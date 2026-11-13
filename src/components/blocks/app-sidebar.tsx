@@ -73,15 +73,19 @@ export const items = [
     url: "/analytics",
     icon: ChartColumnBig,
   },
-  {
-    title: "Правила",
-    url: "/rules",
-    icon: PencilRuler,
-  },
+]
+
+// Настройка организации — в нижнем блоке, между организацией и «Настройками».
+const footerItems = [
   {
     title: "Источники",
     url: "/sources",
     icon: Database,
+  },
+  {
+    title: "Правила",
+    url: "/rules",
+    icon: PencilRuler,
   },
 ]
 
@@ -177,7 +181,7 @@ export function AppSidebar({
       </SidebarContent>
 
       {/* Нижний блок — административные пункты: профиль пользователя,
-          организация, настройки, выход. Тема и уведомления переехали в шапку
+          организация, источники, правила, настройки, выход. Тема и уведомления переехали в шапку
           страницы (PageHeaderActions), отдельный блок «организация +
           пользователь» в самом низу больше не нужен — эти пункты и есть они. */}
       <SidebarFooter className="mt-auto mb-1">
@@ -219,6 +223,17 @@ export function AppSidebar({
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
+
+          {footerItems.map((item) => (
+            <SidebarMenuItem key={item.url}>
+              <SidebarMenuButton asChild>
+                <Link href={item.url} className={footerLinkClass(pathname === item.url)}>
+                  <item.icon className="size-4 mr-2 shrink-0" />
+                  <span className="text-sm">{item.title}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
 
           {isAdmin && (
             <SidebarMenuItem>

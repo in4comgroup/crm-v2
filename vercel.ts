@@ -10,9 +10,8 @@ import { type VercelConfig } from "@vercel/config/v1"
 //
 // Source of truth for the cron expression at deploy time: this file.
 // Source of truth at runtime: `src/server/orchestration/config.ts`
-// (read by the orchestration server functions and surfaced in
-// PHASE2.md "Pipeline tuning"). **If you change one, change the
-// other.** PHASE2 #12 tracks lifting both copies into a
+// (read by the orchestration server functions). **If you change one,
+// change the other.** A possible follow-up is lifting both copies into a
 // system_settings dictionary so this duplication goes away.
 //
 // The `/api/cron/daily` route validates `Authorization: Bearer

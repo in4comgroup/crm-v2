@@ -1,7 +1,7 @@
-// Own-organisation identity registry (see src/app/CLAUDE.md § "Own-organisation
+// Own-organisation identity registry (see src/app/AGENTS.md § "Own-organisation
 // identity registry"). Read by any member, mutated by the org owner only —
 // both gates live in `src/server/org-identity-registry.ts`, never here (API
-// routes must not touch Drizzle; see root CLAUDE.md § Data Layer).
+// routes must not touch Drizzle; see root AGENTS.md § Data Layer).
 import { NextResponse } from "next/server"
 import {
   addOrgIdentityEntry,

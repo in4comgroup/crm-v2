@@ -23,7 +23,7 @@ import { runDailyPipeline } from "@/server/orchestration/daily-pipeline"
 //     keyed on `status='running' AND started_at < now() - 1h`, not a
 //     workflow-shape change.
 //
-// PHASE2 follow-up (not now): if we ever need per-item retry granularity
+// Possible follow-up (not now): if we ever need per-item retry granularity
 // (e.g. a flaky video parse should re-attempt without re-doing sync),
 // the upgrade path is to fan out per-id steps inside the workflow. The
 // orchestration listers (`listPendingParseIds`, `listPendingUploadIds`)

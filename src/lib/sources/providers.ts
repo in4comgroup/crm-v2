@@ -29,7 +29,7 @@ import type { SourceProvider } from "@/db/schema"
 // Capability flags drive UI conditionals (action bar buttons, re-parse
 // availability) and orchestration filters (which providers the daily
 // cron sync iterates). Kept granular even where pairs currently move
-// together — see app/CLAUDE.md § "Provider registry" for the rationale
+// together — see app/AGENTS.md § "Provider registry" for the rationale
 // behind keeping `supportsRemoteSync` and `supportsAutomatedPipeline`
 // separate.
 export type ProviderCapabilities = {

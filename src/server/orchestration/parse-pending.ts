@@ -8,9 +8,9 @@ import { source, sourceItem } from "@/db/schema"
 //
 // Excluded by design:
 //  - 'processing' → another worker / manual click is mid-parse, skip
-//    to avoid double-work (PHASE2 #3 guidance from the user: "easiest
+//    to avoid double-work (team decision: "easiest
 //    is to skip rows in processing status").
-//  - 'failed' → leave for human triage (PHASE2 #5: skip on daily run,
+//  - 'failed' → leave for human triage (team decision: skip on daily run,
 //    don't auto-retry buggy rows).
 //  - children → recreated by their parent's parse, never picked
 //    independently.

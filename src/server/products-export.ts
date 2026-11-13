@@ -12,7 +12,7 @@ import { getServerSession } from "@/lib/get-session"
 // Mirrors refs/price-list.xlsx. CSV is intentionally NOT offered: the format
 // is inherently multi-tab (one tab per country) and CSV has no concept of tabs.
 //
-// Data sources (see src/app/CLAUDE.md § Products):
+// Data sources (see src/app/AGENTS.md § Products):
 //   • country = additional_metadata ->> 'country_name'  (the tab)
 //   • region  = additional_metadata ->> 'region'
 //   • color   = additional_metadata ->> 'color'

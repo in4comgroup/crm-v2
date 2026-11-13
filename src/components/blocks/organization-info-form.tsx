@@ -231,7 +231,7 @@ export function OrganizationInfoForm({
             {canEdit && (
               // Own-organisation identity registry: extra names / websites /
               // addresses used to recognise US during source parsing (see
-              // src/app/CLAUDE.md). Owner-only.
+              // src/app/AGENTS.md). Owner-only.
               <OrgIdentityDialog
                 trigger={
                   <Button variant="outline" className="w-fit">

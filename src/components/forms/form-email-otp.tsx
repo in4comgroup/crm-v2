@@ -23,6 +23,7 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp"
 import { authClient } from "@/lib/auth-client"
+import { REGEXP_ONLY_DIGITS } from "input-otp"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useState } from "react"
 import { useForm } from "react-hook-form"
@@ -132,9 +133,14 @@ export function EmailOtpForm({
     </div>
   )
 
+  // The two steps use two separate useForm instances. Each step's <Form> MUST
+  // carry its own `key`: without it React reuses the details step's field
+  // (e.g. the email <Controller>) for the OTP field at the same tree position,
+  // and that Controller stays subscribed to the OLD form — the OTP input then
+  // never re-renders, so typed digits vanish and submit fails validation.
   if (step === "details") {
     return (
-      <Form {...detailsForm}>
+      <Form key="details" {...detailsForm}>
         <form
           onSubmit={detailsForm.handleSubmit(onSend)}
           className="space-y-4"
@@ -202,7 +208,7 @@ export function EmailOtpForm({
   }
 
   return (
-    <Form {...otpForm}>
+    <Form key="otp" {...otpForm}>
       <form onSubmit={otpForm.handleSubmit(onVerify)} className="space-y-4">
         <p className="text-sm text-muted-foreground text-center">
           Введите 6-значный код, отправленный на{" "}
@@ -221,6 +227,11 @@ export function EmailOtpForm({
                   maxLength={6}
                   autoFocus
                   autoComplete="one-time-code"
+                  // Digits only. A code copied from an email often carries
+                  // spaces / a line break (" 123 456\n"); strip them on paste
+                  // so it isn't cut to "123 4" by maxLength.
+                  pattern={REGEXP_ONLY_DIGITS}
+                  pasteTransformer={(pasted) => pasted.replace(/\D/g, "")}
                   value={field.value}
                   onChange={field.onChange}
                 >

@@ -19,7 +19,7 @@ import { ORCHESTRATION_CONFIG } from "./config"
 //   • The admin "Run pipeline now" route (manual trigger).
 //   • Any future scheduler we swap Vercel for — same function.
 //
-// Sequential execution by design (PHASE2 #2 user decision: MVP doesn't
+// Sequential execution by design (team decision: MVP doesn't
 // have enough volume to need parallelism, and serial keeps Gemini cost
 // predictable).
 //
@@ -28,7 +28,7 @@ import { ORCHESTRATION_CONFIG } from "./config"
 //   2. uploadSourceItem mirrors that contract.
 //   3. The for-loops below ALSO wrap each call in try/catch so a
 //      programming bug in either function only kills its own iteration.
-// Result: one bad row never poisons the batch (PHASE2 #8 user requirement).
+// Result: one bad row never poisons the batch (team requirement).
 export type RunPipelineOptions = {
   trigger: PipelineRunTrigger
 }

@@ -6,7 +6,11 @@
     "dev": "cross-env NODE_OPTIONS=\"--max-old-space-size=8192 --dns-result-order=ipv4first\" next dev",
     "build": "cross-env NODE_OPTIONS=\"--max-old-space-size=8192 --dns-result-order=ipv4first\" next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:generate": "drizzle-kit generate",
+    "db:custom": "drizzle-kit generate --custom",
+    "db:migrate": "drizzle-kit migrate",
+    "db:check": "drizzle-kit check"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.58",

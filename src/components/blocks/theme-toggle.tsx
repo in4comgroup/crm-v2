@@ -10,7 +10,7 @@ import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tool
 // Тот же сегментед-контрол, что переключатель «карточки / список» на
 // Компаниях: стандартный TabsList без переопределений высоты, иконки h-4 и
 // подсказки через AnchorTooltip (Radix Tooltip вокруг TabsTrigger ломает его
-// размеры — см. src/app/CLAUDE.md § «White toolbar convention»).
+// размеры — см. src/app/AGENTS.md § «White toolbar convention»).
 //
 // До монтирования тема на клиенте ещё не известна (next-themes читает её из
 // localStorage), поэтому активный сегмент подсвечиваем только после

@@ -244,7 +244,7 @@ export const blocklistKind = pgEnum("blocklist_kind", [
 
 export type BlocklistKind = (typeof blocklistKind.enumValues)[number]
 
-// Own-organisation identity registry entry kind (see src/app/CLAUDE.md §
+// Own-organisation identity registry entry kind (see src/app/AGENTS.md §
 // "Own-organisation identity registry"). `match_key` is the normalised
 // canonical form per kind: companyMatchKey | bare host | addressMatchKey.
 export const orgIdentityKind = pgEnum("org_identity_kind", [
@@ -284,7 +284,7 @@ export const orderLinkStatus = pgEnum("order_link_status", [
 
 export type OrderLinkStatus = (typeof orderLinkStatus.enumValues)[number]
 
-// LLM-assisted "order from request" flow (see `src/app/CLAUDE.md` §
+// LLM-assisted "order from request" flow (see `src/app/AGENTS.md` §
 // "Order from request"). A pasted client request is parsed into intent items;
 // the rep walks a wizard, one item per step, assembling a draft order.
 //
@@ -790,7 +790,7 @@ export const deal = pgTable(
 // «Хронология» (drawer) и «Лента решений» (top bar) читают ОТСЮДА, а не из
 // deal.changes (то поле — только для карточки, одно мутируемое значение,
 // не история). Добавлено через scripts/add-deal-activity.ts (additive SQL,
-// НЕ `drizzle-kit push`, см. root CLAUDE.md § Commands).
+// НЕ `drizzle-kit push`, см. root AGENTS.md § Commands).
 export const dealActivity = pgTable(
   "deal_activity",
   {
@@ -861,7 +861,7 @@ export const cardCategory = pgEnum("card_category", [
   "new_order",
   // A customer-support request: complaint about product quality, a delivery
   // problem, a product issue/question. High priority; accepting it spawns a
-  // `support`-type task. See `src/app/CLAUDE.md` § "Support cards".
+  // `support`-type task. See `src/app/AGENTS.md` § "Support cards".
   "support",
 ])
 
@@ -1064,8 +1064,9 @@ export const product = pgTable(
 
 // Search V2 — DB-managed generated columns NOT represented above on purpose.
 //
-// `scripts/search-v2/01-foundation.ts` adds these GENERATED ALWAYS … STORED
-// columns + their indexes to the `product` table:
+// The custom migration `migrations/0002_search_v2_product_columns.sql` adds
+// these GENERATED ALWAYS … STORED columns + their indexes to `product` (the
+// functions they call are in `migrations/0000_extensions_and_functions.sql`):
 //   • name_norm     text     — lower(immutable_unaccent(translit_cyr_lat(name)))
 //   • region_norm   text     — same over additional_metadata->>'region'
 //   • is_drink      boolean  — false for merch categories (glasses/water/…)
@@ -1073,11 +1074,12 @@ export const product = pgTable(
 //   • search_vector tsvector — weighted 'simple' FTS (A name/vendor, C cat/type, D country/region)
 // The hybrid retriever in src/server/products.ts reads them via raw `sql`.
 //
-// They are intentionally absent from this schema object: mirroring a generated
-// expression that doesn't byte-match Drizzle's introspection would make
-// `drizzle-kit push` drop + recreate them on every push (a full table rewrite).
-// That migration script is the single source of truth for their definitions —
-// edit translit/search_vector there, then DROP COLUMN + re-add to rebuild.
+// They are intentionally absent from this schema object: Drizzle `select()`
+// returns every schema column (search_vector is large), and an expression that
+// doesn't byte-match Drizzle's introspection would make `drizzle-kit push` drop
+// + recreate them (push is not used — see AGENTS.md § Database changes).
+// To change one: write a NEW custom migration (`pnpm db:custom --name …`) that
+// drops + re-adds the column and recreates its index.
 
 export type Product = typeof product.$inferSelect
 
@@ -1627,7 +1629,7 @@ export const sourceItem = pgTable(
       .default("pending"),
     r2UploadedAt: timestamp("r2_uploaded_at"),
     // Convention: `org_<orgId>/source_<sourceId>/item_<itemId>.md` — see
-    // `src/app/CLAUDE.md`. Stable across re-parses (overwrite in place).
+    // `src/app/AGENTS.md`. Stable across re-parses (overwrite in place).
     markdownR2Key: text("markdown_r2_key"),
     markdownR2SizeBytes: bigint("markdown_r2_size_bytes", { mode: "number" }),
     // Stamped by `applyDiscovery` after the unified discover-from-sources

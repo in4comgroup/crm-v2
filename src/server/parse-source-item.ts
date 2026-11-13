@@ -229,7 +229,7 @@ export async function parseSourceItem(itemId: string): Promise<ParseResult> {
         return await parseTelegramItem(ctx)
       case "dropoff":
         // Drop-off files are browser-session only and don't have parent
-        // rows in source_item yet (PHASE2.md item 8). Fail loud so a
+        // rows in source_item yet. Fail loud so a
         // future caller doesn't silently no-op.
         throw new Error(
           "Drop-off items are not yet persisted as source_item rows; parse via the dropoff dialog instead",

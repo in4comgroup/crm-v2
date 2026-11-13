@@ -6,7 +6,7 @@ import { getBinaryFromR2, putBinaryToR2 } from "@/lib/r2"
 // Фото профиля. `user.image` нельзя хранить как data URL: better-auth кладёт
 // все поля пользователя в подписанную куку сессии (cookieCache), и картинка
 // на десятки КБ переполняет лимит заголовка → 431 на каждом запросе (см.
-// root CLAUDE.md § Multi-Tenancy). Поэтому байты лежат в R2, а в
+// root AGENTS.md § Multi-Tenancy). Поэтому байты лежат в R2, а в
 // `user.image` — короткая ссылка на маршрут, который их отдаёт.
 
 export const AVATAR_MAX_BYTES = 512 * 1024

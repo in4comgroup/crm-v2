@@ -4,7 +4,7 @@
 // can `import { ORCHESTRATION_CONFIG }` at build time to declare the
 // cron schedule alongside the runtime caps.
 //
-// PHASE2.md "Pipeline tuning" tracks moving these to a system_settings
+// Possible follow-up: move these to a system_settings
 // dictionary or env vars once an admin needs to tune without a deploy.
 
 export const ORCHESTRATION_CONFIG = {
@@ -13,8 +13,8 @@ export const ORCHESTRATION_CONFIG = {
   // **Duplicated in `vercel.ts`** because Vercel's vercel.ts evaluator
   // validates the JSON output before runtime imports resolve — pulling
   // this constant into the schedule field produces `undefined` and
-  // trips schema validation. Keep both in sync until PHASE2 #12 moves
-  // them to a system_settings dictionary.
+  // trips schema validation. Keep both in sync until they move
+  // to a system_settings dictionary.
   cron: "0 3 * * *",
 
   // Per-run caps. Items past the cap stay 'pending' / 'needs upload'

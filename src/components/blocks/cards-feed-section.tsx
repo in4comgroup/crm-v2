@@ -27,7 +27,7 @@ export const PRIORITIES = ["normal", "high"] as const
 // colleagues_activity / business_info are valid DB enum values (other,
 // older/inactive rules in this org's /rules list still declare them) but
 // this rule's own # OUTPUT CONTRACT no longer lists them (see
-// scripts/fix-cards-rule-category-enum.ts + src/app/CLAUDE.md § "Card
+// scripts/fix-cards-rule-category-enum.ts + src/app/AGENTS.md § "Card
 // category labels"), so a card can never actually carry one in practice
 // today. Dropped from the filter dropdown so it doesn't offer dead options;
 // CardCategory itself (schema.ts) and every other CATEGORY_LABEL copy

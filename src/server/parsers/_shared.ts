@@ -160,7 +160,7 @@ export const MENTIONED_PEOPLE_PROMPT = `Beyond the author/sender, scan the body 
 // high-confidence entries with a non-empty email, deduped by lowercased
 // email. Medium-confidence + email-less entries are emitted by the model
 // (future use) but dropped here — discovery dedups by email, so the
-// contact-table contract needs the email. See PHASE2.md #14.
+// contact-table contract needs the email.
 export function filterMentionedPeople(
   raw: MentionedPerson[],
 ): MentionedPerson[] {

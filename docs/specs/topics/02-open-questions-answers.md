@@ -185,7 +185,7 @@ No token tracking exists today. **Rec.:** add `llm_usage` in phase 0; set a mont
 
 ### Q25. IN4COM signal pack — who confirms it? — ✅ answered: the Q17 business users review the draft
 
-The draft in [04-distribution-pack-draft.md](http://04-distribution-pack-draft.md) is our proposal (≈ 25 new codes \+ base codes to switch on), written from domain knowledge only. Signals are the input to everything (which messages become topics, which list, when a deal is created), so IN4COM users confirm: which situations matter, how important each is, what does NOT count, and the Russian phrases they really see. No separate workshop is needed; a review of the draft by the same users who do the tests (Q17) is enough.
+The draft in [04-distribution-pack-draft.md](04-distribution-pack-draft.md) is our proposal (≈ 25 new codes \+ base codes to switch on), written from domain knowledge only. Signals are the input to everything (which messages become topics, which list, when a deal is created), so IN4COM users confirm: which situations matter, how important each is, what does NOT count, and the Russian phrases they really see. No separate workshop is needed; a review of the draft by the same users who do the tests (Q17) is enough.
 
 ### Q26. What is a "deal" for IN4COM, and what is an "order"? — ✅ answered: deals only in step one
 

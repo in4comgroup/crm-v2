@@ -17,6 +17,7 @@ import {
   type CardPriority,
 } from "@/db/schema"
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
+import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getServerSession } from "@/lib/get-session"
 import { getTextObject } from "@/server/storage"
 import { aiGenerateText } from "@/server/ai/runtime"
@@ -405,7 +406,9 @@ export async function generateCards(
     .select({ id: user.id, name: user.name })
     .from(member)
     .innerJoin(user, eq(member.userId, user.id))
-    .where(eq(member.organizationId, activeOrgId))
+    // Never offer a system actor «Агент» to the LLM as a card user
+    // (not a member anyway — safety net).
+    .where(and(eq(member.organizationId, activeOrgId), humanUsersOnly()))
 
   // Contacts with an email, keyed by lowercased email so a card can be linked
   // to the external sender deterministically (no LLM name-matching for

@@ -27,6 +27,30 @@ export const ORCHESTRATION_CONFIG = {
   // this, the per-row counters still tick up but individual messages are
   // dropped (a single "+N more truncated" entry is appended).
   maxErrorsPerRun: 200,
+
+  // ── Hourly topics pipeline (runTopicsPipeline, spec topics/01 §13) ──
+  topics: {
+    // Cron schedule expression (UTC). Every hour at :00.
+    //
+    // **Duplicated in `vercel.ts`** (same reason as `cron` above) — if
+    // you change one, change the other. A sub-daily Vercel cron needs the
+    // Vercel **Pro** plan; on Hobby the deploy rejects an hourly schedule.
+    cron: "0 * * * *",
+
+    // Spec §13 "Start history (Q16)" + per-run caps — read by the phases
+    // once they are built (plan phase 2+). Unused by the skeleton.
+    startHistoryDays: 7,
+    maxItemsPerOrgPerRun: 200,
+    concurrency: 3,
+
+    // Cap on failure entries kept in topics_run.errors_json (same idea
+    // as `maxErrorsPerRun`; a "+N more truncated" marker follows).
+    maxErrorsPerRun: 200,
+
+    // A topics_run row still `running` after this long is treated as a
+    // crashed run: marked `failed`, and it no longer blocks a new run.
+    staleRunAfterMinutes: 120,
+  },
 } as const
 
 export type OrchestrationConfig = typeof ORCHESTRATION_CONFIG

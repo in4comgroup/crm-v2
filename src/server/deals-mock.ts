@@ -3,9 +3,9 @@
 //
 // TODO(backend): ВЕСЬ ЭТОТ МОДУЛЬ — временная заглушка. Здесь должны быть
 // настоящие ручки/данные:
-//   1. Предложения агента (generateProposals) — движок, читающий письма/звонки/
-//      TG и предлагающий переход стадии с confidence. Сейчас — детерминированный
-//      мок на основе реальных сделок.
+//   1. Предложения агента — УДАЛЕНЫ 2026-11-13 (topics plan R9): мок двигал
+//      каждую 3-ю сделку при загрузке доски. Настоящие журналируемые переводы
+//      даст deal bridge движка тем (docs/specs/topics, фаза 5).
 //   2. Лента решений (seedFeed + in-memory store) — должна быть таблица журнала
 //      событий (audit log) + ручка листинга. Сейчас — сид из реальных deal.changes
 //      + мок-события агента + аппенды в памяти процесса (теряются при рестарте).
@@ -244,103 +244,11 @@ export function buildIntel(
   return { intel, commitments: commitmentsForStages(stages) }
 }
 
-// ---------------------------------------------------------------------------
-// Предложения агента (ghost). Детерминированный мок: у части сделок предлагаем
-// переход на соседнюю стадию. Учитываем in-memory решения (accept/reject).
-// TODO(backend): заменить на реальный движок предложений.
-// ---------------------------------------------------------------------------
 
-const PROPOSAL_WHY_FWD = [
-  "Клиент просмотрел предложение и запрашивает демонстрацию",
-  "Все коммитменты текущей стадии выполнены по переписке",
-  "Клиент подтвердил бюджет и участников — можно двигать дальше",
-]
-const PROPOSAL_WHY_BACK = [
-  "КП недействительно: клиент сменил юрлицо и вернулся к оценке",
-  "Сорвались сроки пилота — откат к согласованию критериев",
-]
-
-function isTerminal(name: string): boolean {
-  return name === "Closed" || name === "Rejected"
-}
-
-export function generateProposals(
-  deals: DealRow[],
-  stages: DealFunnelStageOption[],
-  resolved: Set<string>,
-): DealProposal[] {
-  const flow = [...stages]
-    .filter((s) => !isTerminal(s.name))
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-  const byId = new Map(flow.map((s) => [s.id, s]))
-  const out: DealProposal[] = []
-
-  for (const d of deals) {
-    if (d.status !== "active") continue
-    const cur = byId.get(d.funnelStageId)
-    if (!cur) continue
-    const seed = hash("prop:" + d.id)
-    // Предложение примерно у каждой 3-й сделки.
-    if (seed % 3 !== 0) continue
-
-    const curIdx = flow.findIndex((s) => s.id === cur.id)
-    const back = seed % 7 === 0 && curIdx > 0
-    const targetIdx = back ? curIdx - 1 : curIdx + 1
-    const target = flow[targetIdx]
-    if (!target) continue
-
-    const id = "p_" + (seed >>> 0).toString(36)
-    if (resolved.has(id)) continue
-
-    out.push({
-      id,
-      dealId: d.id,
-      dealName: d.clientName ? `${d.clientName} — ${d.name}` : d.name,
-      fromStageId: cur.id,
-      toStageId: target.id,
-      fromLabel: cur.label,
-      toLabel: target.label,
-      direction: back ? "back" : "fwd",
-      why: back
-        ? pick(PROPOSAL_WHY_BACK, seed)
-        : pick(PROPOSAL_WHY_FWD, seed),
-      source: pick(SOURCE_LABELS, seed >> 2),
-      confidence: pick(CONFIDENCES, seed >> 4),
-    })
-  }
-  return out
-}
-
-// ---------------------------------------------------------------------------
-// In-memory сторы (per-org). TODO(backend): заменить на БД.
-// ---------------------------------------------------------------------------
-
-const resolvedProposals = new Map<string, Set<string>>()
-const rejectionReasons = new Map<string, Record<string, string>>()
-
-export function getResolvedProposals(orgId: string): Set<string> {
-  let s = resolvedProposals.get(orgId)
-  if (!s) {
-    s = new Set()
-    resolvedProposals.set(orgId, s)
-  }
-  return s
-}
-
-export function markProposalResolved(
-  orgId: string,
-  proposalId: string,
-  reason?: string,
-) {
-  getResolvedProposals(orgId).add(proposalId)
-  if (reason) {
-    const map = rejectionReasons.get(orgId) ?? {}
-    map[proposalId] = reason
-    rejectionReasons.set(orgId, map)
-    // TODO(backend): причина отклонения должна уходить в контекст агента для
-    // организации/клиента, чтобы он не повторял неверное предложение.
-  }
-}
+// The proposal generator and its in-memory stores (a fake "agent" that moved
+// about every 3rd deal when the board loaded) were REMOVED on 2026-11-13
+// (topics plan, decision R9). Real, journaled agent moves come from the
+// topics deal bridge (docs/specs/topics/03-development-plan.md, phase 5).
 
 // Лента решений больше не мок — реальный журнал deal_activity, см.
 // listRecentDealActivity в src/server/deals.ts (и moveDealStage/createDeal,

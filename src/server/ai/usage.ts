@@ -12,6 +12,7 @@ import {
 } from "@/server/ai/registry/assignments"
 import type { AiResultInfo } from "@/server/ai/types"
 import { getPlatformSetting } from "@/server/platform-settings"
+import { noteSpend } from "@/server/ai/budget"
 
 // Usage ledger: recording, cost estimate, exact-cost reconcile
 // (docs/specs/models/04-usage-and-cost.md §2–§4). Called only by the
@@ -38,7 +39,8 @@ export type RecordUsageInput = {
   userId: string | null
   ref?: Record<string, unknown>
   startedAt: Date
-  status: "ok" | "error" | "aborted"
+  // blocked = refused before the call (daily budget used up)
+  status: "ok" | "error" | "aborted" | "blocked"
   error?: unknown
   usage?: UsageLike
   steps?: number
@@ -147,7 +149,12 @@ export async function recordUsageEvent(input: RecordUsageInput): Promise<void> {
       responseId: info?.responseId ?? null,
       responseIds: info?.responseIds?.length ? info.responseIds : null,
       status: input.status,
-      errorType: input.status === "error" ? errorTypeOf(input.error) : null,
+      errorType:
+        input.status === "error"
+          ? errorTypeOf(input.error)
+          : input.status === "blocked"
+            ? "budget_exceeded"
+            : null,
       inputTokens: t.input,
       outputTokens: t.output,
       reasoningTokens: t.reasoning,
@@ -161,6 +168,8 @@ export async function recordUsageEvent(input: RecordUsageInput): Promise<void> {
       markupPercent: markup.toFixed(2),
       ref: input.ref ?? null,
     })
+    const cost = info?.costUsd ?? estimate
+    if (input.orgId && cost) noteSpend(input.orgId, cost)
   } catch (e) {
     console.error("[ai/usage] failed to record usage event:", e)
   }

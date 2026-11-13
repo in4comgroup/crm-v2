@@ -100,6 +100,13 @@ export function AccountAiUsage() {
         <span className="ml-auto text-xs text-muted-foreground">Суммы в долларах США</span>
       </div>
 
+      {data?.budgetExhausted && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          Дневной лимит ИИ исчерпан: фоновая обработка источников продолжится завтра. ИИ чат и
+          другие функции, которые вы запускаете сами, работают.
+        </div>
+      )}
+
       {current?.error && (
         <p className="text-sm text-red-500">Не удалось загрузить данные: {current.error}</p>
       )}

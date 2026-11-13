@@ -13,11 +13,15 @@ import {
   setPlatformSetting,
 } from "@/server/platform-settings"
 import { listAiLanguageVendors } from "@/server/ai/registry/models"
+import { listOrgBudgets } from "@/server/ai/budget"
+import { OrgSettingValidationError, setOrgSetting } from "@/server/org-settings"
 
 // AI platform settings: markup (spec 05) and model policy (spec 03 §7).
 // Platform admins only.
 //   GET → { markupPercent, markupLog, policy, policyLog, vendors }
 //   PUT { markupPercent }                            → save markup
+//   PUT { budgetDefaultUsd }                         → platform default daily AI budget
+//   PUT { orgBudget: { organizationId, dailyUsd } }  → per-org override (null = default)
 //   PUT { policy: { zdrOnly, noTrainingOnly, allowedVendors } }
 //       → 409 { error, blockedProcesses } when a process would be left with
 //         no compliant model; nothing is saved then.
@@ -39,13 +43,17 @@ export type AdminAiSettingsResponse = {
   policy: Awaited<ReturnType<typeof getAiModelPolicy>>
   policyLog: Awaited<ReturnType<typeof listPlatformSettingLog>>
   vendors: string[]
+  budget: {
+    defaultUsd: number
+    orgs: Awaited<ReturnType<typeof listOrgBudgets>>
+  }
 }
 
 export async function GET() {
   const auth = await requireAdmin()
   if (auth.error) return auth.error
   try {
-    const [markupPercent, markupLog, policy, zdrLog, trainLog, vendorLog, vendorRows] = await Promise.all([
+    const [markupPercent, markupLog, policy, zdrLog, trainLog, vendorLog, vendorRows, budgetDefault, budgetOrgs] = await Promise.all([
       getPlatformSetting("ai.markup_percent"),
       listPlatformSettingLog("ai.markup_percent"),
       getAiModelPolicy(),
@@ -53,6 +61,8 @@ export async function GET() {
       listPlatformSettingLog("ai.policy.no_training_only", 5),
       listPlatformSettingLog("ai.policy.allowed_vendors", 5),
       listAiLanguageVendors(),
+      getPlatformSetting("ai.budget.daily_usd"),
+      listOrgBudgets(),
     ])
     const body: AdminAiSettingsResponse = {
       markupPercent,
@@ -62,6 +72,7 @@ export async function GET() {
         .sort((a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime())
         .slice(0, 10),
       vendors: vendorRows,
+      budget: { defaultUsd: budgetDefault, orgs: budgetOrgs },
     }
     return NextResponse.json(body)
   } catch (error) {
@@ -78,6 +89,18 @@ export async function PUT(request: NextRequest) {
     if (body && "markupPercent" in body) {
       const v = await setPlatformSetting("ai.markup_percent", body.markupPercent, auth.userId)
       return NextResponse.json({ markupPercent: v })
+    }
+    if (body && "budgetDefaultUsd" in body) {
+      const v = await setPlatformSetting("ai.budget.daily_usd", body.budgetDefaultUsd, auth.userId)
+      return NextResponse.json({ budgetDefaultUsd: v })
+    }
+    if (body?.orgBudget && typeof body.orgBudget === "object") {
+      const ob = body.orgBudget as { organizationId?: unknown; dailyUsd?: unknown }
+      if (typeof ob.organizationId !== "string") {
+        return NextResponse.json({ error: "organizationId is required" }, { status: 400 })
+      }
+      const v = await setOrgSetting(ob.organizationId, "ai.budget.daily_usd", ob.dailyUsd ?? null, auth.userId)
+      return NextResponse.json({ organizationId: ob.organizationId, dailyUsd: v })
     }
     if (body?.policy && typeof body.policy === "object") {
       const p = body.policy as Record<string, unknown>
@@ -106,7 +129,7 @@ export async function PUT(request: NextRequest) {
     }
     return NextResponse.json({ error: "Nothing to save" }, { status: 400 })
   } catch (error) {
-    if (error instanceof PlatformSettingValidationError) {
+    if (error instanceof PlatformSettingValidationError || error instanceof OrgSettingValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
     console.error("[admin/ai/settings] PUT error:", error)

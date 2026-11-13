@@ -1,11 +1,13 @@
 # Topics — signals registry (full specification)
 
-Status: draft for review · 2026-11-11 · seed data, no code changes
+Status: reviewed 2026-11-13 (decisions R1–R20 in [02-open-questions.md](02-open-questions.md) § F applied) · seed data, no code changes
 Extends [01-specification.md](01-specification.md) §4 (taxonomy) and §10 (Russian language). Attention rules that use these fields: [06-attention-engine.md](06-attention-engine.md).
 
-The registry is the full list of signal codes with all parameters, Russian texts and Russian cues. It is **data** (DB tables), managed by the platform admin in Settings → «Сигналы» (Q3). These files are the **seed**: they are loaded into the tables once, and after that the tables are the master. The «Экспорт в Markdown» of the tab writes the same format back (spec §4.1).
+The registry is the full list of signal codes with all parameters, Russian texts and Russian cues. It is **data** (DB tables with all parameters and settings: codes, packs, per-org activation and overrides, stage rules, risk types, relations), managed by the platform admin in Settings → «Сигналы» (Q3) with a **full editor** in the MVP. These files are the **source of version 1**: after review, version 1 is written into a Drizzle **custom migration** (`pnpm db:custom --name signals_registry_v1`) as platform reference data with fixed ids and `ON CONFLICT DO NOTHING` (root `AGENTS.md` rule 3). After that the DB is the master; these files are not loaded again (no `db/seeds/*.json`, no scripts). The «Экспорт в Markdown» of the tab writes the same format back (spec §4.1).
 
-Items marked **[new]** are not in the decided spec; they are listed in §10 for confirmation.
+Only the packs `base` and `distribution` are seeded (R5). The `agency` pack (05d) stays a document until phase 9 (second pilot).
+
+Items marked **[new]** were not in the 2026-11-10 spec; they are listed in §10 and were accepted on 2026-11-13.
 
 ---
 
@@ -16,7 +18,7 @@ Items marked **[new]** are not in the decided spec; they are listed in §10 for 
 | [05a-signals-base-a-g.md](05a-signals-base-a-g.md) | `base` pack, blocks A Продажи · B Договоры · C Исполнение · D Счета · E Обратная связь · F Встречи · G Контакты | 55 (45 active) |
 | [05b-signals-base-h-n.md](05b-signals-base-h-n.md) | `base` pack, blocks H Рынок · I Недоставка · J Команда · K Аккаунт · L Конкуренты · M Внутреннее · N Поставщики; **attributes**; **relations** | 79 + 26 attributes + 22 relations |
 | [05c-signals-distribution.md](05c-signals-distribution.md) | `distribution` pack (wine / spirits, pilot IN4COM); IN4COM deal-risk types; IN4COM stage-rule template | 23 + 8 proposed; 9 risk types; 28 stage-rule rows |
-| [05d-signals-agency.md](05d-signals-agency.md) | `agency` pack (Maslov N1–N4); agency overrides of base codes; funnel stage-rule template; 26 deal-risk types | 62 (N1 19 · N2 10 · N3 15 · N4 18); 26 risk types; stage rules R0–R37 |
+| [05d-signals-agency.md](05d-signals-agency.md) | `agency` pack (Maslov N1–N4); agency overrides of base codes; funnel stage-rule template; 26 deal-risk types. **Phase 9 / agency: not seeded in the MVP.** | 62 (N1 19 · N2 10 · N3 15 · N4 18); 26 risk types; stage rules R0–R37 |
 
 Every code has the same entry format: a parameter table, then Russian definition, boundary, prompt cues, full synonym list, anti-cues, example, counter-example and card note (§4).
 
@@ -24,7 +26,7 @@ Every code has the same entry format: a parameter table, then Russian definition
 
 ## 2. Data model
 
-Tables from spec §4.1, with the **[new]** columns this registry needs:
+Tables from spec §4.1 (full list in spec §11: packs, blocks, codes, attributes, relations, pack overrides, per-org activation and overrides, stage rules, risk types and their per-org stage guards), with the columns this registry needs (accepted, R1 of §10):
 
 | Table | Columns added **[new]** | Why |
 |---|---|---|
@@ -57,7 +59,7 @@ Tables from spec §4.1, with the **[new]** columns this registry needs:
 | `class` | `risk` \| `chance` \| `fyi` \| null | null only for `state`. |
 | `class_by_relation` | bool | Class by client relation: active → risk, prospect / dormant → chance. |
 | `kind` | `event` \| `watchdog` \| `derived` \| `trend` \| `state` | `trend` has the D4 ceiling (Q24-6). `watchdog` / `derived` / `trend` are emitted by a process. |
-| `effort` | `quick` \| `medium` \| `complex` \| null | Lead days (5 / 3 / 2), reaction time for boost O, relevance window. null = medium. |
+| `effort` | `quick` \| `medium` \| `complex` \| null | Lead days (quick 2 / medium 3 / complex 5, as in 06 and v204), reaction time for boost O, relevance window. null = medium. |
 | `carries_amount` | bool | The prompt asks for `facts.amounts`. |
 
 ### 3.3 Weight scale (how to set a weight)
@@ -83,13 +85,13 @@ Rules: a code that **asks us** for work is ≥ 4. A `risk` that can lose a clien
 
 | Field | Values | Rules |
 |---|---|---|
-| `asks_us` | bool | Maslov «REQ». Sets `waiting_on_us`; enables boosts R and O and evening reminders. |
+| `asks_us` | bool | Maslov «REQ». Sets `waiting_on_us`; enables boosts R and O and (phase 7) evening reminders. A repeat of the same asks-us code on the same topic counts once via boost R; the impatience attribute is not added to it (R19, 06 §4.4). |
 | `inbound_only` | bool | Dropped on items authored by us (spec §5.4 rule 2). |
 | `emitted_by` | `parser` \| `process` \| `both` | `process` codes are never in the extraction prompt. |
 | `stage` | `active` \| `onHold` \| `parked` \| `gated` | Pack default. Only `active` acts. `gated` = waits for a date gate or a feature. |
 | `display_profile` | `W1` \| `D4` \| `P6` \| `P8` \| `S0` \| `S1` \| null | null = from the score. An explicit profile shifts with attributes and boosts (06 §5.1). |
 | `recipient_role` | `relationship` · `opportunity` · `account` · `finance` · `accounting` · `logistics` · `team` · `new_biz` · `events` | Stored now, used when functional roles ship (Q33). |
-| `closes_codes` | text[] | Only for `state` / S1 codes. Closes these codes **on the same topic**. |
+| `closes_codes` | text[] | For `state` / S1 codes **and for event codes** (R12): e.g. `INVOICE_PAID` closes `PAYMENT_PROMISE`; `ORDER_CANCELLED` closes `ORDER_REQUESTED`, `ORDER_CHANGE_REQUESTED`. Closes these codes **on the same topic**. A pack may change `closes_codes` of a base code (§5). An event code that closes still scores by its own weight. |
 | `date_gate` | `{ fact, test: within \| beyond, settingKey, days }` | Server keeps the code only when the fact date passes the test against the item date. |
 | `relevance_days` | int \| null | **[new]** null = default (quick 14 / medium 30 / complex 45 / trend 90). |
 | `card_note_ru` | text | Guidance for the card writer. Roles, not names. |
@@ -137,6 +139,7 @@ Too little data → no instance (spec §5.6: insufficient data never produces a 
 8. **Negation and hedging** are anti-cues: «пока не планируем тендер», «может быть, когда-нибудь» do not give the code.
 9. **Quoted history never counts** (spec §5.3): a cue in a quoted block is context only.
 10. **Industry cues** that make sense only in one pack are marked «(дистрибуция)» or «(агентство)» in base entries.
+11. **Foreign-language mail (R20).** Producers write in English, French or Italian. Extraction works on any language; the prompt says so. Supplier / producer codes (block N, family `supplier`, e.g. `SUPPLIER_*`) also get **English cue phrases** in `cues_prompt_ru` / `synonyms_ru`, marked «(EN)» (e.g. «shipment delayed», «new price list», «price increase from»). Other codes may get them where producers use them. The English cues are added in the IN4COM pack review; 05a–05d do not hold them yet.
 
 ---
 
@@ -145,14 +148,16 @@ Too little data → no instance (spec §5.6: insufficient data never produces a 
 ```
 effective(code, org) =
     pack of code is active for org                                  (organization_signal_setting.packs)
-AND stage(code) = active  after overrides                           (org override → pack default)
+AND stage(code) = active  after overrides                           (org override → pack override → base value)
 AND (code not in a block parked for this pack, e.g. agency: H, J)
-→ weight, display_profile, recipient_role, stage = org override ?? pack value
-→ all other fields = pack value (not overridable in the MVP)
+→ weight, display_profile, recipient_role, stage = org override ?? pack override ?? base value
+→ closes_codes                                  = pack override ?? base value          (R12)
+→ all other fields = base / pack value (not overridable in the MVP)
 ```
 
-- Base codes used by a vertical pack carry the **vertical override** in that pack file (agency overrides in 05d; IN4COM switches in the «IN4COM» column of 05a / 05b).
-- `signal_stage_rule` and `deal_risk_stage_guard` are per org (spec §9.2, §9.4). The pack files give templates; the admin copies them to the org.
+- Base codes used by a vertical pack carry the **vertical override** in that pack file (agency overrides in 05d; IN4COM switches in the «IN4COM» column of 05a / 05b). A pack override may change `closes_codes` of a base code (R12); an org override may not.
+- Overrides are rows in the registry tables (`signal_pack_override`, `organization_signal_setting`), edited in «Сигналы».
+- `signal_stage_rule` and the stage guards of risk types are per org (spec §9.2, §9.4). One model: the risk type is platform data (`deal_risk_type`); the org's stages where it applies are rows in `deal_risk_stage_guard` (risk type × org × allowed stage ids). No guard row = the risk applies at every stage. The pack files give templates; the admin copies them to the org.
 
 ### 5.1 IN4COM activation (pilot)
 
@@ -160,7 +165,13 @@ AND (code not in a block parked for this pack, e.g. agency: H, J)
 |---|---|---|
 | `base` | 31 on (A–G 27, H–N 4), 28 review, 75 off | column «IN4COM» in 05a / 05b; source: 04 §2 |
 | `distribution` | 19 on, 12 review | 4 draft codes and all 8 «Предложено дополнительно» codes wait for the IN4COM review |
-| `agency` | off | second pilot (Q29) |
+| `agency` | off, not seeded | phase 9, second pilot (Q29, R5) |
+
+How the column values act (R6):
+
+- **on** = `active` for IN4COM. Only these codes (~50) go into the **live** extraction prompt.
+- **review** = imported as `onHold` for IN4COM. They run only in an **offline eval batch** on the golden set until the platform admin switches them on.
+- **off** = imported as `onHold` or `parked`. Base blocks H, J, K, L, M: only the codes marked «on» in 05b are active for IN4COM; everything else in these blocks imports as `onHold` / `parked`.
 
 ---
 
@@ -175,7 +186,8 @@ CODE — label_ru
   Признаки: cues_prompt_ru (≤ 8)
 ```
 
-- Process codes, `state` codes emitted only by the CRM, parked / onHold / off codes are not sent.
+- Process codes, `state` codes emitted only by the CRM, parked / onHold / off codes are not sent. For IN4COM this means only the codes marked «on» (§5.1); «review» codes are sent only by the offline eval batch.
+- The prompt states that the item may be in any language (Russian, English, French, Italian …); cues are hints, not a language filter (R20).
 - Codes are grouped by block; blocks are ordered by the org's active-code count.
 - Size budget (Q5): if the prompt exceeds the model's budget, two passes — (1) block classifier with block labels and 3 cues per code, (2) full entries of the chosen blocks only.
 - `example_ru` few-shot lines are off by default; the eval decides per code (prompt cost vs precision).
@@ -189,13 +201,14 @@ The registry editor rejects a save when:
 1. an active code has an empty `boundary_ru`, `definition_ru` or `cues_prompt_ru`;
 2. `cues_prompt_ru` has > 8 items, or a cue is longer than 60 chars;
 3. `score_rule = state` and `weight ≠ 0`, or `class ≠ null`;
-4. `closes_codes` names a code that does not exist or is not in the same family (warning only for cross-family);
+4. `closes_codes` names a code that does not exist or names the code itself; a cross-family close is a warning only (e.g. `INVOICE_PAID` → `PAYMENT_PROMISE` is same family; `ORDER_CANCELLED` → `ORDER_REQUESTED` is same family). `closes_codes` is allowed on `state` and `event` codes (R12), not on `watchdog` / `derived` / `trend` codes;
+4a. an org override tries to change `closes_codes` (only a pack override may);
 5. `kind ∈ {watchdog, derived, trend}` and `emitted_by ≠ process`, or `trigger_rule` is empty;
 6. a `trend` code has an explicit profile above D4;
 7. `family` is empty;
 8. a relation refers to a retired code.
 
-Every save increments `signal_taxonomy_version`. Stored instances keep their version (spec §5.4).
+The editor validates on save (all rules above) and refuses the save with the list of errors. Every accepted save increments `signal_taxonomy_version`. Stored instances keep their version (spec §5.4).
 
 ---
 
@@ -209,16 +222,17 @@ Every save increments `signal_taxonomy_version`. Stored instances keep their ver
 
 ## 9. Change process
 
-1. Change in Settings → «Сигналы» (platform admin) → new taxonomy version.
-2. Eval harness on the golden set (recorded responses + a live sample).
-3. Shadow mode for orgs that use the code; compare lists before / after.
+1. Change in Settings → «Сигналы» (platform admin) → new taxonomy version. The DB is the master; no seed file or migration is needed for an edit.
+2. Eval harness on the golden set (recorded responses + a live sample). A new code starts as `onHold` and runs only in the offline eval batch.
+3. For an org with `topics.enabled = shadow` (org flag in `org_setting`), compare lists before / after. For an org that is `on`, switch the code on after the eval.
 4. Export to Markdown and keep it next to the release notes.
+5. A change that every DB needs on a fresh install (new platform code for all orgs) also goes into a new custom migration (reference data, fixed ids, `ON CONFLICT DO NOTHING`).
 
 ---
 
-## 10. Decisions to confirm
+## 10. Decisions (accepted 2026-11-13 as recommended)
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
 | R1 | New columns: `family`, `relevance_days`, `cues_prompt_ru`, `synonyms_ru`, `anti_cues_ru`, `example_ru`, `counter_example_ru`, `trigger_rule` (§2) | **Yes.** Without them the full cue model and the process rules stay in documents, not in data. |
 | R2 | New relation kind `dampens` (06 §5.2 H4) | **Yes**, seed one rule (`PAYMENT_PROMISE` → `INVOICE_OVERDUE`). |

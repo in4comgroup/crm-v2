@@ -33,6 +33,7 @@ vendors). Follow-ups: [06 §4](06-rollout-and-questions.md). All questions
 | [04-usage-and-cost.md](04-usage-and-cost.md) | Usage ledger (OTel GenAI field names), cost estimate and exact cost, statistics, the «Использование ИИ» tab |
 | [05-markup-and-end-user-cost.md](05-markup-and-end-user-cost.md) | Global markup %, how end-user prices are computed and shown |
 | [06-rollout-and-questions.md](06-rollout-and-questions.md) | Phases, migrations, testing, risks, open questions |
+| [07-daily-budget.md](07-daily-budget.md) | Daily AI budget per organization (background AI stops at the cap) — implemented 2026-11-13 |
 
 ## Terms
 

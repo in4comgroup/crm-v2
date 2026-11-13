@@ -34,9 +34,9 @@ export type BoardIntelData = {
   commitments: StageCommitments
   // Все задачи сделки (по createdAt desc) — карточка листает их шевронами.
   tasksByDeal: Record<string, DealTaskInfo[]>
-  // Сколько переводов агент авто-применил в ЭТОМ фетче (/api/deals/proposals
-  // применяет предложения на лету). > 0 → доска должна подтянуть свежие
-  // стадии (router.refresh в deals-board); повторный фетч вернёт 0 — цикла нет.
+  // Always 0 now: the mock agent that auto-applied stage moves on board load
+  // (/api/deals/proposals) was removed 2026-11-13 (topics plan R9). Kept in
+  // the shape so consumers stay unchanged until the topics deal bridge.
   appliedMoves: number
 }
 
@@ -65,14 +65,12 @@ export function useBoardIntel(): {
     const seq = ++latestRef.current
     setLoading(true)
     try {
-      const [proposalsRes, feedRes, intelRes, tasksRes] = await Promise.all([
-        fetch("/api/deals/proposals"),
+      const [feedRes, intelRes, tasksRes] = await Promise.all([
         fetch("/api/deals/feed"),
         fetch("/api/deals/intel"),
         fetch("/api/tasks"),
       ])
       if (
-        !proposalsRes.ok ||
         !feedRes.ok ||
         !intelRes.ok ||
         !tasksRes.ok
@@ -80,12 +78,8 @@ export function useBoardIntel(): {
         throw new Error("Не удалось загрузить данные доски")
       }
 
-      const [proposalsJson, feedJson, intelJson, tasksJson] =
+      const [feedJson, intelJson, tasksJson] =
         await Promise.all([
-          proposalsRes.json() as Promise<{
-            proposals?: DealProposal[]
-            applied?: number
-          }>,
           feedRes.json() as Promise<{ events?: FeedEvent[] }>,
           intelRes.json() as Promise<{
             intel?: Record<string, DealIntel>
@@ -115,12 +109,12 @@ export function useBoardIntel(): {
       if (latestRef.current !== seq) return
 
       setData({
-        proposals: proposalsJson.proposals ?? [],
+        proposals: [],
         feed: feedJson.events ?? [],
         intel: intelJson.intel ?? {},
         commitments: intelJson.commitments ?? {},
         tasksByDeal,
-        appliedMoves: proposalsJson.applied ?? 0,
+        appliedMoves: 0,
       })
     } catch {
       // Мягкая деградация: сохраняем предыдущие данные, ничего не бросаем.

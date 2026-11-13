@@ -71,6 +71,13 @@
       "when": 1794590765210,
       "tag": "0009_platform_setting",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794594593335,
+      "tag": "0010_topics_phase0_foundations",
+      "breakpoints": true
     }
   ]
 }

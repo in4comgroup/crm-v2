@@ -16,7 +16,7 @@ export type UsageFilters = {
   orgId?: string | null // "system" = calls without an organization
   processKey?: string | null
   model?: string | null // response model
-  status?: "ok" | "error" | "aborted" | null
+  status?: "ok" | "error" | "aborted" | "blocked" | null
 }
 
 const COST = sql<string>`coalesce(${aiUsageEvent.costActualUsd}, ${aiUsageEvent.costEstimateUsd})`

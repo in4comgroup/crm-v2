@@ -80,7 +80,7 @@ export function TableAdminUsers() {
         searchOperator?: "contains"
         filterField?: string
         filterValue?: string
-        filterOperator?: "eq"
+        filterOperator?: "eq" | "ne"
       } = {
         limit: ITEMS_PER_PAGE,
         offset: (page - 1) * ITEMS_PER_PAGE,
@@ -102,6 +102,14 @@ export function TableAdminUsers() {
         query.filterField = "role"
         query.filterValue = filterRole
         query.filterOperator = "eq"
+      } else {
+        // Hide the per-org system actors «Агент» (role 'agent', see
+        // src/server/topics/system-actor.ts) — they are not people.
+        // Every user row has a role (column default 'user'), so `ne`
+        // does not drop anyone else.
+        query.filterField = "role"
+        query.filterValue = "agent"
+        query.filterOperator = "ne"
       }
 
       const { data, error: fetchError } =

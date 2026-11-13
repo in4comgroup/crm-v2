@@ -12,6 +12,13 @@ import { platformSetting, platformSettingLog, user } from "@/db/schema"
 // Spec: docs/specs/models/05-markup-and-end-user-cost.md §2.
 
 export const PLATFORM_SETTINGS = {
+  // Default daily AI budget per organization, USD of gateway cost per UTC
+  // day (docs/specs/models/07-daily-budget.md). Per-org override:
+  // org_setting `ai.budget.daily_usd`.
+  "ai.budget.daily_usd": {
+    schema: z.number().min(0).max(100_000),
+    default: 5,
+  },
   // Markup % on top of AI gateway cost, shown to end users (05 §3).
   "ai.markup_percent": {
     schema: z.number().min(0).max(1000),

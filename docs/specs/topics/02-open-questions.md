@@ -1,9 +1,22 @@
 # Topics — questions to resolve before development
 
-Status: draft for review · 2026-11-10
+Status: **all questions decided** (review of 2026-11-13: § F). Earlier status: draft for review · 2026-11-10
 
 Each question has: why it matters, options, and a recommendation (**Rec.**). Numbers match the `[D?n]` links in [01-specification.md](01-specification.md).
 Blocking = must be answered before phase 1 starts (see [03-development-plan.md](03-development-plan.md)).
+
+## Review 2026-11-13 — what changed
+
+The product owner reviewed the spec against the real repository (crm-v2) and decided R1–R20 (§ F below). Some earlier answers are **superseded**:
+
+| Earlier | Superseded by | Now |
+|---|---|---|
+| Q5 (Yandex model, spike on `yandex-text`) | R2 | Vercel AI Gateway models through the AI layer (`src/server/ai`, one AI process per LLM step); spike on 2–3 gateway models |
+| Q18 (500 ₽ cap, `llm_usage`, RUB prices) | R4 | Per-org daily AI budget **5 USD** in the AI layer; cost from the existing `ai_usage_event` ledger |
+| Q20 (dedicated environments, own PostgreSQL) | R1 | This repo's stack: Vercel + Neon + Vercel Cron / Workflow; Drizzle migrations |
+| Q3 (registry editor) | R11 | Unchanged in substance, made precise: DB registry with all parameters, «Сигналы» tab with a full editor in the MVP, Markdown export; v1 seeded by a migration |
+| Plan "every 15 min" | R3 | Every **60 minutes** |
+| Q8 / plan phase 10 (old «Telegram orders» rule kept for IN4COM) | R7 | Rule switched off when IN4COM topics go `on`; «Создать заказ» on the `ORDER_REQUESTED` topic card |
 
 ## Decisions (2026-11-10)
 
@@ -50,22 +63,53 @@ Requirements v2 ([Описание требований - v2.md](Описани�
 
 ## Still open
 
-Nothing blocks **phase 0**. The table says which phase needs each answer.
+**Nothing open for the product owner.** Pack questions, Q35 and Q36 were accepted as recommended on 2026-11-13 (§ F).
 
-### For business (please answer)
+### Confirmations during the IN4COM review (phase 0, not blocking)
 
-| Q | Question | Who | Needed before |
-|---|---|---|---|
-| Pack | 8 questions in [04-distribution-pack-draft.md](04-distribution-pack-draft.md) §3 (order volume, who handles orders, always-urgent events, deal types, ЕГАИС by email, supplier delay weight, missing situations, IN4COM deal risks in §4) | IN4COM business users | Phase 1 seed (risks: phase 5a) |
-| Q28 follow-up | Align the v2 «Структура воронки» text with Q24 (remove go / no-go) | Business (document only) | Phase 9 |
-| Q35 | Attention engine rules not in the decided spec: boosts (client chases, overdue reaction, corroboration, cap +2), attributes on the dominant instance only, relevance windows, «ждём клиента» lowers one level, `dampens` relation, expiry for P8 / P6 / D4, reminder cap for P8, card score snapshot — [06-attention-engine.md](06-attention-engine.md) §15 (A1–A8, each with a recommendation) | Product owner | Phase 4 |
-| Q36 | Registry additions: new columns (family, relevance window, prompt cues vs full synonyms, anti-cues, examples, process trigger rules), weight scale, open points per pack — [05-signals-registry.md](05-signals-registry.md) §10 and the «Open points» of 05a–05d | Product owner; IN4COM users for base + distribution | Phase 1 seed |
+| Item | Who | Needed before |
+|---|---|---|
+| Real phrases, missing situations and the ЕГАИС / marking codes (04 §3 items 5, 7) | IN4COM business users, in the golden-set review | Phase 1 seed |
+| IN4COM deal risk list (04 §4, Q30) and deal types (R13) | IN4COM business users | Phase 5 / 5a |
+| Align the v2 «Структура воронки» text with Q24 (remove go / no-go) — Q28 follow-up | Business (document only) | Phase 9 |
 
 Out of this plan (separate tasks): functional roles and rights (Q33); Telegram group chats and voice notes (Q32); Telegram files (Q11).
 
 ### Technical
 
-None open. All technical questions are answered (Q4, Q6, Q9, Q10, Q11, Q14). Technical choices made for v2 (no business answer needed): deal state is stored and versioned, one `dealState` LLM task writes the state and risk texts, risk activation and clearing are deterministic rules (spec §9.3–9.4).
+None open. R1–R20 (§ F) replace the technical assumptions of 2026-11-10 that did not match this repository.
+
+---
+
+## F. Review against the repository (2026-11-13) — all decided
+
+Product-owner answers to the review of 2026-11-13. «As recommended» = the recommendation shown.
+
+| # | Question | Decision |
+|---|---|---|
+| R1 | Target stack | **This repo:** Vercel, Neon, Drizzle migrations, Vercel Cron + Workflow. Yandex, K8s, dedicated PostgreSQL were wrong references from an older project. |
+| R2 | Models | **Vercel AI Gateway through the AI layer**, as all LLM calls today: one AI process per LLM step, model chosen on «Процессы ИИ»; spike on 2–3 gateway models. |
+| R3 | Run frequency | **Every 60 minutes** (hourly cron; needs the Vercel Pro plan). Deadline escalation is also evaluated when a list is read. |
+| R4 | Per-org daily AI budget | **Yes, 5 USD by default**, in the AI layer (background stops at the cap, interactive warns). Spec belongs to `docs/specs/models/`. |
+| R5 | Packs to seed | **`base` + `distribution` only**; `agency` (05d) stays a document until phase 9. |
+| R6 | Live prompt | **Only codes marked "on"** for IN4COM (~50); "review" codes run in an offline eval batch. |
+| R7 | «Telegram orders» rule | **Switched off** when IN4COM topics go `on`; «Создать заказ» on the `ORDER_REQUESTED` topic card. |
+| R8 | `ORDER_REQUESTED` weight | **5** (D4 «Сводка») + deadline escalation. |
+| R9 | Mock deal agent | **Removed now** for all orgs; deal discovery journals its moves. |
+| R10 | Old cards | **No migration**; read-only history. |
+| R11 | Signals registry | **DB registry with all parameters and settings**; Settings tab «Сигналы» with the registry, a **full editor in the MVP**, and Markdown export of the current list. Version 1 seeded by a Drizzle migration; then the DB is the master. |
+| R12 | Packs change `closes_codes`; event codes may close codes | **Yes.** |
+| R13 | `deal.deal_type` | **Yes**; IN4COM types: new client / venue, wine-card listing, chain listing, tender, annual supply agreement, renewal (confirmed in the review). |
+| R14 | Topic for a contact without a company | **Yes** (`topic.contact_id`). |
+| R15 | Matcher unsure | **Attach only without a conflicting reference / product / amount**; else a new topic. |
+| R16 | Deal state trigger and length | **Any new deal information** (debounced 10 min); **≤ 3 sentences / 50 words**. |
+| R17 | Active risk | **Forces a card UPDATE**; a serious risk raises it to «Сейчас». |
+| R18 | Exclusions | **Deny-list** (org owner); without a provider filter store only the dedupe id. |
+| R19 | Client reminder | **Counts once** (boost R only). |
+| R20 | Foreign-language mail | **In scope**; English cues for supplier codes. |
+| Pack | 04 §3 questions | **As proposed:** orders handled by the client's sales manager (no orders role in MVP); always-P8: `SALES_TENDER_INVITATION`, `CONTRACT_TERMINATED`, `SIGNAL_INSOLVENCY`, `COMPLAINT_ESCALATED`; `SUPPLIER_DELIVERY_DELAY` = risk at 5; ЕГАИС codes and the risk list confirmed in the review. |
+| Q35 | Attention rules A1–A8 (06 §15) | **All as recommended.** |
+| Q36 | Registry additions R1–R4 (05 §10) | **All as recommended.** |
 
 ---
 

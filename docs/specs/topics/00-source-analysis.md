@@ -2,6 +2,8 @@
 
 Status: draft for review · 2026-11-10 · no code changes
 
+> **Note (2026-11-13):** § 4 «Current RU system (this repo)» (and input 4 in the table below) was written for an older copy of the product (K8s CronJob, Yandex model, dedicated PostgreSQL). It does not describe this repo. See [03-development-plan.md](03-development-plan.md) «Current state (2026-11-13)» for the real state.
+
 This file records what the four inputs say, so the spec does not depend on chat history.
 
 Inputs:

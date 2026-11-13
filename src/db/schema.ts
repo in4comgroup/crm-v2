@@ -2442,6 +2442,132 @@ export const platformSettingLog = pgTable(
   ],
 )
 
+// ─── Topics phase 0 (docs/specs/topics/03-development-plan.md § Phase 0) ─────
+
+// Per-organization settings, key → jsonb value. Mirrors `platform_setting`:
+// keys, types and defaults are declared in code (src/server/org-settings.ts);
+// a missing row = the default. E.g. `topics.enabled` (off | shadow | on),
+// `ai.budget.daily_usd` (per-org override of the platform default).
+export const orgSetting = pgTable(
+  "org_setting",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    value: jsonb("value").$type<unknown>().notNull(),
+    updatedByUserId: text("updated_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.key] })],
+)
+
+// Append-only change log of per-organization settings.
+export const orgSettingLog = pgTable(
+  "org_setting_log",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    key: text("key").notNull(),
+    oldValue: jsonb("old_value").$type<unknown>(),
+    newValue: jsonb("new_value").$type<unknown>(),
+    changedByUserId: text("changed_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    changedAt: timestamp("changed_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("org_setting_log_org_key_idx").on(table.organizationId, table.key, table.changedAt),
+  ],
+)
+
+// One row per run of the hourly topics pipeline (runTopicsPipeline).
+// `orgs` = per-org outcome { orgId, mode, phases: { name: counts }, error? }.
+export const topicsRun = pgTable(
+  "topics_run",
+  {
+    id: text("id").primaryKey(),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+    trigger: pipelineRunTrigger("trigger").notNull(),
+    status: pipelineRunStatus("status").notNull().default("running"),
+    orgsProcessed: integer("orgs_processed").notNull().default(0),
+    orgs: jsonb("orgs").$type<Record<string, unknown>[]>().notNull().default([]),
+    errorsJson: jsonb("errors_json").$type<Record<string, unknown>[]>().notNull().default([]),
+  },
+  (table) => [index("topics_run_started_idx").on(table.startedAt)],
+)
+
+// Golden set for topics quality gates (spec §12, plan phase 0 task 7):
+// real source items of an org, or synthetic messages, with the expected
+// signals / subjects / topic group filled in by business reviewers.
+export const topicsGoldenItem = pgTable(
+  "topics_golden_item",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // Real item, or null for a synthetic message.
+    sourceItemId: text("source_item_id").references(() => sourceItem.id, {
+      onDelete: "set null",
+    }),
+    synthetic: boolean("synthetic").notNull().default(false),
+    // Synthetic message text (or a frozen copy of the real item's text).
+    text: text("text"),
+    // Why this item is in the set (e.g. "random sample", "rare code X").
+    note: text("note"),
+    // Expected result: { codes: [{ code, evidence?, subject? }], topicGroup?, noSignal? }
+    expected: jsonb("expected").$type<Record<string, unknown> | null>(),
+    // LLM pre-annotation (same shape), kept apart from the human answer.
+    preAnnotation: jsonb("pre_annotation").$type<Record<string, unknown> | null>(),
+    status: text("status").notNull().default("new"), // new | pre_annotated | reviewed | excluded
+    reviewedByUserId: text("reviewed_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    reviewedAt: timestamp("reviewed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("topics_golden_item_org_idx").on(table.organizationId, table.status),
+    uniqueIndex("topics_golden_item_source_uidx")
+      .on(table.organizationId, table.sourceItemId)
+      .where(sql`${table.sourceItemId} is not null`),
+  ],
+)
+
+// Results of a model spike / eval run over the golden set (plan phase 0
+// task 8, phase 2 eval). One row per (run, item). Cost and tokens are in
+// ai_usage_event (ref = { evalRunId, goldenItemId }).
+export const topicsEvalResult = pgTable(
+  "topics_eval_result",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull(),
+    organizationId: text("organization_id").notNull(),
+    goldenItemId: text("golden_item_id")
+      .notNull()
+      .references(() => topicsGoldenItem.id, { onDelete: "cascade" }),
+    // What was tested: { process, model, promptVariant, codesInPrompt, … }
+    config: jsonb("config").$type<Record<string, unknown>>().notNull(),
+    ok: boolean("ok").notNull(),
+    error: text("error"),
+    output: jsonb("output").$type<Record<string, unknown> | null>(),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("topics_eval_result_run_idx").on(table.runId)],
+)
+
 export const schema = {
   user,
   session,

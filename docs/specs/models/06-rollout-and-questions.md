@@ -43,7 +43,7 @@ rules → 3). Seeds (`vercel` gateway row) go into a custom migration.
 - More vendor search tools in the adapter (or a provider-neutral one), so search processes can use any vendor.
 - The generic `openai-compatible` adapter (designed in 01, built with the second gateway).
 - OTel export of the usage ledger.
-- Per-organization budgets / limits on AI spend.
+- ~~Per-organization budgets / limits on AI spend.~~ Done: [07-daily-budget.md](07-daily-budget.md).
 - A second gateway adapter.
 - Billing / invoicing based on the end-user cost.
 

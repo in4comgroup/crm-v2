@@ -24,5 +24,12 @@ export const config: VercelConfig = {
       path: "/api/cron/daily",
       schedule: "0 3 * * *", // daily at 03:00 UTC — keep in sync with ORCHESTRATION_CONFIG.cron
     },
+    {
+      // Hourly topics pipeline (docs/specs/topics/01-specification.md §13).
+      // Keep in sync with ORCHESTRATION_CONFIG.topics.cron. A sub-daily
+      // cron needs the Vercel Pro plan.
+      path: "/api/cron/topics",
+      schedule: "0 * * * *",
+    },
   ],
 }

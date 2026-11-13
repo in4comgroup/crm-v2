@@ -11,6 +11,7 @@ import {
 import type { AiProcessKey } from "@/server/ai/processes"
 import { resolveProcess, type ResolvedProcess } from "@/server/ai/registry/assignments"
 import { recordUsageEvent, sumUsage, type UsageLike } from "@/server/ai/usage"
+import { AiBudgetExceededError, getOrgBudgetStatus } from "@/server/ai/budget"
 import type {
   AiProviderOptions,
   AiResultInfo,
@@ -68,6 +69,35 @@ export type AiCallInfo = AiResultInfo & {
 const callInfo = new WeakMap<object, { resolved: ResolvedProcess }>()
 
 export class AiCapabilityUnavailableError extends Error {}
+export { AiBudgetExceededError }
+
+/**
+ * Daily budget gate (docs/specs/models/07-daily-budget.md). Background
+ * processes are refused when the org's budget is used up (a `blocked`
+ * usage event is written, then AiBudgetExceededError is thrown); interactive
+ * processes run anyway and only log. Calls without an org are not budgeted.
+ */
+async function enforceBudget(ctx: AiCallContext, resolved: ResolvedProcess) {
+  if (!ctx.orgId) return
+  const status = await getOrgBudgetStatus(ctx.orgId)
+  if (!status.exceeded) return
+  if (resolved.process.kind === "interactive") {
+    console.warn(
+      `[ai] budget used up for org ${ctx.orgId} ($${status.spentUsd.toFixed(2)} of $${status.budgetUsd}); interactive process ${ctx.process} runs anyway`,
+    )
+    return
+  }
+  await recordUsageEvent({
+    resolved,
+    orgId: ctx.orgId,
+    userId: ctx.userId,
+    ref: ctx.ref,
+    startedAt: new Date(),
+    status: "blocked",
+    requestModel: resolved.modelId,
+  })
+  throw new AiBudgetExceededError(ctx.orgId, status.budgetUsd, status.spentUsd)
+}
 
 function prepare(
   ctx: AiCallContext,
@@ -142,6 +172,7 @@ export async function aiGenerateText<
 ): Promise<GenerateTextResult<TOOLS, OUTPUT>> {
   const { ctx, params } = splitContext(args)
   const resolved = await resolveProcess(ctx.process, ctx.requestedModelId)
+  await enforceBudget(ctx, resolved)
   const base = applySettings(
     params as GenerateParams<TOOLS, OUTPUT>,
     resolved.assignmentSettings,
@@ -212,6 +243,7 @@ export async function aiStreamText<
 ): Promise<StreamTextResult<TOOLS, OUTPUT>> {
   const { ctx, params } = splitContext(args)
   const resolved = await resolveProcess(ctx.process, ctx.requestedModelId)
+  await enforceBudget(ctx, resolved)
   const base = applySettings(
     params as StreamParams<TOOLS, OUTPUT>,
     resolved.assignmentSettings,

@@ -3,6 +3,7 @@ import { getServerSession } from "@/lib/get-session"
 import { getActiveOrgRole } from "@/server/sources"
 import { AI_PROCESSES } from "@/server/ai/processes"
 import { orgUsageView } from "@/server/ai/usage-stats"
+import { getOrgBudgetStatus } from "@/server/ai/budget"
 
 // «Использование ИИ» tab on /account — the active organization's AI usage,
 // for org OWNERS only. Cost includes the platform markup; the gateway cost,
@@ -14,6 +15,9 @@ export type AccountAiUsageResponse = {
   cost: number
   byProcess: { label: string; group: string; calls: number; cost: number }[]
   byUser: { name: string; calls: number; cost: number }[]
+  // Today's AI budget is used up: background AI waits until tomorrow (UTC).
+  // No amounts — the budget is in gateway cost, which owners never see.
+  budgetExhausted: boolean
 }
 
 function parseDay(v: string | null): Date | null {
@@ -36,6 +40,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "from / to (YYYY-MM-DD) are required" }, { status: 400 })
   }
   try {
+    const budget = await getOrgBudgetStatus(role.organizationId)
     const view = await orgUsageView(
       role.organizationId,
       from,
@@ -53,6 +58,7 @@ export async function GET(request: NextRequest) {
         cost: r.cost,
       })),
       byUser: view.byUser.map((r) => ({ name: r.name ?? "Удалённый пользователь", calls: r.calls, cost: r.cost })),
+      budgetExhausted: budget.exceeded,
     }
     return NextResponse.json(body)
   } catch (error) {

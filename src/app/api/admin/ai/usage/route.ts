@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
     orgId: sp.get("org") || null,
     processKey: sp.get("process") || null,
     model: sp.get("model") || null,
-    status: status === "ok" || status === "error" || status === "aborted" ? status : null,
+    status: status === "ok" || status === "error" || status === "aborted" || status === "blocked" ? status : null,
   }
   try {
     const [summary, daily, byOrg, byProcess, byModel, orgs, models, sync] = await Promise.all([

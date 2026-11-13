@@ -204,7 +204,7 @@ Clicking a card opens the deal drawer (the only edit surface).
 
 **Main API.** `api/deals` (GET with many query modes, POST, PUT with `move`,
 `moveOnly`, `statusOnly`, `stageSettings` branches), `api/deals/[id]/contacts`,
-`api/deals/feed`, `api/deals/intel`, `api/deals/proposals`, `api/deals/discover`
+`api/deals/feed`, `api/deals/intel`, `api/deals/discover`
 (max 300 s).
 
 **Server modules.** `deals.ts`, `deals-discovery.ts`, `deals-mock.ts`;
@@ -218,10 +218,10 @@ helpers `src/lib/deal-board.ts`, `deal-funnel.ts`, `kanban-move.ts`.
   stage; the first save copies the system stages into org-owned rows.
 - LLM deal discovery: CREATE / UPDATE_STAGE / SKIP per item, max 50 items,
   dry-run mode for testing rules, de-duplication by client + name.
-- **Agent auto-move is a mock.** On board load `GET /api/deals/proposals` moves
-  some deals one step by a deterministic id-hash (`deals-mock.ts`), only if the
-  org has a working automated source, at most one unreviewed agent step per
-  deal. Risk badges and some "state" texts are also mock (`TODO(backend)`).
+- **No mock agent moves any more** (removed 2026-11-13, topics plan R9). Agent
+  moves come only from LLM deal discovery, which now writes the deal journal
+  (`deal_activity`) for every stage change. Risk badges and some "state" texts
+  are still mock (`TODO(backend)`) until the topics deal bridge (phase 5).
 
 ## Products (catalog) and price-list export
 

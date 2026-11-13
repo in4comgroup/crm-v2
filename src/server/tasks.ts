@@ -13,6 +13,7 @@ import {
   type TaskStatus,
 } from "@/db/schema"
 import { aliasedTable, and, eq, desc, inArray, isNotNull } from "drizzle-orm"
+import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
 
@@ -195,7 +196,9 @@ export async function listOrgMembers(): Promise<OrgMemberOption[]> {
     })
     .from(member)
     .innerJoin(user, eq(member.userId, user.id))
-    .where(eq(member.organizationId, activeOrgId))
+    // System actors «Агент» are never members; the filter is a safety net
+    // so they can never become an assignee option.
+    .where(and(eq(member.organizationId, activeOrgId), humanUsersOnly()))
     .orderBy(user.name)
   return rows
 }

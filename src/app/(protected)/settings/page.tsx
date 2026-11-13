@@ -12,6 +12,7 @@ import { AdminTeardown } from "@/components/blocks/admin-teardown"
 import { AdminAiModels } from "@/components/blocks/admin-ai-models"
 import { AdminAiProcesses } from "@/components/blocks/admin-ai-processes"
 import { AdminAiUsage } from "@/components/blocks/admin-ai-usage"
+import { AdminTopics } from "@/components/blocks/admin-topics"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 
@@ -54,6 +55,7 @@ export default function SettingsPage() {
             <TabsTrigger value="models">Модели</TabsTrigger>
             <TabsTrigger value="ai-processes">Процессы ИИ</TabsTrigger>
             <TabsTrigger value="ai-usage">Использование ИИ</TabsTrigger>
+            <TabsTrigger value="topics">Темы</TabsTrigger>
             <TabsTrigger value="settings">Настройки</TabsTrigger>
           </TabsList>
 
@@ -128,6 +130,11 @@ export default function SettingsPage() {
 
           <TabsContent value="ai-usage" className="mt-4">
             <AdminAiUsage />
+          </TabsContent>
+
+          {/* Topics engine: mode per org + hourly run log (not forceMount). */}
+          <TabsContent value="topics" className="mt-4">
+            <AdminTopics />
           </TabsContent>
 
           <TabsContent

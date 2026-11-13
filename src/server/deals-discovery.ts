@@ -10,6 +10,7 @@ import {
   rule,
   source,
   sourceItem,
+  dealActivity,
 } from "@/db/schema"
 import {
   and,
@@ -709,6 +710,13 @@ export async function generateDeals(
           return
         }
 
+        const [before] = await db
+          .select({ funnelStageId: deal.funnelStageId })
+          .from(deal)
+          .where(eq(deal.id, matchedDealId))
+          .limit(1)
+        const fromStageId = before?.funnelStageId ?? null
+
         await db
           .update(deal)
           .set({
@@ -721,6 +729,22 @@ export async function generateDeals(
             lastMovedBy: "agent",
           })
           .where(eq(deal.id, matchedDealId))
+
+        // Every stage move is journaled (deal_activity), like moveDealStage
+        // does for user moves. Before 2026-11-13 this branch wrote no journal
+        // row (topics plan, decision R9). No row when the stage did not change.
+        if (fromStageId !== newStageId) {
+          await db.insert(dealActivity).values({
+            id: randomUUID(),
+            dealId: matchedDealId,
+            actor: "agent",
+            actorUserId: null,
+            fromStageId,
+            toStageId: newStageId,
+            note: output.changes.trim() || null,
+            reasoning: output.reasoning.trim() || null,
+          })
+        }
 
         result.stageUpdates++
         itemIdsToStamp.push(item.id)

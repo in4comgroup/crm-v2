@@ -39,7 +39,7 @@ Status: draft for review · 2026-11-11 · seed data for the registry (spec §4)
 
 | Code | Название (RU) | W | Class | Kind | Score rule | Effort | Asks us | Inbound only | Amount | Stage (pack) | IN4COM | Profile | Recipient | Family |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `ORDER_REQUESTED` | Клиент прислал заказ | 7 | chance | event | fixed | quick | yes | yes | yes | active | on | P6 | account | order |
+| `ORDER_REQUESTED` | Клиент прислал заказ | 5 | chance | event | fixed | quick | yes | yes | yes | active | on | D4 | account | order |
 | `ORDER_CHANGE_REQUESTED` | Клиент просит изменить заказ | 6 | risk | event | fixed | quick | yes | yes | yes | active | on | P6 | account | order |
 | `ORDER_CANCELLED` | Клиент отменил заказ | 7 | risk | event | fixed | quick | no | yes | yes | active | on | P6 | account | order |
 | `ORDER_CONFIRMED` | Мы подтвердили заказ / выставили счёт | 0 | — | state | state | — | no | no | yes | active | on | S0 | — | order |
@@ -53,7 +53,7 @@ Status: draft for review · 2026-11-11 · seed data for the registry (spec §4)
 | Effort · asks us · inbound only · amount | quick · yes · yes · yes |
 | Emitted by | parser |
 | Stage (pack default) · IN4COM | active · on |
-| Display profile | from weight (P6); volume check in Open point 1 |
+| Display profile | from weight (D4) + deadline escalation: same-day shipment → «Сейчас» (decided R8, 2026-11-13) |
 | Recipient role | account (draft: sales) |
 | Closes / closed by | closes: — · closed by: `ORDER_CONFIRMED` (same topic); made moot by `ORDER_CANCELLED` (Open point 11) |
 | Relations | outranks `STOCK_AVAILABILITY_REQUEST` and `SALES_PRICE_REQUEST` on the same subject; `ORDER_CANCELLED` outranks it; replaces base `SALES_BOOKING_RECEIVED` (off for IN4COM) |
@@ -469,7 +469,7 @@ Status: draft for review · 2026-11-11 · seed data for the registry (spec §4)
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `DELIVERY_SCHEDULE_REQUEST` | Вопрос о сроке / окне доставки | 4 | fyi | event | fixed | quick | yes | yes | no | active | on | D4 | logistics | delivery |
 | `DELIVERY_DISCREPANCY` | Расхождение при приёмке (бой, недовложение, пересорт) | 7 | risk | event | fixed | medium | yes | yes | yes | active | on | P6 | logistics | delivery |
-| `DELIVERY_DISCREPANCY_RESOLVED` | Расхождение закрыто | 3 | — | state | state | — | no | no | no | active | on | S1 | logistics | delivery |
+| `DELIVERY_DISCREPANCY_RESOLVED` | Расхождение закрыто | 0 | — | state | state | — | no | no | no | active | on | S1 | logistics | delivery |
 | `RETURN_REQUESTED` | Клиент просит возврат | 6 | risk | event | fixed | medium | yes | yes | yes | active | on | P6 | logistics | delivery |
 
 ### `DELIVERY_SCHEDULE_REQUEST` — Вопрос о сроке / окне доставки
@@ -549,7 +549,7 @@ Status: draft for review · 2026-11-11 · seed data for the registry (spec §4)
 | Field | Value |
 |---|---|
 | Pack · block · family | distribution · DS4 · delivery |
-| Weight · class · kind · score rule | 3 (draft value; used only for the W1 fallback when no topic is linked, Open point 9) · — · state · state |
+| Weight · class · kind · score rule | 0 (state code, 05 §7 rule 3; decided 2026-11-13, Open point 9) · — · state · state |
 | Effort · asks us · inbound only · amount | — · no · no · no |
 | Emitted by | parser |
 | Stage (pack default) · IN4COM | active · on |
@@ -623,7 +623,7 @@ Status: draft for review · 2026-11-11 · seed data for the registry (spec §4)
 | Code | Название (RU) | W | Class | Kind | Score rule | Effort | Asks us | Inbound only | Amount | Stage (pack) | IN4COM | Profile | Recipient | Family |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `EGAIS_ISSUE` | Проблема в ЕГАИС (ТТН, остатки, акт) | 7 | risk | event | fixed | quick | yes | yes | no | active | review | P6 | logistics | delivery |
-| `EGAIS_ISSUE_RESOLVED` | Проблема в ЕГАИС решена | 3 | — | state | state | — | no | no | no | active | review | S1 | logistics | delivery |
+| `EGAIS_ISSUE_RESOLVED` | Проблема в ЕГАИС решена | 0 | — | state | state | — | no | no | no | active | review | S1 | logistics | delivery |
 | `MARKING_ISSUE` | Проблема с марками (ФСМ / акцизные марки) | 6 | risk | event | fixed | quick | yes | yes | no | active | review | P6 | logistics | delivery |
 | `LICENSE_EXPIRING` | Лицензия клиента заканчивается / приостановлена | 7 | risk | event | fixed | medium | no | yes | no | active | review | P6 | finance | contract |
 | `DOCUMENTS_REQUESTED` | Запрошены документы (УПД, ТТН, сертификаты, декларации, справки А/Б) | 5 | fyi | event | fixed | quick | yes | yes | no | active | on | D4 | logistics | delivery |
@@ -671,7 +671,7 @@ IN4COM `review` = active in shadow mode; the IN4COM users confirm that these mat
 | Field | Value |
 |---|---|
 | Pack · block · family | distribution · DS5 · delivery |
-| Weight · class · kind · score rule | 3 (draft value; W1 fallback only, Open point 9) · — · state · state |
+| Weight · class · kind · score rule | 0 (state code, 05 §7 rule 3; decided 2026-11-13, Open point 9) · — · state · state |
 | Effort · asks us · inbound only · amount | — · no · no · no |
 | Emitted by | parser |
 | Stage (pack default) · IN4COM | active · review |
@@ -1503,7 +1503,7 @@ Rules for all rows: risks never move stages; amounts never enter the forecast au
 
 ## Open points
 
-1. **Order volume (04 §3 Q1).** `ORDER_REQUESTED` at W7 = P6. In MVP the P6 daily limit is off (P6 behaves like P8, spec §8.1), so many orders can flood «Сейчас». **Rec.:** keep W7 in shadow mode; count orders per manager per day in the golden set. Above 3 per day → org override W5 (D4) plus the deadline escalation (same-day shipment → «Сейчас»).
+1. **Order volume (04 §3 Q1).** — **Decided 2026-11-13 (R8): weight 5 (D4) + deadline escalation.** Original note: `ORDER_REQUESTED` at W7 = P6. In MVP the P6 daily limit is off (P6 behaves like P8, spec §8.1), so many orders can flood «Сейчас». **Rec.:** keep W7 in shadow mode; count orders per manager per day in the golden set. Above 3 per day → org override W5 (D4) plus the deadline escalation (same-day shipment → «Сейчас»).
 2. **Who handles orders (04 §3 Q2).** **Rec.:** recipient `account` now. If IN4COM has an order desk, the roles task (Q33) adds a function `orders`; that needs a new `recipient_role` value — do not add it before that task.
 3. **Always P8 (04 §3 Q3).** `SALES_TENDER_INVITATION` (9), `CONTRACT_TERMINATED` (9), `SIGNAL_INSOLVENCY` (9), `COMPLAINT_ESCALATED` (8) are already P8 by weight. **Rec.:** no override needed. Keep `EGAIS_ISSUE` at P6; the deadline escalation lifts it when the client names a same-day date.
 4. **Deal types (04 §3 Q4).** Seeded: `new_venue`, `wine_card_listing`, `chain_listing`, `tender`, `supply_agreement`, `renewal`. Gap: no signal creates a `supply_agreement` deal for an existing client. **Rec.:** create it by hand in the pilot; switch on base `SALES_NEW_DEMAND` later if IN4COM wants automation. Also confirm row 20 (`CONTRACT_FRAME_EXPIRY` → renewal proposal); **rec.:** accept, it is a proposal only.
@@ -1511,9 +1511,9 @@ Rules for all rows: risks never move stages; amounts never enter the forecast au
 6. **`SUPPLIER_DELIVERY_DELAY` 4 → 5 (04 §3 Q6).** **Rec.:** org override to W5 (D4) for IN4COM: a supplier delay means a stock gap for clients, and it triggers `NO_STOCK_FOR_DEAL`.
 7. **Missing situations (04 §3 Q7).** Eight codes are proposed in DS7. Two more candidates were left out to stay within 8: `RETAIL_PENALTY_CLAIM` (штраф сети за уровень сервиса / недопоставку) and `DOCUMENTS_SENT` (state code that closes `DOCUMENTS_REQUESTED`). **Rec.:** confirm DS7 with real examples; add `RETAIL_PENALTY_CLAIM` only if the chains send penalty letters by email.
 8. **Risk list (04 §3 Q8).** Seeded as in 04 §4. Two candidates: «Клиент на грани банкротства» (`SIGNAL_INSOLVENCY`, severity 9) and «Лицензия клиента под угрозой» (`LICENSE_EXPIRING`, severity 7 — no legal shipments of alcohol without a licence). **Rec.:** add both; they need no new codes.
-9. **Weight of S1 state codes.** The draft gives `DELIVERY_DISCREPANCY_RESOLVED` and `EGAIS_ISSUE_RESOLVED` weight 3; the format rule says state codes have weight 0. **Rec.:** keep 3 (source value) with score rule `state`: it never scores and is used only for the S1 fallback «nothing linked → W1 info».
+9. **Weight of S1 state codes.** The draft gives `DELIVERY_DISCREPANCY_RESOLVED` and `EGAIS_ISSUE_RESOLVED` weight 3; the format rule says state codes have weight 0. **Decided 2026-11-13:** weight 0, as for every state code. An S1 code with no linked topic is logged only, no card (spec §6.2 rule 6).
 10. **Engine and schema additions this pack needs.** (a) pack facts `licenseEndDate`, `licenseStatus`, `paymentTermsDays`, `creditLimitRequested` in the extraction schema; (b) a `client_guard` on `signal_stage_rule` (`client_type`, `client_is_new`); (c) a trigger scope `deal | client | org + SKU` on `deal_risk_type`; (d) org settings `distribution.licenseExpiryWindowDays` (30), `distribution.maxDeferralDays`, `distribution.maxCreditLimitRub` (values from IN4COM finance). **Rec.:** add all four in the phase that seeds the pack (plan phase 5a); without (c) the risks `CLIENT_DEBT`, `REPEATED_COMPLAINTS`, `DELISTING`, `CONTRACT_EXPIRING_NO_RENEWAL`, `NO_STOCK_FOR_DEAL` almost never fire, because their triggers live on separate topics.
-11. **Closing without a state code.** (a) `ORDER_CANCELLED` is an event but must end the open order ask; spec §4.2 allows `closes_codes` only on state / S1 codes. (b) Quick asks have no closer (see «Quick asks without an own closing code»). **Rec.:** allow `closes_codes` on event codes (set `ORDER_CANCELLED` → `ORDER_REQUESTED`, `ORDER_CHANGE_REQUESTED`), and add a code flag `closes_on_outbound_reply` for the quick asks listed there.
+11. **Closing without a state code.** — **Decided 2026-11-13 (R12): event codes may close codes; packs may change `closes_codes`.** Original note: (a) `ORDER_CANCELLED` is an event but must end the open order ask; spec §4.2 allows `closes_codes` only on state / S1 codes. (b) Quick asks have no closer (see «Quick asks without an own closing code»). **Rec.:** allow `closes_codes` on event codes (set `ORDER_CANCELLED` → `ORDER_REQUESTED`, `ORDER_CHANGE_REQUESTED`), and add a code flag `closes_on_outbound_reply` for the quick asks listed there.
 12. **Changes to the draft in this file.** `EGAIS_ISSUE_RESOLVED` also closes `MARKING_ISSUE`; `DELIVERY_DISCREPANCY_RESOLVED` also closes `RETURN_REQUESTED` and `COMPLAINT_QUANTITY`; risk `DECISION_DELAYED` triggers on `DECISION_POSTPONED` / `MEETING_CANCEL` / `MEETING_DELAYED` instead of `SALES_RENEGOTIATION` (renegotiation is active work, and it already triggers `COMPETITOR_PRICE`); risk `REPEATED_COMPLAINTS` also triggers on `DELIVERY_DISCREPANCY` (in this pack бой / недовложение go there, not to base complaints); `PAYMENT_PROMISE` does not clear `CLIENT_DEBT` (only `INVOICE_PAID` does). **Rec.:** accept.
 13. **Overlap with base `COMPLAINT_QUANTITY`.** Both cover «недовложение». **Rec.:** for IN4COM `DELIVERY_DISCREPANCY` outranks `COMPLAINT_QUANTITY` on the same subject (relation seeded in this pack); `COMPLAINT_QUANTITY` stays on for shortages outside acceptance (e.g. a short-shipped order the client found later).
 14. **Base codes to switch on for IN4COM** (not in 04 §2): `FEEDBACK_PRICE_PRAISE` (clear code of `COMPETITOR_PRICE`) and `MEETING_DELAYED` (trigger of `DECISION_DELAYED`). **Rec.:** switch both on.

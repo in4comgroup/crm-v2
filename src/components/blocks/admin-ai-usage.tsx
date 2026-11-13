@@ -36,6 +36,7 @@ import {
 import { ChartCard, NoData, StatTile } from "@/components/blocks/analytics/analytics-primitives"
 import { MAX_SERIES, OTHER_LABEL } from "@/lib/analytics-format"
 import { AdminAiMarkup } from "@/components/blocks/admin-ai-markup"
+import { AdminAiBudget } from "@/components/blocks/admin-ai-budget"
 import type { AdminAiUsageResponse } from "@/app/api/admin/ai/usage/route"
 
 const ALL = "__all__"
@@ -375,6 +376,7 @@ export function AdminAiUsage() {
             <SelectItem value="ok">Успешно</SelectItem>
             <SelectItem value="error">Ошибка</SelectItem>
             <SelectItem value="aborted">Прервано</SelectItem>
+            <SelectItem value="blocked">Остановлено бюджетом</SelectItem>
           </SelectContent>
         </Select>
 
@@ -478,6 +480,7 @@ export function AdminAiUsage() {
       </ChartCard>
 
       <AdminAiMarkup periodCost={s?.cost ?? null} />
+      <AdminAiBudget />
 
       {/* Breakdown */}
       <div className="flex items-center gap-3">

@@ -10,11 +10,13 @@ A Topic is one business question extracted from one or more source items, scored
 | [03-development-plan.md](03-development-plan.md) | Phases, estimates, exit criteria, risks |
 | [02-open-questions-answers.md](02-open-questions-answers.md) | Business answers (Q24 = Maslov catalog gaps), source text |
 | [04-distribution-pack-draft.md](04-distribution-pack-draft.md) | Draft signal pack and deal risks for the pilot IN4COM (wine / spirits distributor), for the IN4COM review |
-| [05-signals-registry.md](05-signals-registry.md) | Signals registry: fields, weight scale, Russian cue rules, activation, prompt building, validation. Per-pack code lists: [05a](05a-signals-base-a-g.md) base A–G · [05b](05b-signals-base-h-n.md) base H–N + attributes + relations · [05c](05c-signals-distribution.md) distribution + IN4COM risks · [05d](05d-signals-agency.md) agency + 26 risks |
+| [05-signals-registry.md](05-signals-registry.md) | Signals registry: fields, weight scale, Russian cue rules, activation, prompt building, validation. Per-pack code lists: [05a](05a-signals-base-a-g.md) base A–G · [05b](05b-signals-base-h-n.md) base H–N + attributes + relations · [05c](05c-signals-distribution.md) distribution + IN4COM risks · [05d](05d-signals-agency.md) agency + 26 risks (**phase-9 document**: the `agency` pack is not seeded or built in the MVP, R5) |
 | [06-attention-engine.md](06-attention-engine.md) | Attention engine: instance score, topic score with several signals, boosts, profiles, deadlines, lists, reminders, expiry, explanation, examples |
 
 Pilot: **IN4COM** (decided 2026-11-10).
 
 Inputs (unchanged): `topics concept.png`, `Сигналы_Маслов_каталог_и_правила.docx`, `truffalo-logic-2026-11-10-10-05/`, `Описание требований - v2.md` (business requirements v2: deal state, deal risks, agency roles, scenarios, funnel).
 
-Status: draft for review, 2026-11-10; registry and attention specs added 2026-11-11. No code changes yet.
+Status: Reviewed 2026-11-13: decisions R1–R20 (see [02-open-questions.md](02-open-questions.md) § F); final plan in [03-development-plan.md](03-development-plan.md). Drafted 2026-11-10; registry and attention specs added 2026-11-11. **Phase 0 built 2026-11-13** (not deployed; golden set and model spike wait for IN4COM reviewers).
+
+`00-source-analysis.md` describes an older copy of the repo; the real current state is in `03-development-plan.md` «Current state (2026-11-13)». `05d` (agency pack) stays a document until phase 9 (second pilot).

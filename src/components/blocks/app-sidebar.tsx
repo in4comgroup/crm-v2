@@ -2,14 +2,16 @@
 
 import {
   Home,
-  FileText,
-  ShieldCheck,
-  CircleUserRound,
+  ChartColumnBig,
+  Settings2,
+  Building2,
   PencilRuler,
   Database,
   Users,
+  Contact,
   ListChecks,
   Package,
+  SquareKanban,
 } from "lucide-react"
 import {
   Sidebar,
@@ -21,17 +23,14 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
+  SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Separator } from "@/components/ui/separator"
 import { Logout } from "./logout"
-import { ModeSwitcher } from "./mode-switcher"
 import { usePathname } from "next/navigation"
-import { cn } from "@/lib/utils"
-import Image from "next/image"
+import { BrandMark } from "./brand-mark"
 import Link from "next/link"
-import { NotificationsDrawer } from "./notifications-drawer"
 import type { getServerSession } from "@/lib/get-session"
 
 export type AuthSession = NonNullable<
@@ -45,9 +44,19 @@ export const items = [
     icon: Home,
   },
   {
-    title: "Клиенты",
+    title: "Компании",
     url: "/clients",
     icon: Users,
+  },
+  {
+    title: "Контакты",
+    url: "/contacts",
+    icon: Contact,
+  },
+  {
+    title: "Сделки",
+    url: "/deals",
+    icon: SquareKanban,
   },
   {
     title: "Заказы",
@@ -58,6 +67,11 @@ export const items = [
     title: "Задачи",
     url: "/tasks",
     icon: ListChecks,
+  },
+  {
+    title: "Аналитика",
+    url: "/analytics",
+    icon: ChartColumnBig,
   },
   {
     title: "Правила",
@@ -71,6 +85,27 @@ export const items = [
   },
 ]
 
+// Инициалы для аватарки без картинки: «Анна Соколова» → «АС».
+function initialsOf(name: string | null | undefined, fallback: string) {
+  if (!name) return fallback
+  const letters = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+  return letters || fallback
+}
+
+function footerLinkClass(active: boolean) {
+  return `flex items-center p-2 rounded-md ${
+    active
+      ? "bg-gray-200 text-primary dark:bg-sidebar-accent dark:text-sidebar-accent-foreground"
+      : "text-gray-600 dark:text-white hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:hover:text-sidebar-accent-foreground"
+  }`
+}
+
 export function AppSidebar({
   session,
   orgLogo = null,
@@ -81,7 +116,6 @@ export function AppSidebar({
   orgLogo?: string | null
 }) {
   const pathname = usePathname()
-  const { open } = useSidebar()
 
   const orgName = session.session.activeOrganizationName ?? null
   const userName = session.user.name
@@ -92,28 +126,26 @@ export function AppSidebar({
     <Sidebar className="flex flex-col h-screen" collapsible="icon">
       <SidebarContent className="flex-1">
         <SidebarHeader>
-          {open ? (
-            <div className="flex flex-row gap-3 items-center justify-center">
-              <Image
-                src="/logo.png"
-                alt="Logo"
-                width={28}
-                height={28}
-                className="mt-1 rounded-full"
-              />
-              <h1 className="text-lg font-bold bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
-                business OS
-              </h1>
-            </div>
-          ) : (
-            <Image
-              src="/logo.png"
-              alt="Logo"
-              width={40}
-              height={40}
-              className="mt-1 rounded-full"
+          {/* ЕДИНОЕ дерево для обоих состояний (переключение — только CSS по
+              group-data-[collapsible=icon]): ветвление по `open` размонтировало
+              знак и он «дёргался» при анимации сворачивания. h-7 фиксирует
+              высоту шапки (иначе 44px ↔ 40px и меню подпрыгивает). В свёрнутом
+              виде подпись схлопывается в w-0, знак центрируется, а триггер
+              становится оверлеем поверх знака и проявляется по ховеру. */}
+          <div className="group/logo relative flex h-7 items-center gap-2 overflow-hidden pl-1">
+            {/* НИКАКИХ классов, переключаемых по состоянию раскладки: pl-1
+                даёт знаку x=12 → центр 24px, верный и в развёрнутом, и в
+                свёрнутом (48px) виде — знак не двигается вовсе, подпись
+                плавно срезается overflow-hidden вместе с анимацией ширины. */}
+            <BrandMark className="size-6 rounded-xl shrink-0 transition-opacity group-data-[collapsible=icon]:group-hover/logo:opacity-0" />
+            <span className="min-w-0 flex-1 truncate text-base font-medium">
+              salesdaily
+            </span>
+            <SidebarTrigger
+              aria-label="Свернуть или развернуть меню"
+              className="shrink-0 cursor-pointer transition-opacity group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:inset-0 group-data-[collapsible=icon]:m-auto group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:group-hover/logo:opacity-100"
             />
-          )}
+          </div>
         </SidebarHeader>
 
         <SidebarGroup>
@@ -127,11 +159,13 @@ export function AppSidebar({
                       href={item.url}
                       className={`flex items-center p-2 rounded-md ${
                         pathname === item.url
-                          ? "bg-gray-200 dark:bg-gray-600 text-orange-400"
-                          : "hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-white"
+                          ? "bg-gray-200 text-primary dark:bg-sidebar-accent dark:text-sidebar-accent-foreground"
+                          : "text-gray-600 dark:text-white hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:hover:text-sidebar-accent-foreground"
                       }`}
                     >
-                      <item.icon size={24} className="mr-2" />
+                      {/* Явный size-4: единый размер с кнопками (Button сам
+                          ужимает svg до 16px) — иначе иконки «гуляют». */}
+                      <item.icon className="size-4 mr-2 shrink-0" />
                       <span className="text-sm">{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
@@ -142,37 +176,55 @@ export function AppSidebar({
         </SidebarGroup>
       </SidebarContent>
 
+      {/* Нижний блок — административные пункты: профиль пользователя,
+          организация, настройки, выход. Тема и уведомления переехали в шапку
+          страницы (PageHeaderActions), отдельный блок «организация +
+          пользователь» в самом низу больше не нужен — эти пункты и есть они. */}
       <SidebarFooter className="mt-auto mb-1">
         <SidebarMenu>
           <Separator className="my-1" />
 
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link
-                href={"/account"}
-                className={`flex items-center p-2 rounded-md ${
-                  pathname === "/account"
-                    ? "bg-gray-200 dark:bg-gray-600 text-orange-400"
-                    : "hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-white"
-                }`}
-              >
-                <CircleUserRound size={24} className="mr-3 ml-1" />
-                <span className="text-sm">Организация</span>
+              <Link href="/profile" className={footerLinkClass(pathname === "/profile")}>
+                {/* size-5 при контент-боксе пункта 16px: -m-0.5 компенсирует
+                    лишние 4px, чтобы аватарка стояла по центру и в свёрнутом
+                    сайдбаре, а подпись — вровень с остальными пунктами.
+                    Бордер — цвет разделителей и рамок карточек (border-border). */}
+                <Avatar className="size-5 -m-0.5 mr-1.5 shrink-0 border border-border">
+                  <AvatarImage src={userImage || undefined} alt={userName ?? "Пользователь"} />
+                  <AvatarFallback className="text-[9px]">
+                    {initialsOf(userName, "П")}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="text-sm truncate">{userName}</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
+
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <Link href="/account" className={footerLinkClass(pathname === "/account")}>
+                {orgLogo ? (
+                  <Avatar className="size-5 -m-0.5 mr-1.5 shrink-0 border border-border">
+                    <AvatarImage src={orgLogo} alt={orgName ?? "Организация"} />
+                    <AvatarFallback className="text-[9px]">
+                      {initialsOf(orgName, "О")}
+                    </AvatarFallback>
+                  </Avatar>
+                ) : (
+                  <Building2 className="size-4 mr-2 shrink-0" />
+                )}
+                <span className="text-sm truncate">{orgName ?? "Организация"}</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
           {isAdmin && (
             <SidebarMenuItem>
               <SidebarMenuButton asChild>
-                <Link
-                  href={"/settings"}
-                  className={`flex items-center p-2 rounded-md ${
-                    pathname === "/settings"
-                      ? "bg-gray-200 dark:bg-gray-600 text-orange-400"
-                      : "hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-white"
-                  }`}
-                >
-                  <ShieldCheck size={24} className="mr-3 ml-1" />
+                <Link href="/settings" className={footerLinkClass(pathname === "/settings")}>
+                  <Settings2 className="size-4 mr-2 shrink-0" />
                   <span className="text-sm">Настройки</span>
                 </Link>
               </SidebarMenuButton>
@@ -180,91 +232,7 @@ export function AppSidebar({
           )}
 
           <SidebarMenuItem>
-            <NotificationsDrawer compact={!open} />
-          </SidebarMenuItem>
-
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <ModeSwitcher
-                className={cn(
-                  "flex items-center justify-start",
-                  !open ? "ml-1" : "",
-                )}
-              />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <Logout />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-
-          <Separator className="my-1" />
-          <SidebarMenuItem className="p-1">
-            {orgName ? (
-              <div
-                className={cn(
-                  "flex items-center gap-3 pl-1",
-                  !open && "justify-center rounded-full",
-                )}
-              >
-                <Avatar className={cn("h-6 w-6", !open && "h-6 w-6")}>
-                  <AvatarImage
-                    src={orgLogo ?? undefined}
-                    alt={orgName ?? "Organization"}
-                  />
-                  <AvatarFallback>
-                    {orgName
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")
-                      .toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                {open && (
-                  <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
-                    {orgName}
-                  </span>
-                )}
-              </div>
-            ) : (
-              <div className="flex items-center justify-center p-2">
-                <span className="text-sm text-gray-500 truncate">
-                  No organization
-                </span>
-              </div>
-            )}
-          </SidebarMenuItem>
-
-          <SidebarMenuItem className="p-1">
-            <div
-              className={cn(
-                "flex items-center gap-3 pl-1",
-                !open && "justify-center rounded-full",
-              )}
-            >
-              <Avatar className={cn("h-6 w-6", !open && "h-6 w-6")}>
-                <AvatarImage
-                  src={userImage ?? undefined}
-                  alt={userName ?? "User"}
-                />
-                <AvatarFallback>
-                  {userName
-                    ? userName
-                        .split(" ")
-                        .map((n) => n[0])
-                        .join("")
-                        .toUpperCase()
-                    : "U"}
-                </AvatarFallback>
-              </Avatar>
-              {open && (
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
-                  {userName}
-                </span>
-              )}
-            </div>
+            <Logout />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

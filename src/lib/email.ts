@@ -11,7 +11,19 @@ import nylas from "@/lib/nylas"
  * To switch the default provider, set EMAIL_PROVIDER=resend | nylas in .env.
  */
 
-const resend = new Resend(process.env.RESEND_API_KEY!)
+// Created on first use, not at import: `new Resend()` throws when
+// RESEND_API_KEY is unset, and this module is imported by src/lib/auth.ts —
+// an eager client would crash every page when only Nylas is configured.
+let resendClient: Resend | null = null
+function getResend(): Resend {
+  if (!resendClient) {
+    if (!process.env.RESEND_API_KEY) {
+      throw new Error("RESEND_API_KEY is not configured")
+    }
+    resendClient = new Resend(process.env.RESEND_API_KEY)
+  }
+  return resendClient
+}
 
 const RESEND_DEFAULT_FROM = "onboarding@resend.dev"
 
@@ -29,7 +41,7 @@ export async function sendEmailsViaResend({
   body,
 }: SendEmailValues) {
   const from = process.env.RESEND_FROM || RESEND_DEFAULT_FROM
-  const { data, error } = await resend.emails.send({
+  const { data, error } = await getResend().emails.send({
     from,
     to,
     subject,

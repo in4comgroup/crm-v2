@@ -15,6 +15,7 @@ import {
   sql,
 } from "drizzle-orm"
 import { db } from "@/db/drizzle"
+import { loadClientLastActivity } from "@/server/client-activity"
 import {
   client,
   contact,
@@ -59,11 +60,14 @@ export type ClientDetail = {
   customFields: ClientCustomFields
   funnelPhase: FunnelPhase
   status: EntityStatus
+  currency: string
   userId: string
   userName: string | null
   organizationId: string
   createdAt: string
   updatedAt: string
+  // См. ClientRow.lastActivityAt (src/server/clients.ts).
+  lastActivityAt: string
   contacts: ContactRow[]
 }
 
@@ -90,6 +94,7 @@ export async function getClientDetail(
       customFields: client.customFields,
       funnelPhase: client.funnelPhase,
       status: client.status,
+      currency: client.currency,
       userId: client.userId,
       organizationId: client.organizationId,
       createdAt: client.createdAt,
@@ -135,6 +140,10 @@ export async function getClientDetail(
 
   const userName = creatorRows[0]?.name ?? null
 
+  const lastActivity = (
+    await loadClientLastActivity(organizationId, [row.id])
+  ).get(row.id)
+
   return {
     id: row.id,
     name: row.name,
@@ -148,11 +157,16 @@ export async function getClientDetail(
     customFields: row.customFields ?? {},
     funnelPhase: row.funnelPhase,
     status: row.status,
+    currency: row.currency,
     userId: row.userId,
     userName,
     organizationId: row.organizationId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    lastActivityAt: (lastActivity && lastActivity > row.updatedAt
+      ? lastActivity
+      : row.updatedAt
+    ).toISOString(),
     contacts: contactRows.map(({ contact: c, userName: cu }) => ({
       id: c.id,
       name: c.name,

@@ -32,6 +32,16 @@ export const user = pgTable("user", {
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires"),
+  // Sales department the user belongs to («Отдел 1» / «Отдел 2» / …). Free-form
+  // text, nullable — it's an org-agnostic label used to roll salespeople up into
+  // teams on the Analytics page (`src/server/analytics.ts`).
+  //
+  // Deliberately NOT registered in better-auth's `user.additionalFields`: it is
+  // never needed at auth time, and every field better-auth returns on the
+  // session gets serialised into the signed session cookie (see the org-logo
+  // note under `session.additionalFields` in src/lib/auth.ts). Analytics reads
+  // it straight from this column via drizzle.
+  department: text("department"),
 })
 
 export const session = pgTable(
@@ -234,6 +244,17 @@ export const blocklistKind = pgEnum("blocklist_kind", [
 
 export type BlocklistKind = (typeof blocklistKind.enumValues)[number]
 
+// Own-organisation identity registry entry kind (see src/app/CLAUDE.md §
+// "Own-organisation identity registry"). `match_key` is the normalised
+// canonical form per kind: companyMatchKey | bare host | addressMatchKey.
+export const orgIdentityKind = pgEnum("org_identity_kind", [
+  "name",
+  "website",
+  "address",
+])
+
+export type OrgIdentityKind = (typeof orgIdentityKind.enumValues)[number]
+
 // Order lifecycle. `draft` (internal) → `awaiting_client` (handed to the
 // client for review/confirm via a guest link) → `confirmed` (back to
 // internal) → `finalized` (pushed to accounting). `cancelled` is terminal.
@@ -319,6 +340,19 @@ export const dealStatus = pgEnum("deal_status", [
 
 export type DealStatus = (typeof dealStatus.enumValues)[number]
 
+export const dealContactRole = pgEnum("deal_contact_role", [
+  "decision_maker",
+  "influencer",
+  "expert",
+  "initiator",
+  "economic_buyer",
+  "champion",
+  "blocker",
+  "user",
+  "gatekeeper",
+])
+export type DealContactRole = (typeof dealContactRole.enumValues)[number]
+
 // Batch web-enrichment state for a client (see refs/enrich-clients.md).
 // NULL = never processed OR last run failed → the batch worklist (NULL is the
 // resumability anchor). `enriched` = a match was applied (auto or via review),
@@ -360,6 +394,7 @@ export const client = pgTable(
     email: text("email"),
     address: text("address"),
     webUrl: text("web_url"),
+    currency: text("currency").notNull().default("RUB"),
     // Extensible per-tenant custom fields (jsonb). Today only `type` is used,
     // and only for one org; every other org keeps an empty object. See
     // `src/lib/client-custom-fields.ts`.
@@ -481,6 +516,47 @@ export const discoveryBlocklist = pgTable(
     index("discovery_blocklist_organizationId_idx").on(table.organizationId),
     // Adding the same block twice is a no-op (onConflictDoNothing).
     uniqueIndex("discovery_blocklist_org_kind_key_uidx").on(
+      table.organizationId,
+      table.kind,
+      table.matchKey,
+    ),
+  ],
+)
+
+// Own-organisation identity registry — the owner-curated list of extra names /
+// synonyms, websites and postal addresses that mean "this is US, not a client".
+// The `organization` profile columns (name / web_url / address / email) stay
+// the PRIMARY identity; this table is purely additive, so an org can declare a
+// second brand ("АСТ" ≡ "AST INTER"), a second domain, or a warehouse address
+// without those single-valued columns having to hold a delimited blob.
+//
+// Read by `loadOwnOrgIdentity` (discovery + parse-time own-org filtering) and
+// `getOrgIdentity` (parse-time authorship attribution). Owner-managed from the
+// organisation card on /account.
+export const orgIdentityEntry = pgTable(
+  "org_identity_entry",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    kind: orgIdentityKind("kind").notNull(),
+    // Normalised canonical form (the dedup key): companyMatchKey for `name`,
+    // bare host for `website`, addressMatchKey for `address`.
+    matchKey: text("match_key").notNull(),
+    // Raw value as entered, for display.
+    label: text("label").notNull(),
+    // Optional operator "why" note.
+    note: text("note"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("org_identity_entry_organizationId_idx").on(table.organizationId),
+    // Adding the same value twice is a no-op (onConflictDoNothing).
+    uniqueIndex("org_identity_entry_org_kind_key_uidx").on(
       table.organizationId,
       table.kind,
       table.matchKey,
@@ -611,6 +687,20 @@ export const dealFunnelStage = pgTable(
       { onDelete: "cascade" },
     ),
     isActive: boolean("is_active").notNull().default(true),
+    // «Область 0» перед воронкой (контакт до запроса — холодные знакомства,
+    // которые ведёт маркетинг): колонка на доске есть, но это ещё не стадия
+    // сделки — бледная, вне прогноза (closureProbability = 0), и при этом
+    // НЕ терминальная (вероятность 0 у обычной стадии значит «Rejected»).
+    // Миграция: scripts/add-funnel-stage-pre-pipeline.ts.
+    isPrePipeline: boolean("is_pre_pipeline").notNull().default(false),
+    // Настройки стадии из диалога «Настройки стадий» на /deals. displayName —
+    // то, что видит пользователь (null → русская подпись по `name`, см.
+    // dealStageLabel); `name` НЕ переименовывается: по нему определяются
+    // цвета колонок и терминальные Closed/Rejected. isHidden — колонка
+    // скрыта с доски (сделки в ней тоже не показываются).
+    // Миграция: scripts/add-funnel-stage-settings.ts.
+    displayName: text("display_name"),
+    isHidden: boolean("is_hidden").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -641,6 +731,15 @@ export const deal = pgTable(
     // Populated by `generateDeals`; surfaced on the deal card. No backfill.
     reasoning: text("reasoning"),
     changes: text("changes"),
+    // Who performed the LAST funnel-stage move: 'agent' (auto-applied agent
+    // proposal or LLM deal-discovery UPDATE_STAGE) | 'user' (kanban drag /
+    // move dialog) | null (never moved since this column landed). Drives the
+    // «перевёл агент» badge on the kanban card AND the idempotency guard for
+    // auto-applied proposals (the agent takes at most ONE unreviewed step per
+    // deal — a deal it already moved is skipped until a human moves it again).
+    // Added via scripts/add-deal-last-moved-by.ts (additive SQL, NOT
+    // `drizzle-kit push`).
+    lastMovedBy: text("last_moved_by"),
     // `restrict` rather than `cascade` / `set null`: stages and clients are
     // never hard-deleted in this app (soft-delete via flags). Restrict makes
     // an accidental hard-delete fail loudly instead of orphaning deals.
@@ -652,7 +751,7 @@ export const deal = pgTable(
       .references(() => client.id, { onDelete: "restrict" }),
     // Nullable — operators often create a deal before a value is quoted.
     value: numeric("value", { precision: 14, scale: 2 }),
-    currency: text("currency").notNull().default("USD"),
+    currency: text("currency").notNull().default("RUB"),
     // Lifecycle status (see `dealStatus` enum). `cancelled` + `deleted` are
     // both soft-deletes hidden from the board by default; only `active` deals
     // participate in deal-discovery (identify / match / move). Distinct from
@@ -687,6 +786,41 @@ export const deal = pgTable(
   ],
 )
 
+// Append-only журнал событий сделки (создание + каждый перевод стадии) —
+// «Хронология» (drawer) и «Лента решений» (top bar) читают ОТСЮДА, а не из
+// deal.changes (то поле — только для карточки, одно мутируемое значение,
+// не история). Добавлено через scripts/add-deal-activity.ts (additive SQL,
+// НЕ `drizzle-kit push`, см. root CLAUDE.md § Commands).
+export const dealActivity = pgTable(
+  "deal_activity",
+  {
+    id: text("id").primaryKey(),
+    dealId: text("deal_id")
+      .notNull()
+      .references(() => deal.id, { onDelete: "cascade" }),
+    // 'user' | 'agent' — как lastMovedBy на deal, не отдельный enum.
+    actor: text("actor").notNull(),
+    // Кто из людей совершил действие (null для агентских событий).
+    actorUserId: text("actor_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    // null у события создания сделки (нет «откуда»).
+    fromStageId: text("from_stage_id").references(() => dealFunnelStage.id, {
+      onDelete: "set null",
+    }),
+    toStageId: text("to_stage_id").references(() => dealFunnelStage.id, {
+      onDelete: "set null",
+    }),
+    note: text("note"),
+    reasoning: text("reasoning"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("deal_activity_dealId_idx").on(table.dealId),
+    index("deal_activity_createdAt_idx").on(table.createdAt),
+  ],
+)
+
 // Many-to-many: deal ↔ contact. Composite PK doubles as the dedup index
 // on (dealId, contactId). Cascading on either side keeps the join table
 // clean if a parent is ever hard-deleted (not expected today).
@@ -699,6 +833,7 @@ export const dealContact = pgTable(
     contactId: text("contact_id")
       .notNull()
       .references(() => contact.id, { onDelete: "cascade" }),
+    role: dealContactRole("role"),
   },
   (table) => [
     primaryKey({ columns: [table.dealId, table.contactId] }),
@@ -757,6 +892,21 @@ export const card = pgTable(
     ruleId: text("rule_id").references(() => rule.id, {
       onDelete: "set null",
     }),
+    // What accepting this card's recommendation actually created — stamped
+    // at acceptance time by the two flows that can produce a durable row:
+    // the generic "Принять" → create-task dialog (resultTaskId) and the
+    // new_order "Создать заказ" flow once a real order is minted
+    // (resultOrderId, from either order-builder.tsx's persist() or
+    // products/page.tsx's startAssembly — see dashboard-card.tsx's
+    // handleAccept). At most one is ever set per card (a card has exactly
+    // one recommendation). ON DELETE SET NULL — a later hard-delete of the
+    // task/order shouldn't take the card's own accept/reject history with it.
+    resultTaskId: text("result_task_id").references(() => task.id, {
+      onDelete: "set null",
+    }),
+    resultOrderId: text("result_order_id").references(() => order.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -770,6 +920,8 @@ export const card = pgTable(
     index("card_accepted_idx").on(table.accepted),
     index("card_sourceItemId_idx").on(table.sourceItemId),
     index("card_ruleId_idx").on(table.ruleId),
+    index("card_resultTaskId_idx").on(table.resultTaskId),
+    index("card_resultOrderId_idx").on(table.resultOrderId),
   ],
 )
 
@@ -828,6 +980,29 @@ export const cardContact = pgTable(
   (table) => [
     primaryKey({ columns: [table.cardId, table.contactId] }),
     index("card_contact_contactId_idx").on(table.contactId),
+  ],
+)
+
+// One row per (org, user) — the watermark for the notification bell
+// (src/server/notifications.ts). The feed itself is DERIVED (created_at
+// across client/contact/deal/card, newest first), not a duplicated event
+// log — this table only remembers "seen up to when" per viewer, same spirit
+// as teardown.ts's re-aggregation over existing data instead of a parallel
+// ledger. No row yet = never opened the bell; the server falls back to a
+// 24h lookback for that case rather than dumping the org's whole history.
+export const notificationReadState = pgTable(
+  "notification_read_state",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.userId] }),
   ],
 )
 

@@ -3,6 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -118,6 +128,12 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
   // a suspended client, or options not loaded yet). The effective preview
   // discount derives from the selected client option when available — see below.
   const [orderDiscount, setOrderDiscount] = useState(0)
+  // Set when the session was opened from a Truffalo Card's "Создать заказ"
+  // (orderFromCard handoff, manual branch). The FIRST successful create in
+  // persist() below auto-accepts that card — see dashboard-card.tsx's
+  // "Resolved cards" note for why the card must flip to accepted the moment
+  // an order actually exists for it, not just when the dialog opens.
+  const [originCardId, setOriginCardId] = useState<string | null>(null)
 
   const [clientOptions, setClientOptions] = useState<OrderClientOption[]>([])
   const clientsLoaded = useRef(false)
@@ -146,13 +162,18 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     setLink(null)
     setStockOnly(true)
     setOrderDiscount(0)
+    setOriginCardId(null)
   }, [])
 
-  const openNew = useCallback(() => {
-    reset()
-    setIsActive(true)
-    loadClients()
-  }, [reset, loadClients])
+  const openNew = useCallback(
+    (cardId?: string) => {
+      reset()
+      setOriginCardId(cardId ?? null)
+      setIsActive(true)
+      loadClients()
+    },
+    [reset, loadClients],
+  )
 
   const hydrate = useCallback((o: OrderDetail) => {
     setMode("edit")
@@ -351,6 +372,24 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
         const data = await res.json()
         setMode("edit")
         setOrderId(data.id)
+        // First real order row for this session — if it was opened from a
+        // card's "Создать заказ", that IS the decision on the card, so
+        // auto-accept it the same as clicking "Принять" would. Best-effort,
+        // fire-and-forget: a failure here shouldn't block the order save the
+        // operator is actually waiting on.
+        if (originCardId) {
+          const cardToAccept = originCardId
+          setOriginCardId(null)
+          void fetch("/api/cards", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: cardToAccept,
+              action: "accept",
+              resultOrderId: data.id,
+            }),
+          }).catch(() => {})
+        }
         return data.id as string
       }
       const res = await fetch("/api/orders", {
@@ -370,7 +409,7 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     } finally {
       setSaving(false)
     }
-  }, [clientId, description, currency, lines, mode, orderId])
+  }, [clientId, description, currency, lines, mode, orderId, originCardId])
 
   const saveDraft = useCallback(async () => {
     const id = await persist()
@@ -718,6 +757,10 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
     mode: SendMode
     email: string
   } | null>(null)
+  // Обязательное подтверждение отмены заказа (destructive-действие: статус →
+  // cancelled + отзыв клиентской ссылки). В create-режиме ничего не сохранено —
+  // там cancelOrder просто закрывает панель без подтверждения.
+  const [confirmCancel, setConfirmCancel] = useState(false)
 
   if (!builder.isActive) return null
 
@@ -997,7 +1040,11 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={builder.cancelOrder}
+                        onClick={() =>
+                          mode === "edit"
+                            ? setConfirmCancel(true)
+                            : builder.cancelOrder()
+                        }
                         disabled={saving}
                       >
                         <Ban className="h-4 w-4 mr-1" />
@@ -1030,7 +1077,7 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={builder.cancelOrder}
+                        onClick={() => setConfirmCancel(true)}
                         disabled={saving}
                       >
                         <Ban className="h-4 w-4 mr-1" />
@@ -1071,7 +1118,7 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={builder.cancelOrder}
+                        onClick={() => setConfirmCancel(true)}
                         disabled={saving}
                       >
                         <Ban className="h-4 w-4 mr-1" />
@@ -1151,6 +1198,32 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
           }}
         />
       )}
+
+      <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Отменить заказ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Заказ перейдёт в статус «Отменён»
+              {status === "awaiting_client"
+                ? ", активная ссылка для клиента будет отозвана"
+                : ""}
+              . Отменённый заказ можно будет снова открыть как черновик.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Не отменять</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmCancel(false)
+                builder.cancelOrder()
+              }}
+            >
+              Отменить заказ
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

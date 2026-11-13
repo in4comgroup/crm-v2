@@ -4,17 +4,9 @@ import { db } from "@/db/drizzle"
 import { schema, invitation } from "@/db/schema"
 import { and, eq, gt } from "drizzle-orm"
 import { sendEmails } from "@/lib/email"
-import {
-  lastLoginMethod,
-  organization,
-  admin,
-  emailOTP,
-  oAuthProxy,
-} from "better-auth/plugins"
+import { organization, admin, emailOTP } from "better-auth/plugins"
 import { apiKey } from "@better-auth/api-key"
 import { nextCookies } from "better-auth/next-js"
-import { polar, checkout, portal, usage } from "@polar-sh/better-auth"
-import { Polar } from "@polar-sh/sdk"
 import { getActiveOrganization } from "@/server/organizations"
 import {
   uniqueUsernameGenerator,
@@ -30,19 +22,12 @@ const config: Config = {
   style: "lowerCase",
 }
 
-const polarClient = new Polar({
-  accessToken: process.env.POLAR_ACCESS_TOKEN,
-  server: "sandbox",
-  // Use 'sandbox' if you're using the Polar Sandbox environment
-  // Remember that access tokens, products, etc. are completely separated between environments.
-  // Access tokens obtained in Production are for instance not usable in the Sandbox environment.
-})
-
 export const auth = betterAuth({
   trustedOrigins: [
     "https://app.truffalo.ai",
     "https://business-os-demo.vercel.app",
     "http://localhost:3000",
+    "https://salesdaily-demo.vercel.app",
   ],
   database: drizzleAdapter(db, {
     provider: "pg",
@@ -84,43 +69,18 @@ export const auth = betterAuth({
       },
     },
   },
-  socialProviders: {
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
-      // redirectURI: "https://xxx/api/auth/callback/github",
-    },
-    google: {
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      // redirectURI: "https://xxx/api/auth/callback/google",
-    },
-  },
-  emailAndPassword: {
-    enabled: true,
-    async sendResetPassword({ user, url }) {
-      await sendEmails({
-        to: user.email,
-        subject: "Сброс пароля",
-        body: `Перейдите по этой ссылке, чтобы сбросить пароль: ${url}`,
-      })
-    },
-    // requireEmailVerification: true, // if user can access the app without email verified
-  },
-  emailVerification: {
-    sendOnSignUp: true,
-    autoSignInAfterVerification: true,
-    async sendVerificationEmail({ user, url }) {
-      await sendEmails({
-        to: user.email,
-        subject: "Подтверждение адреса email",
-        body: `Перейдите по этой ссылке, чтобы подтвердить email: ${url}`,
-      })
-    },
-  },
+  // Sign-in and sign-up are email OTP only (see the emailOTP plugin below).
+  // No password, no Google / GitHub OAuth.
   databaseHooks: {
     user: {
       create: {
+        // OTP sign-in creates the user on first login. The sign-up and
+        // invitation forms send a name; the plain sign-in form does not, so
+        // fall back to the email's local part instead of an empty name.
+        before: async (user) => {
+          if (user.name?.trim()) return { data: user }
+          return { data: { ...user, name: user.email.split("@")[0] } }
+        },
         after: async (user) => {
           // Skip default-org creation when the user is signing up in response
           // to an invitation — they'll join the inviter's org via
@@ -198,10 +158,11 @@ export const auth = betterAuth({
     },
   },
   plugins: [
-    lastLoginMethod(),
     nextCookies(),
     emailOTP({
-      disableSignUp: true,
+      // OTP is the only auth method, so it also registers new users: the
+      // first successful code for an unknown email creates the account.
+      disableSignUp: false,
       async sendVerificationOTP({ email, otp, type }) {
         const subjectMap = {
           "sign-in": "Ваш код для входа",
@@ -251,37 +212,5 @@ export const auth = betterAuth({
       adminUserIds: ["f4c577O0wsUOkzxTAUeRAHfKNlvLyQeZ"],
     }),
     apiKey(),
-    polar({
-      client: polarClient,
-      createCustomerOnSignUp: true,
-      use: [
-        checkout({
-          products: [
-            {
-              productId: "4411934b-5c8e-482d-b9fc-dd88c5ab625f",
-              slug: "Test-credit",
-            },
-          ],
-          successUrl: process.env.POLAR_SUCCESS_URL,
-          authenticatedUsersOnly: true,
-        }),
-        portal(),
-        usage(),
-        // webhooks({
-        // secret: process.env.POLAR_WEBHOOK_SECRET,
-        // onCustomerStateChanged: (payload) => // Triggered when anything regarding a customer changes
-        // onOrderPaid: (payload) => // Triggered when an order was paid (purchase, subscription renewal, etc.)
-        // onPayload: (payload) => // Catch-all for all events
-        // })
-      ],
-    }),
-    oAuthProxy({
-      productionURL:
-        process.env.NEXT_PUBLIC_PRODUCTION_URL ||
-        process.env.NEXT_PUBLIC_APP_URL ||
-        "https://business-os-demo.vercel.app",
-      currentURL:
-        process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-    }),
   ],
 })

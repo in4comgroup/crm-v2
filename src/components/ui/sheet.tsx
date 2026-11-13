@@ -5,6 +5,7 @@ import { XIcon } from "lucide-react"
 import { Dialog as SheetPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -75,9 +76,16 @@ function SheetContent({
       >
         {children}
         {showCloseButton && (
-          <SheetPrimitive.Close className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
-            <XIcon className="size-4" />
-            <span className="sr-only">Close</span>
+          <SheetPrimitive.Close asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute top-4 right-4 focus-visible:ring-offset-2 data-[state=open]:bg-secondary"
+            >
+              <XIcon className="size-4" />
+              <span className="sr-only">Close</span>
+            </Button>
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Content>
@@ -112,7 +120,11 @@ function SheetTitle({
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn("font-semibold text-foreground", className)}
+      // min-h-9 + content-center: строка заголовка той же высоты, что
+      // крестик закрытия (size-9 в top-4), — текст встаёт ровно по его
+      // центру. Без этого текстовый заголовок (24px) сидел на 6px выше
+      // крестика; у дроверов с полем-заголовком (h-9) уже было ровно.
+      className={cn("min-h-9 content-center font-semibold text-foreground", className)}
       {...props}
     />
   )

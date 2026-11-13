@@ -7,8 +7,13 @@ import {
   createDeal,
   updateDeal,
   setDealStatus,
+  moveDealStage,
   moveDeal,
   getDeal,
+  listDealActivity,
+  listRejectedDealOrigins,
+  getFunnelStageSettings,
+  saveFunnelStageSettings,
 } from "@/server/deals"
 import { dealStatus, type DealStatus } from "@/db/schema"
 
@@ -18,6 +23,8 @@ export {
   type DealContactOption,
   type DealFunnelStageOption,
   type DealContactSummary,
+  type DealActivityRow,
+  type FunnelStageSetting,
 } from "@/server/deals"
 
 function errorResponse(error: unknown) {
@@ -43,9 +50,22 @@ export async function GET(request: NextRequest) {
       const options = await listDealContactOptions(clientId)
       return NextResponse.json({ options })
     }
+    if (url.searchParams.get("stageSettings") === "1") {
+      const stages = await getFunnelStageSettings()
+      return NextResponse.json({ stages })
+    }
     if (url.searchParams.get("funnelStages") === "1") {
       const stages = await listDealFunnelStages()
       return NextResponse.json({ stages })
+    }
+    const activityFor = url.searchParams.get("activityFor")
+    if (activityFor) {
+      const activity = await listDealActivity(activityFor)
+      return NextResponse.json({ activity })
+    }
+    if (url.searchParams.get("rejectedOrigins") === "1") {
+      const origins = await listRejectedDealOrigins()
+      return NextResponse.json({ origins })
     }
     const id = url.searchParams.get("id")
     if (id) {
@@ -75,7 +95,6 @@ export async function POST(request: NextRequest) {
       clientId,
       contactIds,
       value,
-      currency,
     } = body
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 })
@@ -99,7 +118,6 @@ export async function POST(request: NextRequest) {
       clientId,
       contactIds,
       value,
-      currency,
     })
     return NextResponse.json({ success: true, id: result.id })
   } catch (error) {
@@ -110,6 +128,23 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
+    // «Настройки стадий»: { stageSettings: [{ id, displayName, isHidden }] }.
+    if (Array.isArray(body?.stageSettings)) {
+      const entries = (body.stageSettings as unknown[]).flatMap((e) => {
+        const r = e as { id?: unknown; displayName?: unknown; isHidden?: unknown }
+        if (typeof r?.id !== "string") return []
+        return [
+          {
+            id: r.id,
+            displayName:
+              typeof r.displayName === "string" ? r.displayName : null,
+            isHidden: r.isHidden === true,
+          },
+        ]
+      })
+      await saveFunnelStageSettings(entries)
+      return NextResponse.json({ success: true })
+    }
     const {
       id,
       statusOnly,
@@ -122,14 +157,34 @@ export async function PUT(request: NextRequest) {
       clientId,
       contactIds,
       value,
-      currency,
     } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
     }
+    // Кросс-стадийный перевод через диалог: ставит funnelStageId + заметку-
+    // основание (наш путь). `position` (append в целевую колонку) может
+    // прийти вместе с note — прокидываем в moveDealStage, чтобы порядок
+    // внутри стадии оставался консистентным.
+    if (body.move) {
+      if (!funnelStageId) {
+        return NextResponse.json(
+          { error: "funnelStageId is required" },
+          { status: 400 },
+        )
+      }
+      await moveDealStage(id, funnelStageId, body.note ?? null, {
+        position:
+          typeof position === "string" && position.length > 0
+            ? position
+            : null,
+        historyNote: body.historyNote ?? undefined,
+      })
+      return NextResponse.json({ success: true })
+    }
     // `moveOnly` is the kanban drag shortcut: set the target column (funnel
     // stage) + the client-computed fractional-index `position`. Distinct from
-    // the full update so a drag never touches name/value/contacts.
+    // the full update so a drag never touches name/value/contacts (used for
+    // within-column reorder — optimistic, no dialog).
     if (moveOnly) {
       if (!funnelStageId) {
         return NextResponse.json(
@@ -174,7 +229,6 @@ export async function PUT(request: NextRequest) {
       clientId,
       contactIds,
       value,
-      currency,
       status,
     })
     return NextResponse.json({ success: true })

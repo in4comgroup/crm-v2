@@ -1,28 +1,30 @@
 "use client"
 
+import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { authClient } from "@/lib/auth-client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader } from "lucide-react"
 import { TableRules } from "@/components/tables/table-rules"
+import { PageLoader } from "@/components/blocks/page-loader"
 
 export default function RulesPage() {
   const { data: session, isPending } = authClient.useSession()
 
   if (isPending) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader className="animate-spin h-8 w-8 text-gray-900 dark:text-gray-100" />
-      </div>
+      <PageLoader className="min-h-screen" />
     )
   }
 
   const isAdmin = session?.user?.role === "admin"
 
   return (
-    <div className="flex flex-col gap-6 items-center justify-start min-h-screen pb-8">
-      <h1 className="text-2xl font-medium mt-2">ПРАВИЛА</h1>
+    <div className="flex flex-col gap-4 p-4 pb-10 min-h-screen">
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-xl font-medium">Правила</h1>
+        <PageHeaderActions />
+      </div>
 
-      <Card className="w-full max-w-7xl">
+      <Card className="w-full">
         <CardHeader>
           <CardTitle className="text-xl font-medium">Системные правила</CardTitle>
         </CardHeader>
@@ -37,7 +39,7 @@ export default function RulesPage() {
         </CardContent>
       </Card>
 
-      <Card className="w-full max-w-7xl">
+      <Card className="w-full">
         <CardHeader>
           <CardTitle className="text-xl font-medium">Пользовательские правила</CardTitle>
         </CardHeader>

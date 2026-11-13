@@ -18,7 +18,7 @@ import { source } from "@/db/schema"
 import { getTelegramCredentials } from "@/server/providers/credentials"
 import { upsertSourceItem } from "@/server/source-items"
 import { parseSourceItem } from "@/server/parse-source-item"
-import { uploadSourceItem } from "@/server/r2/upload-source-item"
+import { uploadSourceItem } from "@/server/upload-source-item"
 import {
   getTelegramUpdates,
   isTelegramWebhookConflict,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "@/lib/get-session"
-import { uploadSourceItem } from "@/server/r2/upload-source-item"
+import { uploadSourceItem } from "@/server/upload-source-item"
 import {
   assertSourceItemInScope,
   SourceItemScopeError,
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     const status =
       result.reason === "not_found"
         ? 404
-        : result.reason === "r2_failed"
+        : result.reason === "storage_failed"
           ? 500
           : 400
     return NextResponse.json({ error: result.error }, { status })

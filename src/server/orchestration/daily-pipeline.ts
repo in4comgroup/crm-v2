@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { pipelineRun, sourceItem, type PipelineRunTrigger } from "@/db/schema"
 import { parseSourceItem } from "@/server/parse-source-item"
-import { uploadSourceItem } from "@/server/r2/upload-source-item"
+import { uploadSourceItem } from "@/server/upload-source-item"
 import { runFullSync } from "./run-full-sync"
 import {
   countPendingParseTotal,

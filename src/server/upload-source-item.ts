@@ -3,8 +3,11 @@ import "server-only"
 import { eq } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { sourceItem } from "@/db/schema"
-import { putMarkdownToR2 } from "@/lib/r2"
+import { putTextObject } from "@/server/storage"
 
+// Legacy DB names: `r2_upload_status`, `markdown_r2_key`, … mean "object
+// storage" (docs/specs/s3-r2/02-migration-and-rollout.md §3).
+//
 // Result of a single uploadSourceItem call. Both branches are
 // non-throwing — the caller (manual route OR daily pipeline) decides
 // whether to surface or aggregate the failure. Mirrors the contract of
@@ -22,19 +25,21 @@ export type UploadResult =
       ok: false
       sourceItemId: string
       // 'not_found' / 'not_parsed' / 'no_markdown' are precondition
-      // failures — the row isn't ready and we didn't touch R2 or update
-      // status. 'r2_failed' means the actual upload threw, in which case
+      // failures — the row isn't ready and we didn't touch storage or update
+      // status. 'storage_failed' means the actual upload threw, in which case
       // r2UploadStatus is set to 'failed' so the row shows the right
       // badge and is eligible for retry next run.
-      reason: "not_found" | "not_parsed" | "no_markdown" | "r2_failed"
+      reason: "not_found" | "not_parsed" | "no_markdown" | "storage_failed"
       error: string
     }
 
-// Upload a parsed source_item's markdown to R2 and stamp the upload-side
+// Upload a parsed source_item's markdown to object storage
+// (@/server/storage — provider-neutral, Cloudflare R2 today) and stamp the
+// upload-side
 // columns on the row. Single source of truth for the upload step — used
 // by both the manual `/api/sources/r2/save` route and the daily pipeline.
 //
-// Org derivation: the R2 key prefix is taken from `source_item.organization_id`
+// Org derivation: the storage key prefix is taken from `source_item.organization_id`
 // (which is denormalised from `source.owner_organization_id` at sync
 // time — null for system sources). The previous route used the admin's
 // active session org which is irrelevant for cron-triggered runs and
@@ -89,7 +94,7 @@ export async function uploadSourceItem(
   const key = `${orgSegment}/source_${row.sourceId}/item_${row.id}.md`
 
   try {
-    const uploaded = await putMarkdownToR2(key, row.parsedMarkdown)
+    const uploaded = await putTextObject(key, row.parsedMarkdown, "text/markdown; charset=utf-8")
     const now = new Date()
     await db
       .update(sourceItem)
@@ -98,7 +103,7 @@ export async function uploadSourceItem(
         r2UploadedAt: now,
         markdownR2Key: uploaded.key,
         markdownR2SizeBytes: uploaded.sizeBytes,
-        // R2 has the canonical copy now — drop the DB-side cache.
+        // Storage has the canonical copy now — drop the DB-side cache.
         parsedMarkdown: null,
       })
       .where(eq(sourceItem.id, row.id))
@@ -110,7 +115,7 @@ export async function uploadSourceItem(
       uploadedAt: now,
     }
   } catch (err) {
-    console.error("[uploadSourceItem] R2 put failed", { sourceItemId, err })
+    console.error("[uploadSourceItem] storage put failed", { sourceItemId, err })
     await db
       .update(sourceItem)
       .set({ r2UploadStatus: "failed" })
@@ -118,7 +123,7 @@ export async function uploadSourceItem(
     return {
       ok: false,
       sourceItemId: row.id,
-      reason: "r2_failed",
+      reason: "storage_failed",
       error: err instanceof Error ? err.message : String(err),
     }
   }

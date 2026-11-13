@@ -1,7 +1,7 @@
 import "server-only"
 
 import { getServerSession } from "@/lib/get-session"
-import { getBinaryFromR2, putBinaryToR2 } from "@/lib/r2"
+import { getObject, putObject } from "@/server/storage"
 
 // Фото профиля. `user.image` нельзя хранить как data URL: better-auth кладёт
 // все поля пользователя в подписанную куку сессии (cookieCache), и картинка
@@ -42,7 +42,7 @@ export async function uploadCurrentUserAvatar(
   if (bytes.byteLength === 0 || bytes.byteLength > AVATAR_MAX_BYTES) {
     throw new AvatarError("Файл должен быть меньше 512 КБ", 400)
   }
-  await putBinaryToR2(avatarKey(userId), bytes, contentType)
+  await putObject(avatarKey(userId), bytes, contentType)
   return { url: `/api/avatars/${userId}?v=${Date.now()}` }
 }
 
@@ -52,5 +52,5 @@ export async function getUserAvatar(
   userId: string,
 ): Promise<{ bytes: Uint8Array; contentType: string } | null> {
   await requireUserId()
-  return getBinaryFromR2(avatarKey(userId))
+  return getObject(avatarKey(userId))
 }

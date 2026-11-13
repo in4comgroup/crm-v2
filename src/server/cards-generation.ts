@@ -18,7 +18,7 @@ import {
 } from "@/db/schema"
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
-import { getMarkdownFromR2 } from "@/lib/r2"
+import { getTextObject } from "@/server/storage"
 import { aiGenerateText } from "@/server/ai/runtime"
 import { loadOwnOrgIdentity, type OwnOrgIdentity } from "@/server/org-identity"
 import { extractEmailDomain } from "@/lib/email-domain"
@@ -548,7 +548,7 @@ export async function generateCards(
     result.scanned++
     let markdown = ""
     try {
-      markdown = await getMarkdownFromR2(item.markdownR2Key!)
+      markdown = await getTextObject(item.markdownR2Key!)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn(`[generate-cards] ${item.id} · R2 read failed: ${msg}`)

@@ -58,7 +58,7 @@ images (logos, tracking pixels) are skipped. Each parse also writes
 **own-org attribution** (`own_org` / `external` / `unknown`), using sender
 identity first and an LLM judge only for unclear documents.
 `processSourceItem` = parse if needed, then upload, then upload new children.
-Upload (`src/server/r2/upload-source-item.ts`) writes R2 and clears
+Upload (`src/server/upload-source-item.ts`) writes R2 and clears
 `parsed_markdown`.
 
 **Main API.** `api/sources/sync`, `api/sources/items` (list with

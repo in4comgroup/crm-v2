@@ -25,7 +25,7 @@ import {
   sql,
 } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
-import { getMarkdownFromR2 } from "@/lib/r2"
+import { getTextObject } from "@/server/storage"
 import { aiGenerateText } from "@/server/ai/runtime"
 import { Output } from "ai"
 import { z } from "zod"
@@ -497,7 +497,7 @@ export async function generateDeals(
       result.scanned++
       let markdown = ""
       try {
-        markdown = await getMarkdownFromR2(item.markdownR2Key!)
+        markdown = await getTextObject(item.markdownR2Key!)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         console.warn(`[generate-deals] ${item.id} · R2 read failed: ${msg}`)

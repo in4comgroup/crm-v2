@@ -8,7 +8,7 @@ import {
   type R2UploadStatus,
 } from "@/db/schema"
 import { parseSourceItem } from "@/server/parse-source-item"
-import { uploadSourceItem } from "@/server/r2/upload-source-item"
+import { uploadSourceItem } from "@/server/upload-source-item"
 
 // One end-to-end "process" of a single source_item: parse (if it still
 // needs it) → upload its markdown to R2 (if parsed) → upload any child

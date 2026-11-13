@@ -48,7 +48,7 @@ Names only. Values live in `.env` locally and in Vercel project settings.
 | `BETTER_AUTH_SECRET` | better-auth signing secret (read by better-auth itself) |
 | `BETTER_AUTH_URL` | Public origin of the app for better-auth |
 | `NEXT_PUBLIC_APP_URL` | Public origin: invitation links, guest order links, Telegram webhook URL, client auth base URL. Baked into the client bundle at build. |
-| `NODE_ENV` | `production` enables the cron secret check |
+| `NODE_ENV` | Set by Next.js (`development` / `production`) |
 
 ### AI
 
@@ -69,7 +69,10 @@ Names only. Values live in `.env` locally and in Vercel project settings.
 
 | Variable | Meaning |
 | --- | --- |
-| `R2_ACCOUNT_ID` | Cloudflare account id (used to build the endpoint if `R2_PUBLIC_URL` is empty) |
+| `STORAGE_PROVIDER` | Optional. Object storage provider key; default `cloudflare-r2` (the only one today) |
+| `R2_ACCOUNT_ID` | Cloudflare account id (used to build the endpoint if `R2_ENDPOINT` / `R2_PUBLIC_URL` are empty) |
+| `R2_ENDPOINT` | Optional preferred name for the S3 endpoint (wins over `R2_PUBLIC_URL`) |
+| `R2_JURISDICTION` | Optional `eu` / `fedramp` for a jurisdictional bucket when the endpoint is built from the account id |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | R2 S3 API credentials |
 | `R2_BUCKET_NAME` | Bucket name — `business-os-2` |
 | `R2_PUBLIC_URL` | S3 **endpoint** of the account, e.g. `https://<account>.r2.cloudflarestorage.com` or the `.eu.` form. **Without the bucket name in the path.** |
@@ -79,7 +82,7 @@ Names only. Values live in `.env` locally and in Vercel project settings.
 
 | Variable | Meaning |
 | --- | --- |
-| `CRON_SECRET` | Base64 of 32 random bytes; `/api/cron/daily` requires `Authorization: Bearer <value>` in production |
+| `CRON_SECRET` | Base64 of 32 random bytes; `/api/cron/daily` requires `Authorization: Bearer <value>` in every environment; unset = every call rejected |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Optional fallback bot for a Telegram source with no stored credentials (both required) |
 
 ### Not read by the application code
@@ -149,6 +152,11 @@ are not needed to build a DB.
   `/api/cron/daily` at `0 3 * * *` (03:00 UTC). The same expression is in
   `src/server/orchestration/config.ts`; change both together. Set
   `CRON_SECRET` as a Vercel env var — Vercel then sends the bearer header.
+  The daily run first syncs the AI model catalog (prices) and fetches exact
+  costs still missing in the AI usage ledger, then runs sync → parse →
+  upload. When the cron did not run (local dev, a failed run), use
+  `/settings` → «Использование ИИ» → «Синхронизировать цены и стоимость»
+  (prices + costs) and «Run pipeline» for sources.
 - `NEXT_PUBLIC_*` values are baked in at build time. Changing
   `NEXT_PUBLIC_APP_URL` needs a new deployment.
 - `NEXT_PUBLIC_APP_URL` must be the public HTTPS origin in production, or the
@@ -160,10 +168,15 @@ are not needed to build a DB.
   creates default sources from `source_template` rows; with no templates the
   new org gets no sources (the error is logged, not raised).
 
-## Cloudflare R2
+## Object storage (Cloudflare R2)
 
-- Bucket: `business-os-2`. Client: `src/lib/r2.ts` (lazy; the app starts without
-  R2 configured and fails only when R2 is used).
+- Provider-neutral layer `src/server/storage` (spec `docs/specs/s3-r2/`); the
+  active provider is `STORAGE_PROVIDER` (default `cloudflare-r2`). Lazy: the app
+  starts without storage configured and fails only when storage is used.
+- Bucket: `business-os-2`. R2 env: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+  `R2_BUCKET_NAME`, and the endpoint — `R2_ENDPOINT`, or the legacy
+  `R2_PUBLIC_URL`, or built from `R2_ACCOUNT_ID` (+ optional `R2_JURISDICTION`
+  `eu` / `fedramp`).
 - `R2_PUBLIC_URL` is the S3 endpoint of the account, not a public bucket URL and
   not `<endpoint>/<bucket>`. The bucket name comes from `R2_BUCKET_NAME`.
 - Keys: parsed Markdown `org_<orgId>/source_<sourceId>/item_<itemId>.md`;

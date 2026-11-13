@@ -68,8 +68,9 @@ Step by step:
 2. **Ingest.** Items arrive by remote sync (Nylas, IMAP, Google Chat, Drive),
    by webhook push (Telegram), or by upload (Drop Off, WhatsApp archive, AI chat
    save). Each item is a `source_item` row; attachments become child rows.
-3. **Process.** Each item is parsed by an LLM (Gemini 2.5 Flash via the Vercel
-   AI Gateway) into Markdown, then uploaded to R2. The daily cron runs
+3. **Process.** Each item is parsed by an LLM (via the Vercel AI Gateway; the
+   model per kind of content is chosen by the admin, default Gemini 2.5 Flash)
+   into Markdown, then uploaded to object storage (Cloudflare R2). The daily cron runs
    sync → parse → upload automatically for sources with auto-parse on; the
    Sources page offers the same actions by hand («Обработать», Process).
 4. **Discover.** On «Компании» (Companies) the operator runs discovery
@@ -102,8 +103,8 @@ Step by step:
 | Global search | Cross-entity search box in every page header | header |
 | AI chat panel | Chat over CRM data and the web, on every page | header button |
 | Notifications | Bell in the header with recent events | header |
-| Admin tools | Users, orgs, templates, sources, source teardown | `/settings` «Настройки» |
-| Profile & organization | User profile, org profile, members, invitations | `/profile`, `/account` |
+| Admin tools | Users, orgs, templates, sources, source teardown; AI models registry, model per AI process + model rules, AI usage statistics + markup | `/settings` «Настройки» |
+| Profile & organization | User profile, org profile, members, invitations, AI usage with markup (owners) | `/profile`, `/account` |
 
 ## Navigation (sidebar)
 

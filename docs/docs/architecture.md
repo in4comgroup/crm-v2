@@ -11,10 +11,10 @@
 | Forms | React Hook Form + Zod 4 | |
 | Auth | better-auth 1.5 | Email OTP only; plugins `emailOTP`, `organization`, `admin`, `apiKey`, `nextCookies`. |
 | Database | Neon Postgres (serverless HTTP driver) + Drizzle ORM 0.45 | Schema in `src/db/schema.ts`, client in `src/db/drizzle.ts`. No transactions on the HTTP driver. |
-| Object storage | Cloudflare R2 via `@aws-sdk/client-s3` | Parsed Markdown and user avatars. |
-| LLM | Vercel AI SDK v6 (`ai`) through the Vercel AI Gateway | Parsers use `google/gemini-2.5-flash`; chat default `google/gemini-3.1-flash-lite`, plus `openai/gpt-5-mini` and `anthropic/claude-sonnet-4-6`. `@ai-sdk/google` only for the `google_search` grounding tool. |
+| Object storage | S3-compatible via `@aws-sdk/client-s3`, Cloudflare R2 today | Parsed Markdown and user avatars. Provider-neutral layer `src/server/storage` (generic S3 core + provider registry, `STORAGE_PROVIDER`); spec `docs/specs/s3-r2/`. |
+| LLM | Vercel AI SDK v6 (`ai`) through the Vercel AI Gateway | Only through the AI layer `src/server/ai` (`aiGenerateText` / `aiStreamText` with a process key). Model per process is chosen on `/settings` «Процессы ИИ» (defaults: Gemini 2.5 Flash for parsing, Gemini 3.1 Flash Lite elsewhere). Every call is recorded with tokens and exact cost (`ai_usage_event`). Spec `docs/specs/models/`. |
 | AI UI | ai-elements, streamdown, json-render (`@json-render/*`) | Chat rendering and structured AI output. |
-| Background jobs | Vercel Workflow SDK (`workflow`) + Vercel Cron | One daily workflow. |
+| Background jobs | Vercel Workflow SDK (`workflow`) + Vercel Cron | One daily workflow: AI model catalog sync + usage cost check, then source sync → parse → upload. |
 | Data viz / tables | Recharts 3 (shadcn charts), @tanstack/react-table, @dnd-kit (kanban) | |
 | Integrations | Nylas SDK v8, imapflow + mailparser, node-ical, googleapis, grammY (Telegram), Resend | |
 | File parsing | mammoth (.docx), jszip + @xmldom/xmldom (.pptx), ExcelJS (price-list export) | PDF, image, audio, video go to Gemini as file parts. |
@@ -78,8 +78,8 @@ UI (client components)  →  src/app/api/**/route.ts  →  src/server/*  →  sr
   input, and asserts that the target row belongs to it (helpers such as
   `requireOrgContext`, `assertSourceInScope`, `assertSourceItemInScope`,
   `assertDealInOrg`, `assertOrderInOrg`). Wrong-org ids return 403 or 404.
-- Permission checks for org roles live in `src/server/permissions.ts` and in the
-  module servers (`requireOrgOwner`, `requireOwnerOrg`, `requireAdmin`).
+- Permission checks for org roles live in the module servers (`requireOrgOwner`,
+  `requireOwnerOrg`, `requireAdmin`, `getActiveOrgRole`).
 - `source_item.organization_id` is denormalised from its source so listing
   queries need no join.
 - The org logo is **not** on the session: the session is cached in a signed
@@ -150,7 +150,7 @@ caps (for example 50 items, concurrency 3) sized for one serverless request.
 | Service | Used for | Code |
 | --- | --- | --- |
 | Neon Postgres | Main database | `src/db/drizzle.ts` (adds `Connection: close` to every request for resilience) |
-| Cloudflare R2 | Parsed Markdown (`org_<orgId>/source_<sourceId>/item_<itemId>.md`), avatars (`avatars/user_<id>`) | `src/lib/r2.ts`, `src/server/r2/upload-source-item.ts` |
+| Object storage — Cloudflare R2 today (provider-neutral layer, spec `docs/specs/s3-r2/`) | Parsed Markdown (`org_<orgId>/source_<sourceId>/item_<itemId>.md`), avatars (`avatars/user_<id>`) | `src/server/storage`, `src/server/upload-source-item.ts` |
 | Vercel AI Gateway | All LLM calls (parsing, cards, deals, discovery, chat, analytics assistant, web lookup) | Only through `src/server/ai/runtime.ts` (process key → model from `/settings` «Процессы ИИ» or the code default in `src/server/ai/processes.ts`); Vercel specifics in `src/server/ai/gateways/vercel-ai-gateway/`. ESLint enforces the boundary |
 | Nylas | Email source (read) and system email (send) | `src/lib/nylas.ts`, `src/server/sync/nylas.ts`, `src/lib/email.ts` |
 | IMAP servers | Email source without Nylas | `src/lib/imap.ts`, `src/server/sync/imap.ts`, `src/server/parsers/imap.ts` |

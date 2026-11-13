@@ -2,6 +2,106 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+// ── Layer boundaries ───────────────────────────────────────────────────
+// AI layer:       docs/specs/models/01-gateway-providers.md §3
+// Object storage: docs/specs/s3-r2/01-architecture.md §3
+//
+// ESLint flat config: a later block that sets the SAME rule replaces the
+// earlier one for the files it matches. So every scope below gets the FULL
+// set of restrictions that apply to it, built from these parts — never add
+// a separate block with its own no-restricted-imports / no-restricted-syntax
+// for src/**, it would silently switch the others off.
+
+const AI_CALLS = {
+  name: "ai",
+  importNames: ["generateText", "streamText", "generateObject", "streamObject", "createGateway", "gateway"],
+  message: "Call models through aiGenerateText / aiStreamText from @/server/ai/runtime with a process key.",
+};
+const AI_GATEWAY_FACTORY = {
+  name: "ai",
+  importNames: ["createGateway", "gateway"],
+  message: "Gateway providers belong in src/server/ai/gateways only.",
+};
+const AI_VENDOR_PACKAGES = {
+  group: ["@ai-sdk/*", "!@ai-sdk/react"],
+  message: "Vendor / gateway packages belong in src/server/ai/gateways only. Use @/server/ai/runtime.",
+};
+const AI_VENDOR_PACKAGES_CORE = {
+  group: ["@ai-sdk/*"],
+  message: "Vendor / gateway packages belong in src/server/ai/gateways or catalog-sources only.",
+};
+const STORAGE_SDK = {
+  group: ["@aws-sdk/*"],
+  message: "Object storage goes through @/server/storage (AWS SDK only in src/server/storage/s3).",
+};
+const MODEL_ID_LITERAL = {
+  selector:
+    "Literal[value=/^(google|openai|anthropic|xai|meta|mistral|deepseek|alibaba|amazon|cohere|perplexity|moonshotai|zai)\\/[a-z0-9][a-z0-9.:-]*$/]",
+  message:
+    "No model ids in business code: name an AI process; models live in src/server/ai/processes.ts defaults and the DB.",
+};
+const STORAGE_ENV = {
+  selector:
+    "MemberExpression[object.object.name='process'][object.property.name='env'][property.name=/^(R2|STORAGE)_/]",
+  message: "Storage env vars are read only by src/server/storage/providers/*.",
+};
+
+const restrict = ({ paths = [], patterns = [], syntax = [] }) => ({
+  ...(paths.length || patterns.length
+    ? { "no-restricted-imports": ["error", { paths, patterns }] }
+    : { "no-restricted-imports": "off" }),
+  ...(syntax.length ? { "no-restricted-syntax": ["error", ...syntax] } : { "no-restricted-syntax": "off" }),
+});
+
+const AI_CORE = "src/server/ai/**/*.{ts,tsx}";
+const AI_VENDOR = ["src/server/ai/gateways/**/*.{ts,tsx}", "src/server/ai/catalog-sources/**/*.{ts,tsx}"];
+const STORAGE_CORE = "src/server/storage/s3/**/*.{ts,tsx}";
+const STORAGE_PROVIDERS = "src/server/storage/providers/**/*.{ts,tsx}";
+
+const layerBoundaries = [
+  // Business code (everything else): all restrictions.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    rules: restrict({
+      paths: [AI_CALLS],
+      patterns: [AI_VENDOR_PACKAGES, STORAGE_SDK],
+      syntax: [MODEL_ID_LITERAL, STORAGE_ENV],
+    }),
+  },
+  // AI core: may call the SDK and hold the process defaults (model ids).
+  {
+    files: [AI_CORE],
+    rules: restrict({
+      paths: [AI_GATEWAY_FACTORY],
+      patterns: [AI_VENDOR_PACKAGES_CORE, STORAGE_SDK],
+      syntax: [STORAGE_ENV],
+    }),
+  },
+  // AI gateway adapters + catalog sources: the only vendor code of the AI layer.
+  {
+    files: AI_VENDOR,
+    rules: restrict({ patterns: [STORAGE_SDK], syntax: [STORAGE_ENV] }),
+  },
+  // Storage S3 core: the only AWS SDK importer.
+  {
+    files: [STORAGE_CORE],
+    rules: restrict({
+      paths: [AI_CALLS],
+      patterns: [AI_VENDOR_PACKAGES],
+      syntax: [MODEL_ID_LITERAL, STORAGE_ENV],
+    }),
+  },
+  // Storage providers: the only readers of storage env vars.
+  {
+    files: [STORAGE_PROVIDERS],
+    rules: restrict({
+      paths: [AI_CALLS],
+      patterns: [AI_VENDOR_PACKAGES, STORAGE_SDK],
+      syntax: [MODEL_ID_LITERAL],
+    }),
+  },
+];
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -17,81 +117,7 @@ const eslintConfig = defineConfig([
     // about as "unused". Source of truth is src/workflows/*.workflow.ts.
     "src/app/.well-known/workflow/**",
   ]),
-  // AI layer boundaries (docs/specs/models/01-gateway-providers.md §3).
-  // Business code calls models only through src/server/ai (aiGenerateText /
-  // aiStreamText with a process key) and never names a gateway, a vendor
-  // package or a model id. Gateway / vendor specifics live only in
-  // src/server/ai/gateways/** and src/server/ai/catalog-sources/**.
-  {
-    files: ["src/**/*.{ts,tsx}"],
-    ignores: ["src/server/ai/**"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            {
-              name: "ai",
-              importNames: [
-                "generateText",
-                "streamText",
-                "generateObject",
-                "streamObject",
-                "createGateway",
-                "gateway",
-              ],
-              message:
-                "Call models through aiGenerateText / aiStreamText from @/server/ai/runtime with a process key.",
-            },
-          ],
-          patterns: [
-            {
-              group: ["@ai-sdk/*", "!@ai-sdk/react"],
-              message:
-                "Vendor / gateway packages belong in src/server/ai/gateways only. Use @/server/ai/runtime.",
-            },
-          ],
-        },
-      ],
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector:
-            "Literal[value=/^(google|openai|anthropic|xai|meta|mistral|deepseek|alibaba|amazon|cohere|perplexity|moonshotai|zai)\\/[a-z0-9][a-z0-9.:-]*$/]",
-          message:
-            "No model ids in business code: name an AI process; models live in src/server/ai/processes.ts defaults and the DB.",
-        },
-      ],
-    },
-  },
-  {
-    files: ["src/server/ai/**/*.{ts,tsx}"],
-    ignores: [
-      "src/server/ai/gateways/**",
-      "src/server/ai/catalog-sources/**",
-    ],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            {
-              name: "ai",
-              importNames: ["createGateway", "gateway"],
-              message: "Gateway providers belong in src/server/ai/gateways only.",
-            },
-          ],
-          patterns: [
-            {
-              group: ["@ai-sdk/*"],
-              message:
-                "Vendor / gateway packages belong in src/server/ai/gateways or catalog-sources only.",
-            },
-          ],
-        },
-      ],
-    },
-  },
+  ...layerBoundaries,
   // Vendored shadcn / Vercel AI Elements components are installed via
   // registry CLIs and get overwritten on update. Fixing React Compiler
   // rule violations in-place would regress on the next `shadcn add` /

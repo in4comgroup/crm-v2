@@ -1,4 +1,10 @@
 /**
+ * HISTORICAL — do not re-run. It produced migrations/0012 (already applied
+ * everywhere it matters) and the IN4COM preset. Migration 0014 then merged
+ * the distribution pack into `base` (R21, one pack) and the preset was
+ * edited to match. Registry changes now go through «Сигналы» (DB is the
+ * master) or a NEW custom migration — never through this generator.
+ *
  * Dev-time generator: signal catalogs (docs/specs/topics/05a, 05b, 05c) →
  *   1. migrations/0012_signals_registry_v1.sql — the v1 seed (platform
  *      reference data, fixed keys, ON CONFLICT DO NOTHING);

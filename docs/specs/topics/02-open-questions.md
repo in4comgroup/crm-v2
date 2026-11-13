@@ -107,6 +107,7 @@ Product-owner answers to the review of 2026-11-13. «As recommended» = the reco
 | R18 | Exclusions | **Deny-list** (org owner); without a provider filter store only the dedupe id. |
 | R19 | Client reminder | **Counts once** (boost R only). |
 | R20 | Foreign-language mail | **In scope**; English cues for supplier codes. |
+| R21 | Packs (decided after phase 1) | **One pack.** «Дистрибуция» is merged into «Базовый пакет» (migration `0014`, registry version 3): its 31 signals, blocks DS1–DS7, 9 risk types, 25 rule templates and relations move to `base`; `INVOICE_PAID` itself closes `PAYMENT_PROMISE`. Nothing retired. Which codes act for an org is set per code (presets / org overrides). Agency codes (phase 9) also go into this one pack. |
 | Pack | 04 §3 questions | **As proposed:** orders handled by the client's sales manager (no orders role in MVP); always-P8: `SALES_TENDER_INVITATION`, `CONTRACT_TERMINATED`, `SIGNAL_INSOLVENCY`, `COMPLAINT_ESCALATED`; `SUPPLIER_DELIVERY_DELAY` = risk at 5; ЕГАИС codes and the risk list confirmed in the review. |
 | Q35 | Attention rules A1–A8 (06 §15) | **All as recommended.** |
 | Q36 | Registry additions R1–R4 (05 §10) | **All as recommended.** |

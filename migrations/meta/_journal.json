@@ -99,6 +99,13 @@
       "when": 1794596842079,
       "tag": "0013_signals_registry_v2_fixes",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794599719788,
+      "tag": "0014_signals_single_pack",
+      "breakpoints": true
     }
   ]
 }

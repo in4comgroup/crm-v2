@@ -163,6 +163,8 @@ Full registry (all codes, parameters, Russian cues, attributes, relations, risk 
 
 ### 4.1 Storage
 
+> **R21 (2026-11-13):** there is now **one** pack (`base`); «Дистрибуция» was merged into it (migration `0014`). Text below that speaks of the `distribution` pack means the distribution codes (blocks DS1–DS7) inside the one pack.
+
 Platform dictionary tables (data, not code) **[Q2, R11]**. They hold ALL parameters and settings of the registry. Version 1 is built from the reviewed catalogs (05a–05c) and seeded by a Drizzle **custom migration** as platform reference data: fixed ids, `ON CONFLICT DO NOTHING` (root `AGENTS.md` rule 3). After that the DB is the master; there is no `db/seeds/*.json` and no seed script. Only `base` and `distribution` are seeded [R5].
 
 - `signal_pack` — `code` (`base` | `agency` | `distribution` | …), label RU.

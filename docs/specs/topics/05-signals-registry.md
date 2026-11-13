@@ -159,6 +159,8 @@ AND (code not in a block parked for this pack, e.g. agency: H, J)
 - Overrides are rows in the registry tables (`signal_pack_override`, `organization_signal_setting`), edited in «Сигналы».
 - `signal_stage_rule` and the stage guards of risk types are per org (spec §9.2, §9.4). One model: the risk type is platform data (`deal_risk_type`); the org's stages where it applies are rows in `deal_risk_stage_guard` (risk type × org × allowed stage ids). No guard row = the risk applies at every stage. The pack files give templates; the admin copies them to the org.
 
+> **R21 (2026-11-13): one pack.** After phase 1 the «Дистрибуция» pack was merged into `base` (migration `0014`). The pack / pack-override model below stays in the schema, but today there is one pack; the codes that act for an org are chosen per code (presets, org overrides). The «distribution» column names below describe where a code came from (05c), not a separate pack.
+
 ### 5.1 IN4COM activation (pilot)
 
 | Pack | Active codes | Notes |

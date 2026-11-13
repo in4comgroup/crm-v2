@@ -29,7 +29,7 @@ export async function POST(
 
   try {
     await assertSourceItemInScope(id, activeOrgId)
-    const result = await processSourceItem(id)
+    const result = await processSourceItem(id, { userId: session.user.id })
     return NextResponse.json(result)
   } catch (error) {
     if (error instanceof SourceItemScopeError) {

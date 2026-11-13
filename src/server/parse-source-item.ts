@@ -10,7 +10,11 @@ import {
   type SourceItemKind,
   type OrgAttribution,
 } from "@/db/schema"
-import type { MetadataAnalysis } from "@/server/parsers/_shared"
+import {
+  parserAiContext,
+  type MetadataAnalysis,
+  type ParserAiContext,
+} from "@/server/parsers/_shared"
 import {
   loadOwnOrgIdentity,
   getOrgIdentity,
@@ -86,8 +90,6 @@ import type {
   GchatCredentials,
   NylasCredentials,
 } from "@/server/providers/handlers"
-
-const PARSER_MODEL = "google/gemini-2.5-flash"
 
 // ── Re-parse ──────────────────────────────────────────────────────────
 
@@ -202,10 +204,18 @@ type ParseContext = {
   // is ours). Mutated in-place during the parent's `markParsed`; children are
   // always inserted afterwards, so it's set by the time they read it.
   orgAttributionValue?: OrgAttribution
+  // Who every model call of this parse is for: the item's organization +
+  // the signed-in user on manual paths (null for cron / webhook).
+  ai: ParserAiContext
 }
 
-export async function parseSourceItem(itemId: string): Promise<ParseResult> {
-  const ctx = await loadParseContext(itemId)
+export async function parseSourceItem(
+  itemId: string,
+  // The signed-in user on manual paths (parse / process / fetch routes);
+  // null for cron and webhook paths. The org comes from the item row.
+  opts: { userId: string | null },
+): Promise<ParseResult> {
+  const ctx = await loadParseContext(itemId, opts.userId)
 
   // Mark in-flight so the table shows "Parsing…" even if the user reloads.
   await db
@@ -287,7 +297,10 @@ export async function parseSourceItem(itemId: string): Promise<ParseResult> {
   }
 }
 
-async function loadParseContext(itemId: string): Promise<ParseContext> {
+async function loadParseContext(
+  itemId: string,
+  userId: string | null,
+): Promise<ParseContext> {
   const rows = await db
     .select({
       id: sourceItem.id,
@@ -378,6 +391,8 @@ async function loadParseContext(itemId: string): Promise<ParseContext> {
     metadataJson: (row.metadataJson as Record<string, unknown> | null) ?? {},
     credentialsRef: row.credentialsRef,
     ownOrg: await loadOwnOrgIdentity(row.organizationId),
+    // A row without an organization (system source) is a system call.
+    ai: parserAiContext(row.organizationId, userId),
   }
 }
 
@@ -420,10 +435,10 @@ function filterAnalysisOwnOrg(
 
 async function parseNylasItem(ctx: ParseContext): Promise<ParseResult> {
   const creds = getNylasCredentials(ctx.sourceId, ctx.credentialsRef)
-  const parsed = await parseEmailMessage(ctx.externalId, creds)
+  const parsed = await parseEmailMessage(ctx.externalId, creds, ctx.ai)
 
   // Parent row → complete with markdown.
-  await markParsed(ctx, parsed.markdown, parsed.analysis)
+  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
   let inserted = 0
   let skipped = 0
@@ -583,7 +598,7 @@ async function parseInlineImageOrSkip(
       threadId: ctx.threadExternalId,
       sourceCreatedAt: isoOrNull(ctx.sourceCreatedAt),
       sourceReceivedAt: isoOrNull(ctx.sourceCreatedAt),
-    })
+    }, ctx.ai)
     if (result.decorative) {
       await insertSkippedChild({
         ctx,
@@ -601,6 +616,7 @@ async function parseInlineImageOrSkip(
       meta,
       markdown: result.markdown,
       analysis: result.analysis,
+      parserModel: result.parserModel,
     })
     return { inserted: 1, skipped: 0, failed: 0 }
   } catch (err) {
@@ -627,10 +643,11 @@ async function parseImapItem(ctx: ParseContext): Promise<ParseResult> {
     mailbox,
     namespacedSourceId: ctx.parentNamespacedSourceId,
     creds,
+    ai: ctx.ai,
   })
 
   // Parent row → complete with markdown.
-  await markParsed(ctx, parsed.markdown, parsed.analysis)
+  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
   let inserted = 0
   let skipped = 0
@@ -714,9 +731,9 @@ async function parseGoogleChatItem(ctx: ParseContext): Promise<ParseResult> {
   const creds = getGchatCredentials(ctx.sourceId, ctx.credentialsRef)
   // parseChatMessage takes the full resource path "spaces/X/messages/Y";
   // sync stores the same in externalId.
-  const parsed = await parseChatMessage(ctx.externalId, creds)
+  const parsed = await parseChatMessage(ctx.externalId, creds, ctx.ai)
 
-  await markParsed(ctx, parsed.markdown, parsed.analysis)
+  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
   let inserted = 0
   let skipped = 0
@@ -828,9 +845,9 @@ async function parseWhatsAppItem(ctx: ParseContext): Promise<ParseResult> {
     authors,
     startTimestamp,
     endTimestamp,
-  })
+  }, ctx.ai)
 
-  await markParsed(ctx, parsed.markdown, parsed.analysis)
+  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
   return {
     parentStatus: "complete",
@@ -879,9 +896,9 @@ async function parseTelegramItem(ctx: ParseContext): Promise<ParseResult> {
     sourceCreatedAt: ctx.sourceCreatedAt
       ? ctx.sourceCreatedAt.toISOString()
       : null,
-  })
+  }, ctx.ai)
 
-  await markParsed(ctx, parsed.markdown, parsed.analysis)
+  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
   return {
     parentStatus: "complete",
@@ -936,7 +953,7 @@ async function parseTelegramVoiceItem(
     threadId: ctx.threadExternalId,
     sourceCreatedAt: isoOrNull(ctx.sourceCreatedAt),
     sourceReceivedAt: isoOrNull(ctx.sourceCreatedAt),
-  })
+  }, ctx.ai)
 
   // Backfill the message body with the transcript. At ingest a voice note has
   // no usable text — `rawText`/`text` were set to the (usually empty) caption —
@@ -953,7 +970,13 @@ async function parseTelegramVoiceItem(
       : parsed.transcript || caption
   const metadataPatch = body ? { rawText: body, text: body } : undefined
 
-  await markParsed(ctx, parsed.markdown, parsed.analysis, metadataPatch)
+  await markParsed(
+    ctx,
+    parsed.markdown,
+    parsed.analysis,
+    parsed.parserModel,
+    metadataPatch,
+  )
 
   return {
     parentStatus: "complete",
@@ -968,7 +991,7 @@ async function parseTelegramVoiceItem(
 
 async function parseGoogleDriveItem(ctx: ParseContext): Promise<ParseResult> {
   const creds = getGdriveCredentials(ctx.sourceId, ctx.credentialsRef)
-  const parsed = await parseDriveFile(ctx.externalId, creds)
+  const parsed = await parseDriveFile(ctx.externalId, creds, ctx.ai)
   // First block is the body (the file itself); video files emit a
   // second block (audio transcript) that becomes a child.
   if (parsed.blocks.length === 0) {
@@ -976,7 +999,12 @@ async function parseGoogleDriveItem(ctx: ParseContext): Promise<ParseResult> {
   }
 
   const bodyBlock = parsed.blocks[0]
-  await markParsed(ctx, bodyBlock.markdown, bodyBlock.analysis)
+  await markParsed(
+    ctx,
+    bodyBlock.markdown,
+    bodyBlock.analysis,
+    bodyBlock.parserModel,
+  )
 
   let inserted = 0
   for (let i = 1; i < parsed.blocks.length; i++) {
@@ -993,6 +1021,7 @@ async function parseGoogleDriveItem(ctx: ParseContext): Promise<ParseResult> {
       },
       markdown: extra.markdown,
       analysis: extra.analysis,
+      parserModel: extra.parserModel,
     })
     inserted++
   }
@@ -1049,7 +1078,7 @@ async function runAttachmentParser(
         ...commonInput,
         bytes,
         fileName: meta.fileName,
-      })
+      }, ctx.ai)
       await insertParsedChild({
         ctx,
         externalId: attSourceId,
@@ -1057,6 +1086,7 @@ async function runAttachmentParser(
         meta,
         markdown: r.markdown,
         analysis: r.analysis,
+        parserModel: r.parserModel,
       })
       return { inserted: 1, skipped: 0, failed: 0 }
     }
@@ -1066,7 +1096,7 @@ async function runAttachmentParser(
         bytes,
         fileName: meta.fileName,
         mediaType: resolveMediaType(meta.contentType, "audio/mpeg"),
-      })
+      }, ctx.ai)
       await insertParsedChild({
         ctx,
         externalId: attSourceId,
@@ -1074,6 +1104,7 @@ async function runAttachmentParser(
         meta,
         markdown: r.markdown,
         analysis: r.analysis,
+        parserModel: r.parserModel,
       })
       return { inserted: 1, skipped: 0, failed: 0 }
     }
@@ -1092,7 +1123,7 @@ async function runAttachmentParser(
         audioSourceId,
         // The audio block's parent is the video, not the email/chat.
         audioParentSourceId: attSourceId,
-      })
+      }, ctx.ai)
       // Insert the video block first so it can be referenced as the
       // parent of the audio derivation.
       const videoChildId = await insertParsedChild({
@@ -1102,6 +1133,7 @@ async function runAttachmentParser(
         meta,
         markdown: r.videoMarkdown,
         analysis: r.videoAnalysis,
+        parserModel: r.parserModel,
       })
       await insertParsedChild({
         ctx,
@@ -1110,6 +1142,7 @@ async function runAttachmentParser(
         meta: { ...meta, contentType: "audio/mp4" },
         markdown: r.audioMarkdown,
         analysis: r.audioAnalysis,
+        parserModel: r.parserModel,
         parentSourceItemIdOverride: videoChildId,
       })
       return { inserted: 2, skipped: 0, failed: 0 }
@@ -1136,7 +1169,7 @@ async function runAttachmentParser(
             ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ),
-      })
+      }, ctx.ai)
       await insertParsedChild({
         ctx,
         externalId: attSourceId,
@@ -1144,6 +1177,7 @@ async function runAttachmentParser(
         meta,
         markdown: r.markdown,
         analysis: r.analysis,
+        parserModel: r.parserModel,
       })
       return { inserted: 1, skipped: 0, failed: 0 }
     }
@@ -1173,7 +1207,7 @@ async function runAttachmentParser(
         meta.contentType,
         inferImageMediaType(meta.fileName),
       ),
-    })
+    }, ctx.ai)
     if (input.isInlineImage && r.decorative) {
       await insertSkippedChild({
         ctx,
@@ -1191,6 +1225,7 @@ async function runAttachmentParser(
       meta,
       markdown: r.markdown,
       analysis: r.analysis,
+      parserModel: r.parserModel,
     })
     return { inserted: 1, skipped: 0, failed: 0 }
   } catch (err) {
@@ -1263,13 +1298,15 @@ async function computeOrgAttribution(
     // WhatsApp transcripts are conversational — authorship is meaningless, so
     // never pay for the judge there.
     enableLlmJudge: ctx.provider !== "whatsapp",
-  })
+  }, ctx.ai)
 }
 
 async function markParsed(
   ctx: ParseContext,
   markdown: string,
   analysis: MetadataAnalysis,
+  // Model that actually produced `analysis` (from the parser result).
+  parserModel: string | null,
   // Optional extra fields to fold into metadata_json at parse time. Used by the
   // Telegram voice path to backfill `rawText`/`text` with the transcript (the
   // bytes carried no usable body text at ingest — see `parseTelegramVoiceItem`).
@@ -1289,7 +1326,7 @@ async function markParsed(
     .set({
       parseStatus: "complete",
       parsedAt: new Date(),
-      parserModel: PARSER_MODEL,
+      parserModel,
       parsedMarkdown: markdown,
       parseError: null,
       orgAttribution: attribution.value,
@@ -1305,6 +1342,8 @@ async function insertParsedChild(args: {
   meta: AttachmentMeta
   markdown: string
   analysis: MetadataAnalysis
+  // Model that actually produced `analysis` (from the parser result).
+  parserModel: string | null
   parentSourceItemIdOverride?: string
 }): Promise<string> {
   const id = randomUUID()
@@ -1329,7 +1368,7 @@ async function insertParsedChild(args: {
       fetchedAt: now,
       parseStatus: "complete",
       parsedAt: now,
-      parserModel: PARSER_MODEL,
+      parserModel: args.parserModel,
       parsedMarkdown: args.markdown,
       // Children inherit the parent's authorship verdict (set on ctx during the
       // parent's markParsed, which always runs before children are inserted).
@@ -1341,7 +1380,7 @@ async function insertParsedChild(args: {
       set: {
         parseStatus: "complete",
         parsedAt: now,
-        parserModel: PARSER_MODEL,
+        parserModel: args.parserModel,
         parsedMarkdown: args.markdown,
         parseError: null,
         filename: args.meta.fileName,

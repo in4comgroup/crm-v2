@@ -214,7 +214,8 @@ Admin tool to hard-delete selected **threads** of a source — a thread = one to
 ## Source Parsing (admin-only)
 
 - **Goal**: convert fetched source items (emails, chats, drive files, dropped files) into a structured markdown document matching `refs/parsing-sources-template.md` (YAML frontmatter + `## Summary` + `## Content`). Used manually today; will be called by schedulers/AI agents once automation is wired up.
-- **Config**: `src/lib/parser-config.ts` holds model IDs and tuning constants (e.g. `PARSER_CONFIG.pdf.maxBytes = 20 MB`). Will migrate to a DB-backed settings dictionary once the schema is ready.
+- **Config**: `src/lib/parser-config.ts` holds tuning constants only (size caps, media types, image triage — e.g. `PARSER_CONFIG.pdf.maxBytes = 20 MB`). **Models are NOT here any more**: each parser calls `aiGenerateText` with its AI process (`parsing.email`, `parsing.chat_message` [Google Chat / Telegram / WhatsApp], `parsing.document_metadata`, `parsing.office`, `parsing.pdf`, `parsing.image`, `parsing.audio`, `parsing.video`, `parsing.org_attribution`); the admin picks the model on `/settings` → «Процессы ИИ» (default Gemini 2.5 Flash). Mentions of "Gemini 2.5 Flash" in the parser notes below describe that default.
+- **AI context threading**: every parser takes a last `ai: ParserAiContext` argument (`{ orgId, userId }`, `src/server/parsers/_shared.ts` → `parserAiContext()`); `parseSourceItem(itemId, { userId })` / `processSourceItem(itemId, { userId })` build it from `source_item.organization_id` + the caller's user (manual routes: the session user; cron and Telegram webhook: `null`). `source_item.parser_model` is stamped from the model that actually answered (`aiCallInfo(result).responseModel`, returned by each parser as `parserModel`), not from a constant.
 - **Shared helpers**: `src/server/parsers/_shared.ts` exports `buildFrontmatter`, `assembleMarkdown`, `uniqueStrings`, `extractUrls`, `emailsToDomainUrls`, and the `SourceFrontmatter` type — every parser produces frontmatter via this module so the template format stays consistent across source kinds.
 - **Source ID namespaces** (all emulated until the DB table lands — the namespace prefix keeps them visually distinct from future real UUIDs):
   - `nylas:<messageId>` — email body
@@ -684,7 +685,9 @@ Email envelopes carry a **technical** participant name (admin-defined, often Eng
 - **UI** — `form-contact-edit.tsx` has "Native name" + "Phone" fields; `contact-card.tsx` shows native name as a subtitle + phone in the body; the Contacts-tab name filter matches `name` OR `name_native`. (Phone needed no new UI — the column + form field already existed.)
 - **DB / backfill** — `contact.name_native text` added via `scripts/add-contact-name-native.ts`; `contact.phone` already existed. No data backfill — values populate on new parses / re-parse / "Re-scan already-reviewed items", consistent with the participants + mentionedPeople rollout.
 
-### Web lookup (Gemini + grounded `google_search`)
+### Web lookup (two passes: web search + structured extract)
+
+AI processes: pass 1 = `clients.enrichment_research` (`capabilities: ["web_search"]` — the gateway adapter supplies the vendor search tool; the notes below about `google_search` describe the Google tool it supplies today), pass 2 = `clients.enrichment_extract`. Models are set on `/settings` → «Процессы ИИ».
 
 Manual button on each client card (`<Globe>` icon next to the edit pencil) and on the client detail page (full "Lookup on web" button next to "Edit"). Runs a two-pass Gemini call to find the company on the web and proposes updates to its contact fields. Any org member can use it.
 
@@ -1011,7 +1014,7 @@ The LLM pipeline. Per-item function call, bounded concurrency, hard cap 50 per c
 - **Time period** — last day / last 3 days / last week / specific dates (**default «За день» / `last_day`**).
 - **Sources** — "All org sources" checkbox, otherwise per-source checkboxes from `/api/sources/options`.
 - **Rule** — Custom-type rules from `/api/rules?type=Custom`. Defaults to the first rule in the list; an empty rule list shows a "Create a Custom rule on the Rules page first" hint.
-- **Model** — picks from `MODELS` in `src/lib/llm-models.ts` (default `DEFAULT_MODEL_KEY`). Same selector used by the chat.
+- **Model** — the admin-allowed list of the process «Генерация карточек» (`cards.generation`) via `useAiProcessModels` (`GET /api/ai/models`); the admin's default is preselected; sent as `modelId`. Same mechanism as the chat picker.
 - **Re-analyze already processed items** — bypasses the `card_analysis_scanned_at` filter for ad-hoc re-runs.
 - **Preview chip** — debounced 200ms `GET /api/cards/generate` call returns the eligible-item count + cap. Shows `<count> items will be analyzed (<extra> more outside the cap)` when the count exceeds the hard cap.
 - **Run button** — POSTs the run, surfaces a `cardsCreated created · scanned scanned · skipped skipped` toast, with `(capped — N extra not analyzed)` or `· N failed` annotations as needed. Console-logs the full server response for DevTools inspection.

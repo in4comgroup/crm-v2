@@ -23,4 +23,4 @@ The same rules are in the root `AGENTS.md` → "Working rules".
 | [auth/](auth/README.md) | Authentication: email OTP only, invitation flow | Implemented 2026-11-13, not yet deployed |
 | [billing/](billing/README.md) | Billing / payments: Polar removal | Implemented 2026-11-13, not yet deployed |
 | [db-migrations/](db-migrations/README.md) | Database change process: Drizzle migrations baseline + reference (seed) data | Implemented and applied to the DB 2026-11-13 |
-| [models/](models/README.md) | AI models: gateway providers, model registry, per-process model selection, usage statistics, markup | Spec ready, all questions decided, not implemented (2026-11-13) |
+| [models/](models/README.md) | AI models: gateway providers, model registry, per-process model selection, usage statistics, markup | Implemented P1–P4 (registry, per-process models, runtime layer, usage ledger, markup, owner usage view, model policy) 2026-11-13, not yet deployed |

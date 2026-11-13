@@ -96,14 +96,15 @@ import { cn } from "@/lib/utils"
 import Image from "next/image"
 import { BrandMark } from "./brand-mark"
 import { SearchResultsCard } from "@/components/blocks/search-results-card"
-import { DEFAULT_MODEL_KEY, MODELS } from "@/lib/llm-models"
+import { useAiProcessModels } from "@/lib/use-ai-process-models"
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-// Model list lives in src/lib/llm-models.ts so the chat picker, the
-// Explore-sources dialog, and the /api/chat route share one source of truth.
+// The picker lists the models the admin allowed for the «ИИ чат» process
+// (/settings → «Процессы ИИ»), from GET /api/ai/models. The server accepts
+// only those ids.
 
 const ACCEPTED_FILE_TYPES = [
   "image/png",
@@ -147,15 +148,19 @@ function validateFiles(files: FileUIPart[]): FileUIPart[] {
 // ---------------------------------------------------------------------------
 
 export function AIChat({ className }: { className?: string }) {
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_KEY)
+  const { models, defaultModelId } = useAiProcessModels("chat.assistant")
+  // null = no explicit pick yet → the admin's default for the process.
+  const [pickedModel, setPickedModel] = useState<string | null>(null)
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
+  const selectedModel =
+    (pickedModel && models.some((m) => m.id === pickedModel) ? pickedModel : null) ??
+    defaultModelId
 
   // ONE universal search engine — no toggles. The route registers the
-  // internal-records tools plus (on a capable model) Google's web-search
-  // grounding on every request, and the model decides which to use. The old
-  // «источники» / «веб-поиск» buttons existed only because Gemini 2.5 Flash
-  // dropped custom function tools whenever google_search was present.
-  const currentModel = MODELS.find((m) => m.key === selectedModel) ?? MODELS[0]
+  // internal-records tools plus the `searchWeb` tool (its own model call,
+  // process «Поиск в интернете (чат)») on every request, and the model
+  // decides which to use.
+  const currentModel = models.find((m) => m.id === selectedModel) ?? models[0] ?? null
 
   // Stable transport that reads the latest model at request time via a ref —
   // avoids recreating the transport on every state change.
@@ -226,31 +231,35 @@ export function AIChat({ className }: { className?: string }) {
           >
             <ModelSelectorTrigger asChild>
               <Button variant="ghost" size="sm" className="gap-2 text-xs">
-                <ModelSelectorLogo
-                  provider={currentModel.provider}
-                  className="size-4"
-                />
-                {currentModel.label}
+                {currentModel?.vendor && (
+                  <ModelSelectorLogo
+                    provider={currentModel.vendor}
+                    className="size-4"
+                  />
+                )}
+                {currentModel?.name ?? "Модель"}
               </Button>
             </ModelSelectorTrigger>
             <ModelSelectorContent>
               <ModelSelectorInput placeholder="Поиск моделей..." />
               <ModelSelectorList>
                 <ModelSelectorGroup heading="Доступные модели">
-                  {MODELS.map((model) => (
+                  {models.map((model) => (
                     <ModelSelectorItem
-                      key={model.key}
-                      value={model.key}
+                      key={model.id}
+                      value={`${model.name} ${model.id}`}
                       onSelect={() => {
-                        setSelectedModel(model.key)
+                        setPickedModel(model.id)
                         setModelSelectorOpen(false)
                       }}
                     >
-                      <ModelSelectorLogo
-                        provider={model.provider}
-                        className="size-4"
-                      />
-                      <ModelSelectorName>{model.label}</ModelSelectorName>
+                      {model.vendor && (
+                        <ModelSelectorLogo
+                          provider={model.vendor}
+                          className="size-4"
+                        />
+                      )}
+                      <ModelSelectorName>{model.name}</ModelSelectorName>
                     </ModelSelectorItem>
                   ))}
                 </ModelSelectorGroup>

@@ -2,12 +2,12 @@ import "server-only"
 
 import { randomUUID } from "node:crypto"
 import { eq } from "drizzle-orm"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
 import { z } from "zod"
 import { db } from "@/db/drizzle"
 import { sourceItem } from "@/db/schema"
 import { getOrCreateAiChatSource } from "@/server/sources"
-import { DEFAULT_GATEWAY_ID } from "@/lib/llm-models"
+import { aiCallInfo, aiGenerateText } from "@/server/ai/runtime"
 import {
   assembleMarkdown,
   buildFrontmatter,
@@ -116,7 +116,7 @@ function renderConversation(
   return lines.join("\n").trim()
 }
 
-// ── Analysis (Gemini → metadata_json fields) ─────────────────────────
+// ── Analysis (LLM → metadata_json fields) ────────────────────────────
 
 const analysisSchema = z.object({
   language: z
@@ -144,16 +144,22 @@ const analysisSchema = z.object({
     .describe("Names of products mentioned in the conversation."),
 })
 
-const ANALYSIS_MODEL = DEFAULT_GATEWAY_ID
-
-async function extractAnalysis(transcript: string): Promise<MetadataAnalysis> {
+// Process `chat.session_analysis`; the model is picked by the AI runtime.
+// Returns the analysis plus the model that actually answered (stamped on
+// the saved rows as `parser_model`).
+async function extractAnalysis(
+  transcript: string,
+  ai: { orgId: string; userId: string },
+): Promise<{ analysis: MetadataAnalysis; model: string | null }> {
   const truncated =
     transcript.length > 60_000
       ? `${transcript.slice(0, 60_000)}\n\n[...truncated, ${transcript.length - 60_000} additional characters omitted]`
       : transcript
 
-  const { output } = await generateText({
-    model: ANALYSIS_MODEL,
+  const result = await aiGenerateText({
+    process: "chat.session_analysis",
+    orgId: ai.orgId,
+    userId: ai.userId,
     output: Output.object({ schema: analysisSchema }),
     system:
       "You are a precise AI-chat session analysis assistant. Extract structured metadata from a saved conversation between a user and an AI assistant. Never fabricate facts — only return what is present in the transcript.",
@@ -164,7 +170,8 @@ async function extractAnalysis(transcript: string): Promise<MetadataAnalysis> {
     ].join("\n"),
   })
 
-  return {
+  const output = result.output
+  const analysis: MetadataAnalysis = {
     language: output.language || "en",
     summary: output.summary,
     mentions: uniqueStrings(output.mentions),
@@ -176,6 +183,8 @@ async function extractAnalysis(transcript: string): Promise<MetadataAnalysis> {
     // user + assistant). Empty keeps the MetadataAnalysis shape uniform.
     mentionedPeople: [],
   }
+  const info = aiCallInfo(result)
+  return { analysis, model: info?.responseModel ?? info?.requestModel ?? null }
 }
 
 // ── Save entry point ─────────────────────────────────────────────────
@@ -199,7 +208,10 @@ export async function saveChatSession(
   // LLM-derived analysis. Failure here is fatal — without analysis the
   // metadata_json + frontmatter would be misleading. Caller surfaces
   // the error to the user via toast.
-  const analysis = await extractAnalysis(conversation)
+  const { analysis, model: analysisModel } = await extractAnalysis(
+    conversation,
+    { orgId: input.organizationId, userId: input.userId },
+  )
 
   // Stable namespaced id used both as `source_item.external_id` and as
   // the YAML frontmatter `source_id`. Each save is a new row (Q1=A).
@@ -247,7 +259,7 @@ export async function saveChatSession(
     fetchedAt: now,
     parseStatus: "complete",
     parsedAt: now,
-    parserModel: ANALYSIS_MODEL,
+    parserModel: analysisModel,
     parsedMarkdown: markdown,
     metadataJson: {
       provider: "aichat",
@@ -281,7 +293,7 @@ export async function saveChatSession(
         // OUR side is aichat, and the parent ref disambiguates.
         dropoffId: `${sessionId}-${i}`,
         description: `Attached to AI chat session "${trimmedTitle}"`,
-      })
+      }, { orgId: input.organizationId, userId: input.userId })
 
       // First block is the body; videos emit a second (audio) block.
       const firstBlock = parsed.blocks[0]
@@ -300,7 +312,8 @@ export async function saveChatSession(
         fetchedAt: now,
         parseStatus: "complete",
         parsedAt: now,
-        parserModel: ANALYSIS_MODEL,
+        // The model that parsed THIS file, not the session-analysis model.
+        parserModel: firstBlock.parserModel ?? null,
         parsedMarkdown: firstBlock.markdown,
         metadataJson: {
           provider: "aichat",
@@ -327,7 +340,7 @@ export async function saveChatSession(
           fetchedAt: now,
           parseStatus: "complete",
           parsedAt: now,
-          parserModel: ANALYSIS_MODEL,
+          parserModel: extra.parserModel ?? null,
           parsedMarkdown: extra.markdown,
           metadataJson: { provider: "aichat", ...extra.analysis },
         })

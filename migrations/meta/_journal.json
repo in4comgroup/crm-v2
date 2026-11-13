@@ -36,6 +36,41 @@
       "when": 1794580973757,
       "tag": "0004_seed_reference_data",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794588380354,
+      "tag": "0005_ai_model_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794588380717,
+      "tag": "0006_ai_model_registry_seed",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794589135695,
+      "tag": "0007_ai_process_assignment",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794590027676,
+      "tag": "0008_ai_usage_event",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794590765210,
+      "tag": "0009_platform_setting",
+      "breakpoints": true
     }
   ]
 }

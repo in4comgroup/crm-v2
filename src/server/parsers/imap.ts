@@ -15,7 +15,11 @@ import {
   parseIcsToEvent,
   type CalendarEvent,
 } from "@/server/parsers/ics"
-import { uniqueStrings, type MetadataAnalysis } from "@/server/parsers/_shared"
+import {
+  uniqueStrings,
+  type MetadataAnalysis,
+  type ParserAiContext,
+} from "@/server/parsers/_shared"
 
 // A real (non-inline) attachment with its bytes already in hand — mailparser
 // hands us the decoded content inline, so unlike Nylas there is no per-
@@ -29,6 +33,8 @@ export type ImapAttachment = {
 export type ParsedImapEmail = {
   markdown: string
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
   attachments: ImapAttachment[]
   bodyInlineImages: InlineBodyImage[]
   sourceCreatedAt: string | null
@@ -43,6 +49,8 @@ type ParseImapArgs = {
   // Namespaced frontmatter source id, e.g. "imap:<externalId>".
   namespacedSourceId: string
   creds: ImapCredentials
+  // Org / user the model call is for.
+  ai: ParserAiContext
 }
 
 // Flatten a mailparser AddressObject (or array) into lowercased email strings.
@@ -67,7 +75,7 @@ function addressEmails(
 export async function parseImapMessage(
   args: ParseImapArgs,
 ): Promise<ParsedImapEmail> {
-  const { externalId, mailbox, namespacedSourceId, creds } = args
+  const { externalId, mailbox, namespacedSourceId, creds, ai } = args
 
   const sep = externalId.indexOf(":")
   const uidValidityStr = sep >= 0 ? externalId.slice(0, sep) : ""
@@ -124,7 +132,7 @@ export async function parseImapMessage(
   // bytes are already inline, no download. Best-effort.
   const calendarEvent = extractCalendarEvent(mail.attachments)
 
-  const { markdown, analysis } = await analyzeAndAssembleEmail({
+  const { markdown, analysis, parserModel } = await analyzeAndAssembleEmail(ai, {
     sourceId: namespacedSourceId,
     sourceSystem: "Email",
     subject,
@@ -157,6 +165,7 @@ export async function parseImapMessage(
   return {
     markdown,
     analysis,
+    parserModel,
     attachments,
     bodyInlineImages,
     sourceCreatedAt,

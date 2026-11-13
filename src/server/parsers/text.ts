@@ -1,8 +1,8 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
 import { z } from "zod"
 import { getNylasClient } from "@/lib/nylas"
-import { PARSER_CONFIG } from "@/lib/parser-config"
+import { aiGenerateText } from "@/server/ai/runtime"
 import type { NylasCredentials } from "@/server/providers/handlers"
 import {
   buildCalendarContext,
@@ -27,8 +27,10 @@ import {
   organizationDetailSchema,
   PARTICIPANT_DETAILS_PROMPT,
   participantDetailSchema,
+  servedModel,
   uniqueStrings,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 
@@ -217,6 +219,8 @@ export type ParsedEmail = ParsedSource & {
   messageId: string
   threadId: string | null
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 /**
@@ -226,7 +230,7 @@ export type ParsedEmail = ParsedSource & {
  * Deterministic fields (thread_id, dates, senders, recipients, urls) are
  * extracted directly from the Nylas payload. Content-derived fields
  * (summary, mentions, companies, products, language, clean markdown body)
- * are produced by the LLM via generateText + Output.object().
+ * are produced by the LLM via aiGenerateText + Output.object().
  *
  * Also surfaces the raw attachment list so the caller can chain format-
  * specific parsers (PDF, audio, …) against each attachment.
@@ -234,6 +238,7 @@ export type ParsedEmail = ParsedSource & {
 export async function parseEmailMessage(
   emailId: string,
   creds: NylasCredentials,
+  ai: ParserAiContext,
 ): Promise<ParsedEmail> {
   const { data: msg } = await getNylasClient(creds).messages.find({
     identifier: creds.grantId,
@@ -262,11 +267,11 @@ export async function parseEmailMessage(
     ? new Date(msg.date * 1000).toISOString()
     : null
 
-  // Run the shared email LLM pipeline (prompt → Gemini → junk filter →
+  // Run the shared email LLM pipeline (prompt → model → junk filter →
   // frontmatter + markdown + analysis). Identical for Nylas and IMAP, so it
   // lives in one place; the provider-specific work is only the body fetch +
   // attachment byte retrieval.
-  const { markdown, analysis } = await analyzeAndAssembleEmail({
+  const { markdown, analysis, parserModel } = await analyzeAndAssembleEmail(ai, {
     sourceId: `nylas:${msg.id}`,
     sourceSystem: "Email",
     subject,
@@ -313,6 +318,7 @@ export async function parseEmailMessage(
     messageId: msg.id,
     threadId: msg.threadId ?? null,
     analysis,
+    parserModel,
   }
 }
 
@@ -338,7 +344,7 @@ export type EmailLlmInput = {
 }
 
 /**
- * The shared email analysis + assembly pipeline. One Gemini pass produces the
+ * The shared email analysis + assembly pipeline. One model pass produces the
  * `MetadataAnalysis`; a junk classification short-circuits via
  * `EmailFilteredError` (unless a real calendar invite overrides it); the body
  * is assembled into the frontmatter + `## Meeting` markdown. Reused verbatim by
@@ -346,8 +352,13 @@ export type EmailLlmInput = {
  * produce identical markdown + analysis shapes.
  */
 export async function analyzeAndAssembleEmail(
+  ai: ParserAiContext,
   input: EmailLlmInput,
-): Promise<{ markdown: string; analysis: MetadataAnalysis }> {
+): Promise<{
+  markdown: string
+  analysis: MetadataAnalysis
+  parserModel: string | null
+}> {
   const {
     sourceId,
     sourceSystem,
@@ -371,8 +382,9 @@ export async function analyzeAndAssembleEmail(
 
   const nowIso = new Date().toISOString()
 
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.text.model,
+  const result = await aiGenerateText({
+    process: "parsing.email",
+    ...ai,
     output: Output.object({ schema: analysisSchema }),
     system: SYSTEM_PROMPT,
     prompt: buildLlmPrompt({
@@ -385,6 +397,7 @@ export async function analyzeAndAssembleEmail(
         : null,
     }),
   })
+  const analysis = result.output
 
   // Junk filter: short-circuit before assembling markdown. The thrown
   // error is converted to parseStatus = 'skipped' by parseSourceItem so
@@ -433,6 +446,7 @@ export async function analyzeAndAssembleEmail(
 
   return {
     markdown,
+    parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
       summary: analysis.summary,

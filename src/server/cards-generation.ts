@@ -19,10 +19,10 @@ import {
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
 import { getMarkdownFromR2 } from "@/lib/r2"
-import { getGatewayId } from "@/lib/llm-models"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { loadOwnOrgIdentity, type OwnOrgIdentity } from "@/server/org-identity"
 import { extractEmailDomain } from "@/lib/email-domain"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
 import { z } from "zod"
 import { randomUUID } from "crypto"
 
@@ -220,7 +220,10 @@ export type GenerateCardsInput = {
   to: string | null
   sourceIds: string[] | null
   ruleId: string
-  modelKey: string
+  // Optional user pick (full model id) for the user-selectable
+  // `cards.generation` process. The AI runtime ignores it unless the admin
+  // allowed it; omitted → the process default.
+  requestedModelId?: string | null
   // When false (default), the pipeline only sees items the previous run
   // hasn't analyzed yet (or has been re-parsed since). When true, it
   // ignores `cardAnalysisScannedAt` entirely — for ad-hoc re-runs.
@@ -310,7 +313,7 @@ export async function previewCardGenerationCandidates(input: {
 export async function generateCards(
   input: GenerateCardsInput,
 ): Promise<GenerateCardsResult> {
-  const { activeOrgId } = await requireOrgContext()
+  const { session, activeOrgId } = await requireOrgContext()
 
   // 1. Resolve + scope the rule.
   const ruleRows = await db
@@ -517,8 +520,6 @@ export async function generateCards(
     return { historyMarkdown: lines.join("\n"), priorCount: kept.length }
   }
 
-  const gatewayId = getGatewayId(input.modelKey)
-
   const result: GenerateCardsResult = {
     scanned: 0,
     cardsCreated: 0,
@@ -541,7 +542,7 @@ export async function generateCards(
   console.log(
     `[generate-cards] starting batch · candidates=${candidates.length} ` +
       `cap=${CARD_GEN_HARD_CAP} concurrency=${CARD_GEN_CONCURRENCY} ` +
-      `model=${input.modelKey}`,
+      `requestedModel=${input.requestedModelId ?? "(process default)"}`,
   )
   await mapWithConcurrency(candidates, CARD_GEN_CONCURRENCY, async (item) => {
     result.scanned++
@@ -583,8 +584,11 @@ export async function generateCards(
     })
 
     try {
-      const { output } = await generateText({
-        model: gatewayId,
+      const { output } = await aiGenerateText({
+        process: "cards.generation",
+        orgId: activeOrgId,
+        userId: session.user.id,
+        requestedModelId: input.requestedModelId ?? null,
         output: Output.object({ schema: cardOutputSchema }),
         system:
           "You are a precise sales-and-marketing analysis assistant. " +

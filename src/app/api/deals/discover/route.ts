@@ -49,16 +49,14 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as Partial<GenerateDealsInput>
+    // `modelId` (optional) = the user's model pick, a full model id from
+    // GET /api/ai/models?process=deals.discovery. Omitted → process default.
+    const body = (await request.json()) as Partial<
+      Omit<GenerateDealsInput, "requestedModelId">
+    > & { modelId?: unknown }
     if (!body.ruleId) {
       return NextResponse.json(
         { error: "ruleId is required" },
-        { status: 400 },
-      )
-    }
-    if (!body.modelKey) {
-      return NextResponse.json(
-        { error: "modelKey is required" },
         { status: 400 },
       )
     }
@@ -67,7 +65,8 @@ export async function POST(request: NextRequest) {
       to: body.to ?? null,
       sourceIds: body.sourceIds ?? null,
       ruleId: body.ruleId,
-      modelKey: body.modelKey,
+      requestedModelId:
+        typeof body.modelId === "string" && body.modelId ? body.modelId : null,
       includeAlreadyAnalyzed: body.includeAlreadyAnalyzed === true,
       dryRun: body.dryRun === true,
     })

@@ -93,7 +93,23 @@ Re-parsing an item clears them so the item is re-analysed.
 | `card_contact` | Card ↔ external contact (matched by sender email) | PK `(cardId, contactId)` |
 | `notification_read_state` | Per-user "last seen" for the header bell | `organizationId`, `userId`, `lastSeenAt` |
 
-## 7. Admin and audit
+## 7. AI model registry
+
+Spec: `docs/specs/models/`. Vendor-neutral: column names and units follow the
+models.dev schema; gateway-specific data only in jsonb (`raw`, `cost_raw`).
+
+| Table | Purpose | Key columns |
+| --- | --- | --- |
+| `ai_gateway` | One row per AI gateway (seed: `vercel`) | `adapter`, `catalog_sources` (ordered; first is authoritative), `models_dev_provider_id`, `is_enabled`, `is_default` (one), `config` (non-secret), `credentials_env` (env var name, never the key), `last_synced_at`, `last_sync_error` |
+| `ai_model` | Every model of every gateway, mirrored by the catalog sync. Never deleted | PK (`gateway_id`, `model_id`); `vendor`, `type`, capability booleans (`tool_call`, `structured_output`, `web_search`, `reasoning`, …), `input_modalities`, `limit_context`, `cost_*` (USD per 1M tokens; web search per 1,000), `cost_raw`, `zdr`, `is_available`, `field_sources`, `raw` |
+| `ai_model_price_history` | One row per price change of a model (reporting) | `gateway_id`, `model_id`, `valid_from`, `cost_*` |
+| `ai_process_assignment` | Admin's model choice per AI process (the process catalog itself is code: `src/server/ai/processes.ts`; no row = code default) | `process_key` (PK), `gateway_id`, `primary_model_id`, `fallback_model_ids` (≤3, ordered), `allowed_model_ids` (user-selectable processes), `settings`, `updated_by_user_id` |
+| `ai_usage_event` | AI usage ledger: one row per model call (OTel GenAI column names). No FKs on purpose (outlives deleted orgs/users) | `organization_id`, `user_id`, `process_key`, `request_model`, `response_model`, `response_id(s)`, `status`, token counts, `web_search_count`, `steps`, `duration_ms`, `cost_estimate_usd`, `cost_actual_usd` (exact, from the gateway), `markup_percent` |
+| `platform_setting` | Platform-wide settings, key → jsonb (keys, types, defaults declared in `src/server/platform-settings.ts`; no row = default). Today: `ai.markup_percent`, `ai.policy.zdr_only`, `ai.policy.no_training_only`, `ai.policy.allowed_vendors` | `key` (PK), `value`, `updated_by_user_id`, `updated_at` |
+| `platform_setting_log` | Append-only change log of platform settings | `key`, `old_value`, `new_value`, `changed_by_user_id`, `changed_at` |
+| `ai_process_assignment_log` | Append-only change log of assignments | `process_key`, `changed_by_user_id`, `changed_at`, `before`, `after` (jsonb snapshots; `after` null = reset) |
+
+## 8. Admin and audit
 
 | Table | Purpose | Key columns |
 | --- | --- | --- |

@@ -1,5 +1,6 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
 import { PARSER_CONFIG } from "@/lib/parser-config"
 import {
@@ -10,7 +11,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 
@@ -97,6 +100,8 @@ export type ParsedImage = {
     byteSize: number
   }
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 /**
@@ -105,11 +110,12 @@ export type ParsedImage = {
  * owns fetching bytes and deciding on source identifiers.
  *
  * Handles both photo-style images (via description) and text-heavy images
- * (via OCR) in a single Gemini 2.5 Flash multimodal call — the model picks
+ * (via OCR) in a single multimodal model call — the model picks
  * the right strategy per-image based on what it sees.
  */
 export async function parseImageBytes(
   input: ImageParseInput,
+  ai: ParserAiContext,
 ): Promise<ParsedImage> {
   const { bytes, fileName, mediaType } = input
 
@@ -124,8 +130,9 @@ export async function parseImageBytes(
     throw new UnsupportedImageTypeError(mediaType)
   }
 
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.image.model,
+  const result = await aiGenerateText({
+    process: "parsing.image",
+    ...ai,
     output: Output.object({ schema: imageAnalysisSchema }),
     system: `You are a precise image parsing assistant. Extract structured metadata and convert the provided image into clean Markdown. For text-heavy images perform OCR faithfully; for photos/diagrams give a detailed description. Never fabricate facts that are not visible in the image.
 
@@ -150,6 +157,7 @@ For images specifically: the 'author/sender' is whoever you extract into the \`s
       },
     ],
   })
+  const analysis = result.output
 
   const nowIso = new Date().toISOString()
 
@@ -186,6 +194,7 @@ For images specifically: the 'author/sender' is whoever you extract into the \`s
       mediaType,
       byteSize: bytes.byteLength,
     },
+    parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
       summary: analysis.summary,

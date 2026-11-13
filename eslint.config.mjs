@@ -17,6 +17,81 @@ const eslintConfig = defineConfig([
     // about as "unused". Source of truth is src/workflows/*.workflow.ts.
     "src/app/.well-known/workflow/**",
   ]),
+  // AI layer boundaries (docs/specs/models/01-gateway-providers.md §3).
+  // Business code calls models only through src/server/ai (aiGenerateText /
+  // aiStreamText with a process key) and never names a gateway, a vendor
+  // package or a model id. Gateway / vendor specifics live only in
+  // src/server/ai/gateways/** and src/server/ai/catalog-sources/**.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/server/ai/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "ai",
+              importNames: [
+                "generateText",
+                "streamText",
+                "generateObject",
+                "streamObject",
+                "createGateway",
+                "gateway",
+              ],
+              message:
+                "Call models through aiGenerateText / aiStreamText from @/server/ai/runtime with a process key.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["@ai-sdk/*", "!@ai-sdk/react"],
+              message:
+                "Vendor / gateway packages belong in src/server/ai/gateways only. Use @/server/ai/runtime.",
+            },
+          ],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "Literal[value=/^(google|openai|anthropic|xai|meta|mistral|deepseek|alibaba|amazon|cohere|perplexity|moonshotai|zai)\\/[a-z0-9][a-z0-9.:-]*$/]",
+          message:
+            "No model ids in business code: name an AI process; models live in src/server/ai/processes.ts defaults and the DB.",
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/server/ai/**/*.{ts,tsx}"],
+    ignores: [
+      "src/server/ai/gateways/**",
+      "src/server/ai/catalog-sources/**",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "ai",
+              importNames: ["createGateway", "gateway"],
+              message: "Gateway providers belong in src/server/ai/gateways only.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["@ai-sdk/*"],
+              message:
+                "Vendor / gateway packages belong in src/server/ai/gateways or catalog-sources only.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Vendored shadcn / Vercel AI Elements components are installed via
   // registry CLIs and get overwritten on update. Fixing React Compiler
   // rule violations in-place would regress on the next `shadcn add` /

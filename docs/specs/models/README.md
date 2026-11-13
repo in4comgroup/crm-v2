@@ -3,8 +3,14 @@
 Model registry, per-process model selection, usage statistics and markup for
 everything the system sends to an AI gateway.
 
-Status: **ready to implement.** All questions (Q1–Q8) decided by the product
-owner on 2026-11-13 (see [06-rollout-and-questions.md](06-rollout-and-questions.md)).
+Status: **P1–P4 implemented** (2026-11-13): registry, catalog sync,
+«Модели» tab; process catalog, per-process model choice, runtime layer, all
+call sites migrated, ESLint boundaries, «Процессы ИИ» tab; usage ledger with
+exact gateway cost, «Использование ИИ» tab, manual price + cost sync; global
+markup, owner usage tab on `/account`, model policy (ZDR / no training /
+vendors). Follow-ups: [06 §4](06-rollout-and-questions.md). All questions
+(Q1–Q8) decided by the product owner on 2026-11-13 (see
+[06-rollout-and-questions.md](06-rollout-and-questions.md)).
 
 ## Requirements (from the product owner)
 

@@ -117,3 +117,41 @@ Required to fill `organization_id` / `user_id` (see 00 §3):
   they already hold.
 - The AI chat route requires sign-in (decided, Q5) — every chat call has an
   org and a user. See [../auth/api-access.md](../auth/api-access.md).
+
+## 8. Implementation notes (P3, 2026-11-13)
+
+Built: `ai_usage_event` (migration `0008_ai_usage_event`), recording in
+`src/server/ai/runtime.ts` → `src/server/ai/usage.ts`, statistics in
+`src/server/ai/usage-stats.ts`, API `api/admin/ai/usage`, tab
+`src/components/blocks/admin-ai-usage.tsx`, plus the cost columns of
+«Процессы ИИ» (03 §5) and the 30-day usage block in the «Модели» drawer.
+
+Differences from §2–§4, found while building:
+
+- **Exact cost is recorded at call time.** Vercel AI Gateway returns the
+  billed cost of every generation in `providerMetadata.gateway.cost`
+  (measured: it matches `getGenerationInfo.totalCost`). The adapter sums it
+  over all steps into `cost_actual_usd`. Reconcile only fills gaps (a step
+  without cost metadata), so it runs **daily** (phase 0 of the daily
+  pipeline) plus the «Уточнить» button on the tab — not a 15-minute cron
+  (a sub-daily Vercel cron also needs a paid plan). The gateway's lookup
+  answers 404 for ~20 s after a call; reconcile only takes events older than
+  2 minutes.
+- Extra columns: `response_ids` (every step's generation id — a multi-step
+  call is several generations) and `cost_reconcile_attempts` (stops after 3).
+- No foreign keys on `organization_id` / `user_id`: the ledger must outlive
+  deleted orgs and users, and an insert must never fail on a constraint.
+- `operation_name` is always `chat` (all calls are chat-completion style).
+- Web search: the grounding metadata sits under the UPSTREAM provider key
+  (`vertex`), so the adapter checks every key. With `web_search_count` the
+  estimate now includes the per-search fee (measured: estimate = exact cost,
+  $0.01425 for one grounded call).
+- An aborted stream records `status = aborted` with the usage of finished
+  steps only; if it is aborted before the first step ends, tokens and cost
+  are empty (the gateway may still bill a partial generation).
+- `markup_percent` stays null until P4. (P4: filled on every event.)
+- Manual sync (added on request): «Синхронизировать цены и стоимость» on
+  «Использование ИИ» runs exactly what the daily cron runs (price sync of
+  every enabled gateway + reconcile), for when the cron did not run (local
+  dev, a failed run). Both admin tabs warn when the last price sync is older
+  than 26 h.

@@ -12,6 +12,7 @@ import {
   uniqueIndex,
   pgEnum,
   primaryKey,
+  foreignKey,
   AnyPgColumn,
 } from "drizzle-orm/pg-core"
 import type { ClientCustomFields } from "@/lib/client-custom-fields"
@@ -2145,6 +2146,301 @@ export const cardUserRelations = relations(cardUser, ({ one }) => ({
     references: [user.id],
   }),
 }))
+
+// ─── AI model registry (docs/specs/models/02-model-registry.md) ─────────────
+//
+// Vendor-neutral by rule (docs/specs/models/01-gateway-providers.md §3 rule 4):
+// gateway-specific data goes into the `raw` / `cost_raw` jsonb columns only.
+// Column names and units follow the models.dev schema (costs = USD per 1M
+// tokens).
+
+// One row per AI gateway the platform can route through. Secrets are never
+// stored here: `credentials_env` names the env var that holds the key.
+export const aiGateway = pgTable(
+  "ai_gateway",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    // Adapter key in src/server/ai/gateways (e.g. "vercel-ai-gateway").
+    adapter: text("adapter").notNull(),
+    // Ordered catalog sources; the first is authoritative, later ones only
+    // fill empty fields (e.g. {gateway-api,models-dev}).
+    catalogSources: text("catalog_sources")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    // Provider id in models.dev (e.g. "vercel") for the models-dev source.
+    modelsDevProviderId: text("models_dev_provider_id"),
+    isEnabled: boolean("is_enabled").notNull().default(true),
+    isDefault: boolean("is_default").notNull().default(false),
+    // Non-secret settings, e.g. { "baseUrl": "https://…/v1" }.
+    config: jsonb("config")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    credentialsEnv: text("credentials_env"),
+    lastSyncedAt: timestamp("last_synced_at"),
+    lastSyncError: text("last_sync_error"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    // Exactly one default gateway.
+    uniqueIndex("ai_gateway_default_uidx")
+      .on(table.isDefault)
+      .where(sql`${table.isDefault} = true`),
+  ],
+)
+
+export type AiGateway = typeof aiGateway.$inferSelect
+
+// One row per model per gateway, mirrored from the gateway catalog. Never
+// deleted: a model that disappears gets is_available = false (usage events
+// reference it).
+export const aiModel = pgTable(
+  "ai_model",
+  {
+    gatewayId: text("gateway_id")
+      .notNull()
+      .references(() => aiGateway.id, { onDelete: "cascade" }),
+    modelId: text("model_id").notNull(),
+    vendor: text("vendor"),
+    name: text("name").notNull(),
+    family: text("family"),
+    description: text("description"),
+    type: text("type").notNull().default("language"),
+    canonicalModelId: text("canonical_model_id"),
+    // Capabilities (models.dev names). Null = unknown.
+    attachment: boolean("attachment"),
+    reasoning: boolean("reasoning"),
+    toolCall: boolean("tool_call"),
+    structuredOutput: boolean("structured_output"),
+    temperature: boolean("temperature"),
+    openWeights: boolean("open_weights"),
+    webSearch: boolean("web_search"),
+    inputModalities: text("input_modalities").array(),
+    outputModalities: text("output_modalities").array(),
+    limitContext: integer("limit_context"),
+    limitOutput: integer("limit_output"),
+    // USD per 1M tokens (models.dev unit).
+    costInput: numeric("cost_input", { precision: 14, scale: 6 }),
+    costOutput: numeric("cost_output", { precision: 14, scale: 6 }),
+    costCacheRead: numeric("cost_cache_read", { precision: 14, scale: 6 }),
+    costCacheWrite: numeric("cost_cache_write", { precision: 14, scale: 6 }),
+    // USD per 1,000 web searches.
+    costWebSearch: numeric("cost_web_search", { precision: 14, scale: 6 }),
+    // Full source price object (tiers, service tiers, regional, media).
+    costRaw: jsonb("cost_raw").$type<Record<string, unknown>>(),
+    knowledge: text("knowledge"),
+    releaseDate: text("release_date"),
+    lastUpdated: text("last_updated"),
+    status: text("status"),
+    zdr: text("zdr"),
+    noTraining: text("no_training"),
+    regions: text("regions").array(),
+    deprecatedAt: timestamp("deprecated_at"),
+    isAvailable: boolean("is_available").notNull().default(true),
+    // Which catalog source filled which field.
+    fieldSources: jsonb("field_sources")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    // Original records, keyed by catalog source.
+    raw: jsonb("raw").$type<Record<string, unknown>>().notNull().default({}),
+    firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.gatewayId, table.modelId] }),
+    index("ai_model_gateway_type_idx").on(table.gatewayId, table.type),
+    index("ai_model_vendor_idx").on(table.vendor),
+    index("ai_model_canonical_idx").on(table.canonicalModelId),
+    // Trigram search index lives in a custom migration (expression index).
+  ],
+)
+
+export type AiModel = typeof aiModel.$inferSelect
+
+// Price history: one row per price change of a model (reporting only —
+// usage events store their own computed cost).
+export const aiModelPriceHistory = pgTable(
+  "ai_model_price_history",
+  {
+    id: text("id").primaryKey(),
+    gatewayId: text("gateway_id").notNull(),
+    modelId: text("model_id").notNull(),
+    validFrom: timestamp("valid_from").defaultNow().notNull(),
+    costInput: numeric("cost_input", { precision: 14, scale: 6 }),
+    costOutput: numeric("cost_output", { precision: 14, scale: 6 }),
+    costCacheRead: numeric("cost_cache_read", { precision: 14, scale: 6 }),
+    costCacheWrite: numeric("cost_cache_write", { precision: 14, scale: 6 }),
+    costWebSearch: numeric("cost_web_search", { precision: 14, scale: 6 }),
+    costRaw: jsonb("cost_raw").$type<Record<string, unknown>>(),
+  },
+  (table) => [
+    index("ai_model_price_history_model_idx").on(
+      table.gatewayId,
+      table.modelId,
+      table.validFrom,
+    ),
+    foreignKey({
+      name: "ai_model_price_history_model_fk",
+      columns: [table.gatewayId, table.modelId],
+      foreignColumns: [aiModel.gatewayId, aiModel.modelId],
+    }).onDelete("cascade"),
+  ],
+)
+
+// Admin's model choice per AI process (docs/specs/models/03-processes-and-model-selection.md §4).
+// The process catalog itself lives in code (src/server/ai/processes.ts); a
+// process without a row runs on its code default.
+export const aiProcessAssignment = pgTable("ai_process_assignment", {
+  processKey: text("process_key").primaryKey(),
+  gatewayId: text("gateway_id")
+    .notNull()
+    .references(() => aiGateway.id),
+  primaryModelId: text("primary_model_id").notNull(),
+  // Ordered; tried when the primary fails.
+  fallbackModelIds: text("fallback_model_ids")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
+  // Only for user-selectable processes: the models users may pick.
+  allowedModelIds: text("allowed_model_ids")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
+  // Optional call settings: { maxOutputTokens?, temperature? }. Applied only
+  // when the calling code does not set the value itself.
+  settings: jsonb("settings")
+    .$type<{ maxOutputTokens?: number; temperature?: number }>()
+    .notNull()
+    .default({}),
+  updatedByUserId: text("updated_by_user_id").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+})
+
+export type AiProcessAssignment = typeof aiProcessAssignment.$inferSelect
+
+// Append-only change log of assignments, so a cost or quality jump can be
+// traced to a model change. `before` / `after` = assignment snapshots
+// (null before = first choice, null after = reset to default).
+export const aiProcessAssignmentLog = pgTable(
+  "ai_process_assignment_log",
+  {
+    id: text("id").primaryKey(),
+    processKey: text("process_key").notNull(),
+    changedByUserId: text("changed_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    changedAt: timestamp("changed_at").defaultNow().notNull(),
+    before: jsonb("before").$type<Record<string, unknown> | null>(),
+    after: jsonb("after").$type<Record<string, unknown> | null>(),
+  },
+  (table) => [
+    index("ai_process_assignment_log_process_idx").on(
+      table.processKey,
+      table.changedAt,
+    ),
+  ],
+)
+
+// AI usage ledger (docs/specs/models/04-usage-and-cost.md §2): one row per
+// aiGenerateText / aiStreamText call (a multi-step agent call = one row with
+// the totals of all steps). Column names follow the OpenTelemetry GenAI
+// semantic conventions where one exists, so the ledger can be exported as
+// OTel data later. Written by src/server/ai/usage.ts; never by business code.
+export const aiUsageEvent = pgTable(
+  "ai_usage_event",
+  {
+    id: text("id").primaryKey(),
+    createdAt: timestamp("created_at").defaultNow().notNull(), // span start
+    // No FKs on purpose: the ledger outlives deleted orgs / users (billing
+    // history), and recording must never fail on a constraint.
+    organizationId: text("organization_id"),
+    userId: text("user_id"),
+    processKey: text("process_key").notNull(),
+    operationName: text("operation_name").notNull(), // gen_ai.operation.name
+    gatewayId: text("gateway_id").notNull(),
+    providerName: text("provider_name"), // gen_ai.provider.name (upstream)
+    requestModel: text("request_model").notNull(), // gen_ai.request.model
+    responseModel: text("response_model"), // gen_ai.response.model
+    responseId: text("response_id"), // gen_ai.response.id (last step)
+    // Every step's generation id (multi-step calls), for cost reconcile.
+    responseIds: text("response_ids").array(),
+    status: text("status").notNull(), // ok | error | aborted
+    errorType: text("error_type"), // error.type
+    inputTokens: integer("input_tokens"), // gen_ai.usage.input_tokens
+    outputTokens: integer("output_tokens"), // gen_ai.usage.output_tokens
+    reasoningTokens: integer("reasoning_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheWriteTokens: integer("cache_write_tokens"),
+    webSearchCount: integer("web_search_count"),
+    steps: integer("steps"),
+    durationMs: integer("duration_ms"),
+    costEstimateUsd: numeric("cost_estimate_usd", { precision: 14, scale: 8 }),
+    // Exact cost reported by the gateway (inline or by reconcile).
+    costActualUsd: numeric("cost_actual_usd", { precision: 14, scale: 8 }),
+    costReconcileAttempts: integer("cost_reconcile_attempts").notNull().default(0),
+    // Markup in force at call time (05 §3); null until markup exists (P4).
+    markupPercent: numeric("markup_percent", { precision: 6, scale: 2 }),
+    ref: jsonb("ref").$type<Record<string, unknown>>(),
+  },
+  (table) => [
+    index("ai_usage_event_org_created_idx").on(table.organizationId, table.createdAt),
+    index("ai_usage_event_process_created_idx").on(table.processKey, table.createdAt),
+    index("ai_usage_event_model_created_idx").on(table.responseModel, table.createdAt),
+    index("ai_usage_event_response_id_idx").on(table.responseId),
+    index("ai_usage_event_created_idx").on(table.createdAt),
+  ],
+)
+
+export type AiUsageEvent = typeof aiUsageEvent.$inferSelect
+
+// Platform-wide settings, key → jsonb value (docs/specs/models/05-markup-and-end-user-cost.md §2).
+// Keys and their types/defaults are declared in code
+// (src/server/platform-settings.ts); a missing row = the default.
+export const platformSetting = pgTable("platform_setting", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").$type<unknown>().notNull(),
+  updatedByUserId: text("updated_by_user_id").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+})
+
+// Append-only change log of platform settings (old → new, who, when).
+export const platformSettingLog = pgTable(
+  "platform_setting_log",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    oldValue: jsonb("old_value").$type<unknown>(),
+    newValue: jsonb("new_value").$type<unknown>(),
+    changedByUserId: text("changed_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    changedAt: timestamp("changed_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("platform_setting_log_key_idx").on(table.key, table.changedAt),
+  ],
+)
 
 export const schema = {
   user,

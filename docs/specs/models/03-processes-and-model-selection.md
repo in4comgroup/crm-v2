@@ -25,7 +25,7 @@ Per process:
 | `kind` | `interactive` (a user waits) or `background` (batch / cron) |
 | `requires` | Capabilities the model must have (02 §4) |
 | `defaultModelId` | Used when the admin has made no choice, or as last resort |
-| `userSelectable` | Only for the AI chat: users choose among admin-allowed models |
+| `userSelectable` | Users choose among admin-allowed models: the AI chat (Q4), and the two dialogs that already had a model picker — cards («Найти в источниках») and deal discovery |
 
 Initial catalog (from the inventory in 00):
 
@@ -37,8 +37,8 @@ Initial catalog (from the inventory in 00):
 | `analytics.assistant` | «ИИ ассистент аналитики» | interactive | tools | `google/gemini-3.1-flash-lite` |
 | `clients.enrichment_research` | «Обогащение компаний: поиск» | interactive | web_search (vendor tool, §6) | `google/gemini-3.1-flash-lite` |
 | `clients.enrichment_extract` | «Обогащение компаний: извлечение» | interactive | structured_output | `google/gemini-3.1-flash-lite` |
-| `cards.generation` | «Генерация карточек» | background | structured_output | `google/gemini-3.1-flash-lite` |
-| `deals.discovery` | «Поиск сделок» | background | structured_output | `google/gemini-3.1-flash-lite` |
+| `cards.generation` | «Генерация карточек» | background | structured_output | `google/gemini-3.1-flash-lite` (user-selectable) |
+| `deals.discovery` | «Поиск сделок» | background | structured_output | `google/gemini-3.1-flash-lite` (user-selectable) |
 | `orders.request_split` | «Заказ из запроса» | interactive | structured_output | `google/gemini-3.1-flash-lite` |
 | `parsing.email` | «Разбор писем» | background | structured_output | `google/gemini-2.5-flash` |
 | `parsing.chat_message` | «Разбор сообщений (Google Chat, Telegram, WhatsApp)» | background | structured_output | `google/gemini-2.5-flash` |
@@ -135,3 +135,32 @@ filter for all processes:
 - «Разрешённые разработчики» (Allowed vendors) — e.g. only google, openai, anthropic
 
 Stored in `platform_setting` (05 §2). Default: all off (no restriction).
+
+## 8. Implementation notes (P2, 2026-11-13)
+
+- Code: `src/server/ai/processes.ts` (catalog), `src/server/ai/registry/assignments.ts`
+  (resolution, compatibility, save / reset / log), `src/server/ai/runtime.ts`,
+  `api/admin/ai/processes`, `api/ai/models` (picker data, any signed-in user),
+  `src/components/blocks/admin-ai-processes.tsx`. Migration
+  `0007_ai_process_assignment`.
+- While the admin has not saved an allowed list, a user-selectable process
+  offers its `defaultAllowedModelIds` (= the three models of the old
+  hard-coded picker), so users see no change.
+- Built in P3: the «≈ $ за 1 000 вызовов» column (process average tokens,
+  last 30 days, × model prices; «нет данных» before the first call), the
+  «За 30 дней» column, the same estimate per model in the edit dialog (sorted
+  by it) and the «Было ≈ $A → станет ≈ $B» line.
+- Built in P4: the policy block (§7, `admin-ai-policy.tsx`, keys
+  `ai.policy.*` in `platform_setting`). It is compatibility rule 5:
+  - ZDR / no-training: the gateway can restrict one call to compliant
+    providers (`zeroDataRetention`, `disallowPromptTraining` in the Vercel
+    provider options; adapter flag `privacyRouting`), so a model marked
+    `some` qualifies and the runtime sends the flag on every call. Without
+    privacy routing only `all` qualifies.
+  - Allowed vendors: by `ai_model.vendor`.
+  - Strict: a save that leaves any process with no compliant model
+    (primary, fallbacks, code default) is refused with the list of those
+    processes (HTTP 409). At runtime a process with no compliant model
+    fails with `AiPolicyError` instead of silently using a non-compliant
+    default. `settings` (temperature / max
+  output tokens) is stored and applied by the runtime, but has no UI yet.

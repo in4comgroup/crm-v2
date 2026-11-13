@@ -29,11 +29,10 @@ import {
   listTaskSummaryByClient,
   type ClientTaskSummary,
 } from "@/server/tasks"
-import { generateText, Output, stepCountIs } from "ai"
-import { google } from "@ai-sdk/google"
+import { Output, stepCountIs } from "ai"
 import { z } from "zod"
 import { getServerSession } from "@/lib/get-session"
-import { DEFAULT_GATEWAY_ID } from "@/lib/llm-models"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { randomUUID } from "crypto"
 import { request as httpsRequest } from "node:https"
 import { request as httpRequest } from "node:http"
@@ -550,17 +549,15 @@ export async function updateClient(
     .where(eq(client.id, clientId))
 }
 
-// ── Web lookup (Gemini + grounded google_search) ─────────────────────
-
-// External web search + extraction. Gemini 3.1 Flash Lite runs
-// `google_search` grounding alongside function tools and is cheaper than
-// 2.5 Flash; see src/lib/llm-models.ts.
-const LOOKUP_RESEARCH_MODEL = DEFAULT_GATEWAY_ID
-const LOOKUP_EXTRACT_MODEL = DEFAULT_GATEWAY_ID
+// ── Web lookup (grounded web search + structured extract) ────────────
+//
+// Two AI processes: `clients.enrichment_research` (web_search capability)
+// and `clients.enrichment_extract` (structured output). Models are picked
+// by the AI runtime (src/server/ai/), not here.
 
 // ── Direct homepage fetch (precision booster for the extract pass) ────
 //
-// Grounded google_search returns snippets, not full page bodies — so an
+// Grounded web search returns snippets, not full page bodies — so an
 // address sitting in a homepage footer / Impressum frequently never reaches
 // the model. When we already know the company's own URL, we additionally
 // fetch the homepage + a few likely contact/legal pages and feed the raw
@@ -896,14 +893,15 @@ const lookupExtractSchema = z.object({
 })
 
 /**
- * Run a web lookup against Gemini for the given client. Two-pass:
+ * Run a web lookup for the given client. Two-pass:
  *
- *   1. RESEARCH — call gemini-2.5-flash with the `google_search` tool.
+ *   1. RESEARCH — process `clients.enrichment_research` with the web
+ *      search tool (capability `web_search`).
  *      The model writes a short freeform research note about the company
  *      using whatever it learns from the web. We capture the grounded
  *      sources (URL + title) the model used.
  *
- *   2. EXTRACT — call gemini-2.5-flash again with structured-output but
+ *   2. EXTRACT — process `clients.enrichment_extract`, structured output but
  *      no tools, feeding it the research note + the input client's
  *      current fields. Returns up to 3 candidate matches.
  *
@@ -923,8 +921,9 @@ export async function lookupClientOnWeb(
   clientId: string,
   hints?: ClientLookupHints,
 ): Promise<ClientLookupResult> {
-  const { activeOrgId } = await requireOrgContext()
+  const { session, activeOrgId } = await requireOrgContext()
   const target = await assertClientInOrg(clientId, activeOrgId)
+  const aiCtx = { orgId: activeOrgId, userId: session.user.id }
 
   // Pull active contacts for extra disambiguation context (their names +
   // emails — never the suspended ones, those are archived).
@@ -1036,12 +1035,13 @@ Write 2–4 short paragraphs of research notes summarising what you found. If mu
     ? fetchSiteTextForLookup(knownUrl)
     : Promise.resolve("")
 
-  const research = await generateText({
-    model: LOOKUP_RESEARCH_MODEL,
+  const research = await aiGenerateText({
+    process: "clients.enrichment_research",
+    ...aiCtx,
+    capabilities: ["web_search"],
     system:
-      "You are a precise company-research assistant. Use the google_search tool to find authoritative information about the given company. Prefer official websites, LinkedIn company pages, and corporate registries over social media or aggregators. Never invent details — if a field can't be confirmed by the search results, say so explicitly.",
+      "You are a precise company-research assistant. Use the web search tool to find authoritative information about the given company. Prefer official websites, LinkedIn company pages, and corporate registries over social media or aggregators. Never invent details — if a field can't be confirmed by the search results, say so explicitly.",
     prompt: researchPrompt,
-    tools: { google_search: google.tools.googleSearch({}) },
     // Bound the search → fetch → answer loop so the model can't spiral.
     stopWhen: stepCountIs(5),
     // Same input must give the same answer: two runs of this lookup used to
@@ -1051,7 +1051,7 @@ Write 2–4 short paragraphs of research notes summarising what you found. If mu
 
   const siteText = await sitePromise
 
-  // Grounded Gemini exposes the URLs it consulted on `result.sources`.
+  // Grounded search exposes the URLs it consulted on `result.sources`.
   // The Source union has both 'url' and 'document' variants — narrow to
   // url before we read .url / .title.
   const sources: ClientLookupSource[] = (research.sources ?? []).flatMap(
@@ -1089,8 +1089,9 @@ ${research.text || "(no research output)"}
 
 Based on the research notes, extract up to 3 candidate companies that could be the right match for this CRM record. Sort by confidence (best first). For each candidate, fill every field that the research notes confirm, and use empty strings for fields the research didn't establish. Rate confidence by how well the candidate fits the operator-confirmed parameters and the record's address / contact email. Drop any candidate that contradicts an operator-confirmed parameter — do not return it as a lower-confidence alternative.`
 
-  const { output: extracted } = await generateText({
-    model: LOOKUP_EXTRACT_MODEL,
+  const { output: extracted } = await aiGenerateText({
+    process: "clients.enrichment_extract",
+    ...aiCtx,
     output: Output.object({ schema: lookupExtractSchema }),
     system:
       "You convert research notes and raw company-website text into structured candidate records. Never invent fields — if neither the research notes nor the website text confirms a value, return an empty string for that field. When raw website text is provided it is primary-source evidence and outranks the research notes. Operator-confirmed parameters outrank third-party sources. Use empty arrays for the candidates list if no plausible match was found.",

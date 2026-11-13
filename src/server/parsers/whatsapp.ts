@@ -1,9 +1,9 @@
 import "server-only"
 
 import { createHash } from "node:crypto"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
-import { PARSER_CONFIG } from "@/lib/parser-config"
 import {
   assembleMarkdown,
   buildFrontmatter,
@@ -13,7 +13,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 
@@ -424,6 +426,8 @@ export type ParsedWhatsAppGroup = {
     authors: string[]
   }
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 // Mirrors `parseChatMessage` from `chat.ts`: deterministic frontmatter
@@ -433,9 +437,11 @@ export type ParsedWhatsAppGroup = {
 // no API to call, the conversation is the local archive.
 export async function parseWhatsAppGroup(
   input: ParseWhatsAppGroupInput,
+  ai: ParserAiContext,
 ): Promise<ParsedWhatsAppGroup> {
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.text.model,
+  const result = await aiGenerateText({
+    process: "parsing.chat_message",
+    ...ai,
     output: Output.object({ schema: analysisSchema }),
     system: `You are a precise WhatsApp chat parsing assistant. Extract structured metadata from a multi-message group transcript. Never fabricate facts — only return what is present in the conversation.
 
@@ -447,6 +453,7 @@ For WhatsApp specifically: the 'author/sender' is each of the conversation parti
       rawText: input.rawText,
     }),
   })
+  const analysis = result.output
 
   const urls = extractUrls(input.rawText)
   const nowIso = new Date().toISOString()
@@ -482,6 +489,7 @@ For WhatsApp specifically: the 'author/sender' is each of the conversation parti
       sourceSystem: "WhatsApp",
       authors: input.authors,
     },
+    parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
       summary: analysis.summary,

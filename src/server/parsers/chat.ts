@@ -1,9 +1,9 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
 import { getChatClient, listChatMembers } from "@/lib/google-chat"
 import type { GchatCredentials } from "@/server/providers/handlers"
-import { PARSER_CONFIG } from "@/lib/parser-config"
 import {
   assembleMarkdown,
   buildFrontmatter,
@@ -13,7 +13,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 
@@ -75,6 +77,8 @@ export type ParsedChatMessage = {
   threadId: string | null
   sourceCreatedAt: string | null
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 /**
@@ -87,12 +91,13 @@ export type ParsedChatMessage = {
  * yet, recipients will be empty rather than error.
  *
  * Content-derived fields (summary, mentions, companies, products, language,
- * clean markdown body) are produced by the LLM via generateText +
+ * clean markdown body) are produced by the LLM via aiGenerateText +
  * Output.object().
  */
 export async function parseChatMessage(
   messageName: string,
   creds: GchatCredentials,
+  ai: ParserAiContext,
 ): Promise<ParsedChatMessage> {
   if (!/^spaces\/[^/]+\/messages\/[^/]+$/.test(messageName)) {
     throw new Error(
@@ -124,8 +129,9 @@ export async function parseChatMessage(
     : null
   const nowIso = new Date().toISOString()
 
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.text.model,
+  const result = await aiGenerateText({
+    process: "parsing.chat_message",
+    ...ai,
     output: Output.object({ schema: analysisSchema }),
     system: `You are a precise Google Chat message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.
 
@@ -134,6 +140,7 @@ ${MENTIONED_PEOPLE_PROMPT}
 For Chat specifically: the 'author/sender' is the message author shown above; don't include them in mentionedPeople. Channel members listed above are also captured elsewhere — don't include them either unless the body explicitly attributes them with an organization (e.g. quotes an email or names their company). When inferring organization from the author's affiliation, you can't always derive it from a Chat author — only emit a medium-confidence inferred org when the body text itself makes the author's company unambiguous.`,
     prompt: buildLlmPrompt({ author, recipients, bodyText }),
   })
+  const analysis = result.output
 
   const sourceId = `gchat:${messageId}`
   const frontmatter: SourceFrontmatter = {
@@ -186,6 +193,7 @@ For Chat specifically: the 'author/sender' is the message author shown above; do
     spaceName,
     threadId: threadLastSegment,
     sourceCreatedAt,
+    parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
       summary: analysis.summary,

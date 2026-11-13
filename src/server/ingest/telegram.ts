@@ -310,9 +310,11 @@ async function persistTelegramMessage(
 // blocks the ack or the fetch response.
 export async function parseAndUploadTelegramItem(
   itemId: string,
+  // The signed-in user on the manual Fetch path; null for the webhook.
+  opts: { userId: string | null },
 ): Promise<void> {
   try {
-    const parsed = await parseSourceItem(itemId)
+    const parsed = await parseSourceItem(itemId, opts)
     if (parsed.parentStatus !== "complete") {
       console.warn(
         `[telegram] post-ingest parse not complete for ${itemId}: ` +
@@ -407,6 +409,8 @@ const FETCH_PAGE_LIMIT = 100
 
 export async function fetchTelegramUpdates(
   sourceId: string,
+  // The signed-in user who clicked Fetch (attributed on the parse calls).
+  opts: { userId: string | null },
 ): Promise<TelegramFetchResult> {
   const rows = await db
     .select({
@@ -481,7 +485,7 @@ export async function fetchTelegramUpdates(
   // back to the daily pipeline. Telegram text parses fast, so even a large pull
   // stays comfortably inside the route's maxDuration.
   for (const itemId of newItemIds) {
-    await parseAndUploadTelegramItem(itemId)
+    await parseAndUploadTelegramItem(itemId, opts)
   }
 
   return { fetched, ingested, ignored, webhookActive: false }

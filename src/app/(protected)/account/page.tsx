@@ -12,6 +12,7 @@ import { schema } from "@/db/schema"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { PageLoader } from "@/components/blocks/page-loader"
+import { AccountAiUsage } from "@/components/blocks/account-ai-usage"
 
 type User = {
   id: string
@@ -125,6 +126,7 @@ export default function AccountPage() {
           {isOwner && user && (
             <TabsTrigger value="members">Участники</TabsTrigger>
           )}
+          {isOwner && <TabsTrigger value="ai-usage">Использование ИИ</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="info" className="flex flex-col gap-4">
@@ -162,6 +164,14 @@ export default function AccountPage() {
                 />
               </CardContent>
             </Card>
+          </TabsContent>
+        )}
+
+        {/* Owners only; the API checks the owner role itself. Mounted only
+            when opened, so the page does not load usage data up front. */}
+        {isOwner && (
+          <TabsContent value="ai-usage">
+            <AccountAiUsage />
           </TabsContent>
         )}
       </Tabs>

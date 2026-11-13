@@ -344,14 +344,18 @@ Visible only to platform admins (`user.role === 'admin'`). Tabs:
 
 | Tab | What it does | API / server |
 | --- | --- | --- |
-| «Пользователи» (Users) | List users, role, ban, edit memberships in any org (reconcile, last-owner guard) | `api/admin/user-organizations`; better-auth admin plugin; `admin-organizations.ts`, `users.ts` |
+| «Пользователи» (Users) | List users, role, ban, edit memberships in any org (reconcile, last-owner guard) | `api/admin/user-organizations`; better-auth admin plugin; `admin-organizations.ts` |
 | «Организации» (Organizations) | Edit any org | `api/admin/organizations` |
 | «Шаблоны» (Templates) | CRUD of source templates | `api/admin/templates`, `templates.ts` |
 | «Источники» (Sources) | Create/edit any source, credentials, config, auto-parse | `api/admin/sources` (+ `/config`, `/credentials`), `admin-sources.ts` |
 | «Сброс источника» (Source reset) | Teardown: hard delete selected threads of a source plus the cards, companies, contacts, deals, tasks and orders that only they produced; typed confirmation; audited in `teardown_log` | `api/admin/teardown/{sources,preview,execute}`, `teardown.ts` |
+| «Модели» (Models) | Read-only AI model registry: every model of each AI gateway with prices and capabilities; filters (gateway, type, vendor, capabilities, search, available only), sortable, detail drawer (full pricing, price history, data source per field); «Синхронизировать» (Sync) button. Spec: `docs/specs/models/02-model-registry.md` | `api/admin/ai/models`, `api/admin/ai/catalog/sync`; `src/server/ai/{registry,catalog}` |
+| «Процессы ИИ» (AI processes) | The model of every place that calls AI (18 processes, grouped): primary + up to 3 fallbacks, picked only from compatible models (capabilities, vendor web-search tool), cheapest first; for the AI chat, cards and deal discovery also the list users may pick from; reset to default; warnings when a chosen model became unavailable; «≈ $ / 1 000 вызовов» and 30-day usage per process; «Правила выбора моделей» (ZDR only, no training only, allowed vendors — a save that would leave a process without a compliant model is refused). Changes apply within a minute, no deploy. Spec: `docs/specs/models/03-processes-and-model-selection.md` | `api/admin/ai/processes`; `src/server/ai/registry/assignments.ts` |
+| «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost per day stacked by process or model, breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history). Spec: `docs/specs/models/04-usage-and-cost.md` | `api/admin/ai/usage`; `src/server/ai/usage.ts`, `usage-stats.ts` |
 | «Настройки» (Settings) | Placeholder ("no platform settings yet") | — |
 
 Also admin-only: `POST /api/admin/pipeline/run`, `GET /api/admin/pipeline/stats`.
+The model catalog also refreshes daily, as phase 0 of the daily pipeline.
 Teardown keeps a company/contact if any item outside the selected threads also
 "produced" it (shared-safe rule), and resets the sync cursor only on a full
 source reset.
@@ -363,12 +367,16 @@ source reset.
   Platform admins can change their own email; it becomes verified at the next
   OTP sign-in.
 - `/account` (title = org name): tab «Информация об организации» (owner edits
-  profile fields, logo, «Своя организация» identity registry) and tab
-  «Участники» (Members — owners only: roles, remove, invite).
+  profile fields, logo, «Своя организация» identity registry), tab
+  «Участники» (Members — owners only: roles, remove, invite) and tab
+  «Использование ИИ» (AI usage — owners only: calls and cost WITH the platform
+  markup per function and per user; never the gateway cost, markup % or model
+  ids; `api/account/ai-usage`, spec `docs/specs/models/05-markup-and-end-user-cost.md`).
 - Invitations: owner invites by email → email with
   `/accept-invitation/<id>` → invitee signs in with an OTP sent to the invited
   address → accepts → active org is set. `/sign-up` blocks self sign-up when the
   email already has a pending invite.
-- Server: `organizations.ts`, `members.ts`, `invitations.ts`, `user-avatar.ts`,
-  `api-keys.ts`; API: `api/organization`, `api/session`, `api/auth/keys`,
-  `api/invitations/*`.
+- Server: `organizations.ts`, `invitations.ts`, `user-avatar.ts`,
+  `api-keys.ts` (member management goes through the better-auth organization
+  plugin); API: `api/organization`, `api/auth/keys`, `api/invitations/*`,
+  `api/account/ai-usage`.

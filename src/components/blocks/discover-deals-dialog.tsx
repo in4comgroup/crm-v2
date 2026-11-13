@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select"
 import { Loader, Sparkles } from "lucide-react"
 import { toast } from "sonner"
-import { MODELS, DEFAULT_MODEL_KEY } from "@/lib/llm-models"
+import { useAiProcessModels } from "@/lib/use-ai-process-models"
 import type { SourceSummary } from "@/server/sources"
 import type { RuleRow } from "@/app/api/rules/route"
 import type {
@@ -86,7 +86,15 @@ export function DiscoverDealsDialog({
   const [rules, setRules] = useState<RuleRow[]>([])
   const [ruleId, setRuleId] = useState<string>("")
 
-  const [modelKey, setModelKey] = useState<string>(DEFAULT_MODEL_KEY)
+  // Model picker: admin-allowed models for the `deals.discovery` process.
+  // Until the user picks one, the process default is preselected.
+  const {
+    models,
+    defaultModelId,
+    loading: modelsLoading,
+  } = useAiProcessModels("deals.discovery")
+  const [pickedModelId, setPickedModelId] = useState<string | null>(null)
+  const modelId = pickedModelId ?? defaultModelId ?? ""
   const [includeAlreadyAnalyzed, setIncludeAlreadyAnalyzed] = useState(false)
   // Dry run: preview what the rule WOULD do, writing nothing. The rule-testing
   // loop — iterate wording, re-run, no duplicates created, no items stamped.
@@ -214,7 +222,7 @@ export function DiscoverDealsDialog({
           to: range.to,
           sourceIds: effectiveSourceIds,
           ruleId,
-          modelKey,
+          modelId: modelId || undefined,
           includeAlreadyAnalyzed,
           dryRun,
         }),
@@ -439,14 +447,22 @@ export function DiscoverDealsDialog({
             >
               Модель
             </Label>
-            <Select value={modelKey} onValueChange={setModelKey}>
+            <Select
+              value={modelId}
+              onValueChange={setPickedModelId}
+              disabled={modelsLoading || models.length === 0}
+            >
               <SelectTrigger id="discover-deals-model" className="w-full">
-                <SelectValue />
+                <SelectValue
+                  placeholder={
+                    modelsLoading ? "Загрузка моделей…" : "Модель по умолчанию"
+                  }
+                />
               </SelectTrigger>
               <SelectContent>
-                {MODELS.map((m) => (
-                  <SelectItem key={m.key} value={m.key}>
-                    {m.label}
+                {models.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name}
                   </SelectItem>
                 ))}
               </SelectContent>

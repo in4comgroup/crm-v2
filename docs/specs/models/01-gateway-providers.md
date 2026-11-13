@@ -76,6 +76,7 @@ interface AiGatewayAdapter {
     providerName?: string                         // gen_ai.provider.name of the upstream
   }
   // Optional capabilities — absent = not supported by this gateway
+  listCatalog?(gw: GatewayConfig): Promise<NormalizedModel[]>   // the gateway's own catalog, read by the "gateway-api" source
   lookupCost?(responseId: string, gw: GatewayConfig): Promise<number | null>   // USD
   fallbackModelsSupported: boolean                // gateway-side model fallback
   // Vendor tools for a capability, for the served model's vendor
@@ -95,6 +96,7 @@ Vercel adapter:
 
 | Method | Vercel AI Gateway |
 | --- | --- |
+| `listCatalog` | `GET <config.baseUrl>/models` (public); USD/token → USD/1M; tags → capability booleans (**built in P1**) |
 | `languageModel` | `gateway(modelId)` (`@ai-sdk/gateway`) |
 | `callOptions` | `providerOptions.gateway = { models: fallbacks, tags, user, zeroDataRetention }` |
 | `readResult` | `providerMetadata.gateway.generationId`, routing attempts |

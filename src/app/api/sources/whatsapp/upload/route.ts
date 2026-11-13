@@ -23,8 +23,6 @@ import {
   UnsupportedOfficeTypeError,
 } from "@/server/parsers/dropoff"
 
-const PARSER_MODEL = "google/gemini-2.5-flash"
-
 // WhatsApp video parsing dominates wall-clock — match the per-item
 // Parse route's ceiling so a 50 MB MP4 still fits comfortably.
 export const maxDuration = 300
@@ -306,7 +304,7 @@ export async function POST(request: NextRequest) {
         description: "",
         userName,
         uploadedAt: now.toISOString(),
-      })
+      }, { orgId: activeOrgId, userId: session.user.id })
 
       const rootId = randomUUID()
       const firstBlock = parsed.blocks[0]
@@ -331,7 +329,8 @@ export async function POST(request: NextRequest) {
         fetchedAt: now,
         parseStatus: "complete",
         parsedAt: now,
-        parserModel: PARSER_MODEL,
+        // The model that actually parsed this file (parse runs before insert).
+        parserModel: firstBlock.parserModel,
         parsedMarkdown: firstBlock.markdown,
       })
 
@@ -357,7 +356,7 @@ export async function POST(request: NextRequest) {
           fetchedAt: now,
           parseStatus: "complete",
           parsedAt: now,
-          parserModel: PARSER_MODEL,
+          parserModel: extra.parserModel,
           parsedMarkdown: extra.markdown,
         })
       }

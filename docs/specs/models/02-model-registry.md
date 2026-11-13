@@ -68,9 +68,9 @@ in models.dev (the Vercel API gives USD per token; the source converts).
 | `cost_web_search` | numeric(14,6) | *ext* | nullable; USD per 1,000 searches (unit to verify against the invoice) |
 | `cost_raw` | jsonb | *ext* | Full source price object (tiers, service tiers, regional, media) |
 | `knowledge` | text | `knowledge` | Knowledge cutoff |
-| `release_date` | date | `release_date` | |
-| `last_updated` | date | `last_updated` | |
-| `status` | text | `status` | e.g. deprecated / beta, from the source |
+| `release_date` | text | `release_date` | ISO date as the source gives it |
+| `last_updated` | text | `last_updated` | ISO date as the source gives it |
+| `status` | text | `status` | e.g. deprecated / beta, from the source. Vercel: `deprecated` when `deprecated_at` is in the past |
 | `zdr` | text | *ext* | Zero data retention: all / some / none |
 | `no_training` | text | *ext* | all / some / none |
 | `regions` | text[] | *ext* | |
@@ -110,6 +110,11 @@ Each catalog source maps its own data to the record (e.g. Vercel tag
   - Later sources (models.dev) only **fill empty fields** (e.g. `family`,
     `knowledge`, a missing capability or price). `field_sources` records
     where each value came from.
+  - Exception: `input_modalities` / `output_modalities` are the **union** of
+    all sources (`field_sources` = `gateway-api+models-dev`). Measured: Vercel
+    lists only text/image/pdf for Gemini 2.5 Flash, which transcribes audio
+    and video in production. The models-dev source therefore also adds the
+    model maker's own models.dev entry (by `canonical_model_id`).
   - Matching across sources by `model_id`, then by `canonical_model_id`.
 - Models missing from the authoritative source get `is_available = false`
   (never deleted: usage events reference them).
@@ -142,10 +147,18 @@ Toolbar (white toolbar convention):
 
 Table columns: Model (name + id), Vendor, Type, Context, Input $/1M,
 Output $/1M, Capabilities (icons), ZDR, «Используется в» (used by N
-processes). The drawer also shows `field_sources` («источник данных») per field. Sortable by name, vendor, price, context. Server-paginated.
+processes — added in P2, when processes exist). The drawer also shows `field_sources` («источник данных») per field. Sortable by name, vendor, price, context. Server-paginated.
 
 Row click → side drawer: all fields, full pricing (tiers, service tiers,
-regional, media prices), description, processes that use the model, link to
-usage statistics for the model.
+regional, media prices), price history, data source per field, description.
+Added later: processes that use the model (P2), link to its usage
+statistics (P3).
+
+**Implemented in P1** (2026-11-13): `src/components/blocks/admin-ai-models.tsx`,
+API `api/admin/ai/models` + `api/admin/ai/catalog/sync`, server
+`src/server/ai/{gateways,catalog-sources,catalog,registry}`, migrations
+`0005_ai_model_registry` (tables) + `0006_ai_model_registry_seed` (trigram
+index, `vercel` row). The daily sync runs as phase 0 of `runDailyPipeline`.
+Measured: one sync = 511 models in ~5 s; a re-run changes no prices.
 
 The registry is read-only in the UI; it mirrors the gateway.

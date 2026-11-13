@@ -18,8 +18,6 @@ import {
   UnsupportedOfficeTypeError,
 } from "@/server/parsers/dropoff"
 
-const PARSER_MODEL = "google/gemini-2.5-flash"
-
 // Video transcription dominates wall-clock — match the per-item Parse
 // route's ceiling so the longest path fits.
 export const maxDuration = 300
@@ -97,7 +95,7 @@ export async function POST(request: NextRequest) {
         description,
         userName,
         uploadedAt: new Date().toISOString(),
-      })
+      }, { orgId: activeOrgId, userId: session.user.id })
 
       const now = new Date()
       const rootId = randomUUID()
@@ -121,7 +119,8 @@ export async function POST(request: NextRequest) {
         fetchedAt: now,
         parseStatus: "complete",
         parsedAt: now,
-        parserModel: PARSER_MODEL,
+        // The model that actually parsed this file (parse runs before insert).
+        parserModel: firstBlock.parserModel,
         parsedMarkdown: firstBlock.markdown,
       })
 
@@ -144,7 +143,7 @@ export async function POST(request: NextRequest) {
           fetchedAt: now,
           parseStatus: "complete",
           parsedAt: now,
-          parserModel: PARSER_MODEL,
+          parserModel: extra.parserModel,
           parsedMarkdown: extra.markdown,
         })
         childCount++

@@ -1,6 +1,5 @@
 import {
   convertToModelMessages,
-  streamText,
   createUIMessageStream,
   createUIMessageStreamResponse,
   stepCountIs,
@@ -21,7 +20,7 @@ import { listClients } from "@/server/clients"
 import { listContacts } from "@/server/contacts"
 import { listDeals } from "@/server/deals"
 import { searchWeb } from "@/server/web-search"
-import { DEFAULT_MODEL_KEY, getGatewayId } from "@/lib/llm-models"
+import { aiStreamText } from "@/server/ai/runtime"
 import {
   entitySearchScore,
   FIELD_WEIGHT,
@@ -30,10 +29,9 @@ import {
 
 export const maxDuration = 120
 
-// Model dictionary lives in src/lib/llm-models.ts so the chat picker, the
-// Explore-sources dialog, and this route share one source of truth.
-// All requests route through Vercel AI Gateway (auth via AI_GATEWAY_API_KEY).
-// Plain "provider/model" strings passed to streamText() are auto-routed by AI SDK v6.
+// The model comes from the AI process «ИИ чат» (`chat.assistant`): the
+// admin's choice on /settings → «Процессы ИИ», or the user's pick from the
+// admin-allowed list (docs/specs/models/03-processes-and-model-selection.md).
 
 // Builds the source-search tool set. All three execute server-side and
 // are scoped to the caller's active organization — listing only that
@@ -58,11 +56,11 @@ function toSourceHit(row: SourceItemRow) {
   }
 }
 
-// The web half of the engine. `searchWeb` runs its own grounded Gemini
-// sub-call (see src/server/web-search.ts for why Google's `google_search`
-// can't just be passed through to the chat model) so it is provider-agnostic
-// and always registered — no session or org needed to read the public web.
-const webTools = {
+// The web half of the engine. `searchWeb` runs its own model call (process
+// `chat.web_search`, see src/server/web-search.ts) with the gateway's
+// web-search tool, so it works whatever model the chat itself runs on.
+// Org + user are passed for attribution of that call.
+const buildWebTools = (ai: { orgId: string; userId: string }) => ({
   searchWeb: tool({
     description:
       "Search the public internet and return grounded findings plus the source URLs consulted. Use it for anything the user's own records can't answer — what a company does, who its people are, market/news context, public contact details. Always use it before stating a fact about a named real-world company, person, product or event.",
@@ -74,9 +72,9 @@ const webTools = {
           "What to look up, as a self-contained search query (include the company/person name — this tool sees no chat history).",
         ),
     }),
-    execute: async ({ query }) => searchWeb(query),
+    execute: async ({ query }) => searchWeb(query, ai),
   }),
-} as const
+})
 
 function buildSourceTools(organizationId: string | null) {
   if (!organizationId) return undefined
@@ -306,13 +304,13 @@ export async function POST(req: Request) {
   try {
     const {
       messages,
-      model: modelKey = DEFAULT_MODEL_KEY,
+      model: requestedModelId,
     }: {
       messages: UIMessage[]
+      // A model id from GET /api/ai/models?process=chat.assistant. Ids
+      // outside the admin-allowed list are ignored by the runtime.
       model?: string
     } = await req.json()
-
-    const gatewayId = getGatewayId(modelKey)
 
     // ── One universal search engine ───────────────────────────────────
     //
@@ -329,22 +327,25 @@ export async function POST(req: Request) {
 
     // Web search is an ordinary function tool, so every provider can call it.
     const tools = {
-      ...webTools,
+      ...buildWebTools({ orgId: sourceOrgId, userId: session.user.id }),
       ...(sourceTools ?? {}),
     }
     const hasTools = Object.keys(tools).length > 0
 
     console.log(
-      "[chat] gateway:",
-      gatewayId,
+      "[chat] requested model:",
+      requestedModelId ?? "-",
       "org:",
       sourceOrgId ?? "-",
       "tools:",
       Object.keys(tools),
     )
 
-    const result = streamText({
-      model: gatewayId,
+    const result = await aiStreamText({
+      process: "chat.assistant",
+      orgId: sourceOrgId,
+      userId: session.user.id,
+      requestedModelId,
       system: buildSystemPrompt({
         internal: sourceTools !== undefined,
         web: true,

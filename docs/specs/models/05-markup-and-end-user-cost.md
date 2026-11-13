@@ -59,3 +59,22 @@ On the «Использование ИИ» tab, block «Наценка»:
 - **Never shown to end users:** gateway cost, markup %, model ids (shown as
   the process name only).
 - **Currency:** USD (gateway prices are USD).
+
+## 6. Implementation notes (P4, 2026-11-13)
+
+Built: `platform_setting` + `platform_setting_log` (migration
+`0009_platform_setting`), the generic typed settings module
+`src/server/platform-settings.ts` (keys, zod schemas, defaults, 60 s cache,
+change log), API `api/admin/ai/settings`, the «Наценка» block
+(`admin-ai-markup.tsx`) and the «С наценкой» KPI / column on «Использование
+ИИ», and the owner tab on `/account` (`account-ai-usage.tsx`, API
+`api/account/ai-usage`).
+
+- Every usage event stores `markup_percent` in force at call time; «С
+  наценкой» = Σ cost × (1 + markup / 100) per event, so a markup change never
+  changes past amounts. Events from before P4 have no markup (counted as 0).
+- The owner tab (org role `owner`, checked by the API) shows calls and the
+  marked-up cost per process («По функциям») and per user for interactive
+  processes. The API response has no gateway cost, markup % or model ids.
+- Example line in the admin block uses the selected period's real cost
+  ($10 when there is none).

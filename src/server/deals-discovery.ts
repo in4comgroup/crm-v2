@@ -26,8 +26,8 @@ import {
 } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
 import { getMarkdownFromR2 } from "@/lib/r2"
-import { getGatewayId } from "@/lib/llm-models"
-import { generateText, Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
+import { Output } from "ai"
 import { z } from "zod"
 import { randomUUID } from "crypto"
 
@@ -82,7 +82,10 @@ export type GenerateDealsInput = {
   to: string | null
   sourceIds: string[] | null
   ruleId: string
-  modelKey: string
+  // Optional user pick (full model id) for the user-selectable
+  // `deals.discovery` process. The AI runtime ignores it unless the admin
+  // allowed it; omitted → the process default.
+  requestedModelId?: string | null
   // When false (default), the pipeline only sees items the previous run
   // hasn't analyzed yet (or has been re-parsed since). When true, it
   // ignores `dealAnalysisScannedAt` entirely.
@@ -461,8 +464,6 @@ export async function generateDeals(
     )
     .join("\n- ")
 
-  const gatewayId = getGatewayId(input.modelKey)
-
   const result: GenerateDealsResult = {
     scanned: 0,
     dealsCreated: 0,
@@ -486,7 +487,7 @@ export async function generateDeals(
   console.log(
     `[generate-deals] starting batch · candidates=${candidates.length} ` +
       `cap=${DEAL_DISCOVERY_HARD_CAP} concurrency=${DEAL_DISCOVERY_CONCURRENCY} ` +
-      `model=${input.modelKey} dryRun=${dryRun}`,
+      `requestedModel=${input.requestedModelId ?? "(process default)"} dryRun=${dryRun}`,
   )
 
   await mapWithConcurrency(
@@ -530,8 +531,11 @@ export async function generateDeals(
       })
 
       try {
-        const { output } = await generateText({
-          model: gatewayId,
+        const { output } = await aiGenerateText({
+          process: "deals.discovery",
+          orgId: activeOrgId,
+          userId: session.user.id,
+          requestedModelId: input.requestedModelId ?? null,
           output: Output.object({ schema: dealOutputSchema }),
           system:
             "You are a precise sales-pipeline analysis assistant. " +

@@ -1,5 +1,32 @@
 import "server-only"
 import { z } from "zod"
+import { aiCallInfo } from "@/server/ai/runtime"
+
+// Who a parser's model call is for. Every parser entry point takes it and
+// spreads it into `aiGenerateText` (docs/specs/models/01-gateway-providers.md
+// §6). `orgId` = the source item's organization; `userId` = the signed-in
+// user on manual paths (upload / parse / process / fetch routes), null on
+// cron and webhook paths. A call with no organization must say `systemCall`.
+export type ParserAiContext =
+  | { orgId: string; userId: string | null; systemCall?: false }
+  | { orgId: null; userId: string | null; systemCall: true }
+
+export function parserAiContext(
+  orgId: string | null,
+  userId: string | null,
+): ParserAiContext {
+  return orgId
+    ? { orgId, userId }
+    : { orgId: null, userId, systemCall: true }
+}
+
+// The model that actually answered a parser call (after any fallback) —
+// stamped onto `source_item.parser_model`. Null when the runtime cannot tell.
+export function servedModel(
+  result: Parameters<typeof aiCallInfo>[0],
+): string | null {
+  return aiCallInfo(result)?.responseModel ?? null
+}
 
 // Junk classification — only the email parser populates this with real
 // values (it's the one provider where automated/transactional mail is
@@ -92,7 +119,7 @@ export const organizationDetailSchema = z.object({
 // A third party referenced inside the body of a source item (not the
 // author/sender, not an envelope recipient — those are captured by the
 // sync-time `participants` field). Extracted by every parser's existing
-// Gemini call via the shared schema + prompt below.
+// model call via the shared schema + prompt below.
 export type MentionedPerson = {
   name: string
   email: string // empty when not quoted in the body

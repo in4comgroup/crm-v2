@@ -15,8 +15,9 @@ import { type VercelConfig } from "@vercel/config/v1"
 // system_settings dictionary so this duplication goes away.
 //
 // The `/api/cron/daily` route validates `Authorization: Bearer
-// $CRON_SECRET` (production only). Vercel attaches this header
-// automatically when `CRON_SECRET` is set as a project env var.
+// $CRON_SECRET` in every environment (unset secret = every call rejected).
+// Vercel attaches this header automatically when `CRON_SECRET` is set as a
+// project env var.
 export const config: VercelConfig = {
   crons: [
     {

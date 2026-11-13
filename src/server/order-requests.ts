@@ -16,9 +16,9 @@ import {
   listProductCategories,
   listProductFilterOptions,
 } from "@/server/products"
-import { getGatewayId, DEFAULT_MODEL_KEY } from "@/lib/llm-models"
+import { aiGenerateText } from "@/server/ai/runtime"
 import type { OrderRequestItemFilters } from "@/lib/order-request"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
 import { z } from "zod"
 import { randomUUID } from "crypto"
 
@@ -60,7 +60,6 @@ export type CreateOrderRequestInput = {
   clientId: string
   rawText: string
   comment?: string | null
-  modelKey?: string
 }
 
 // ── LLM output schema ────────────────────────────────────────────────
@@ -320,9 +319,10 @@ export async function createAndParseOrderRequest(
       listProductFilterOptions(),
     ])
 
-    const gatewayId = getGatewayId(input.modelKey ?? DEFAULT_MODEL_KEY)
-    const { output } = await generateText({
-      model: gatewayId,
+    const { output } = await aiGenerateText({
+      process: "orders.request_split",
+      orgId: activeOrgId,
+      userId: session.user.id,
       // Deterministic split: the same client message must yield the same
       // search terms every run. At the provider default temperature the model
       // drifts the term bag (adds/drops generic kind-words like "wine", varies

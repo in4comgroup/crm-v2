@@ -13,6 +13,8 @@ import {
 } from "./parse-pending"
 import { listPendingUploadIds } from "./upload-pending"
 import { ORCHESTRATION_CONFIG } from "./config"
+import { syncAllModelCatalogs } from "@/server/ai/catalog/sync"
+import { reconcileUsageCosts } from "@/server/ai/usage"
 
 // Engine-agnostic orchestration entry point. Called by:
 //   • The Vercel Workflow (cron-triggered) — wraps this in workflow steps.
@@ -20,7 +22,7 @@ import { ORCHESTRATION_CONFIG } from "./config"
 //   • Any future scheduler we swap Vercel for — same function.
 //
 // Sequential execution by design (team decision: MVP doesn't
-// have enough volume to need parallelism, and serial keeps Gemini cost
+// have enough volume to need parallelism, and serial keeps model cost
 // predictable).
 //
 // Per-item failure isolation is layered:
@@ -45,7 +47,7 @@ export type RunPipelineResult = {
 }
 
 type PipelineErrorEntry = {
-  phase: "sync" | "parse" | "upload"
+  phase: "catalog" | "sync" | "parse" | "upload"
   sourceId?: string
   sourceItemId?: string
   message: string
@@ -89,6 +91,35 @@ export async function runDailyPipeline(
 
   const errors: PipelineErrorEntry[] = []
 
+  // ── Phase 0: AI model catalog ─────────────────────────────────────
+  // Refresh the model registry from every enabled AI gateway
+  // (docs/specs/models/02-model-registry.md §5). Isolated: a failure is
+  // logged and never stops the source pipeline.
+  try {
+    for (const r of await syncAllModelCatalogs()) {
+      if (!r.ok) {
+        pushError(errors, {
+          phase: "catalog",
+          message: `${r.gatewayId}: ${r.error ?? "sync failed"}`,
+        })
+      }
+    }
+  } catch (e) {
+    pushError(errors, {
+      phase: "catalog",
+      message: e instanceof Error ? e.message : String(e),
+    })
+  }
+  // Exact gateway cost for usage events that did not get it inline
+  // (docs/specs/models/04-usage-and-cost.md §4). Never throws.
+  const reconcile = await reconcileUsageCosts()
+  if (reconcile.failed > 0) {
+    pushError(errors, {
+      phase: "catalog",
+      message: `usage cost reconcile: ${reconcile.failed} of ${reconcile.checked} lookups failed`,
+    })
+  }
+
   // ── Phase 1: Sync ─────────────────────────────────────────────────
   // runFullSync already isolates per-source failures; we only have to
   // copy its outcomes into the error log.
@@ -115,7 +146,8 @@ export async function runDailyPipeline(
   for (const id of parseIds) {
     parseAttempted++
     try {
-      const r = await parseSourceItem(id)
+      // Cron: no user; the org comes from the item row.
+      const r = await parseSourceItem(id, { userId: null })
       if (r.parentStatus === "complete") parseComplete++
       else if (r.parentStatus === "skipped") parseSkipped++
       else if (r.parentStatus === "failed") {

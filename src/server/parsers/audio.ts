@@ -1,5 +1,6 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
 import { PARSER_CONFIG } from "@/lib/parser-config"
 import {
@@ -10,7 +11,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 
@@ -110,6 +113,8 @@ export type ParsedAudio = {
     speakerCount: number
   }
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 /**
@@ -121,6 +126,7 @@ export type ParsedAudio = {
  */
 export async function parseAudioBytes(
   input: AudioParseInput,
+  ai: ParserAiContext,
 ): Promise<ParsedAudio> {
   const { bytes, fileName, mediaType } = input
 
@@ -137,8 +143,9 @@ export async function parseAudioBytes(
 
   const modelMediaType = resolveModelMediaType(mediaType, fileName)
 
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.audio.model,
+  const result = await aiGenerateText({
+    process: "parsing.audio",
+    ...ai,
     output: Output.object({ schema: audioAnalysisSchema }),
     system: `You are a precise audio parsing assistant. Transcribe the provided recording faithfully, diarise it by speaker, and extract structured metadata. Keep speaker labels stable across segments. Do not invent content that is not present in the audio.
 
@@ -163,6 +170,7 @@ For audio specifically: the 'author/sender' is each of the SPEAKERS — don't in
       },
     ],
   })
+  const analysis = result.output
 
   // Clean speaker labels + segments server-side so frontmatter and the
   // rendered transcript stay consistent if the model returned slight
@@ -229,6 +237,7 @@ For audio specifically: the 'author/sender' is each of the SPEAKERS — don't in
       durationSeconds: analysis.durationSeconds,
       speakerCount: speakers.length,
     },
+    parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
       summary: analysis.summary,
@@ -308,10 +317,10 @@ export function isSupportedAudioType(
 }
 
 /**
- * Pick the mime type we hand to Gemini in the file part. The caller-supplied
+ * Pick the mime type we hand to the model in the file part. The caller-supplied
  * `mediaType` is whatever the source system reported (Nylas attachment header,
  * Google Chat `contentType`, browser `File.type`, …) and may be missing or
- * use a non-standard spelling. Gemini accepts `audio/mpeg` for mp3 and
+ * use a non-standard spelling. Models accept `audio/mpeg` for mp3 and
  * `audio/mp4` for m4a — normalise everything else to one of those so we
  * don't get rejected on `audio/x-m4a` or an empty `application/octet-stream`.
  */
@@ -338,7 +347,7 @@ function resolveModelMediaType(mediaType: string, fileName: string): string {
     return "audio/mp4"
   }
 
-  // mp3 variants → audio/mpeg (Gemini's documented spelling).
+  // mp3 variants → audio/mpeg (the standard spelling).
   if (mt === "audio/mp3") return "audio/mpeg"
   if (
     fn.endsWith(".mp3") &&
@@ -347,7 +356,7 @@ function resolveModelMediaType(mediaType: string, fileName: string): string {
     return "audio/mpeg"
   }
 
-  // ogg / opus variants → audio/ogg (Gemini's documented spelling). Telegram
+  // ogg / opus variants → audio/ogg (the standard spelling). Telegram
   // bot voice messages are Opus-in-Ogg and report `audio/ogg`, but some
   // clients spell it `audio/opus` or send a bare extension.
   if (mt === "audio/opus" || mt === "audio/ogg") return "audio/ogg"

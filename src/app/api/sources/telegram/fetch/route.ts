@@ -34,7 +34,9 @@ export async function POST(request: NextRequest) {
 
   try {
     await assertSourceInScope(sourceId, activeOrgId)
-    const result = await fetchTelegramUpdates(sourceId)
+    const result = await fetchTelegramUpdates(sourceId, {
+      userId: session.user.id,
+    })
     return NextResponse.json(result)
   } catch (error) {
     if (error instanceof SourceScopeError) {

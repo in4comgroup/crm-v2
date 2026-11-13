@@ -67,6 +67,8 @@ async function loadRow(itemId: string): Promise<Row | null> {
 
 export async function processSourceItem(
   itemId: string,
+  // The signed-in user who triggered the run (null for background callers).
+  opts: { userId: string | null },
 ): Promise<ProcessResult> {
   const initial = await loadRow(itemId)
   if (!initial) {
@@ -94,7 +96,7 @@ export async function processSourceItem(
   if (initial.parseStatus !== "complete" && initial.parseStatus !== "skipped") {
     parsed = true
     try {
-      const r = await parseSourceItem(itemId)
+      const r = await parseSourceItem(itemId, opts)
       if (r.parentStatus === "failed") {
         parseError = r.parentParseError ?? "Ошибка разбора"
       }

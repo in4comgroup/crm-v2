@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select"
 import { Loader, Sparkles } from "lucide-react"
 import { toast } from "sonner"
-import { MODELS, DEFAULT_MODEL_KEY } from "@/lib/llm-models"
+import { useAiProcessModels } from "@/lib/use-ai-process-models"
 import type { SourceSummary } from "@/server/sources"
 import type { RuleRow } from "@/app/api/rules/route"
 
@@ -91,7 +91,15 @@ export function ExploreSourcesDialog({
   const [rules, setRules] = useState<RuleRow[]>([])
   const [ruleId, setRuleId] = useState<string>("")
 
-  const [modelKey, setModelKey] = useState<string>(DEFAULT_MODEL_KEY)
+  // Model picker: admin-allowed models for the `cards.generation` process.
+  // Until the user picks one, the process default is preselected.
+  const {
+    models,
+    defaultModelId,
+    loading: modelsLoading,
+  } = useAiProcessModels("cards.generation")
+  const [pickedModelId, setPickedModelId] = useState<string | null>(null)
+  const modelId = pickedModelId ?? defaultModelId ?? ""
   const [includeAlreadyAnalyzed, setIncludeAlreadyAnalyzed] = useState(false)
 
   const [loadingOptions, setLoadingOptions] = useState(false)
@@ -209,7 +217,7 @@ export function ExploreSourcesDialog({
           to: range.to,
           sourceIds: effectiveSourceIds,
           ruleId,
-          modelKey,
+          modelId: modelId || undefined,
           includeAlreadyAnalyzed,
         }),
       })
@@ -424,14 +432,22 @@ export function ExploreSourcesDialog({
             >
               Модель
             </Label>
-            <Select value={modelKey} onValueChange={setModelKey}>
+            <Select
+              value={modelId}
+              onValueChange={setPickedModelId}
+              disabled={modelsLoading || models.length === 0}
+            >
               <SelectTrigger id="explore-model" className="w-full">
-                <SelectValue />
+                <SelectValue
+                  placeholder={
+                    modelsLoading ? "Загрузка моделей…" : "Модель по умолчанию"
+                  }
+                />
               </SelectTrigger>
               <SelectContent>
-                {MODELS.map((m) => (
-                  <SelectItem key={m.key} value={m.key}>
-                    {m.label}
+                {models.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name}
                   </SelectItem>
                 ))}
               </SelectContent>

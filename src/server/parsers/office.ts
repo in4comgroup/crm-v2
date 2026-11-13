@@ -1,5 +1,6 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
 import mammoth from "mammoth"
 import JSZip from "jszip"
@@ -13,7 +14,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 
@@ -89,6 +92,8 @@ export type ParsedOffice = {
     byteSize: number
   }
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 /**
@@ -99,11 +104,12 @@ export type ParsedOffice = {
  * Two-stage pipeline:
  *   1. Extract content server-side (mammoth for docx → HTML; custom
  *      jszip+xmldom extractor for pptx → slide-separated text).
- *   2. Feed extracted content to Gemini 2.5 Flash for markdown cleanup +
+ *   2. Feed extracted content to the model for markdown cleanup +
  *      metadata extraction (same schema as the PDF parser).
  */
 export async function parseOfficeBytes(
   input: OfficeParseInput,
+  ai: ParserAiContext,
 ): Promise<ParsedOffice> {
   const { bytes, fileName, mediaType } = input
 
@@ -128,9 +134,10 @@ export async function parseOfficeBytes(
       ? await extractDocxHtml(buffer)
       : await extractPptxText(buffer)
 
-  // ── Stage 2: Gemini for cleanup + metadata ────────────────────────
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.office.model,
+  // ── Stage 2: model for cleanup + metadata ─────────────────────────
+  const result = await aiGenerateText({
+    process: "parsing.office",
+    ...ai,
     output: Output.object({ schema: officeAnalysisSchema }),
     system: `You are a precise document parsing assistant. Convert the provided pre-extracted document content into clean Markdown and extract structured metadata. Never fabricate facts that are not present in the input. Preserve the document's structure faithfully.
 
@@ -139,6 +146,7 @@ ${MENTIONED_PEOPLE_PROMPT}
 For Office documents specifically: the 'author/sender' is whoever you extract into the \`senders\` field (cover, byline, signature block, slide-deck author). Don't include them in mentionedPeople. Only emit third parties referenced in the document body. When inferring organization from the author's affiliation, only do so if the document itself states the author's company unambiguously (letterhead, slide template with company, signature with affiliation).`,
     prompt: buildLlmPrompt({ format, fileName, extracted }),
   })
+  const analysis = result.output
 
   const nowIso = new Date().toISOString()
   const frontmatter: SourceFrontmatter = {
@@ -174,6 +182,7 @@ For Office documents specifically: the 'author/sender' is whoever you extract in
       format,
       byteSize: bytes.byteLength,
     },
+    parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
       summary: analysis.summary,
@@ -193,7 +202,7 @@ function buildLlmPrompt(args: {
 }): string {
   const { format, fileName, extracted } = args
   // Guardrail against pathological extractions — if a doc has 200 pages of
-  // boilerplate, clip the tail rather than blow out the Gemini context.
+  // boilerplate, clip the tail rather than blow out the model context.
   const MAX_CHARS = 120_000
   const clipped =
     extracted.length > MAX_CHARS

@@ -1,5 +1,6 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
 import { PARSER_CONFIG } from "@/lib/parser-config"
 import {
@@ -10,7 +11,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 import {
@@ -124,12 +127,15 @@ export type ParsedVideo = {
   // differs per block.
   videoAnalysis: MetadataAnalysis
   audioAnalysis: MetadataAnalysis
+  // Model that answered the single call behind both blocks
+  // (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 /**
  * Parse MP4 bytes into two structured markdown documents in a single
- * Gemini call: one for the visual summary + description, one for the
- * diarised audio transcript. Gemini handles the split natively — no
+ * model call: one for the visual summary + description, one for the
+ * diarised audio transcript. The model handles the split natively — no
  * ffmpeg / audio-extraction step needed.
  *
  * Universal across source systems — caller owns fetching bytes and
@@ -137,6 +143,7 @@ export type ParsedVideo = {
  */
 export async function parseVideoBytes(
   input: VideoParseInput,
+  ai: ParserAiContext,
 ): Promise<ParsedVideo> {
   const { bytes, fileName, mediaType } = input
 
@@ -151,8 +158,9 @@ export async function parseVideoBytes(
     throw new UnsupportedVideoTypeError(mediaType)
   }
 
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.video.model,
+  const result = await aiGenerateText({
+    process: "parsing.video",
+    ...ai,
     output: Output.object({ schema: videoAnalysisSchema }),
     system: `You are a precise video parsing assistant. Analyse the provided video both visually and aurally. Produce a faithful visual description AND a faithful diarised transcript of any speech. Extract structured metadata. Never fabricate facts that are not present in the video.
 
@@ -177,6 +185,7 @@ For video specifically: the 'author/sender' is each of the SPEAKERS — don't in
       },
     ],
   })
+  const analysis = result.output
 
   const segments = analysis.segments.map((s) => ({
     ...s,
@@ -270,6 +279,7 @@ For video specifically: the 'author/sender' is each of the SPEAKERS — don't in
       durationSeconds: analysis.durationSeconds,
       speakerCount: speakers.length,
     },
+    parserModel: servedModel(result),
     videoAnalysis: { ...sharedFields, summary: analysis.videoSummary },
     audioAnalysis: { ...sharedFields, summary: audioSummary },
   }

@@ -1,7 +1,7 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
-import { PARSER_CONFIG } from "@/lib/parser-config"
 import {
   assembleMarkdown,
   buildFrontmatter,
@@ -11,7 +11,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 
@@ -70,13 +72,17 @@ export type ParseTelegramMessageInput = {
 export type ParsedTelegramMessage = {
   markdown: string
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 export async function parseTelegramMessage(
   input: ParseTelegramMessageInput,
+  ai: ParserAiContext,
 ): Promise<ParsedTelegramMessage> {
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.text.model,
+  const result = await aiGenerateText({
+    process: "parsing.chat_message",
+    ...ai,
     output: Output.object({ schema: analysisSchema }),
     system: `You are a precise Telegram message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.
 
@@ -85,6 +91,7 @@ ${MENTIONED_PEOPLE_PROMPT}
 For Telegram specifically: the 'author/sender' is the message sender shown above; don't include them in mentionedPeople. Only emit third parties referenced inside the message body. When inferring an organization from the sender's affiliation, only do so if the body text itself makes their company unambiguous (they introduce themselves with an affiliation, or quote a business email).`,
     prompt: buildLlmPrompt({ sender: input.sender, rawText: input.rawText }),
   })
+  const analysis = result.output
 
   const urls = extractUrls(input.rawText)
   const nowIso = new Date().toISOString()
@@ -115,6 +122,7 @@ For Telegram specifically: the 'author/sender' is the message sender shown above
 
   return {
     markdown,
+    parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
       summary: analysis.summary,

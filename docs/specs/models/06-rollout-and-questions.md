@@ -6,10 +6,10 @@ Each phase ships on its own and leaves the app working.
 
 | Phase | Content | Visible result |
 | --- | --- | --- |
-| P1 | Tables `ai_gateway` (+ seed `vercel`), `ai_model`, `ai_model_price_history`; catalog sources `gateway-api` (Vercel) + `models-dev`; catalog sync (daily + button); tab «Модели» | Admin sees all gateway models with prices and capabilities |
-| P2 | ESLint boundary rules (01 §3); process catalog in code; `ai_process_assignment` (+ log); runtime layer `aiGenerateText` / `aiStreamText`; all 21 call sites migrated; org/user threaded through; hard-coded model lists removed; chat picker reads allowed models | No behaviour change (defaults = today's models); admin can switch models per process in «Процессы ИИ» |
-| P3 | `ai_usage_event`; recording in the runtime layer; reconcile job; tab «Использование ИИ» with statistics | Admin sees cost per org / process / model |
-| P4 | `platform_setting` (+ log); markup block; end-user view (per answers to Q1–Q3); model policy (ZDR / vendors) | Markup set; end users see their AI cost |
+| P1 ✅ (2026-11-13) | Tables `ai_gateway` (+ seed `vercel`), `ai_model`, `ai_model_price_history`; catalog sources `gateway-api` (Vercel) + `models-dev`; catalog sync (daily + button); tab «Модели» | Admin sees all gateway models with prices and capabilities |
+| P2 ✅ (2026-11-13) | ESLint boundary rules (01 §3); process catalog in code; `ai_process_assignment` (+ log); runtime layer `aiGenerateText` / `aiStreamText`; all 21 call sites migrated; org/user threaded through; hard-coded model lists removed; chat picker reads allowed models | No behaviour change (defaults = today's models); admin can switch models per process in «Процессы ИИ» |
+| P3 ✅ (2026-11-13) | `ai_usage_event`; recording in the runtime layer; reconcile job; tab «Использование ИИ» with statistics | Admin sees cost per org / process / model |
+| P4 ✅ (2026-11-13) | `platform_setting` (+ log); markup block; end-user view (per answers to Q1–Q3); model policy (ZDR / vendors) | Markup set; end users see their AI cost |
 
 DB changes go through Drizzle migrations only (root `AGENTS.md` → Working
 rules → 3). Seeds (`vercel` gateway row) go into a custom migration.

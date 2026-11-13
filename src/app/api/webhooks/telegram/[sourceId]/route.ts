@@ -80,7 +80,7 @@ export async function POST(
     // `parseAndUploadTelegramItem` swallows failures and the pipeline retries.
     if (result.outcome === "ingested" && result.inserted && result.itemId) {
       const itemId = result.itemId
-      after(() => parseAndUploadTelegramItem(itemId))
+      after(() => parseAndUploadTelegramItem(itemId, { userId: null }))
     }
     return NextResponse.json({ ok: true }, { status: 200 })
   } catch (err) {

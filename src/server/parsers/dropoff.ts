@@ -1,5 +1,8 @@
 import "server-only"
-import type { MetadataAnalysis } from "@/server/parsers/_shared"
+import type {
+  MetadataAnalysis,
+  ParserAiContext,
+} from "@/server/parsers/_shared"
 import { parsePdfBytes, PdfTooLargeError } from "@/server/parsers/pdf"
 import {
   parseImageBytes,
@@ -41,6 +44,8 @@ export type DropoffBlock = {
   sourceId: string
   markdown: string
   analysis: MetadataAnalysis
+  // Model that produced this block (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 export type ParsedDropoffFile = {
@@ -80,6 +85,7 @@ export type DropoffParseInput = {
  */
 export async function parseDropoffFile(
   input: DropoffParseInput,
+  ai: ParserAiContext,
 ): Promise<ParsedDropoffFile> {
   const { bytes, fileName, mediaType, dropoffId } = input
 
@@ -106,12 +112,13 @@ export async function parseDropoffFile(
       ...commonInput,
       bytes,
       fileName,
-    })
+    }, ai)
     blocks.push({
       kind: "pdf",
       sourceId,
       markdown: result.markdown,
       analysis: result.analysis,
+      parserModel: result.parserModel,
     })
   } else if (kind === "audio") {
     const result = await parseAudioBytes({
@@ -119,12 +126,13 @@ export async function parseDropoffFile(
       bytes,
       fileName,
       mediaType: resolveMediaType(mediaType, "audio/mpeg"),
-    })
+    }, ai)
     blocks.push({
       kind: "audio",
       sourceId,
       markdown: result.markdown,
       analysis: result.analysis,
+      parserModel: result.parserModel,
     })
   } else if (kind === "video") {
     const audioSourceId = `${sourceId}:audio`
@@ -140,18 +148,20 @@ export async function parseDropoffFile(
       videoParentSourceId: null,
       audioSourceId,
       audioParentSourceId: sourceId,
-    })
+    }, ai)
     blocks.push({
       kind: "video",
       sourceId,
       markdown: result.videoMarkdown,
       analysis: result.videoAnalysis,
+      parserModel: result.parserModel,
     })
     blocks.push({
       kind: "video_audio",
       sourceId: audioSourceId,
       markdown: result.audioMarkdown,
       analysis: result.audioAnalysis,
+      parserModel: result.parserModel,
     })
   } else if (kind === "office") {
     const format = detectOfficeFormat(mediaType, fileName)
@@ -166,12 +176,13 @@ export async function parseDropoffFile(
           ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
       ),
-    })
+    }, ai)
     blocks.push({
       kind: format,
       sourceId,
       markdown: result.markdown,
       analysis: result.analysis,
+      parserModel: result.parserModel,
     })
   } else {
     // image
@@ -180,12 +191,13 @@ export async function parseDropoffFile(
       bytes,
       fileName,
       mediaType: resolveMediaType(mediaType, inferImageMediaType(fileName)),
-    })
+    }, ai)
     blocks.push({
       kind: "image",
       sourceId,
       markdown: result.markdown,
       analysis: result.analysis,
+      parserModel: result.parserModel,
     })
   }
 

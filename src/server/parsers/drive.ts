@@ -1,9 +1,9 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
 import { getDriveClient } from "@/lib/google-drive"
 import type { GdriveCredentials } from "@/server/providers/handlers"
-import { PARSER_CONFIG } from "@/lib/parser-config"
 import {
   assembleMarkdown,
   buildFrontmatter,
@@ -13,7 +13,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 import { parsePdfBytes, PdfTooLargeError } from "@/server/parsers/pdf"
@@ -109,6 +111,8 @@ export type DriveBlock = {
   sourceId: string
   markdown: string
   analysis: MetadataAnalysis
+  // Model that produced this block (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 export type ParsedDriveFile = {
@@ -137,6 +141,7 @@ export type ParsedDriveFile = {
 export async function parseDriveFile(
   fileId: string,
   creds: GdriveCredentials,
+  ai: ParserAiContext,
 ): Promise<ParsedDriveFile> {
   const drive = getDriveClient(creds)
 
@@ -174,6 +179,7 @@ export async function parseDriveFile(
     ownerNames,
     webViewUrls,
     nowIso,
+    ai,
   }
 
   // Dispatch.
@@ -213,6 +219,8 @@ type DriveCtx = {
   ownerNames: string[]
   webViewUrls: string[]
   nowIso: string
+  // Org / user the model calls are for.
+  ai: ParserAiContext
 }
 
 // ── Google Docs ──────────────────────────────────────────────────────
@@ -229,7 +237,7 @@ async function parseGoogleDoc(
   const contentMarkdown =
     typeof res.data === "string" ? res.data : String(res.data ?? "")
 
-  const analysis = await runMetadataExtraction({
+  const { analysis, parserModel } = await runMetadataExtraction(ctx.ai, {
     context: `Filename: ${ctx.fileName}\nSource: Google Doc (exported as Markdown by Google's API)`,
     content: contentMarkdown,
     systemHint:
@@ -258,6 +266,7 @@ async function parseGoogleDoc(
       contentMarkdown.trim(),
     ),
     analysis: analysisFromMetadataOnly(analysis),
+    parserModel,
   }
 }
 
@@ -280,7 +289,7 @@ async function parseGoogleSheet(
 
   const preview = renderSheetPreview({ headers, rows, totalDataRows })
 
-  const analysis = await runMetadataExtraction({
+  const { analysis, parserModel } = await runMetadataExtraction(ctx.ai, {
     context: `Filename: ${ctx.fileName}\nSource: Google Sheet (first ${SHEETS_PREVIEW_ROWS} rows of ${totalDataRows} exported as CSV preview)`,
     content: preview,
     systemHint:
@@ -302,6 +311,7 @@ async function parseGoogleSheet(
     sourceId: ctx.sourceId,
     markdown: assembleMarkdown(frontmatter, analysis.summary, preview.trim()),
     analysis: analysisFromMetadataOnly(analysis),
+    parserModel,
   }
 }
 
@@ -334,13 +344,14 @@ async function parseGoogleSlides(
     threadId: null,
     sourceCreatedAt: ctx.sourceCreatedAt,
     sourceReceivedAt: ctx.sourceReceivedAt,
-  })
+  }, ctx.ai)
 
   return {
     kind: "slides",
     sourceId: ctx.sourceId,
     markdown: result.markdown,
     analysis: result.analysis,
+    parserModel: result.parserModel,
   }
 }
 
@@ -374,13 +385,14 @@ async function parseNonGoogleFile(
       ...commonInput,
       bytes,
       fileName: ctx.fileName,
-    })
+    }, ctx.ai)
     return [
       {
         kind: "pdf",
         sourceId: ctx.sourceId,
         markdown: result.markdown,
         analysis: result.analysis,
+        parserModel: result.parserModel,
       },
     ]
   }
@@ -393,13 +405,14 @@ async function parseNonGoogleFile(
         mimeType && mimeType !== "application/octet-stream"
           ? mimeType
           : "audio/mpeg",
-    })
+    }, ctx.ai)
     return [
       {
         kind: "audio",
         sourceId: ctx.sourceId,
         markdown: result.markdown,
         analysis: result.analysis,
+        parserModel: result.parserModel,
       },
     ]
   }
@@ -420,19 +433,21 @@ async function parseNonGoogleFile(
       videoParentSourceId: null,
       audioSourceId,
       audioParentSourceId: ctx.sourceId,
-    })
+    }, ctx.ai)
     return [
       {
         kind: "video",
         sourceId: ctx.sourceId,
         markdown: result.videoMarkdown,
         analysis: result.videoAnalysis,
+        parserModel: result.parserModel,
       },
       {
         kind: "video_audio",
         sourceId: audioSourceId,
         markdown: result.audioMarkdown,
         analysis: result.audioAnalysis,
+        parserModel: result.parserModel,
       },
     ]
   }
@@ -444,13 +459,14 @@ async function parseNonGoogleFile(
       bytes,
       fileName: ctx.fileName,
       mediaType: mimeType,
-    })
+    }, ctx.ai)
     return [
       {
         kind: format,
         sourceId: ctx.sourceId,
         markdown: result.markdown,
         analysis: result.analysis,
+        parserModel: result.parserModel,
       },
     ]
   }
@@ -464,13 +480,14 @@ async function parseNonGoogleFile(
       mimeType && mimeType !== "application/octet-stream"
         ? mimeType
         : inferImageMediaType(ctx.fileName),
-  })
+  }, ctx.ai)
   return [
     {
       kind: "image",
       sourceId: ctx.sourceId,
       markdown: result.markdown,
       analysis: result.analysis,
+      parserModel: result.parserModel,
     },
   ]
 }
@@ -509,19 +526,26 @@ function analysisFromMetadataOnly(
   }
 }
 
-async function runMetadataExtraction(args: {
-  context: string
-  content: string
-  systemHint: string
-}): Promise<z.infer<typeof metadataOnlySchema>> {
+async function runMetadataExtraction(
+  ai: ParserAiContext,
+  args: {
+    context: string
+    content: string
+    systemHint: string
+  },
+): Promise<{
+  analysis: z.infer<typeof metadataOnlySchema>
+  parserModel: string | null
+}> {
   const MAX_CHARS = 120_000
   const clipped =
     args.content.length > MAX_CHARS
       ? `${args.content.slice(0, MAX_CHARS)}\n\n[...truncated, ${args.content.length - MAX_CHARS} additional characters omitted]`
       : args.content
 
-  const { output } = await generateText({
-    model: PARSER_CONFIG.text.model,
+  const result = await aiGenerateText({
+    process: "parsing.document_metadata",
+    ...ai,
     output: Output.object({ schema: metadataOnlySchema }),
     system: `${args.systemHint} Never fabricate facts that are not present in the provided content.
 
@@ -530,7 +554,7 @@ ${MENTIONED_PEOPLE_PROMPT}
 For Drive documents specifically: the 'author/sender' is the file owner (provided in the context); don't include them in mentionedPeople. Only emit third parties referenced in the document body. When inferring organization from the author's affiliation, only do so if the document itself states the author's company unambiguously.`,
     prompt: `${args.context}\n\n--- BEGIN CONTENT ---\n${clipped}\n--- END CONTENT ---`,
   })
-  return output
+  return { analysis: result.output, parserModel: servedModel(result) }
 }
 
 function buildStandardFrontmatter(

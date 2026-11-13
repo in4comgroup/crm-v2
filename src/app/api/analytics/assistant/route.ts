@@ -1,6 +1,5 @@
 import {
   convertToModelMessages,
-  streamText,
   stepCountIs,
   type UIMessage,
 } from "ai"
@@ -10,7 +9,7 @@ import {
   buildAnalyticsSystemPrompt,
   buildAnalyticsTools,
 } from "@/server/analytics-assistant"
-import { DEFAULT_MODEL_KEY, getGatewayId } from "@/lib/llm-models"
+import { aiStreamText } from "@/server/ai/runtime"
 
 export const maxDuration = 60
 
@@ -19,8 +18,8 @@ export const maxDuration = 60
 //
 // The org id is bound into the tool from the SESSION — it is never a model
 // input, so no prompt injection can widen the scope to another tenant.
-
-const DEFAULT_MODEL = DEFAULT_MODEL_KEY
+//
+// Model: AI process «ИИ ассистент аналитики» (`analytics.assistant`).
 
 export async function POST(req: Request) {
   try {
@@ -45,8 +44,10 @@ export async function POST(req: Request) {
       ? new Date(new Date(`${bounds.last}T00:00:00.000Z`).getTime() + 86_400_000)
       : new Date()
 
-    const result = streamText({
-      model: getGatewayId(DEFAULT_MODEL),
+    const result = await aiStreamText({
+      process: "analytics.assistant",
+      orgId: organizationId,
+      userId: session.user.id,
       system: buildAnalyticsSystemPrompt({
         from: bounds.first ?? "—",
         to: bounds.last ?? "—",

@@ -1,5 +1,6 @@
 import "server-only"
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
 import { PARSER_CONFIG } from "@/lib/parser-config"
 import {
@@ -10,7 +11,9 @@ import {
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
   uniqueStrings,
+  servedModel,
   type MetadataAnalysis,
+  type ParserAiContext,
   type SourceFrontmatter,
 } from "@/server/parsers/_shared"
 
@@ -81,6 +84,8 @@ export type ParsedPdf = {
     byteSize: number
   }
   analysis: MetadataAnalysis
+  // Model that answered the analysis call (→ source_item.parser_model).
+  parserModel: string | null
 }
 
 /**
@@ -92,6 +97,7 @@ export type ParsedPdf = {
  */
 export async function parsePdfBytes(
   input: PdfParseInput,
+  ai: ParserAiContext,
 ): Promise<ParsedPdf> {
   const { bytes, fileName } = input
 
@@ -99,8 +105,9 @@ export async function parsePdfBytes(
     throw new PdfTooLargeError(bytes.byteLength, PARSER_CONFIG.pdf.maxBytes)
   }
 
-  const { output: analysis } = await generateText({
-    model: PARSER_CONFIG.pdf.model,
+  const result = await aiGenerateText({
+    process: "parsing.pdf",
+    ...ai,
     output: Output.object({ schema: pdfAnalysisSchema }),
     system: `You are a precise document parsing assistant. Extract structured metadata and convert the provided PDF into clean Markdown. Do not invent facts. Aggressively strip repeating headers, footers, page numbers, and watermark boilerplate — they are noise, not content.
 
@@ -125,6 +132,7 @@ For PDFs specifically: the 'author/sender' is whoever you extract into the \`sen
       },
     ],
   })
+  const analysis = result.output
 
   const nowIso = new Date().toISOString()
 
@@ -159,6 +167,7 @@ For PDFs specifically: the 'author/sender' is whoever you extract into the \`sen
       fileName,
       byteSize: bytes.byteLength,
     },
+    parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
       summary: analysis.summary,

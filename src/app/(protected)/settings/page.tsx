@@ -9,6 +9,9 @@ import { TableAdminOrgs } from "@/components/tables/table-admin-orgs"
 import { TableAdminSources } from "@/components/tables/table-admin-sources"
 import { TableAdminTemplates } from "@/components/tables/table-admin-templates"
 import { AdminTeardown } from "@/components/blocks/admin-teardown"
+import { AdminAiModels } from "@/components/blocks/admin-ai-models"
+import { AdminAiProcesses } from "@/components/blocks/admin-ai-processes"
+import { AdminAiUsage } from "@/components/blocks/admin-ai-usage"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 
@@ -48,6 +51,9 @@ export default function SettingsPage() {
             <TabsTrigger value="templates">Шаблоны</TabsTrigger>
             <TabsTrigger value="sources">Источники</TabsTrigger>
             <TabsTrigger value="teardown">Сброс источника</TabsTrigger>
+            <TabsTrigger value="models">Модели</TabsTrigger>
+            <TabsTrigger value="ai-processes">Процессы ИИ</TabsTrigger>
+            <TabsTrigger value="ai-usage">Использование ИИ</TabsTrigger>
             <TabsTrigger value="settings">Настройки</TabsTrigger>
           </TabsList>
 
@@ -109,6 +115,19 @@ export default function SettingsPage() {
                 <AdminTeardown />
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Not forceMount: the registry loads only when the tab opens. */}
+          <TabsContent value="models" className="mt-4">
+            <AdminAiModels />
+          </TabsContent>
+
+          <TabsContent value="ai-processes" className="mt-4">
+            <AdminAiProcesses />
+          </TabsContent>
+
+          <TabsContent value="ai-usage" className="mt-4">
+            <AdminAiUsage />
           </TabsContent>
 
           <TabsContent

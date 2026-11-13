@@ -9,12 +9,13 @@
 // the build would fail.
 import "server-only"
 
-import { generateText, Output } from "ai"
+import { Output } from "ai"
+import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
-import { PARSER_CONFIG } from "@/lib/parser-config"
 import { getProvider } from "@/lib/sources/providers"
 import type { SourceProvider } from "@/db/schema"
 import type { OrgIdentity } from "@/server/org-identity"
+import type { ParserAiContext } from "@/server/parsers/_shared"
 import { loadOrgBlocklist } from "@/server/blocklist"
 import { addressMatchesText } from "@/lib/address-match"
 import {
@@ -170,13 +171,15 @@ When genuinely unsure, answer "unknown" — do not guess.`
 
 // Returns null (abstain) on any error so the deterministic verdict stands.
 async function judgeOrgAuthorship(
+  ai: ParserAiContext,
   orgIdentity: OrgIdentity,
   markdown: string,
 ): Promise<OrgAttributionResult | null> {
   const content = markdown.slice(0, 8000)
   try {
-    const { output } = await generateText({
-      model: PARSER_CONFIG.text.model,
+    const { output } = await aiGenerateText({
+      process: "parsing.org_attribution",
+      ...ai,
       output: Output.object({ schema: judgeSchema }),
       system: JUDGE_SYSTEM,
       prompt: [
@@ -217,7 +220,7 @@ export async function resolveOrgAttribution(input: {
   orgIdentity: OrgIdentity | null
   organizationId?: string | null
   enableLlmJudge?: boolean
-}): Promise<OrgAttributionResult> {
+}, ai: ParserAiContext): Promise<OrgAttributionResult> {
   // 1. Deterministic classifier.
   const deterministic = classifyOrgAttribution(input)
 
@@ -257,7 +260,11 @@ export async function resolveOrgAttribution(input: {
   //    signal (e.g. medium org_url). Otherwise the judge is the authority — it
   //    can upgrade an `unknown` document AND correct a weak `org_url` own_org
   //    when the doc is actually third-party.
-  const judged = await judgeOrgAuthorship(input.orgIdentity, input.contentHaystack)
+  const judged = await judgeOrgAuthorship(
+    ai,
+    input.orgIdentity,
+    input.contentHaystack,
+  )
   if (!judged || judged.value === "unknown") return deterministic
 
   return {

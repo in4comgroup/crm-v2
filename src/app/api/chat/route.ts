@@ -292,6 +292,17 @@ function buildSourceTools(organizationId: string | null) {
 }
 
 export async function POST(req: Request) {
+  // Sign-in required, checked before any work: an anonymous caller must never
+  // reach the (paid) model or the web-search tool.
+  const session = await getServerSession()
+  const sourceOrgId = session?.session.activeOrganizationId ?? null
+  if (!session?.user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 })
+  }
+  if (!sourceOrgId) {
+    return Response.json({ error: "No active organization" }, { status: 403 })
+  }
+
   try {
     const {
       messages,
@@ -312,16 +323,11 @@ export async function POST(req: Request) {
     // conflict is gone: every request gets whichever tools the caller is
     // actually entitled to, and the model picks.
     //
-    // Internal tools require an authenticated session AND an active
-    // organization — items are tenant-scoped, so without an active org
-    // there's nothing to search. Anonymous or org-less callers get the
-    // web-only engine.
-    const session = await getServerSession()
-    const sourceOrgId = session?.session.activeOrganizationId ?? null
+    // Internal tools are tenant-scoped to the caller's active organization
+    // (session + org are guaranteed by the check at the top).
     const sourceTools = buildSourceTools(sourceOrgId)
 
-    // Web search needs neither a session nor an org, and every provider can
-    // call it (it's an ordinary function tool), so it's always on.
+    // Web search is an ordinary function tool, so every provider can call it.
     const tools = {
       ...webTools,
       ...(sourceTools ?? {}),

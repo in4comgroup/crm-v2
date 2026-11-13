@@ -1,4 +1,7 @@
-"use server"
+import "server-only"
+
+// Not "use server": these functions take any sourceId and run a provider
+// sync with stored credentials. Callers check access (sync route, cron).
 
 import { getNylasClient, describeNylasError } from "@/lib/nylas"
 import {

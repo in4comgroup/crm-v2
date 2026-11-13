@@ -1,0 +1,137 @@
+# Processes and model selection (R4)
+
+## 1. Goal
+
+Every place that calls a model is a named **process** with known needs. The
+admin picks a model for each process from the models that meet those needs,
+seeing price and capabilities, and sets fallbacks. A change takes effect
+without a deploy.
+
+## 2. Process catalog
+
+Defined **in code** (`src/server/ai/processes.ts`), because each process is
+tied to code: its prompt, its schema, its tools. The DB stores only the
+admin's choices (§4). A process that is removed from code disappears from the
+UI; its usage history stays.
+
+Per process:
+
+| Field | Meaning |
+| --- | --- |
+| `key` | Stable id, e.g. `parsing.email` |
+| `label` | Russian UI name, e.g. «Разбор писем» |
+| `group` | UI group: «Чат и ассистенты», «Разбор источников», «Карточки и сделки», «Клиенты», «Заказы» |
+| `description` | One sentence, Russian |
+| `kind` | `interactive` (a user waits) or `background` (batch / cron) |
+| `requires` | Capabilities the model must have (02 §4) |
+| `defaultModelId` | Used when the admin has made no choice, or as last resort |
+| `userSelectable` | Only for the AI chat: users choose among admin-allowed models |
+
+Initial catalog (from the inventory in 00):
+
+| Key | «Label» | Kind | Requires | Default |
+| --- | --- | --- | --- | --- |
+| `chat.assistant` | «ИИ чат» | interactive | tools, image_input | `google/gemini-3.1-flash-lite` |
+| `chat.web_search` | «Поиск в интернете (чат)» | interactive | web_search (vendor tool, §6) | `google/gemini-3.1-flash-lite` |
+| `chat.session_analysis` | «Сохранение чата» | interactive | structured_output | `google/gemini-3.1-flash-lite` |
+| `analytics.assistant` | «ИИ ассистент аналитики» | interactive | tools | `google/gemini-3.1-flash-lite` |
+| `clients.enrichment_research` | «Обогащение компаний: поиск» | interactive | web_search (vendor tool, §6) | `google/gemini-3.1-flash-lite` |
+| `clients.enrichment_extract` | «Обогащение компаний: извлечение» | interactive | structured_output | `google/gemini-3.1-flash-lite` |
+| `cards.generation` | «Генерация карточек» | background | structured_output | `google/gemini-3.1-flash-lite` |
+| `deals.discovery` | «Поиск сделок» | background | structured_output | `google/gemini-3.1-flash-lite` |
+| `orders.request_split` | «Заказ из запроса» | interactive | structured_output | `google/gemini-3.1-flash-lite` |
+| `parsing.email` | «Разбор писем» | background | structured_output | `google/gemini-2.5-flash` |
+| `parsing.chat_message` | «Разбор сообщений (Google Chat, Telegram, WhatsApp)» | background | structured_output | `google/gemini-2.5-flash` |
+| `parsing.document_metadata` | «Разбор Google Docs/Sheets» | background | structured_output | `google/gemini-2.5-flash` |
+| `parsing.office` | «Разбор Word/PowerPoint» | background | structured_output | `google/gemini-2.5-flash` |
+| `parsing.pdf` | «Разбор PDF» | background | structured_output, pdf_input | `google/gemini-2.5-flash` |
+| `parsing.image` | «Разбор изображений» | background | structured_output, image_input | `google/gemini-2.5-flash` |
+| `parsing.audio` | «Расшифровка аудио» | background | structured_output, audio_input | `google/gemini-2.5-flash` |
+| `parsing.video` | «Разбор видео» | background | structured_output, video_input | `google/gemini-2.5-flash` |
+| `parsing.org_attribution` | «Определение авторства документа» | background | structured_output | `google/gemini-2.5-flash` |
+
+Defaults = today's models, so the switch to the new layer changes nothing
+until the admin changes an assignment.
+
+## 3. Compatibility rule
+
+A model is **compatible** with a process when:
+
+1. its gateway is enabled and the model `is_available`;
+2. `type = 'language'`;
+3. its capabilities include every item in `requires`;
+4. for each capability that needs a vendor tool (today `web_search`), the
+   gateway adapter can supply that tool for this model
+   (`adapter.capabilityTool(cap, model) !== null`, 01 §4);
+5. (optional admin policy, §7) it meets the privacy filter, e.g. ZDR.
+
+Only compatible models can be saved as primary or fallback. The UI may show
+incompatible models greyed out with the reason («нет ввода аудио» — no audio
+input).
+
+## 4. Table `ai_process_assignment`
+
+| Column | Type | Note |
+| --- | --- | --- |
+| `process_key` | text PK | From the code catalog |
+| `gateway_id` | text FK | |
+| `primary_model_id` | text | FK (`gateway_id`, `model_id`) → `ai_model` |
+| `fallback_model_ids` | text[] | Ordered; tried by the gateway if the primary fails (`providerOptions.gateway.models`) |
+| `allowed_model_ids` | text[] | Only for `userSelectable` processes (AI chat): the list users can pick from |
+| `settings` | jsonb | Optional per-process call settings: `maxOutputTokens`, `temperature`, `reasoningEffort` |
+| `updated_by_user_id` | text FK → user | |
+| `updated_at` | timestamp | |
+
+Changes are logged in `ai_process_assignment_log` (who, when, old → new) so a
+cost jump can be traced to a model change.
+
+Runtime resolution (`resolveProcess(key)`), cached in memory for 60 s:
+assignment row → if missing or the primary is unavailable, use the first
+available fallback → else `defaultModelId`. Every fallback-by-resolution is
+logged as a warning.
+
+## 5. Admin UI: tab «Процессы ИИ» (AI processes) on `/settings`
+
+Table grouped by `group`:
+
+| Column | Content |
+| --- | --- |
+| Process | Label + description + kind badge («фоновый» / «интерактивный») |
+| Requires | Capability icons |
+| Model | Current primary (name, vendor), «по умолчанию» badge when no choice was made |
+| Fallbacks | Count + names on hover |
+| Cost estimate | «≈ $X за 1 000 вызовов» (≈ $X per 1,000 calls), from the average tokens per call of this process over the last 30 days (04) × the model's prices. «нет данных» when there is no usage yet |
+| Usage (30 d) | Calls, total cost |
+| Status | Warning if the model is deprecated / unavailable / incompatible |
+
+«Изменить» (Edit) opens a dialog:
+
+- Model picker showing **only compatible models**, with filters (vendor,
+  search) and columns: name, vendor, input / output price, context, «≈ $ за
+  1 000 вызовов» for this process, capability icons, ZDR.
+- Sort by estimated cost (default), price, name.
+- «Резервные модели» (Fallbacks): ordered list, max 3, same picker.
+- For the AI chat: «Доступны пользователям» (Allowed for users) multi-select.
+- «Сбросить на модель по умолчанию» (Reset to default).
+- Preview line: «Было ≈ $A → станет ≈ $B за 1 000 вызовов».
+
+## 6. Vendor tools (web search)
+
+`chat.web_search` and `clients.enrichment_research` need web search. Business
+code asks only for the capability; the gateway adapter returns the vendor's
+native tool for the selected model (01 §4). Today the Vercel adapter supplies
+`google.tools.googleSearch()` for Google models only, so rule 4 of §3 makes
+only Google models compatible for these two processes. When the adapter learns
+another vendor's search tool (or a provider-neutral one), more models become
+compatible — with no change to business code.
+
+## 7. Admin preferences (policy)
+
+One settings block on the «Процессы ИИ» tab, applied to the compatibility
+filter for all processes:
+
+- «Только модели с нулевым хранением данных (ZDR)» — only `zdr = all`
+- «Только модели без обучения на данных» — only `no_training = all`
+- «Разрешённые разработчики» (Allowed vendors) — e.g. only google, openai, anthropic
+
+Stored in `platform_setting` (05 §2). Default: all off (no restriction).

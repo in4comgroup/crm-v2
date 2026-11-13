@@ -33,12 +33,15 @@ Node-only packages `imapflow`, `mailparser`, `node-ical`, `exceljs` are listed i
 | `src/app/(protected)/` | Session required (checked in `layout.tsx`, redirect to `/sign-in`) | All product pages. The layout mounts the sidebar and the global AI chat panel once. |
 | `src/app/o/[token]` | Public, token is the authorization | Guest order review and confirmation. |
 | `src/app/api/webhooks/telegram/[sourceId]` | Public, path id + secret header are the authorization | Telegram bot webhook. |
-| `src/app/api/cron/daily` | Bearer `CRON_SECRET` in production | Starts the daily pipeline workflow. |
+| `src/app/api/cron/daily` | Bearer `CRON_SECRET`, required in every environment | Starts the daily pipeline workflow. |
 | `src/app/api/invitations/[id]`, `api/invitations/check` | Public | Invitation lookup and "has pending invite" check. |
 | `src/app/api/**` (all other routes) | Session required; most need an active org | JSON API used by the UI. |
 
-There is no auth middleware. Protection is done by the `(protected)` layout and by
-each API route / server function.
+Two layers (since 2026-11-13): the central sign-in gate `src/proxy.ts` rejects
+every request without a session (API → 401, page → `/sign-in`) except the
+public-by-design entries above; then each API route / server function
+validates the session itself. Rule and allowlist:
+[../specs/auth/api-access.md](../specs/auth/api-access.md).
 
 ## Layering rule
 

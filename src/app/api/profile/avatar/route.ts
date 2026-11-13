@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { getServerSession } from "@/lib/get-session"
 import {
   AVATAR_MAX_BYTES,
   AvatarError,
@@ -9,6 +10,11 @@ import {
 // { url } для `user.image`; само поле клиент сохраняет через
 // authClient.updateUser, чтобы обновилась и кука сессии.
 export async function POST(request: NextRequest) {
+  // Sign-in first: never read (buffer) the body for an anonymous caller.
+  const session = await getServerSession()
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
   try {
     const contentType = (request.headers.get("content-type") ?? "")
       .split(";")[0]

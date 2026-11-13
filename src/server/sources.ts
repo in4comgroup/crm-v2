@@ -458,7 +458,9 @@ export async function getOrCreateAiChatSource(
       "No active aichat template found. Run `pnpm tsx scripts/seed-templates.ts --apply` to seed the template dictionary.",
     )
   }
-  const { instantiateFromTemplate } = await import("@/server/templates")
+  const { instantiateFromTemplate } = await import(
+    "@/server/templates-instantiate"
+  )
   return instantiateFromTemplate({
     organizationId,
     templateId: tpl.id,

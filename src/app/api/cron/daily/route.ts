@@ -8,8 +8,9 @@ import { dailyPipelineWorkflow } from "@/workflows/daily-pipeline.workflow"
 // `Authorization: Bearer $CRON_SECRET` to every scheduled invocation —
 // rejecting anything else keeps the route off the open internet.
 //
-// In development we skip the auth check so the admin "Run pipeline now"
-// button OR a local curl can hit it without setting up the header.
+// The secret is required in EVERY environment, and a missing CRON_SECRET
+// rejects all calls (otherwise "Bearer undefined" would pass). The admin
+// "Run pipeline now" button uses /api/admin/pipeline/run, not this route.
 //
 // The route is intentionally tiny: validate, kick off the workflow,
 // return. The workflow itself takes over from there (Fluid Compute,
@@ -17,11 +18,10 @@ import { dailyPipelineWorkflow } from "@/workflows/daily-pipeline.workflow"
 // orchestration logic into the route, defeating the whole point of the
 // detachable orchestration layer.
 export async function GET(request: NextRequest) {
-  if (process.env.NODE_ENV === "production") {
-    const auth = request.headers.get("authorization")
-    if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-      return new NextResponse("Unauthorized", { status: 401 })
-    }
+  const secret = process.env.CRON_SECRET
+  const auth = request.headers.get("authorization")
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return new NextResponse("Unauthorized", { status: 401 })
   }
 
   try {

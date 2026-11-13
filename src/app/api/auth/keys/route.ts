@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { getServerSession } from "@/lib/get-session"
 import {
   createApiKey,
   deleteApiKeys,
@@ -6,7 +7,20 @@ import {
   getApiKeys,
 } from "@/server/api-keys"
 
+// Sign-in required for every method (the helpers return null without a
+// session, which used to surface as an empty 200/201).
+async function unauthorized(): Promise<NextResponse | null> {
+  const session = await getServerSession()
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+  return null
+}
+
 export async function GET(request: NextRequest) {
+  const denied = await unauthorized()
+  if (denied) return denied
+
   const { searchParams } = new URL(request.url)
   const keyId = searchParams.get("keyId")
 
@@ -40,6 +54,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const denied = await unauthorized()
+  if (denied) return denied
+
   try {
     const body = await request.json()
     const { name, expiresIn, prefix, description } = body
@@ -68,6 +85,9 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const denied = await unauthorized()
+  if (denied) return denied
+
   const { searchParams } = new URL(request.url)
   const keyId = searchParams.get("keyId")
 

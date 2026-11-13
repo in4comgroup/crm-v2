@@ -3,7 +3,7 @@ import { getServerSession } from "@/lib/get-session"
 import { db } from "@/db/drizzle"
 import { member, sourceTemplate } from "@/db/schema"
 import { and, eq } from "drizzle-orm"
-import { instantiateFromTemplate } from "@/server/templates"
+import { instantiateFromTemplate } from "@/server/templates-instantiate"
 
 // Org-owner endpoint for the "Add source" picker.
 // Body: { templateId }

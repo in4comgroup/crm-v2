@@ -1,27 +1,12 @@
-"use server"
+import "server-only"
 
 import { db } from "@/db/drizzle"
 import { member, organization } from "@/db/schema"
-import { eq, inArray } from "drizzle-orm"
-import { getCurrentUser } from "./users"
+import { eq } from "drizzle-orm"
 
-export async function getOrganizations() {
-  const { currentUser } = await getCurrentUser()
-
-  const members = await db.query.member.findMany({
-    where: eq(member.userId, currentUser.id),
-  })
-
-  const organizations = await db.query.organization.findMany({
-    where: inArray(
-      organization.id,
-      members.map((member) => member.organizationId)
-    ),
-  })
-
-  return organizations
-}
-
+// Internal (NOT a server action): the first organization a user belongs to.
+// Used by the session-create hook in src/lib/auth.ts and by
+// GET /api/organization (which only ever passes the signed-in user's id).
 export async function getActiveOrganization(userId: string) {
   const memberUser = await db.query.member.findFirst({
     where: eq(member.userId, userId),
@@ -36,24 +21,4 @@ export async function getActiveOrganization(userId: string) {
   })
 
   return activeOrganization
-}
-
-export async function getOrganizationBySlug(slug: string) {
-  try {
-    const organizationBySlug = await db.query.organization.findFirst({
-      where: eq(organization.slug, slug),
-      with: {
-        members: {
-          with: {
-            user: true,
-          },
-        },
-      },
-    })
-
-    return organizationBySlug
-  } catch (error) {
-    console.error(error)
-    return null
-  }
 }

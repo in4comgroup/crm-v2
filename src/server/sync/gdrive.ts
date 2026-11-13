@@ -1,4 +1,7 @@
-"use server"
+import "server-only"
+
+// Not "use server": these functions take any sourceId and run a provider
+// sync with stored credentials. Callers check access (sync route, cron).
 
 import { getDriveClient } from "@/lib/google-drive"
 import {

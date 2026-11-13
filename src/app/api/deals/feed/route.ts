@@ -4,7 +4,6 @@
 
 import { NextResponse } from "next/server"
 import { listRecentDealActivity } from "@/server/deals"
-import { getServerSession } from "@/lib/get-session"
 
 function errorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown error"
@@ -19,11 +18,7 @@ function errorResponse(error: unknown) {
 
 export async function GET() {
   try {
-    const session = await getServerSession()
-    if (!session) throw new Error("Unauthorized")
-    const orgId = session.session.activeOrganizationId
-    if (!orgId) throw new Error("No active organization")
-    const events = await listRecentDealActivity(orgId)
+    const events = await listRecentDealActivity()
     return NextResponse.json({ events })
   } catch (error) {
     return errorResponse(error)

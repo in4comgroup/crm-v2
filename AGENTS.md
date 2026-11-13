@@ -36,6 +36,11 @@ This file gives guidance to AI coding agents (Claude Code, Codex, Cursor, Copilo
 - `src/app/AGENTS.md` — feature flows: **global search** (`/api/search`, reachable from every page's header) and the **global AI chat panel** (also reachable from every page, mounted once at the layout level), **analytics (sales reporting over orders — `/analytics`)**, invitation flow, sources (Nylas/**IMAP**/Chat/Drive/Files Drop Off/**Telegram bot** — per-org webhook push; email parser also folds **calendar (.ics) invites** into the parent item; **own-org attribution** of every parsed item; admin **source teardown/reset**), **companies** (`/clients` — 5 relationship tabs, scroll-loaded feed, + **batch web enrichment**, owner-managed **discovery blocklist**) and a **standalone contacts directory** (`/contacts`), tasks (Kanban + Timeline), **deals (sales funnel + LLM discovery)**, **products (catalog) & orders (manual builder + guest order-confirmation links + LLM-assisted "order from request" assembly)**, org member management.
 - `src/lib/AGENTS.md` — logic/infra: email delivery, Google infrastructure, AI chat, json-render catalog/registry.
 
+### 4. Access — nothing works without sign-in
+- `src/proxy.ts` rejects every request without a session (API → 401, page → `/sign-in`), except the allowlist of public-by-design entry points documented in `docs/specs/auth/api-access.md`. Adding a public entry point = a documented reason + its own protection + a row in that spec + a pattern in `src/proxy.ts`.
+- The gate is a safety net, not the check: every route handler and every exported function of a `"use server"` module must validate the session itself (`getServerSession()` + 401, or a `require*` helper).
+- Internal helpers that take an org / user id as a parameter must not live in a `"use server"` module — use `import "server-only"`.
+
 ## Commands
 
 - `pnpm dev` — start Next.js dev server. **Runs with `NODE_OPTIONS=--max-old-space-size=8192` on purpose** (same for `pnpm build`). `withWorkflow()` bundles the WHOLE app on boot to scan for `'use workflow'` / `'use step'` directives ("Discovering workflow directives …" in the dev log), so the dev server sits at **~4.1 GB RSS while completely idle** — right against Node's default ~4.19 GB heap ceiling. Loading one or two heavy pages pushes it over and the process **dies with no error message** — the log just stops, typically right after `Created intermediate workflow bundle`, which reads as "the dev server silently quit". Raising the ceiling is the fix; don't remove the flag. If it recurs, `rm -rf .next` first (a stale cache inflates the baseline further), and prefer `next/dynamic` for any page pulling in a heavy graph (see the lazy `TabAssistant` in `/analytics`).
@@ -71,7 +76,7 @@ This file gives guidance to AI coding agents (Claude Code, Codex, Cursor, Copilo
 - `src/app/accept-invitation/[id]/` — public invitation page, kept **outside** `(auth)` so signed-in users can still see and accept an invitation
 - `src/app/(protected)/` — auth-gated pages; session checked server-side in `layout.tsx`, redirects to `/sign-in` if unauthenticated
 - `src/app/(protected)/settings/` — platform-admin-only (users & orgs management, templates, sources, **«Сброс источника» = admin source teardown/reset**)
-- `src/app/o/[token]/` — **public, no-auth** guest order-confirmation page (capability = the token). Outside `(protected)` so the layout gate doesn't apply; there is no auth middleware. Details in `src/app/AGENTS.md` § "Guest order-confirmation links".
+- `src/app/o/[token]/` — **public, no-auth** guest order-confirmation page (capability = the token). Outside `(protected)` so the layout gate doesn't apply, and allowlisted in the sign-in gate `src/proxy.ts` (see docs/specs/auth/api-access.md). Details in `src/app/AGENTS.md` § "Guest order-confirmation links".
 
 ### API Routes (overview)
 

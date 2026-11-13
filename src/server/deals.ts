@@ -796,10 +796,10 @@ export type FeedEvent = {
 // Последние события по ВСЕЙ орге (не одной сделке) — реальный журнал вместо
 // deal.changes-сида + in-memory аппендов агента (deals-mock.ts, TODO(backend),
 // теперь устарело: каждый moveDealStage/createDeal сам пишет в deal_activity).
-export async function listRecentDealActivity(
-  organizationId: string,
-  limit = 100,
-): Promise<FeedEvent[]> {
+// The org comes from the caller's session (never a parameter): this module
+// is "use server", so every export must check the session itself.
+export async function listRecentDealActivity(limit = 100): Promise<FeedEvent[]> {
+  const { activeOrgId: organizationId } = await requireOrgContext()
   const fromStage = aliasedTable(dealFunnelStage, "from_stage")
   const toStage = aliasedTable(dealFunnelStage, "to_stage")
 

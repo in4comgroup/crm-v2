@@ -16,7 +16,13 @@ import { toast } from "sonner"
 export function SignInForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const redirect = searchParams.get("redirect") || "/dashboard"
+  // Only same-app paths: "/x" yes; "//evil.com", "https://evil.com" no
+  // (would be an open redirect after sign-in).
+  const requested = searchParams.get("redirect") ?? ""
+  const redirect =
+    requested.startsWith("/") && !requested.startsWith("//") && !requested.startsWith("/\\")
+      ? requested
+      : "/dashboard"
 
   return (
     <Card className="w-full max-w-md">

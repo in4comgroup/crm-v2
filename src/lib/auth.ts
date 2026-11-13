@@ -142,7 +142,7 @@ export const auth = betterAuth({
         after: async (org: { id: string }) => {
           try {
             const { bootstrapDefaultsForOrg } =
-              await import("@/server/templates")
+              await import("@/server/templates-instantiate")
             const result = await bootstrapDefaultsForOrg(org.id)
             console.log(
               `[org-bootstrap] org=${org.id} instantiated=${result.instantiated} alreadyExisted=${result.alreadyExisted}`,

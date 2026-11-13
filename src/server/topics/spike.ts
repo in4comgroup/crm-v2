@@ -3,13 +3,13 @@ import { randomUUID } from "crypto"
 import { and, asc, eq, ne, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { aiUsageEvent, topicsEvalResult, topicsGoldenItem } from "@/db/schema"
-import { SIGNAL_CATALOG_V0 } from "@/server/topics/catalog/catalog-v0"
+import { getEffectiveSignals, getRegistry } from "@/server/signals/registry"
 import {
-  codesForSet,
   EXTRACTION_CODE_SETS,
   EXTRACTION_VARIANTS,
   type ExtractionCodeSet,
   type ExtractionVariant,
+  loadPromptCodes,
   type NormalizedExtraction,
 } from "@/server/topics/prompt/extraction"
 import {
@@ -30,6 +30,11 @@ import { loadGoldenWorkItems } from "@/server/topics/golden-set"
 // The model under test is whatever «Процессы ИИ» assigns to
 // topics.signal_extraction at call time; it is recorded per result. To compare
 // models the admin switches the assignment between runs.
+//
+// The codes come from the org's effective signals registry (loaded once per
+// batch, so all items of a batch share one taxonomy version, recorded in
+// `config.taxonomyVersion` with the exact `config.codes` list). An org with
+// no active code fails the batch with SignalsNotEnabledError (route → 400).
 
 export const SPIKE_BATCH_MAX = 10
 const CONCURRENCY = 3
@@ -45,7 +50,9 @@ type ResultConfig = {
   codesInPrompt: number
   codeBlockChars: number
   systemChars: number
-  catalog: "v0"
+  taxonomyVersion: number
+  /** Codes in the prompt (two_pass: the whole set offered to pass 1). */
+  codes: string[]
   inputTokens: number | null
   outputTokens: number | null
   blocks: string[] | null
@@ -122,6 +129,10 @@ export async function runSpikeBatch(args: {
     }
   }
 
+  // Before any write: an org without active codes fails the whole batch.
+  const promptSet = await loadPromptCodes(args.orgId, codeSet)
+  const setCodes = promptSet.codes.map((c) => c.code)
+
   const pending = await remainingItemIds(args.orgId, runId)
   const batchIds = pending.slice(0, limit)
   const items = await loadGoldenWorkItems(args.orgId, batchIds)
@@ -136,7 +147,13 @@ export async function runSpikeBatch(args: {
         runId,
         organizationId: args.orgId,
         goldenItemId: id,
-        config: { process: EXTRACTION_PROCESS, variant, codeSet, catalog: "v0" },
+        config: {
+          process: EXTRACTION_PROCESS,
+          variant,
+          codeSet,
+          taxonomyVersion: promptSet.taxonomyVersion,
+          codes: setCodes,
+        },
         ok: false,
         error: "Нет текста элемента",
         output: { errorKind: "other" },
@@ -159,7 +176,7 @@ export async function runSpikeBatch(args: {
             text: item.text,
             envelope: item.envelope,
             variant,
-            codeSet,
+            promptSet,
             ref: { evalRunId: runId, goldenItemId: item.id },
           })
           const config: ResultConfig = {
@@ -171,7 +188,8 @@ export async function runSpikeBatch(args: {
             codesInPrompt: run.codesInPrompt,
             codeBlockChars: run.codeBlockChars,
             systemChars: run.systemChars,
-            catalog: "v0",
+            taxonomyVersion: run.taxonomyVersion,
+            codes: setCodes,
             inputTokens: run.inputTokens,
             outputTokens: run.outputTokens,
             blocks: run.blocks,
@@ -195,7 +213,14 @@ export async function runSpikeBatch(args: {
             runId,
             organizationId: args.orgId,
             goldenItemId: item.id,
-            config: { process: EXTRACTION_PROCESS, variant, codeSet, catalog: "v0", synthetic: item.synthetic },
+            config: {
+              process: EXTRACTION_PROCESS,
+              variant,
+              codeSet,
+              taxonomyVersion: promptSet.taxonomyVersion,
+              codes: setCodes,
+              synthetic: item.synthetic,
+            },
             ok: false,
             error: message.slice(0, 2000),
             output: { errorKind: classifyExtractionError(error) },
@@ -273,7 +298,9 @@ export type PrStats = {
 export type SpikeCodeRow = {
   code: string
   labelRu: string
-  in4com: string | null
+  /** The code's state for the org now: on = live prompt, review = offline only, off. */
+  status: "on" | "review" | "off" | null
+  /** Effective weight for the org (registry). */
   weight: number | null
   profile: string | null
   /** Items where the code was predicted (high / medium confidence). */
@@ -310,6 +337,8 @@ export type SpikeReport = {
   models: string[]
   codeBlockChars: number | null
   codesInPrompt: number | null
+  /** Taxonomy versions the results were computed with (normally one). */
+  taxonomyVersions: number[]
   items: {
     total: number
     ok: number
@@ -403,8 +432,23 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
   const firstCfg = rows[0].config as Partial<ResultConfig>
   const variant = firstCfg.variant ?? "single"
   const codeSet = (firstCfg.codeSet ?? "live") as ExtractionCodeSet
-  const inSet = new Set(codesForSet(codeSet).map((c) => c.code))
-  const catalog = new Map(SIGNAL_CATALOG_V0.map((c) => [c.code, c]))
+  // Codes the run asked for (stored per result); expected codes outside it
+  // are ignored, so a live run is not charged for review-only codes.
+  const inSet = new Set<string>()
+  for (const r of rows) {
+    const codes = (r.config as Partial<ResultConfig>).codes
+    if (Array.isArray(codes)) for (const c of codes) inSet.add(c)
+  }
+  const [registry, effective] = await Promise.all([getRegistry(), getEffectiveSignals(orgId)])
+  const category = new Map(registry.categories.map((c) => [c.code, c]))
+  const eff = new Map(effective.map((e) => [e.code, e]))
+  const taxonomyVersions = [
+    ...new Set(
+      rows
+        .map((r) => (r.config as Partial<ResultConfig>).taxonomyVersion)
+        .filter((v): v is number => typeof v === "number"),
+    ),
+  ].sort((a, b) => a - b)
 
   const okRows = rows.filter((r) => r.ok)
   const failedRows = rows.filter((r) => !r.ok)
@@ -423,13 +467,14 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
   const codeRow = (code: string): SpikeCodeRow => {
     let row = perCode.get(code)
     if (!row) {
-      const c = catalog.get(code)
+      const c = category.get(code)
+      const e = eff.get(code)
       row = {
         code,
         labelRu: c?.labelRu ?? code,
-        in4com: c?.in4com ?? null,
-        weight: c?.weight ?? null,
-        profile: c?.profile ?? null,
+        status: e ? (e.reviewOnly ? "review" : e.inPrompt ? "on" : "off") : null,
+        weight: e?.weight ?? c?.weight ?? null,
+        profile: e?.displayProfile ?? c?.displayProfile ?? null,
         found: 0,
         foundLow: 0,
         expected: 0,
@@ -547,6 +592,7 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
     models: [...models],
     codeBlockChars,
     codesInPrompt,
+    taxonomyVersions,
     items: {
       total: rows.length,
       ok: okRows.length,

@@ -5,8 +5,9 @@ import { z } from "zod"
 import { db } from "@/db/drizzle"
 import { organization, source, sourceItem, topicsGoldenItem } from "@/db/schema"
 import { getTextObject } from "@/server/storage"
-import { SIGNAL_CATALOG_V0 } from "@/server/topics/catalog/catalog-v0"
+import { getRegistry } from "@/server/signals/registry"
 import type { ExtractionEnvelope } from "@/server/topics/prompt/extraction"
+import { loadPromptCodes } from "@/server/topics/prompt/extraction"
 import { runExtraction } from "@/server/topics/prompt/run-extraction"
 
 // Golden set for the topics quality gates (spec 01 §12, plan phase 0 task 7).
@@ -20,29 +21,34 @@ import { runExtraction } from "@/server/topics/prompt/run-extraction"
 export const GOLDEN_STATUSES = ["new", "pre_annotated", "reviewed", "excluded"] as const
 export type GoldenStatus = (typeof GOLDEN_STATUSES)[number]
 
-const KNOWN_CODES = new Set(SIGNAL_CATALOG_V0.map((c) => c.code))
+/** Non-retired registry codes (cached registry, ≤ 60 s). */
+async function knownSignalCodes(): Promise<Set<string>> {
+  const registry = await getRegistry()
+  return new Set(registry.categories.filter((c) => !c.retiredAt).map((c) => c.code))
+}
 
-/** Human answer (and pre-annotation) shape. */
-export const goldenExpectedSchema = z
-  .object({
-    codes: z.array(
-      z
-        .object({
-          code: z
-            .string()
-            .min(1)
-            .refine((c) => KNOWN_CODES.has(c), { message: "Неизвестный код сигнала" }),
-          evidence: z.string().optional(),
-          subject: z.string().optional(),
-        })
-        .passthrough(),
-    ),
-    noSignal: z.boolean().optional(),
-    topicGroup: z.string().optional(),
-  })
-  .passthrough()
+/** Human answer (and pre-annotation) shape; codes must be registry codes. */
+export const goldenExpectedSchema = (knownCodes: Set<string>) =>
+  z
+    .object({
+      codes: z.array(
+        z
+          .object({
+            code: z
+              .string()
+              .min(1)
+              .refine((c) => knownCodes.has(c), { message: "Неизвестный код сигнала" }),
+            evidence: z.string().optional(),
+            subject: z.string().optional(),
+          })
+          .passthrough(),
+      ),
+      noSignal: z.boolean().optional(),
+      topicGroup: z.string().optional(),
+    })
+    .passthrough()
 
-export type GoldenExpected = z.infer<typeof goldenExpectedSchema>
+export type GoldenExpected = z.infer<ReturnType<typeof goldenExpectedSchema>>
 
 export class GoldenSetError extends Error {
   constructor(
@@ -447,7 +453,7 @@ export async function updateGoldenItem(
     if (patch.expected === null) {
       set.expected = null
     } else {
-      const parsed = goldenExpectedSchema.safeParse(patch.expected)
+      const parsed = goldenExpectedSchema(await knownSignalCodes()).safeParse(patch.expected)
       if (!parsed.success) {
         throw new GoldenSetError(
           `expected: ${parsed.error.issues.map((i) => `${i.path.join(".") || "—"}: ${i.message}`).join("; ")}`,
@@ -488,13 +494,15 @@ export const PREANNOTATE_MAX_IDS = 10
  * LLM pre-annotation of up to 10 items: extraction over the "review" code
  * set (on + review codes, so reviewers also see candidates for the offline
  * batch). Stores `pre_annotation`; status → pre_annotated unless the item
- * is already reviewed or excluded.
+ * is already reviewed or excluded. Throws SignalsNotEnabledError (before any
+ * call) when the org has no active signal code.
  */
 export async function preAnnotate(
   orgId: string,
   ids: string[],
 ): Promise<{ id: string; ok: boolean; codes?: string[]; error?: string }[]> {
   const unique = [...new Set(ids)].slice(0, PREANNOTATE_MAX_IDS)
+  const promptSet = await loadPromptCodes(orgId, "review")
   const items = await loadGoldenWorkItems(orgId, unique)
   const found = new Set(items.map((i) => i.id))
   const missing = unique
@@ -507,7 +515,7 @@ export async function preAnnotate(
         text: item.text,
         envelope: item.envelope,
         variant: "single",
-        codeSet: "review",
+        promptSet,
         ref: { goldenItemId: item.id, preAnnotation: true },
       })
       const out = run.output
@@ -524,6 +532,7 @@ export async function preAnnotate(
         direction: out?.direction ?? null,
         model: run.model,
         codeSet: run.codeSet,
+        taxonomyVersion: run.taxonomyVersion,
         at: new Date().toISOString(),
       }
       await db

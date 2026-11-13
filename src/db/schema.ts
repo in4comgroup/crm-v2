@@ -2568,6 +2568,293 @@ export const topicsEvalResult = pgTable(
   (table) => [index("topics_eval_result_run_idx").on(table.runId)],
 )
 
+// ─── Signals registry (docs/specs/topics/05-signals-registry.md; plan phase 1) ─
+//
+// The DB is the master after the v1 seed (custom migration with fixed ids).
+// Value lists (class, kind, stage, profile, …) are TEXT columns validated in
+// code (src/server/signals/schema.ts), not pg enums, so the editor can evolve
+// them without schema migrations. Codes are the stable primary keys.
+
+export const signalPack = pgTable("signal_pack", {
+  code: text("code").primaryKey(), // base | distribution | agency | …
+  labelRu: text("label_ru").notNull(),
+  descriptionRu: text("description_ru"),
+  sort: integer("sort").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+})
+
+export const signalBlock = pgTable("signal_block", {
+  code: text("code").primaryKey(), // A … N, N1 … N4, DS1 … DS7
+  packCode: text("pack_code")
+    .notNull()
+    .references(() => signalPack.code),
+  labelRu: text("label_ru").notNull(),
+  // client_activity | colleagues_activity | business_info
+  audience: text("audience"),
+  internalOnly: boolean("internal_only").notNull().default(false),
+  firstPartyOnly: boolean("first_party_only").notNull().default(false),
+  sort: integer("sort").notNull().default(0),
+})
+
+export const signalCategory = pgTable(
+  "signal_category",
+  {
+    code: text("code").primaryKey(),
+    packCode: text("pack_code")
+      .notNull()
+      .references(() => signalPack.code),
+    blockCode: text("block_code")
+      .notNull()
+      .references(() => signalBlock.code),
+    family: text("family").notNull(),
+    labelRu: text("label_ru").notNull(),
+    definitionRu: text("definition_ru").notNull().default(""),
+    boundaryRu: text("boundary_ru").notNull().default(""),
+    cuesPromptRu: text("cues_prompt_ru").array().notNull().default(sql`'{}'::text[]`),
+    // { business?: [], chat?: [], terms?: [], patterns?: [] }
+    synonymsRu: jsonb("synonyms_ru").$type<Record<string, string[]>>().notNull().default({}),
+    // [{ text, code | null }]
+    antiCuesRu: jsonb("anti_cues_ru").$type<{ text: string; code: string | null }[]>().notNull().default([]),
+    exampleRu: text("example_ru").notNull().default(""),
+    counterExampleRu: text("counter_example_ru").notNull().default(""),
+    cardNoteRu: text("card_note_ru").notNull().default(""),
+    weight: integer("weight").notNull(),
+    scoreRule: text("score_rule").notNull(), // fixed | state | inherited
+    class: text("class"), // risk | chance | fyi | null (state)
+    classByRelation: boolean("class_by_relation").notNull().default(false),
+    kind: text("kind").notNull(), // event | watchdog | derived | trend | state
+    effort: text("effort"), // quick | medium | complex | null
+    carriesAmount: boolean("carries_amount").notNull().default(false),
+    asksUs: boolean("asks_us").notNull().default(false),
+    inboundOnly: boolean("inbound_only").notNull().default(false),
+    emittedBy: text("emitted_by").notNull().default("parser"), // parser | process | both
+    stage: text("stage").notNull().default("active"), // active | onHold | parked | gated
+    displayProfile: text("display_profile"), // W1 | D4 | P6 | P8 | S0 | S1 | null
+    recipientRole: text("recipient_role"),
+    closesCodes: text("closes_codes").array().notNull().default(sql`'{}'::text[]`),
+    // { fact, test: within | beyond, settingKey, days? }
+    dateGate: jsonb("date_gate").$type<Record<string, unknown> | null>(),
+    relevanceDays: integer("relevance_days"),
+    // process codes only (05 §3.6)
+    triggerRule: jsonb("trigger_rule").$type<Record<string, unknown> | null>(),
+    // Free text from the catalog that has no field yet (e.g. "both (mostly …)").
+    noteRu: text("note_ru"),
+    retiredAt: timestamp("retired_at"),
+    successorCode: text("successor_code"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    updatedByUserId: text("updated_by_user_id").references(() => user.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    index("signal_category_pack_block_idx").on(table.packCode, table.blockCode),
+  ],
+)
+
+export const signalAttribute = pgTable("signal_attribute", {
+  code: text("code").primaryKey(),
+  packCode: text("pack_code")
+    .notNull()
+    .references(() => signalPack.code),
+  groupCode: text("group_code"), // exclusive group (one per item)
+  scope: text("scope").notNull().default("message"), // message | account | contact
+  labelRu: text("label_ru").notNull(),
+  definitionRu: text("definition_ru").notNull().default(""),
+  weight: integer("weight").notNull(), // −1 … +2
+  stage: text("stage").notNull().default("active"),
+  defaultOff: boolean("default_off").notNull().default(false),
+  profiles: text("profiles").array().notNull().default(sql`'{}'::text[]`),
+  cuesRu: text("cues_ru").array().notNull().default(sql`'{}'::text[]`),
+  antiCuesRu: text("anti_cues_ru").array().notNull().default(sql`'{}'::text[]`),
+  noteRu: text("note_ru"),
+  sort: integer("sort").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+})
+
+export const signalRelation = pgTable(
+  "signal_relation",
+  {
+    id: text("id").primaryKey(), // fixed ids for seeded rows, e.g. "rel:outranks:A:B"
+    packCode: text("pack_code")
+      .notNull()
+      .references(() => signalPack.code),
+    // outranks | leads_over | both | merges_into | dampens
+    kind: text("kind").notNull(),
+    codeA: text("code_a").notNull(),
+    codeB: text("code_b").notNull(),
+    settingKey: text("setting_key"), // dampens: how long (06 §5.2 H4)
+    fact: text("fact"), // dampens: fact that bounds it (e.g. promised date)
+    noteRu: text("note_ru"),
+  },
+  (table) => [index("signal_relation_codes_idx").on(table.codeA, table.codeB)],
+)
+
+// A vertical pack's override of a base code (05 §5; closes_codes per R12).
+// NULL column = no override.
+export const signalPackOverride = pgTable(
+  "signal_pack_override",
+  {
+    packCode: text("pack_code")
+      .notNull()
+      .references(() => signalPack.code),
+    code: text("code")
+      .notNull()
+      .references(() => signalCategory.code),
+    weight: integer("weight"),
+    displayProfile: text("display_profile"),
+    recipientRole: text("recipient_role"),
+    stage: text("stage"),
+    closesCodes: text("closes_codes").array(),
+    noteRu: text("note_ru"),
+  },
+  (table) => [primaryKey({ columns: [table.packCode, table.code] })],
+)
+
+// Per-org activation of packs (tenant data, set in «Сигналы»).
+export const organizationSignalPack = pgTable(
+  "organization_signal_pack",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    packCode: text("pack_code")
+      .notNull()
+      .references(() => signalPack.code),
+    enabled: boolean("enabled").notNull().default(true),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.packCode] })],
+)
+
+// Per-org override of a code (stage on/off, weight, profile, recipient).
+// closes_codes is NOT overridable per org (05 §5).
+export const organizationSignalOverride = pgTable(
+  "organization_signal_override",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    code: text("code")
+      .notNull()
+      .references(() => signalCategory.code),
+    stage: text("stage"),
+    weight: integer("weight"),
+    displayProfile: text("display_profile"),
+    recipientRole: text("recipient_role"),
+    // R6: "review" codes = onHold for the live prompt, run in the offline eval.
+    reviewOnly: boolean("review_only").notNull().default(false),
+    noteRu: text("note_ru"),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.code] })],
+)
+
+// Signal → deal effect (spec §9.2). organization_id NULL = a pack TEMPLATE
+// (target by stage meaning S1…S5 / won / lost); the admin copies templates
+// to an org and maps them to the org's stage ids.
+export const signalStageRule = pgTable(
+  "signal_stage_rule",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").references(() => organization.id, { onDelete: "cascade" }),
+    packCode: text("pack_code").references(() => signalPack.code),
+    code: text("code")
+      .notNull()
+      .references(() => signalCategory.code),
+    // create_deal | move_stage | in_stage | outcome_won | outcome_lost | pause | …
+    effect: text("effect").notNull(),
+    targetStageId: text("target_stage_id").references(() => dealFunnelStage.id, { onDelete: "set null" }),
+    targetStageMeaning: text("target_stage_meaning"), // templates: S1…S5 / won / lost
+    dealTypes: text("deal_types").array().notNull().default(sql`'{}'::text[]`),
+    // { minConfidence, minScore, fromStageIds|fromStageMeanings, forwardOnly,
+    //   requiresConfirmation, requiresFact, clientGuard }
+    guards: jsonb("guards").$type<Record<string, unknown>>().notNull().default({}),
+    enabled: boolean("enabled").notNull().default(true),
+    sort: integer("sort").notNull().default(0),
+    noteRu: text("note_ru"),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (table) => [index("signal_stage_rule_org_code_idx").on(table.organizationId, table.code)],
+)
+
+// Deal risk type (platform, per pack; spec §9.4).
+export const dealRiskType = pgTable("deal_risk_type", {
+  code: text("code").primaryKey(),
+  packCode: text("pack_code")
+    .notNull()
+    .references(() => signalPack.code),
+  labelRu: text("label_ru").notNull(),
+  descriptionRu: text("description_ru").notNull().default(""),
+  // Fixed explanation when the deal-state run returns NOOP (R17).
+  explanationRu: text("explanation_ru").notNull().default(""),
+  triggerCodes: text("trigger_codes").array().notNull().default(sql`'{}'::text[]`),
+  clearCodes: text("clear_codes").array().notNull().default(sql`'{}'::text[]`),
+  severity: integer("severity").notNull(),
+  minOccurrences: integer("min_occurrences").notNull().default(1),
+  condition: text("condition"), // named condition, e.g. distinct_postponements_without_new_date
+  scope: text("scope").notNull().default("deal"), // deal | client
+  reactionRole: text("reaction_role"),
+  stageGuardTemplate: text("stage_guard_template"), // e.g. "S1–S5" (meanings)
+  noteRu: text("note_ru"),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+})
+
+// Per org: whether a risk type is on, and the org's stages where it applies
+// (null = every stage).
+export const dealRiskStageGuard = pgTable(
+  "deal_risk_stage_guard",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    riskCode: text("risk_code")
+      .notNull()
+      .references(() => dealRiskType.code),
+    enabled: boolean("enabled").notNull().default(true),
+    stageIds: text("stage_ids").array(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.riskCode] })],
+)
+
+// Taxonomy versions: every accepted registry save creates one; instances,
+// topics and cards store the version they were computed with.
+export const signalTaxonomyVersion = pgTable("signal_taxonomy_version", {
+  version: integer("version").primaryKey(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+  summary: text("summary").notNull(),
+})
+
+// Change log of registry edits (one row per changed entity per save).
+export const signalRegistryChange = pgTable(
+  "signal_registry_change",
+  {
+    id: text("id").primaryKey(),
+    version: integer("version").notNull(),
+    // category | attribute | relation | pack | block | pack_override |
+    // org_pack | org_override | stage_rule | risk_type | risk_guard
+    entity: text("entity").notNull(),
+    entityKey: text("entity_key").notNull(),
+    organizationId: text("organization_id"),
+    action: text("action").notNull(), // create | update | delete
+    before: jsonb("before").$type<Record<string, unknown> | null>(),
+    after: jsonb("after").$type<Record<string, unknown> | null>(),
+    changedByUserId: text("changed_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    changedAt: timestamp("changed_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("signal_registry_change_version_idx").on(table.version),
+    index("signal_registry_change_entity_idx").on(table.entity, table.entityKey),
+  ],
+)
+
 export const schema = {
   user,
   session,

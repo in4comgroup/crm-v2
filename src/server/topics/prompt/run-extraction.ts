@@ -6,19 +6,23 @@ import {
   buildBlockClassifierPrompt,
   buildExtractionSystemPrompt,
   buildItemPrompt,
-  codesForSet,
   extractionOutputSchema,
+  loadPromptCodes,
   normalizeExtraction,
   type ExtractionCodeSet,
   type ExtractionEnvelope,
   type ExtractionVariant,
   type NormalizedExtraction,
+  type PromptCodeSet,
 } from "./extraction"
 
 // One extraction of one text through the AI layer (process
 // topics.signal_extraction; two_pass adds topics.signal_block_classifier).
 // Org id explicit; the caller passes the usage `ref` (e.g. { evalRunId,
 // goldenItemId }). Throws on a failed call — the caller records the error.
+// The prompt codes come from the org's effective registry (loadPromptCodes);
+// a batch passes a preloaded `promptSet` so every item uses the same
+// taxonomy version. Throws SignalsNotEnabledError when the org has none.
 
 export const EXTRACTION_PROCESS = "topics.signal_extraction" as const
 export const BLOCK_CLASSIFIER_PROCESS = "topics.signal_block_classifier" as const
@@ -35,6 +39,8 @@ export type ExtractionRun = {
   codesInPrompt: number
   codeBlockChars: number
   systemChars: number
+  /** Taxonomy version the prompt was built from. */
+  taxonomyVersion: number
   inputTokens: number | null
   outputTokens: number | null
   durationMs: number
@@ -46,12 +52,15 @@ export async function runExtraction(args: {
   envelope: ExtractionEnvelope
   variant?: ExtractionVariant
   codeSet?: ExtractionCodeSet
+  /** Preloaded codes (must match orgId / codeSet); loaded when omitted. */
+  promptSet?: PromptCodeSet
   ref: Record<string, unknown>
 }): Promise<ExtractionRun> {
   const variant = args.variant ?? "single"
-  const codeSet = args.codeSet ?? "live"
+  const codeSet = args.promptSet?.codeSet ?? args.codeSet ?? "live"
   const started = Date.now()
-  const allCodes = codesForSet(codeSet)
+  const promptSet = args.promptSet ?? (await loadPromptCodes(args.orgId, codeSet))
+  const allCodes = promptSet.codes
   const prompt = buildItemPrompt(args.envelope, args.text)
 
   let codes = allCodes
@@ -75,7 +84,7 @@ export async function runExtraction(args: {
       known.has(b),
     )
     const chosen = new Set(blocks)
-    codes = allCodes.filter((c) => chosen.has(c.block))
+    codes = allCodes.filter((c) => chosen.has(c.blockCode))
     if (codes.length === 0) {
       return {
         output: null,
@@ -87,6 +96,7 @@ export async function runExtraction(args: {
         codesInPrompt: 0,
         codeBlockChars: 0,
         systemChars: 0,
+        taxonomyVersion: promptSet.taxonomyVersion,
         inputTokens: pass1.totalUsage.inputTokens ?? null,
         outputTokens: pass1.totalUsage.outputTokens ?? null,
         durationMs: Date.now() - started,
@@ -94,7 +104,7 @@ export async function runExtraction(args: {
     }
   }
 
-  const sys = buildExtractionSystemPrompt(codes)
+  const sys = buildExtractionSystemPrompt(promptSet, codes)
   const result = await aiGenerateText({
     process: EXTRACTION_PROCESS,
     orgId: args.orgId,
@@ -106,7 +116,11 @@ export async function runExtraction(args: {
     temperature: 0,
   })
   return {
-    output: normalizeExtraction(result.output, { allowedCodes: sys.codes, text: args.text }),
+    output: normalizeExtraction(result.output, {
+      allowedCodes: sys.codes,
+      attributes: promptSet.attributes,
+      text: args.text,
+    }),
     variant,
     codeSet,
     model: aiCallInfo(result)?.responseModel ?? null,
@@ -115,6 +129,7 @@ export async function runExtraction(args: {
     codesInPrompt: sys.codes.length,
     codeBlockChars: sys.codeBlockChars,
     systemChars: sys.systemChars,
+    taxonomyVersion: sys.taxonomyVersion,
     inputTokens: result.totalUsage.inputTokens ?? null,
     outputTokens: result.totalUsage.outputTokens ?? null,
     durationMs: Date.now() - started,

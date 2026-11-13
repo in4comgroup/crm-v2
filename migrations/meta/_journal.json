@@ -78,6 +78,27 @@
       "when": 1794594593335,
       "tag": "0010_topics_phase0_foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794595785734,
+      "tag": "0011_signal_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794595853302,
+      "tag": "0012_signals_registry_v1",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794596842079,
+      "tag": "0013_signals_registry_v2_fixes",
+      "breakpoints": true
     }
   ]
 }

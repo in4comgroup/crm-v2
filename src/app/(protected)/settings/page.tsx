@@ -13,6 +13,7 @@ import { AdminAiModels } from "@/components/blocks/admin-ai-models"
 import { AdminAiProcesses } from "@/components/blocks/admin-ai-processes"
 import { AdminAiUsage } from "@/components/blocks/admin-ai-usage"
 import { AdminTopics } from "@/components/blocks/admin-topics"
+import { AdminSignals } from "@/components/blocks/admin-signals"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 
@@ -56,6 +57,7 @@ export default function SettingsPage() {
             <TabsTrigger value="ai-processes">Процессы ИИ</TabsTrigger>
             <TabsTrigger value="ai-usage">Использование ИИ</TabsTrigger>
             <TabsTrigger value="topics">Темы</TabsTrigger>
+            <TabsTrigger value="signals">Сигналы</TabsTrigger>
             <TabsTrigger value="settings">Настройки</TabsTrigger>
           </TabsList>
 
@@ -135,6 +137,11 @@ export default function SettingsPage() {
           {/* Topics engine: mode per org + hourly run log (not forceMount). */}
           <TabsContent value="topics" className="mt-4">
             <AdminTopics />
+          </TabsContent>
+
+          {/* Signals registry editor (not forceMount: loads when opened). */}
+          <TabsContent value="signals" className="mt-4">
+            <AdminSignals />
           </TabsContent>
 
           <TabsContent

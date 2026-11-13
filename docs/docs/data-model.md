@@ -109,6 +109,19 @@ models.dev schema; gateway-specific data only in jsonb (`raw`, `cost_raw`).
 | `platform_setting_log` | Append-only change log of platform settings | `key`, `old_value`, `new_value`, `changed_by_user_id`, `changed_at` |
 | `ai_process_assignment_log` | Append-only change log of assignments | `process_key`, `changed_by_user_id`, `changed_at`, `before`, `after` (jsonb snapshots; `after` null = reset) |
 
+## 7a. Signals registry and topics (in progress)
+
+Spec: `docs/specs/topics/`. Signals registry (DB is the master after the seed
+migration `0012`): `signal_pack`, `signal_block`, `signal_category` (code PK;
+all parameters incl. Russian texts, cues, anti-cues, weight, class, kind,
+stage, profile, closes, date gate, trigger rule), `signal_attribute`,
+`signal_relation`, `signal_pack_override`, per-org `organization_signal_pack` /
+`organization_signal_override`, `signal_stage_rule` (org NULL = pack template),
+`deal_risk_type` + per-org `deal_risk_stage_guard`, `signal_taxonomy_version` +
+`signal_registry_change` (every save = new version + change rows). Topics phase
+0: `org_setting` (+ log; `topics.enabled`, `ai.budget.daily_usd`), `topics_run`,
+`topics_golden_item`, `topics_eval_result`.
+
 ## 8. Admin and audit
 
 | Table | Purpose | Key columns |

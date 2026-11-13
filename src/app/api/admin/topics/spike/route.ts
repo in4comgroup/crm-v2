@@ -1,7 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { getServerSession } from "@/lib/get-session"
 import { getSpikeReport, listSpikeRuns, runSpikeBatch, SpikeError } from "@/server/topics/spike"
-import type { ExtractionCodeSet, ExtractionVariant } from "@/server/topics/prompt/extraction"
+import {
+  SignalsNotEnabledError,
+  type ExtractionCodeSet,
+  type ExtractionVariant,
+} from "@/server/topics/prompt/extraction"
 
 export {
   type SpikeBatchResult,
@@ -31,6 +35,10 @@ async function requireAdmin() {
 }
 
 function errorResponse(error: unknown) {
+  // The org has no active signal code: a setup problem the admin fixes in «Сигналы».
+  if (error instanceof SignalsNotEnabledError) {
+    return NextResponse.json({ error: error.message, code: "signals_not_enabled" }, { status: 400 })
+  }
   if (error instanceof SpikeError) {
     return NextResponse.json({ error: error.message }, { status: 400 })
   }

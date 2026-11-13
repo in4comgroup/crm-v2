@@ -359,6 +359,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
         <span className="text-muted-foreground">
           {fmtDate(r.startedAt)} — {fmtDate(r.lastAt)}
           {r.codeBlockChars !== null && ` · блок кодов ${num(r.codeBlockChars)} симв. (${r.codesInPrompt} кодов)`}
+          {r.taxonomyVersions.length > 0 && ` · версия реестра ${r.taxonomyVersions.join(", ")}`}
           {r.items.remaining > 0 && ` · не обработано: ${r.items.remaining}`}
         </span>
       </div>
@@ -448,7 +449,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
             <TableRow>
               <TableHead>Код</TableHead>
               <TableHead>Название</TableHead>
-              <TableHead>IN4COM</TableHead>
+              <TableHead>Статус</TableHead>
               <TableHead className="text-right">Найден</TableHead>
               <TableHead className="text-right">low</TableHead>
               <TableHead className="text-right">Ожидался</TableHead>
@@ -471,7 +472,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
               <TableRow key={c.code} className="even:bg-muted/40">
                 <TableCell className="font-mono text-xs">{c.code}</TableCell>
                 <TableCell className="text-xs">{c.labelRu}</TableCell>
-                <TableCell className="text-xs">{c.in4com ?? "—"}</TableCell>
+                <TableCell className="text-xs">{c.status ?? "—"}</TableCell>
                 <TableCell className="text-right">{c.found}</TableCell>
                 <TableCell className="text-right">{c.foundLow}</TableCell>
                 <TableCell className="text-right">{c.expected}</TableCell>

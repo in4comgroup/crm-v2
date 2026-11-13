@@ -1,27 +1,23 @@
 import "server-only"
 import { z } from "zod"
-import {
-  SIGNAL_ATTRIBUTES_V0,
-  SIGNAL_CATALOG_V0,
-  type SignalCatalogEntry,
-} from "@/server/topics/catalog/catalog-v0"
+import type { AntiCue } from "@/lib/signals/types"
+import { getCurrentVersion, getEffectiveSignals, getRegistry } from "@/server/signals/registry"
 
 // Signal-extraction prompt (spec 01 §5.3, registry 05 §6).
 //
-// The system prompt is built only from the catalog, never from the item, so
-// it is a stable prefix that the gateway / provider can cache. The item
-// (envelope + text) is the user message and always comes last.
+// The code block is built from the org's EFFECTIVE registry (DB, 05 §5),
+// never from the item, so the system prompt is a stable prefix that the
+// gateway / provider can cache. The item (envelope + text) is the user
+// message and always comes last.
 //
 // Code sets (decision R6):
-//   live   = IN4COM "on" codes — the live prompt;
-//   review = "on" + "review" codes — the offline eval batch only.
+//   live   = effective `inPrompt` codes (active, not review-only, not process);
+//   review = live + the org's review-only codes that the parser may emit —
+//            the offline eval batch only.
 // Variants (Q5):
 //   single   = one call with the full code block;
 //   two_pass = (1) block classifier (labels + 3 cues per code), (2) full
 //              entries of the chosen blocks only.
-//
-// v0 reads the committed catalog file; phase 2 reads the org's effective
-// registry (phase-1 DB tables) instead — same output schema.
 
 export type ExtractionVariant = "single" | "two_pass"
 export type ExtractionCodeSet = "live" | "review"
@@ -39,27 +35,122 @@ export const EXTRACTION_LIMITS = {
   itemChars: 24_000,
 } as const
 
-/** Prompt-eligible codes of a code set, in catalog order. */
-export function codesForSet(codeSet: ExtractionCodeSet): SignalCatalogEntry[] {
-  return SIGNAL_CATALOG_V0.filter(
-    (c) => c.promptEligible && (codeSet === "review" || c.in4com === "on"),
-  )
+/** One code as the prompt needs it (registry row + effective values). */
+export type PromptCode = {
+  code: string
+  packCode: string
+  blockCode: string
+  blockLabelRu: string
+  labelRu: string
+  definitionRu: string
+  boundaryRu: string
+  cuesPromptRu: string[]
+  antiCuesRu: AntiCue[]
+  kind: string
+  /** Effective weight for the org. */
+  weight: number
+  /** True for codes added only by the `review` code set. */
+  reviewOnly: boolean
 }
 
-type BlockGroup = { block: string; labelRu: string; codes: SignalCatalogEntry[] }
+export type PromptAttribute = {
+  code: string
+  groupCode: string
+  labelRu: string
+  cuesRu: string[]
+  antiCuesRu: string[]
+}
+
+/** Everything one extraction needs from the registry, loaded once per batch. */
+export type PromptCodeSet = {
+  orgId: string
+  codeSet: ExtractionCodeSet
+  /** Taxonomy version the codes were read at (stored with every result). */
+  taxonomyVersion: number
+  codes: PromptCode[]
+  attributes: PromptAttribute[]
+  /** Non-retired registry codes (for validation of human answers). */
+  knownCodes: string[]
+}
+
+/** The org has no active signal code (no activation applied in «Сигналы»). */
+export class SignalsNotEnabledError extends Error {
+  constructor(public orgId: string) {
+    super(
+      "Для организации не включены сигналы. Примените шаблон в «Сигналы» (например, «Пилот дистрибуции (IN4COM)») и повторите.",
+    )
+    this.name = "SignalsNotEnabledError"
+  }
+}
+
+/**
+ * Prompt codes of one org from the effective registry. Throws
+ * SignalsNotEnabledError when the org has no `inPrompt` code.
+ */
+export async function loadPromptCodes(orgId: string, codeSet: ExtractionCodeSet): Promise<PromptCodeSet> {
+  const [registry, effective, taxonomyVersion] = await Promise.all([
+    getRegistry(),
+    getEffectiveSignals(orgId),
+    getCurrentVersion(),
+  ])
+  const blockLabel = new Map(registry.blocks.map((b) => [b.code, b.labelRu]))
+  const eff = new Map(effective.map((e) => [e.code, e]))
+  const codes: PromptCode[] = []
+  // Registry order (pack → block → weight → code) inside each block.
+  for (const c of registry.categories) {
+    const e = eff.get(c.code)
+    if (!e || c.retiredAt) continue
+    const live = e.inPrompt
+    const review = codeSet === "review" && !live && e.reviewOnly && c.emittedBy !== "process"
+    if (!live && !review) continue
+    codes.push({
+      code: c.code,
+      packCode: c.packCode,
+      blockCode: c.blockCode,
+      blockLabelRu: blockLabel.get(c.blockCode) ?? c.blockCode,
+      labelRu: c.labelRu,
+      definitionRu: c.definitionRu,
+      boundaryRu: c.boundaryRu,
+      cuesPromptRu: c.cuesPromptRu,
+      antiCuesRu: c.antiCuesRu,
+      kind: c.kind,
+      weight: e.weight,
+      reviewOnly: !live,
+    })
+  }
+  if (!codes.some((c) => !c.reviewOnly)) throw new SignalsNotEnabledError(orgId)
+  const attributes = registry.attributes
+    .filter((a) => a.scope === "message" && a.stage === "active" && !a.defaultOff)
+    .map((a) => ({
+      code: a.code,
+      groupCode: a.groupCode ?? a.code,
+      labelRu: a.labelRu,
+      cuesRu: a.cuesRu,
+      antiCuesRu: a.antiCuesRu,
+    }))
+  return {
+    orgId,
+    codeSet,
+    taxonomyVersion,
+    codes,
+    attributes,
+    knownCodes: registry.categories.filter((c) => !c.retiredAt).map((c) => c.code),
+  }
+}
+
+type BlockGroup = { block: string; labelRu: string; codes: PromptCode[] }
 
 /**
  * Codes grouped by block; blocks ordered by their code count (desc), then by
  * block code — deterministic, so the prompt prefix is stable (05 §6).
  */
-export function groupByBlock(codes: readonly SignalCatalogEntry[]): BlockGroup[] {
+export function groupByBlock(codes: readonly PromptCode[]): BlockGroup[] {
   const map = new Map<string, BlockGroup>()
   for (const c of codes) {
-    const key = `${c.pack}:${c.block}`
-    let g = map.get(key)
+    let g = map.get(c.blockCode)
     if (!g) {
-      g = { block: c.block, labelRu: c.blockLabelRu, codes: [] }
-      map.set(key, g)
+      g = { block: c.blockCode, labelRu: c.blockLabelRu, codes: [] }
+      map.set(c.blockCode, g)
     }
     g.codes.push(c)
   }
@@ -68,14 +159,14 @@ export function groupByBlock(codes: readonly SignalCatalogEntry[]): BlockGroup[]
   )
 }
 
-function antiCueLine(c: SignalCatalogEntry): string {
+function antiCueLine(c: PromptCode): string {
   if (c.antiCuesRu.length === 0) return ""
   const parts = c.antiCuesRu.map((a) => `${a.text} → ${a.code ?? "нет сигнала"}`)
   return ` Похоже, но не это: ${parts.join("; ")}.`
 }
 
 /** One code entry in the 05 §6 format. */
-function codeEntry(c: SignalCatalogEntry): string {
+function codeEntry(c: PromptCode): string {
   const lines = [`${c.code} — ${c.labelRu}`]
   lines.push(`  Определение: ${c.definitionRu}`)
   lines.push(`  Не считается: ${c.boundaryRu}${antiCueLine(c)}`)
@@ -89,20 +180,20 @@ function codeEntry(c: SignalCatalogEntry): string {
 }
 
 /** The code block: all entries grouped by block. */
-export function buildCodeBlock(codes: readonly SignalCatalogEntry[]): string {
+export function buildCodeBlock(codes: readonly PromptCode[]): string {
   if (codes.length === 0) return "(нет активных кодов — signals всегда пустой)"
   return groupByBlock(codes)
     .map((g) => `### Блок ${g.block} · ${g.labelRu}\n\n${g.codes.map(codeEntry).join("\n\n")}`)
     .join("\n\n")
 }
 
-function attributeBlock(): string {
-  return SIGNAL_ATTRIBUTES_V0.filter((a) => a.stage === "active" && !a.defaultOff)
+function attributeBlock(attributes: readonly PromptAttribute[]): string {
+  return attributes
     .map(
       (a) =>
-        `${a.code} (группа ${a.group}) — ${a.labelRu}. Признаки: ${a.cuesRu
+        `${a.code} (группа ${a.groupCode}) — ${a.labelRu}. Признаки: ${a.cuesRu
           .map((q) => `«${q}»`)
-          .join(", ")}. Не считается: ${a.antiCuesRu}`,
+          .join(", ")}. Не считается: ${a.antiCuesRu.join("; ")}`,
     )
     .join("\n")
 }
@@ -136,15 +227,22 @@ export type ExtractionPrompt = {
   /** Size of the code block (characters) — the part that scales with the registry. */
   codeBlockChars: number
   systemChars: number
+  taxonomyVersion: number
 }
 
-/** Full system prompt for one pass over the given codes. */
-export function buildExtractionSystemPrompt(codes: readonly SignalCatalogEntry[]): ExtractionPrompt {
+/**
+ * Full system prompt for one pass. `codes` defaults to every code of the
+ * set; two_pass passes the codes of the chosen blocks.
+ */
+export function buildExtractionSystemPrompt(
+  set: PromptCodeSet,
+  codes: readonly PromptCode[] = set.codes,
+): ExtractionPrompt {
   const codeBlock = buildCodeBlock(codes)
   const system = `${INSTRUCTIONS}
 
 АТРИБУТЫ (модификаторы тона и эмоции)
-${attributeBlock()}
+${attributeBlock(set.attributes)}
 
 КОДЫ СИГНАЛОВ
 ${codeBlock}`
@@ -153,11 +251,12 @@ ${codeBlock}`
     codes: codes.map((c) => c.code),
     codeBlockChars: codeBlock.length,
     systemChars: system.length,
+    taxonomyVersion: set.taxonomyVersion,
   }
 }
 
 /** Two-pass, pass 1: block labels + 3 cues per code. */
-export function buildBlockClassifierPrompt(codes: readonly SignalCatalogEntry[]): {
+export function buildBlockClassifierPrompt(codes: readonly PromptCode[]): {
   system: string
   blocks: string[]
   chars: number
@@ -297,6 +396,8 @@ export type NormalizedExtraction = Omit<ExtractionOutput, "signals"> & {
   signals: NormalizedSignal[]
   /** Codes the model returned that were not in the prompt. */
   unknownCodes: string[]
+  /** Attribute codes the model returned that are not registry message attributes. */
+  unknownAttributes: string[]
 }
 
 const squash = (s: string) =>
@@ -318,7 +419,7 @@ export function evidenceInText(evidence: string, text: string): boolean {
 
 export function normalizeExtraction(
   output: ExtractionOutput,
-  opts: { allowedCodes: readonly string[]; text: string },
+  opts: { allowedCodes: readonly string[]; attributes: readonly PromptAttribute[]; text: string },
 ): NormalizedExtraction {
   const allowed = new Set(opts.allowedCodes)
   const unknownCodes: string[] = []
@@ -339,10 +440,17 @@ export function normalizeExtraction(
     if (signals.length >= EXTRACTION_LIMITS.signals) break
   }
   const groups = new Set<string>()
+  const unknownAttributes: string[] = []
+  const attrByCode = new Map(opts.attributes.map((a) => [a.code, a]))
   const attributes = output.attributes.filter((a) => {
-    const attr = SIGNAL_ATTRIBUTES_V0.find((x) => x.code === a.code)
-    if (!attr || groups.has(attr.group)) return false
-    groups.add(attr.group)
+    const attr = attrByCode.get(a.code.trim().toUpperCase())
+    if (!attr) {
+      unknownAttributes.push(a.code)
+      return false
+    }
+    // One attribute per exclusive group.
+    if (groups.has(attr.groupCode)) return false
+    groups.add(attr.groupCode)
     return true
   })
   return {
@@ -356,5 +464,6 @@ export function normalizeExtraction(
       deadlines: output.facts.deadlines.slice(0, EXTRACTION_LIMITS.deadlines),
     },
     unknownCodes,
+    unknownAttributes,
   }
 }

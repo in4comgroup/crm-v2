@@ -4,7 +4,7 @@
 // Org select → sample real items / add synthetic messages → LLM
 // pre-annotation of selected rows → review: the row drawer shows the text and
 // a JSON editor for `expected` ({ codes: [{ code, evidence?, subject? }],
-// noSignal?, topicGroup? }), validated on the server against the catalog.
+// noSignal?, topicGroup? }), validated on the server against the signals registry.
 // API: /api/admin/topics/golden.
 
 import { useCallback, useEffect, useMemo, useState } from "react"
@@ -475,7 +475,7 @@ function SyntheticDialog({
 
 const EMPTY_EXPECTED = { codes: [], noSignal: true }
 
-/** Client-side shape check; the server validates the codes against the catalog. */
+/** Client-side shape check; the server validates the codes against the registry. */
 function checkExpected(raw: string): { value: unknown; error: string | null } {
   if (!raw.trim()) return { value: null, error: null }
   let value: unknown

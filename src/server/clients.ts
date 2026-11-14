@@ -22,6 +22,7 @@ import {
   inArray,
   gte,
 } from "drizzle-orm"
+import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { computeOrderDiscount } from "@/lib/orders-format"
 import { loadClientLastActivity } from "@/server/client-activity"
 import { listDealFunnelStages } from "@/server/deals"
@@ -278,7 +279,7 @@ export async function listClientsFeed(params: {
   const dealRows = await db
     .select({ clientId: deal.clientId, funnelStageId: deal.funnelStageId })
     .from(deal)
-    .where(and(eq(deal.organizationId, activeOrgId), eq(deal.status, "active")))
+    .where(and(eq(deal.organizationId, activeOrgId), inArray(deal.status, [...OPEN_DEAL_STATUSES])))
 
   const hasClosed = new Set<string>()
   const hasOpen = new Set<string>()

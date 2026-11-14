@@ -83,6 +83,7 @@ const STATUS_LABEL: Record<string, string> = {
   suspended: "Приостановлен",
   deleted: "Удалён",
   cancelled: "Отменён",
+  paused: "На паузе",
 }
 
 function label(map: Record<string, string>, v: string | null | undefined) {

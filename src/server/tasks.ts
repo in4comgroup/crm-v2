@@ -13,6 +13,7 @@ import {
   type TaskStatus,
 } from "@/db/schema"
 import { aliasedTable, and, eq, desc, inArray, isNotNull } from "drizzle-orm"
+import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
@@ -253,9 +254,9 @@ export async function listTaskDealOptions(
   const { activeOrgId } = await requireOrgContext()
   const conditions = [
     eq(deal.organizationId, activeOrgId),
-    // Only active deals are valid task contexts — cancelled / deleted deals
+    // Only open (active / paused) deals are valid task contexts — cancelled / deleted deals
     // are soft-deleted and shouldn't appear in the picker.
-    eq(deal.status, "active"),
+    inArray(deal.status, [...OPEN_DEAL_STATUSES]),
   ]
   if (clientId) {
     conditions.push(eq(deal.clientId, clientId))

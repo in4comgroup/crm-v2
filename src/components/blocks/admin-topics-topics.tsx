@@ -7,11 +7,13 @@
 // again), signal instances with evidence, the event journal, and the
 // actions «Готово» / «Не относится» / «Объединить с…»; phase 4: the
 // attention result (list, profile, score, «Почему в этом списке») and the
-// topic card (open card + history) with «Переписать карточку».
+// topic card (open card + history) with «Переписать карточку»; phase 5:
+// the deal bridge (linked deal, decision log per signal instance, deal
+// proposal / stage confirmation cards) with «Решить по сделке».
 // API: /api/admin/topics/topics. Users never see this.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { ChevronLeft, ChevronRight, FileText, Loader, PenLine, RefreshCw, RotateCcw, Unlink } from "lucide-react"
+import { ChevronLeft, ChevronRight, FileText, Handshake, Loader, PenLine, RefreshCw, RotateCcw, Unlink } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -63,9 +65,92 @@ import type {
   AdminTopicDetailResponse,
   AdminTopicsListResponse,
   TopicDebugCard,
+  TopicDebugDealCard,
+  TopicDebugDealDecision,
   TopicDebugDetail,
   TopicDebugRow,
 } from "@/app/api/admin/topics/topics/route"
+
+const DEAL_ACTION_LABEL: Record<string, string> = {
+  create: "создана сделка",
+  link: "привязана к сделке",
+  propose: "предложение «Новая возможность?»",
+  move: "перевод вперёд",
+  confirm: "подтверждение стадии",
+  outcome: "итог сделки",
+  pause: "пауза",
+  resume: "снятие паузы",
+  context: "контекст сделки",
+  skip: "без действия",
+}
+const DEAL_STATUS_LABEL: Record<string, string> = {
+  active: "активна",
+  paused: "на паузе",
+  cancelled: "отменена",
+  deleted: "удалена",
+}
+
+function dealActionText(action: string): string {
+  const [a, dry] = action.split(":")
+  return `${DEAL_ACTION_LABEL[a] ?? a}${dry === "dry_run" ? " (тень: не выполнено)" : ""}`
+}
+
+function DealDecisionView({ d }: { d: TopicDebugDealDecision }) {
+  return (
+    <div className="rounded-lg border p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono">{d.code}</span>
+        {d.labelRu && <span className="text-muted-foreground">{d.labelRu}</span>}
+        {d.confidence && <Badge variant="outline">{d.confidence}</Badge>}
+        {d.topicScore !== null && <span className="text-muted-foreground">балл темы {d.topicScore}</span>}
+        {d.dryRun && <Badge variant="secondary">тень</Badge>}
+        <span className="ml-auto text-muted-foreground">{fmtDate(d.createdAt)}</span>
+      </div>
+      <ul className="mt-1 flex flex-col gap-0.5">
+        {d.results.length === 0 && <li className="text-muted-foreground">Правил нет.</li>}
+        {d.results.map((r, i) => (
+          <li key={i}>
+            <span className="font-mono text-muted-foreground">{r.effect || "—"}</span> →{" "}
+            <span className="font-medium">{dealActionText(r.action)}</span>
+            {r.stageLabel && <> · «{r.stageLabel}»</>}
+            {r.reasonRu && <span className="text-muted-foreground"> · {r.reasonRu}</span>}
+            {r.ruleNote && <span className="text-muted-foreground"> · правило: {r.ruleNote.split("\n")[0]}</span>}
+            {r.error && <span className="text-red-500"> · ошибка: {r.error}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function DealCardView({ c }: { c: TopicDebugDealCard }) {
+  const p = c.proposal
+  return (
+    <div className="rounded-lg border p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline">{c.kind === "deal_proposal" ? "Новая возможность?" : "Подтвердить стадию"}</Badge>
+        <CardStatusBadge status={c.status} />
+        <span className="font-medium">{c.headline}</span>
+        <span className="ml-auto text-muted-foreground">{fmtDate(c.createdAt)}</span>
+      </div>
+      {p && (
+        <div className="mt-1 text-muted-foreground">
+          {p.codeLabelRu} ({p.confidence}, балл {p.topicScore}) · {p.reasonRu}
+          {p.evidence && <> · «{p.evidence}»</>}
+          {p.dealTypeLabelRu && <> · тип: {p.dealTypeLabelRu}</>}
+          {p.stageLabelRu && <> · стадия: {p.fromStageLabelRu ? `${p.fromStageLabelRu} → ` : ""}{p.stageLabelRu}</>}
+        </div>
+      )}
+      {(c.rejectReasonCode || c.rejectionReason) && (
+        <div className="mt-1">
+          Отклонено: {c.rejectReasonCode ? (CARD_REJECT_REASON_LABELS_RU[c.rejectReasonCode as CardRejectReason] ?? c.rejectReasonCode) : ""}
+          {c.rejectionReason ? ` — ${c.rejectionReason}` : ""}
+        </div>
+      )}
+      {c.dealId && <div className="mt-1 font-mono text-muted-foreground">сделка {c.dealId}</div>}
+    </div>
+  )
+}
 
 const ALL = "__all__"
 const LIVE = "open,dormant"
@@ -519,7 +604,7 @@ function TopicDetailDialog({
   }, [orgId, topicId])
 
   const act = async (
-    action: "done" | "dismiss" | "merge" | "detachItem" | "resolveItem" | "rewriteCard",
+    action: "done" | "dismiss" | "merge" | "detachItem" | "resolveItem" | "rewriteCard" | "runDeals",
     extra: { targetTopicId?: string; sourceItemId?: string } = {},
   ) => {
     if (!topicId) return
@@ -533,9 +618,19 @@ function TopicDetailDialog({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
-      const { detail: next, outcome, card } = data as AdminTopicActionResponse
+      const { detail: next, outcome, card, deals } = data as AdminTopicActionResponse
       if (outcome) toast.success(topicOutcomeText(outcome))
       else if (card) toast.success(CARD_OUTCOME_LABEL[card.outcome] ?? card.outcome)
+      else if (deals)
+        toast.success(
+          "skipped" in deals
+            ? deals.skipped === "no stage rules"
+              ? "У организации нет правил стадий — скопируйте шаблоны в «Сигналах»"
+              : deals.skipped
+            : deals.instances === 0
+              ? "Новых сигналов для сделки нет"
+              : `Решено сигналов: ${deals.instances}${deals.dryRun ? " (тень: сделки не менялись)" : ""}`,
+        )
       else toast.success("Готово")
       onChanged()
       if (!next) {
@@ -740,6 +835,62 @@ function TopicDetailDialog({
                         ))}
                       </>
                     )}
+                  </div>
+                )}
+              </section>
+
+              <section className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium">Сделка</h3>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="ml-auto"
+                    disabled={busy !== null}
+                    onClick={() => void act("runDeals")}
+                  >
+                    {busy === "runDeals:" ? <Loader className="h-4 w-4 animate-spin" /> : <Handshake className="h-4 w-4" />}
+                    Решить по сделке
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  «Решить по сделке» применяет правила стадий к ещё не решённым сигналам темы. Сделки меняются только в режиме «вкл.»; в тени решения только записываются.
+                </p>
+                {detail.deal ? (
+                  <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
+                    <KV k="Сделка">
+                      {detail.deal.name}
+                      {detail.deal.createdByAgent && <Badge variant="secondary" className="ml-2">создал агент</Badge>}
+                    </KV>
+                    <KV k="Стадия">
+                      {detail.deal.stageLabel ?? "—"} · {DEAL_STATUS_LABEL[detail.deal.status] ?? detail.deal.status}
+                      {detail.deal.pausedUntil && <> до {fmtDate(detail.deal.pausedUntil)}</>}
+                    </KV>
+                    <KV k="Тип">{detail.deal.dealTypeLabel ?? "—"}</KV>
+                    <KV k="ID">
+                      <span className="font-mono text-xs">{detail.deal.id}</span>
+                    </KV>
+                    {detail.deal.outcomeReason && <KV k="Итог / причина">{detail.deal.outcomeReason}</KV>}
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground">Тема не привязана к сделке.</div>
+                )}
+                {detail.dealCards.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <div className="text-xs text-muted-foreground">Карточки сделки ({detail.dealCards.length})</div>
+                    {detail.dealCards.map((c) => (
+                      <DealCardView key={c.id} c={c} />
+                    ))}
+                  </div>
+                )}
+                <div className="text-xs text-muted-foreground">Решения по сигналам ({detail.dealDecisions.length})</div>
+                {detail.dealDecisions.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">Решений пока нет.</div>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {detail.dealDecisions.map((d) => (
+                      <DealDecisionView key={d.id} d={d} />
+                    ))}
                   </div>
                 )}
               </section>

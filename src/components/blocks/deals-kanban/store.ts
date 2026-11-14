@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import type { DealRow, DealFunnelStageOption } from "@/app/api/deals/route"
 import { computePosition } from "@/lib/kanban-move"
+import { isOpenDealStatus } from "@/lib/deal-funnel"
 
 // Per-column field sort is transient view-state — it NEVER writes to
 // `deal.position`. "Вручную" renders the persisted manual order; the others
@@ -124,7 +125,7 @@ function sortCards(cards: DealRow[], mode: SortMode): DealRow[] {
 
 // Исход карточки в терминальной колонке: выиграна (Closed) vs проиграна (прочее).
 function isWonDeal(d: DealRow): boolean {
-  return d.status === "active" && d.funnelStageName === "Closed"
+  return isOpenDealStatus(d.status) && d.funnelStageName === "Closed"
 }
 
 // Сортировка карточек финальной колонки. «По умолчанию» — по свежести; «won/lost»

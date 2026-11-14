@@ -41,6 +41,15 @@ export const PLATFORM_SETTINGS = {
     schema: attentionParamsOverrideSchema.nullable(),
     default: null as AttentionParamsOverride | null,
   },
+  // Deal bridge (topics phase 5, spec 01 §9.2, Q27). Per-org override:
+  // org_setting with the same key (null there = this value).
+  "deals.autoCreateEnabled": { schema: z.boolean(), default: true },
+  "deals.autoCreateMinScore": { schema: z.number().int().min(0).max(20), default: 7 },
+  "deals.autoCreateMinConfidence": {
+    schema: z.enum(["low", "medium", "high"]),
+    default: "high" as "low" | "medium" | "high",
+  },
+  "deals.proposalMinScore": { schema: z.number().int().min(0).max(20), default: 5 },
 } as const
 
 export type PlatformSettingKey = keyof typeof PLATFORM_SETTINGS

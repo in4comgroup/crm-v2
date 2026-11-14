@@ -37,6 +37,7 @@ import type {
   TaskContactOption,
 } from "@/app/api/tasks/route"
 import type { TaskType, TaskPriority, TaskStatus } from "@/db/schema"
+import { isOpenDealStatus } from "@/lib/deal-funnel"
 
 const TYPES: TaskType[] = [
   "meet",
@@ -190,7 +191,7 @@ export function TaskEditForm({
         }
         setDealOptions(
           ((dRes.deals ?? []) as DealLite[])
-            .filter((d) => d.status === "active")
+            .filter((d) => isOpenDealStatus(d.status))
             .map((d) => ({ id: d.id, name: d.name, clientName: d.clientName })),
         )
         if (mode === "create" && !form.getValues("assigneeId")) {

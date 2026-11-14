@@ -1,7 +1,7 @@
 # Topics — development plan (final)
 
-Status: **final, 2026-11-13. Progress: phases 0–4 built (not deployed); phase 5 next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
-Spec: [01-specification.md](01-specification.md) · Decisions: [02-open-questions.md](02-open-questions.md) (§ F = R1–R23) · Registry: [05-signals-registry.md](05-signals-registry.md) · Attention: [06-attention-engine.md](06-attention-engine.md)
+Status: **final, 2026-11-13. Progress: phases 0–5 built (not deployed); phase 5a next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
+Spec: [01-specification.md](01-specification.md) · Decisions: [02-open-questions.md](02-open-questions.md) (§ F = R1–R24) · Registry: [05-signals-registry.md](05-signals-registry.md) · Attention: [06-attention-engine.md](06-attention-engine.md)
 
 The plan of 2026-11-10 assumed another copy of the product (Yandex models, own PostgreSQL, K8s CronJob, `llm_usage`). It is replaced by this document. Its business content (phases, scope, gates) is kept.
 
@@ -33,13 +33,13 @@ The plan of 2026-11-10 assumed another copy of the product (Yandex models, own P
 | Deal discovery | Process `deals.discovery` (name match); since phase 0 it journals every stage move (`deal_activity`) | Replaced in phase 5, removed in phase 12 |
 | Mock agent | Removed in phase 0 (R9) | — |
 | Orchestration | Daily cron `0 3 * * *` → `runDailyPipeline` (model catalog sync + cost check, sync → parse → upload), `pipeline_run`; **hourly** cron `0 * * * *` → `runTopicsPipeline` (phase «signals» built in phase 2; the others are stubs), `topics_run` | Phases 3–5a fill the stubs |
-| DB process | Drizzle migrations `0000`–`0020` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027), reference data in migrations | Next topics migration: **0021** |
+| DB process | Drizzle migrations `0000`–`0021` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027, `0021` deal bridge), reference data in migrations | Next topics migration: **0022** |
 | Topics foundations (phase 0) | `org_setting` (`topics.enabled`, budget override), system actor «Агент», «Темы» tab (modes, runs, golden set, model spike) | Used by every later phase |
 | Signals registry (phase 1) | DB registry (one generic pack; 158 codes after `0017`: 144 `active`, 8 `parked`, 6 `gated`, no retired codes; attributes, relations, 9 risk types, rule templates), `getEffectiveSignals(orgId)`, «Сигналы» tab with the full editor, Markdown export (preset mechanism kept, no presets defined — R22) | Extraction prompt reads it |
 | Signal extraction (phase 2) | `src/server/topics/signals/` (gates, extraction, post-processing, storage, hourly runner, manual action), `signal_instance`, `source_item_subject`, `source_item.signal_*`, `analysis_exclusion` (owner UI on Sources), `src/lib/ru-mail/`, eval runner with stored metrics, signal review on «Темы» | Input of topic resolution (phase 3): counted instances + subjects per item |
 | Access | Sign-in gate `src/proxy.ts`; routes check the session; `"use server"` modules are session-bound | Engine code is `server-only` and takes `organizationId` explicitly |
 
-Missing today: deal types, deal bridge, deal state / risks, the user UI (lists «Сейчас / Сводка / Неделя», topic drawer — phase 6). (Thread keys, topics, the hourly intake, attention, the production calendar and topic cards are built — phases 3–4.)
+Missing today: deal state / risks (phase 5a), the user UI (lists «Сейчас / Сводка / Неделя», topic drawer — phase 6). (Thread keys, topics, the hourly intake, attention, the production calendar, topic cards, deal types and the deal bridge are built — phases 3–5.)
 
 ## Overview
 
@@ -50,8 +50,8 @@ Missing today: deal types, deal bridge, deal state / risks, the user UI (lists �
 | 2 | Signal extraction | 2.5 | Gates, `topics.signal_extraction`, scoring, storage, exclusions, forwarded mail, eval runner | No (shadow) | ✅ built |
 | 3 | Topic engine | 3 | `thread_key`, topics, resolver + `topics.topic_match`, lifecycle, journal, teardown / reparse, debug page | No (shadow) | ✅ built |
 | 4 | Attention and cards | 2 | Attention engine (06, A1–A8), production calendar, card per topic with kinds, `topics.card_writer` | No (shadow) | ✅ built |
-| 5 | Deal bridge | 2 | Deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение» | No (shadow) | next |
-| 5a | Deal state and risks | 1.5 | `deals.state_summary`, risk engine, «Есть риски» | No (shadow) |  |
+| 5 | Deal bridge | 2 | Deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение» | No (shadow) | ✅ built |
+| 5a | Deal state and risks | 1.5 | `deals.state_summary`, risk engine, «Есть риски» | No (shadow) | next |
 | 6 | UI and pilot | 2 | «Сейчас / Сводка / Неделя», topic drawer, company / deal tabs, «Создать заказ» on order topics, IN4COM switch-on | **Yes (IN4COM)** |  |
 | **MVP** | | **≈ 17.5** | | |  |
 | 7 | Delivery | 2 | Email digest, Telegram to staff, P6 evening reminders and daily limit | Yes |  |
@@ -236,6 +236,21 @@ Exit: shadow cards reviewed with IN4COM on 2 weeks of real data; duplicate rate 
 
 ## Phase 5 — Deal bridge (2 weeks)
 
+**Status 2026-11-14 — built, not deployed.** Migration `0021_topics_phase5_deal_bridge` (deal status `paused`; table `deal_type`; `deal.deal_type_id`, `paused_until`, `pause_reason`, `outcome_reason`, `created_by_agent`; `deal_activity.topic_id`, `source_item_id`, `rule_id`, `evidence`). `pnpm test`: 253 tests + 1 todo.
+
+| Task | State |
+|---|---|
+| 1 Migration + deal types | Done: `0021`; `src/server/deal-types.ts` — generic defaults (`new_location`, `listing`, `tender`, `supply_agreement`, `renewal`) created per org on first use (tenant data); editor «Типы сделок» next to «Настройки стадий» on /deals (org owner; types are hidden, never deleted); deal type in the deal forms and on the kanban card |
+| 2 Deal helpers | Done: `src/server/deal-engine.ts` (server-only, org-explicit): create (agent or user), forward-only move (skip allowed), outcome won / lost (`withdrawn` only by a user), pause / resume, undo of an agent deal, topic link; every write = one batch with a `deal_activity` row (topic, item, rule, evidence). Owner of an agent deal: topic assignee → `client.user_id` (if still a member) → org owner → oldest member |
+| 3 Rules | Done: `src/server/topics/deals/rules.ts` (pure, unit-tested) over the org's own `signal_stage_rule` rows (none → `skipped: no stage rules`): `ORDER_*` and low-confidence signals never act; author-only (our own items never create / move / close); area 0 is never a target; `requires_fact` / `PROSPECT_NEED_EXPRESSED` need a concrete task; forward only; one signal does not both create and move a deal. Create: open deal of client + type → link; else auto-create (settings `deals.autoCreateEnabled` true, `autoCreateMinScore` 7, `autoCreateMinConfidence` high, client resolved, guards) → else `deal_proposal` card (score ≥ `deals.proposalMinScore` 5, client or contact) → else nothing. Moves / outcomes → automatic or a `stage_confirmation` card; `in_stage` → `deal_context` topic event only. Phase «deals» after «cards»: new signals of the last 30 days, 50 topics / run, one `deal_decision` event per signal (idempotent). **In `shadow` the phase is a dry run:** decisions and hidden cards are stored, deals are not changed (deals are visible on the board) |
+| 4 «Происхождение» | Done: deal drawer tab with the deal's topics and items (markdown links) and the journal (actor Агент / user, stage change, rule, evidence); badge «создал агент» + «Отменить» on the card and in the drawer; pause dialog (date + reason) and «Снять с паузы». Paused deals stay in their stage and count as open everywhere (`OPEN_DEAL_STATUSES` in `src/lib/deal-funnel.ts`) |
+| Cards | `deal_proposal` «<Компания> — новая возможность: <тип>» (Создать / Не сделка) and `stage_confirmation` (Подтвердить / Отклонить): text by code, no LLM; `PUT /api/cards { action: "deal_execute" }`; reject codes `not_a_deal`, `deal_exists`, `wrong_stage`; visible only in mode `on` |
+| Old discovery | `/api/deals/discover` stays until phase 12; in mode `on` it does not create a deal for a client with an open agent deal and does not move agent deals |
+
+Live check (IN4COM): the admin step «copy rule templates» done on the test DB (23 rules; S1 «Квалификация», S2 «Потребности», S3 «Пилот», S4 «КП», S5 «Переговоры», won Closed, lost Rejected); test client «maslov.agency» created, the hourly re-link linked both maslov topics; the engine auto-created the deal «maslov.agency — запрос коммерческих условий» (type `new_location`, stage «Квалификация», SALES_OFFER_REQUESTED high, score 7, client new; journal with topic, item, rule `tpl:base:6`, evidence); a re-run did nothing. Smoke tests (move, backward refused, pause / resume, undo, confirmation card, «Не сделка», hidden cards) passed and were cleaned up. The test client, the 23 rules and the agent deal stay for the review; IN4COM mode `off`.
+
+**Open:** exit gate = IN4COM users agree with the auto-created deals and moves in the shadow / first `on` weeks. Decided (R24): shadow = dry run for deals; paused deals count in the weighted forecast. Proposal / confirmation cards do not expire; a `pause` from a signal has no end date (no fact gives one). The mock «board intel» (`src/server/deals-mock.ts`, `/api/deals/intel`) is still used by the kanban — remove it with the old logic (phase 12).
+
 1. Migration: `deal.deal_type` + per-org deal types (R13; generic list from R22: `new_location`, `listing`, `tender`, `supply_agreement`, `renewal`), `deal_activity.topic_id / source_item_id / rule_id`, deal status `paused` (+ until, reason).
 2. Org-explicit, `server-only` deal helpers (create / move / outcome) acting as the system actor; every move journaled.
 3. Rules (Q12, Q27): auto-create above the per-org threshold (confidence high, score ≥ 7, client resolved, no open deal of the same type), `deal_proposal` card below; area 0 never creates a deal (Q34); `PROSPECT_NEED_EXPRESSED` only with a concrete task; forward-only moves; `stage_confirmation` cards; `ORDER_*` codes have no deal effect; «создал агент» badge + undo.
@@ -274,18 +289,17 @@ Exit (go-live sign-off): Q23 targets met for 2 consecutive weeks.
 
 Out of this plan (separate tasks): functional roles and rights (Q33); Telegram group chats, voice notes and files (Q11, Q32).
 
-## Next steps (2026-11-14, after phase 4)
+## Next steps (2026-11-14, after phase 5)
 
-Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0020` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
+Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0021` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
 
-Current state: phases 0–4 built, not deployed. Hourly run per org in `shadow` / `on`: intake → signals → topics → attention → cards; deals / deal state are stubs. Users see nothing new yet (the lists UI is phase 6). IN4COM: `base` pack on, topics mode `off`; test topics and 2 hidden test cards from the live checks.
+Current state: phases 0–5 built, not deployed. Hourly run per org in `shadow` / `on`: intake → signals → topics → attention → cards → deals (dry run in `shadow`); deal state is a stub. IN4COM: `base` pack on, 23 stage rules, 5 deal types, topics mode `off`; test data from the live checks (topics, 2 hidden topic cards, test client «maslov.agency», 1 agent deal).
 
 | # | Step | Who | Blocks |
 |---|---|---|---|
-| 1 | Review and commit phases 0–4 (incl. migrations `0016`–`0020`) | Product owner | — |
-| 2 | IN4COM reviewers: golden set (codes and topic groups), signal texts, then an eval | IN4COM + platform admin | Exit gates of phases 2–3 |
-| 3 | Shadow review of topics and cards in «Темы (отладка)» on real data (IN4COM in `shadow`) | IN4COM + platform admin | Exit gate of phase 4 |
-| 4 | **Phase 5 — deal bridge** (deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение») | Development | Can start now |
+| 1 | Review and commit phases 0–5 (incl. migrations `0016`–`0021`) | Product owner | — |
+| 2 | IN4COM reviewers: golden set, signal texts, eval; shadow review of topics, cards and deal decisions in «Темы (отладка)» | IN4COM + platform admin | Exit gates of phases 2–5 |
+| 3 | **Phase 5a — deal state and risks** (`deals.state_summary`, risk engine, «Есть риски», I5 escalation, R17 card update) | Development | Can start now |
 
 Note: 15 of the codes made `active` by R23 are process codes (watchdogs, CRM-data trends). Nothing emits them until phase 8.
 

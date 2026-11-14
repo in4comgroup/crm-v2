@@ -34,6 +34,7 @@ import { toast } from "sonner"
 import type {
   DealClientOption,
   DealFunnelStageOption,
+  DealTypeOption,
 } from "@/app/api/deals/route"
 import { CURRENCY_SYMBOL } from "@/lib/deal-board"
 import TaskEditDialog from "@/components/forms/form-task-edit"
@@ -49,7 +50,12 @@ type DealFormData = {
   funnelStageId: string
   clientId: string
   value: string
+  // "" = без типа (тип сделки необязателен).
+  dealTypeId: string
 }
+
+// Sentinel for «Без типа» — Radix Select forbids an empty item value.
+const NO_TYPE = "__none__"
 
 type Props = {
   trigger: React.ReactNode
@@ -61,6 +67,7 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
   const [isPending, startTransition] = useTransition()
   const [clientOptions, setClientOptions] = useState<DealClientOption[]>([])
   const [stageOptions, setStageOptions] = useState<DealFunnelStageOption[]>([])
+  const [typeOptions, setTypeOptions] = useState<DealTypeOption[]>([])
   // Опциональная первая задача при СОЗДАНИИ сделки (UX): вместо урезанной
   // копии формы задачи (только имя/срок/исполнитель — не было типа,
   // приоритета, описания, приходилось потом редактировать в Задачах) сразу
@@ -81,6 +88,7 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
       funnelStageId: "",
       clientId: "",
       value: "",
+      dealTypeId: "",
     },
   })
 
@@ -95,9 +103,12 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
     let cancelled = false
     ;(async () => {
       try {
-        const [cRes, sRes] = await Promise.all([
+        const [cRes, sRes, tRes] = await Promise.all([
           fetch("/api/deals?clientOptions=1").then((r) => r.json()),
           fetch("/api/deals?funnelStages=1").then((r) => r.json()),
+          fetch("/api/deals?dealTypes=1")
+            .then((r) => r.json())
+            .catch(() => ({ types: [] })),
         ])
         if (cancelled) return
         // Скрытые в «Настройках стадий» колонки в выборе не предлагаем.
@@ -106,6 +117,10 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
         ).filter((s) => !s.isHidden)
         setClientOptions(cRes.options ?? [])
         setStageOptions(stages)
+        // Скрытые типы в выборе не предлагаем.
+        setTypeOptions(
+          ((tRes.types ?? []) as DealTypeOption[]).filter((t) => !t.isHidden),
+        )
 
         // Default: первая стадия САМОЙ воронки (lowest sortOrder, Qualification
         // в системной) — 0-я «до воронки» не дефолт для новой сделки.
@@ -116,6 +131,7 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
           funnelStageId: defaultStage?.id ?? "",
           clientId: "",
           value: "",
+          dealTypeId: "",
         })
       } catch {}
     })()
@@ -142,6 +158,7 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
             funnelStageId: data.funnelStageId,
             clientId: data.clientId,
             value: numericValue,
+            dealTypeId: data.dealTypeId || null,
           }),
         })
         if (!res.ok) {
@@ -285,6 +302,36 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
                 )}
               />
             </div>
+
+            <FormField
+              control={form.control}
+              name="dealTypeId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-gray-400">Тип сделки</FormLabel>
+                  <Select
+                    value={field.value || NO_TYPE}
+                    onValueChange={(v) =>
+                      field.onChange(v === NO_TYPE ? "" : v)
+                    }
+                  >
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Без типа" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value={NO_TYPE}>Без типа</SelectItem>
+                      {typeOptions.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.labelRu}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}

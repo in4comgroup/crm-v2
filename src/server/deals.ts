@@ -6,6 +6,8 @@ import {
   dealActivity,
   dealContact,
   dealFunnelStage,
+  dealType,
+  signalCategory,
   client,
   contact,
   user,
@@ -19,9 +21,25 @@ import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
 import {
   dealStageLabel,
+  OPEN_DEAL_STATUSES,
   PRE_PIPELINE_VIRTUAL_ID,
   stageDisplayLabel,
 } from "@/lib/deal-funnel"
+import {
+  DealTypeForbiddenError,
+  ensureDefaultDealTypes,
+  saveDealTypes,
+  type DealTypeInput,
+  type DealTypeRow,
+} from "@/server/deal-types"
+import { getActiveOrgRole } from "@/server/sources"
+import {
+  listDealProvenance,
+  pauseDeal,
+  resumeDeal,
+  undoAgentDeal,
+  type DealProvenanceView,
+} from "@/server/deal-engine"
 
 export type DealContactSummary = { id: string; name: string }
 
@@ -50,6 +68,18 @@ export type DealRow = {
   // Fractional-indexing key for manual kanban order within a stage; null until
   // the deal is first dragged (board sorts null to the end by updatedAt).
   position: string | null
+  // ── Topics plan phase 5 (deal bridge) ──
+  // Deal type from the org's list (`deal_type`); null = untyped.
+  dealTypeId: string | null
+  dealTypeCode: string | null
+  dealTypeLabel: string | null
+  // status `paused`: until when (ISO) and why. The deal keeps its stage.
+  pausedUntil: string | null
+  pauseReason: string | null
+  // Why the deal ended (won / lost / undone by a user).
+  outcomeReason: string | null
+  // Badge «создал агент»: created by the topics engine.
+  createdByAgent: boolean
   userId: string
   userName: string | null
   organizationId: string
@@ -151,6 +181,23 @@ async function assertContactsInOrg(
       throw new Error("One or more contacts not in this organization")
     }
   }
+}
+
+// Deal type must belong to the caller's org. `null` / "" = untyped.
+async function resolveDealTypeId(
+  dealTypeId: string | null | undefined,
+  organizationId: string,
+): Promise<string | null> {
+  if (!dealTypeId) return null
+  const rows = await db
+    .select({ id: dealType.id })
+    .from(dealType)
+    .where(
+      and(eq(dealType.id, dealTypeId), eq(dealType.organizationId, organizationId)),
+    )
+    .limit(1)
+  if (!rows[0]) throw new Error("Invalid deal type")
+  return rows[0].id
 }
 
 // Drizzle's `numeric` accepts string or number; we normalise to a fixed
@@ -291,15 +338,77 @@ export async function listDealContactOptions(
   return rows
 }
 
+// One select shape for `listDeals` + `getDeal` (deal + stage + client +
+// owner + deal type), mapped by `toDealRow`.
+const dealRowColumns = {
+  deal,
+  funnelStageName: dealFunnelStage.name,
+  funnelStageProbability: dealFunnelStage.closureProbability,
+  funnelStageDisplayName: dealFunnelStage.displayName,
+  clientName: client.name,
+  userName: user.name,
+  dealTypeCode: dealType.code,
+  dealTypeLabel: dealType.labelRu,
+}
+
+type DealRowSelect = {
+  deal: typeof deal.$inferSelect
+  funnelStageName: string
+  funnelStageProbability: string
+  funnelStageDisplayName: string | null
+  clientName: string | null
+  userName: string | null
+  dealTypeCode: string | null
+  dealTypeLabel: string | null
+}
+
+function toDealRow(r: DealRowSelect, contacts: DealContactSummary[]): DealRow {
+  return {
+    id: r.deal.id,
+    name: r.deal.name,
+    description: r.deal.description,
+    reasoning: r.deal.reasoning,
+    changes: r.deal.changes,
+    lastMovedBy: r.deal.lastMovedBy,
+    funnelStageId: r.deal.funnelStageId,
+    funnelStageName: r.funnelStageName,
+    funnelStageLabel: stageDisplayLabel(
+      r.funnelStageName,
+      r.funnelStageDisplayName,
+    ),
+    funnelStageProbability: Number(r.funnelStageProbability),
+    clientId: r.deal.clientId,
+    clientName: r.clientName,
+    contacts,
+    value: r.deal.value,
+    currency: r.deal.currency,
+    status: r.deal.status,
+    position: r.deal.position,
+    dealTypeId: r.deal.dealTypeId,
+    dealTypeCode: r.dealTypeCode,
+    dealTypeLabel: r.dealTypeLabel,
+    pausedUntil: r.deal.pausedUntil ? r.deal.pausedUntil.toISOString() : null,
+    pauseReason: r.deal.pauseReason,
+    outcomeReason: r.deal.outcomeReason,
+    createdByAgent: r.deal.createdByAgent,
+    userId: r.deal.userId,
+    userName: r.userName,
+    organizationId: r.deal.organizationId,
+    createdAt: r.deal.createdAt.toISOString(),
+    updatedAt: r.deal.updatedAt.toISOString(),
+  }
+}
+
 export async function listDeals(
   options?: { includeCancelled?: boolean; includeDeleted?: boolean },
 ): Promise<DealRow[]> {
   const { activeOrgId } = await requireOrgContext()
 
-  // `active` always shows. `cancelled` / `deleted` are soft-deleted and only
-  // surface when explicitly requested — the board passes both flags and does
-  // the final hide/show client-side so toggling doesn't refetch.
-  const allowedStatuses: DealStatus[] = ["active"]
+  // Open deals (`active` + `paused` — a paused deal keeps its stage and stays
+  // on the board) always show. `cancelled` / `deleted` are soft-deleted and
+  // only surface when explicitly requested — the board passes both flags and
+  // does the final hide/show client-side so toggling doesn't refetch.
+  const allowedStatuses: DealStatus[] = [...OPEN_DEAL_STATUSES]
   if (options?.includeCancelled) allowedStatuses.push("cancelled")
   if (options?.includeDeleted) allowedStatuses.push("deleted")
 
@@ -309,18 +418,12 @@ export async function listDeals(
   ]
 
   const rows = await db
-    .select({
-      deal,
-      funnelStageName: dealFunnelStage.name,
-      funnelStageProbability: dealFunnelStage.closureProbability,
-      funnelStageDisplayName: dealFunnelStage.displayName,
-      clientName: client.name,
-      userName: user.name,
-    })
+    .select(dealRowColumns)
     .from(deal)
     .innerJoin(dealFunnelStage, eq(deal.funnelStageId, dealFunnelStage.id))
     .leftJoin(client, eq(deal.clientId, client.id))
     .leftJoin(user, eq(deal.userId, user.id))
+    .leftJoin(dealType, eq(deal.dealTypeId, dealType.id))
     .where(and(...conditions))
     .orderBy(desc(deal.updatedAt))
 
@@ -345,50 +448,18 @@ export async function listDeals(
     }
   }
 
-  return rows.map((r) => ({
-    id: r.deal.id,
-    name: r.deal.name,
-    description: r.deal.description,
-    reasoning: r.deal.reasoning,
-    changes: r.deal.changes,
-    lastMovedBy: r.deal.lastMovedBy,
-    funnelStageId: r.deal.funnelStageId,
-    funnelStageName: r.funnelStageName,
-    funnelStageLabel: stageDisplayLabel(
-      r.funnelStageName,
-      r.funnelStageDisplayName,
-    ),
-    funnelStageProbability: Number(r.funnelStageProbability),
-    clientId: r.deal.clientId,
-    clientName: r.clientName,
-    contacts: contactsByDeal.get(r.deal.id) ?? [],
-    value: r.deal.value,
-    currency: r.deal.currency,
-    status: r.deal.status,
-    position: r.deal.position,
-    userId: r.deal.userId,
-    userName: r.userName,
-    organizationId: r.deal.organizationId,
-    createdAt: r.deal.createdAt.toISOString(),
-    updatedAt: r.deal.updatedAt.toISOString(),
-  }))
+  return rows.map((r) => toDealRow(r, contactsByDeal.get(r.deal.id) ?? []))
 }
 
 export async function getDeal(dealId: string): Promise<DealRow | null> {
   const { activeOrgId } = await requireOrgContext()
   const rows = await db
-    .select({
-      deal,
-      funnelStageName: dealFunnelStage.name,
-      funnelStageProbability: dealFunnelStage.closureProbability,
-      funnelStageDisplayName: dealFunnelStage.displayName,
-      clientName: client.name,
-      userName: user.name,
-    })
+    .select(dealRowColumns)
     .from(deal)
     .innerJoin(dealFunnelStage, eq(deal.funnelStageId, dealFunnelStage.id))
     .leftJoin(client, eq(deal.clientId, client.id))
     .leftJoin(user, eq(deal.userId, user.id))
+    .leftJoin(dealType, eq(deal.dealTypeId, dealType.id))
     .where(eq(deal.id, dealId))
     .limit(1)
 
@@ -403,33 +474,7 @@ export async function getDeal(dealId: string): Promise<DealRow | null> {
     .where(eq(dealContact.dealId, dealId))
     .orderBy(contact.name)
 
-  return {
-    id: r.deal.id,
-    name: r.deal.name,
-    description: r.deal.description,
-    reasoning: r.deal.reasoning,
-    changes: r.deal.changes,
-    lastMovedBy: r.deal.lastMovedBy,
-    funnelStageId: r.deal.funnelStageId,
-    funnelStageName: r.funnelStageName,
-    funnelStageLabel: stageDisplayLabel(
-      r.funnelStageName,
-      r.funnelStageDisplayName,
-    ),
-    funnelStageProbability: Number(r.funnelStageProbability),
-    clientId: r.deal.clientId,
-    clientName: r.clientName,
-    contacts: contactRows,
-    value: r.deal.value,
-    currency: r.deal.currency,
-    status: r.deal.status,
-    position: r.deal.position,
-    userId: r.deal.userId,
-    userName: r.userName,
-    organizationId: r.deal.organizationId,
-    createdAt: r.deal.createdAt.toISOString(),
-    updatedAt: r.deal.updatedAt.toISOString(),
-  }
+  return toDealRow(r, contactRows)
 }
 
 export async function createDeal(data: {
@@ -439,6 +484,7 @@ export async function createDeal(data: {
   clientId: string
   contactIds?: string[]
   value?: number | string | null
+  dealTypeId?: string | null
 }) {
   const { session, activeOrgId } = await requireOrgContext()
   if (!data.name?.trim()) throw new Error("Name is required")
@@ -449,6 +495,7 @@ export async function createDeal(data: {
   await assertFunnelStageAccessible(data.funnelStageId, activeOrgId)
   const contactIds = data.contactIds ?? []
   await assertContactsInOrg(contactIds, activeOrgId)
+  const dealTypeId = await resolveDealTypeId(data.dealTypeId, activeOrgId)
 
   const value = normaliseValue(data.value)
   const clientRow = await db
@@ -470,6 +517,7 @@ export async function createDeal(data: {
     value,
     currency,
     status: "active",
+    dealTypeId,
     userId: session.user.id,
     organizationId: activeOrgId,
     createdAt: now,
@@ -511,10 +559,11 @@ export async function updateDeal(
     value?: number | string | null
     currency?: string | null
     status?: DealStatus
+    dealTypeId?: string | null
   },
 ) {
-  const { activeOrgId } = await requireOrgContext()
-  await assertDealInOrg(dealId, activeOrgId)
+  const { session, activeOrgId } = await requireOrgContext()
+  const current = await assertDealInOrg(dealId, activeOrgId)
 
   if (data.name !== undefined && !data.name.trim()) {
     throw new Error("Name is required")
@@ -547,15 +596,20 @@ export async function updateDeal(
       .limit(1)
     patch.currency = clientRow[0]?.currency ?? "RUB"
   }
-  if (data.status !== undefined) {
-    if (!dealStatus.enumValues.includes(data.status)) {
-      throw new Error("Invalid deal status")
-    }
-    patch.status = data.status
+  if (data.dealTypeId !== undefined) {
+    patch.dealTypeId = await resolveDealTypeId(data.dealTypeId, activeOrgId)
+  }
+  // paused → active = «Снять с паузы» (journaled by the deal engine below).
+  const resume = current.status === "paused" && data.status === "active"
+  if (data.status !== undefined && data.status !== current.status && !resume) {
+    Object.assign(patch, statusPatch(current.status, data.status))
   }
 
   if (Object.keys(patch).length > 0) {
     await db.update(deal).set(patch).where(eq(deal.id, dealId))
+  }
+  if (resume) {
+    await resumeDeal(activeOrgId, dealId, { kind: "user", userId: session.user.id })
   }
 
   // Replace-style contact membership update: delete the existing edges,
@@ -584,12 +638,39 @@ export async function updateDeal(
 // Status-only shortcut (mirrors tasks' `updateTaskStatus`). Used by the
 // `statusOnly` PUT path for quick cancel / delete / restore toggles.
 export async function setDealStatus(dealId: string, status: DealStatus) {
-  const { activeOrgId } = await requireOrgContext()
-  if (!dealStatus.enumValues.includes(status)) {
+  const { session, activeOrgId } = await requireOrgContext()
+  const current = await assertDealInOrg(dealId, activeOrgId)
+  if (status === current.status) return
+  if (current.status === "paused" && status === "active") {
+    await resumeDeal(activeOrgId, dealId, { kind: "user", userId: session.user.id })
+    return
+  }
+  await db
+    .update(deal)
+    .set(statusPatch(current.status, status))
+    .where(eq(deal.id, dealId))
+}
+
+// Status change through the edit form / the quick shortcut. `paused` needs a
+// return date + reason, so it is set ONLY by «Поставить на паузу»
+// (`pauseDealForUser` → deal engine). Leaving `paused` here (cancel / delete
+// / plain «Активна») clears the pause fields.
+function statusPatch(
+  from: DealStatus,
+  to: DealStatus,
+): Partial<typeof deal.$inferInsert> {
+  if (!dealStatus.enumValues.includes(to)) {
     throw new Error("Invalid deal status")
   }
-  await assertDealInOrg(dealId, activeOrgId)
-  await db.update(deal).set({ status }).where(eq(deal.id, dealId))
+  if (to === "paused") {
+    throw new Error("Чтобы поставить сделку на паузу, используйте «Поставить на паузу»")
+  }
+  const patch: Partial<typeof deal.$inferInsert> = { status: to }
+  if (from === "paused") {
+    patch.pausedUntil = null
+    patch.pauseReason = null
+  }
+  return patch
 }
 
 // Перевод сделки по воронке вручную (drag&drop в канбане / кросс-стадийный
@@ -1062,5 +1143,148 @@ export async function saveFunnelStageSettings(
           eq(dealFunnelStage.ownerOrganizationId, activeOrgId),
         ),
       )
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deal types (topics plan phase 5, spec 01 §9.2 / §14): the org's list,
+// edited by the org OWNER next to «Настройки стадий». Tenant data — the
+// generic defaults are created on first use (`ensureDefaultDealTypes`).
+// ---------------------------------------------------------------------------
+
+export type DealTypeOption = DealTypeRow
+
+/** All types of the active org (hidden too — the UI filters for pickers). */
+export async function listDealTypeOptions(): Promise<DealTypeOption[]> {
+  const { activeOrgId } = await requireOrgContext()
+  return ensureDefaultDealTypes(activeOrgId)
+}
+
+/** Editor payload: the full list + whether the caller may change it. */
+export async function getDealTypeSettings(): Promise<{
+  types: DealTypeOption[]
+  canManage: boolean
+}> {
+  const { activeOrgId } = await requireOrgContext()
+  const [types, role] = await Promise.all([
+    ensureDefaultDealTypes(activeOrgId),
+    getActiveOrgRole(),
+  ])
+  return { types, canManage: role?.role === "owner" }
+}
+
+/** Owner only. Types are never deleted — hide instead. */
+export async function saveDealTypeSettings(
+  rows: DealTypeInput[],
+): Promise<DealTypeOption[]> {
+  const { activeOrgId } = await requireOrgContext()
+  const role = await getActiveOrgRole()
+  if (!role || role.organizationId !== activeOrgId || role.role !== "owner") {
+    throw new DealTypeForbiddenError()
+  }
+  // DealTypeValidationError (Russian message) passes through → 400.
+  return saveDealTypes(activeOrgId, rows)
+}
+
+// ---------------------------------------------------------------------------
+// Deal bridge lifecycle (topics plan phase 5, spec 01 §9.2): pause / resume
+// and undo of an agent-created deal. Session-bound wrappers around the
+// org-explicit deal engine (src/server/deal-engine.ts), which journals every
+// write in `deal_activity`.
+// ---------------------------------------------------------------------------
+
+/** «Поставить на паузу»: `until` = YYYY-MM-DD (future), reason required. */
+export async function pauseDealForUser(
+  dealId: string,
+  input: { until: string; reason: string },
+): Promise<void> {
+  const { session, activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.until ?? "")) {
+    throw new Error("Укажите дату возврата")
+  }
+  const until = new Date(`${input.until}T00:00:00Z`)
+  if (Number.isNaN(until.getTime())) throw new Error("Неверная дата возврата")
+  const today = new Date().toISOString().slice(0, 10)
+  if (input.until <= today) {
+    throw new Error("Дата возврата должна быть в будущем")
+  }
+  const reason = input.reason?.trim()
+  if (!reason) throw new Error("Укажите причину паузы")
+  await pauseDeal(
+    activeOrgId,
+    dealId,
+    { kind: "user", userId: session.user.id },
+    { until, reason },
+  )
+}
+
+/** «Снять с паузы» → status `active` (no-op when the deal is not paused). */
+export async function resumeDealForUser(dealId: string): Promise<void> {
+  const { session, activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  await resumeDeal(activeOrgId, dealId, { kind: "user", userId: session.user.id })
+}
+
+/** «Отменить» at the «создал агент» badge: status `deleted`, reason kept. */
+export async function undoAgentCreatedDeal(
+  dealId: string,
+  reason: string | null,
+): Promise<void> {
+  const { session, activeOrgId } = await requireOrgContext()
+  const current = await assertDealInOrg(dealId, activeOrgId)
+  if (current.status !== "active" && current.status !== "paused") {
+    throw new Error("Отменить можно только открытую сделку")
+  }
+  await undoAgentDeal(activeOrgId, dealId, session.user.id, reason)
+}
+
+export type DealProvenanceResult = DealProvenanceView & {
+  /** Stage id → display label for the journal's from / to stages. */
+  stageLabels: Record<string, string>
+  /** Topic lead code → registry label (`signal_category.label_ru`). */
+  leadCodeLabels: Record<string, string>
+}
+
+/** Deal drawer «Происхождение»: topics + items + the provenance journal. */
+export async function getDealProvenance(
+  dealId: string,
+): Promise<DealProvenanceResult> {
+  const { activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  const view = await listDealProvenance(activeOrgId, dealId)
+
+  const stageIds = new Set<string>()
+  for (const a of view.activity) {
+    if (a.fromStageId) stageIds.add(a.fromStageId)
+    if (a.toStageId) stageIds.add(a.toStageId)
+  }
+  const leadCodes = new Set(
+    view.topics.map((t) => t.leadCode).filter((c): c is string => !!c),
+  )
+  const [stageRows, codeRows] = await Promise.all([
+    stageIds.size
+      ? db
+          .select({
+            id: dealFunnelStage.id,
+            name: dealFunnelStage.name,
+            displayName: dealFunnelStage.displayName,
+          })
+          .from(dealFunnelStage)
+          .where(inArray(dealFunnelStage.id, [...stageIds]))
+      : Promise.resolve([]),
+    leadCodes.size
+      ? db
+          .select({ code: signalCategory.code, labelRu: signalCategory.labelRu })
+          .from(signalCategory)
+          .where(inArray(signalCategory.code, [...leadCodes]))
+      : Promise.resolve([]),
+  ])
+  return {
+    ...view,
+    stageLabels: Object.fromEntries(
+      stageRows.map((r) => [r.id, stageDisplayLabel(r.name, r.displayName)]),
+    ),
+    leadCodeLabels: Object.fromEntries(codeRows.map((r) => [r.code, r.labelRu])),
   }
 }

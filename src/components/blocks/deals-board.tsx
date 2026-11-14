@@ -35,8 +35,12 @@ import {
   ChevronsUpDown,
   ScanSearch,
   SlidersVertical,
+  Tags,
 } from "lucide-react"
 import { DealStageSettingsDialog } from "@/components/blocks/deal-stage-settings-dialog"
+import { DealTypesSettingsDialog } from "@/components/blocks/deal-types-settings-dialog"
+import { DealUndoAgentDialog } from "@/components/blocks/deal-lifecycle-dialogs"
+import { isOpenDealStatus } from "@/lib/deal-funnel"
 import {
   Tooltip,
   TooltipContent,
@@ -228,6 +232,9 @@ export function DealsBoard({
     null,
   )
   const [stageSettingsOpen, setStageSettingsOpen] = useState(false)
+  const [dealTypesOpen, setDealTypesOpen] = useState(false)
+  // «Отменить» у бейджа «создал агент» (карточка или дровер) → один диалог.
+  const [undoDeal, setUndoDeal] = useState<DealRow | null>(null)
   const [finalSort, setFinalSortState] = useState<TerminalSortMode>("default")
   // Сортировка финальной колонки переживает уход со страницы — как и
   // сортировки обычных колонок в store (localStorage, per-user).
@@ -338,8 +345,10 @@ export function DealsBoard({
     [filteredBase, agentMovedOnly],
   )
 
+  // «Открытые» = active + paused: сделка на паузе остаётся в своей стадии
+  // (§9.2 — пауза это статус, не стадия), с бейджем «Пауза до …».
   const activeDeals = useMemo(
-    () => filtered.filter((d) => d.status === "active"),
+    () => filtered.filter((d) => isOpenDealStatus(d.status)),
     [filtered],
   )
 
@@ -347,7 +356,7 @@ export function DealsBoard({
   // показываются КАРТОЧКАМИ в финальной колонке «Закрытие» (см. terminalCards).
   // Удалённые (ошибки ввода) в обычных колонках не показываются никогда.
   const boardDeals = useMemo(
-    () => filtered.filter((d) => d.status === "active"),
+    () => filtered.filter((d) => isOpenDealStatus(d.status)),
     [filtered],
   )
 
@@ -357,7 +366,7 @@ export function DealsBoard({
   const wonDeals = useMemo(
     () =>
       filtered.filter(
-        (d) => d.status === "active" && d.funnelStageName === "Closed",
+        (d) => isOpenDealStatus(d.status) && d.funnelStageName === "Closed",
       ),
     [filtered],
   )
@@ -366,7 +375,7 @@ export function DealsBoard({
       filteredBase.filter(
         (d) =>
           d.status === "cancelled" ||
-          (d.status === "active" && d.funnelStageName === "Rejected"),
+          (isOpenDealStatus(d.status) && d.funnelStageName === "Rejected"),
       ),
     [filteredBase],
   )
@@ -512,7 +521,7 @@ export function DealsBoard({
     // терминальную карточку (реальный id стадии Closed/Rejected) → диалог исхода:
     // Выиграно → Closed, Проиграно → Rejected (см. confirmOutcome).
     if (toStageId === FINAL_DROP_ID || (toStage && isTerminalStage(toStage.name))) {
-      if (moving.status !== "active") return // отменённые/удалённые не трогаем
+      if (!isOpenDealStatus(moving.status)) return // отменённые/удалённые не трогаем
       // Брошено на карточку той же терминальной стадии — переупорядочивания в
       // финальной колонке нет, диалог не дёргаем.
       if (
@@ -584,7 +593,7 @@ export function DealsBoard({
   // исхода при переводе в терминальную стадию (Closed/Rejected). Дровер
   // больше не пишет в /api/deals напрямую в обход этих диалогов.
   function requestStageChange(deal: DealRow, toStageId: string) {
-    if (deal.status !== "active") return
+    if (!isOpenDealStatus(deal.status)) return
     if (toStageId === deal.funnelStageId) return
     const toStage = stages.find((s) => s.id === toStageId)
     if (!toStage) return
@@ -860,6 +869,19 @@ export function DealsBoard({
                   <Button
                     size="icon-sm"
                     variant="outline"
+                    aria-label="Типы сделок"
+                    onClick={() => setDealTypesOpen(true)}
+                  >
+                    <Tags className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Типы сделок</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
                     aria-label={
                       allCollapsed
                         ? "Развернуть все колонки"
@@ -884,6 +906,11 @@ export function DealsBoard({
             <DealStageSettingsDialog
               open={stageSettingsOpen}
               onOpenChange={setStageSettingsOpen}
+              onSaved={refresh}
+            />
+            <DealTypesSettingsDialog
+              open={dealTypesOpen}
+              onOpenChange={setDealTypesOpen}
               onSaved={refresh}
             />
           </div>
@@ -934,6 +961,7 @@ export function DealsBoard({
                   intelById={board.intel}
                   tasksByDeal={board.tasksByDeal}
                   intelLoaded={!boardLoading}
+                  onUndoAgent={setUndoDeal}
                   onOpen={(d) => {
                     if (justDraggedRef.current) return
                     setOpenDealId(d.id)
@@ -962,6 +990,7 @@ export function DealsBoard({
                 intelById={board.intel}
                 tasksByDeal={board.tasksByDeal}
                 intelLoaded={!boardLoading}
+                onUndoAgent={setUndoDeal}
                 onOpen={(d) => {
                   if (justDraggedRef.current) return
                   setOpenDealId(d.id)
@@ -1006,6 +1035,15 @@ export function DealsBoard({
         onOpenChange={setDrawerOpen}
         onChanged={refresh}
         onRequestStageChange={requestStageChange}
+        onUndoAgent={setUndoDeal}
+      />
+      <DealUndoAgentDialog
+        deal={undoDeal}
+        onCancel={() => setUndoDeal(null)}
+        onDone={() => {
+          setUndoDeal(null)
+          refresh()
+        }}
       />
       <DealDecisionFeed
         open={feedOpen}

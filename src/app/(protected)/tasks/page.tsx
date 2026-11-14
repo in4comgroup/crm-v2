@@ -44,6 +44,7 @@ import { TaskCard } from "@/components/blocks/task-card"
 import { TaskDetailDrawer } from "@/components/blocks/task-detail-drawer"
 import { TaskTimeline } from "@/components/blocks/task-timeline"
 import { PageLoader } from "@/components/blocks/page-loader"
+import { isOpenDealStatus } from "@/lib/deal-funnel"
 
 const PAGE_SIZE = 6
 
@@ -355,7 +356,7 @@ function TasksPageContent() {
         }
         setDealOptions(
           ((dRes.deals ?? []) as DealLite[])
-            .filter((d) => d.status === "active")
+            .filter((d) => isOpenDealStatus(d.status))
             .map((d) => ({ id: d.id, name: d.name, clientName: d.clientName })),
         )
       } catch {

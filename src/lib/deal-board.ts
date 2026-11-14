@@ -1,4 +1,5 @@
 import type { DealRow, DealFunnelStageOption } from "@/server/deals"
+import { isOpenDealStatus } from "@/lib/deal-funnel"
 
 // Терминальные (закрывающие) системные стадии — в доске выносятся на отдельную
 // полку, drop в них запрещён. Имена соответствуют английским именам стадий в БД.
@@ -150,7 +151,8 @@ export function aggregateByCurrency(
   return parts.length ? parts.join(" · ") : "0 ₽"
 }
 
-// Взвешенный прогноз: Σ value × вероятность, по активным НЕтерминальным сделкам.
+// Взвешенный прогноз: Σ value × вероятность, по открытым (active + paused)
+// НЕтерминальным сделкам.
 // closureProbability — доля 0..1.
 export function weightedForecast(
   deals: DealRow[],
@@ -159,7 +161,7 @@ export function weightedForecast(
   const probByStageId = new Map(stages.map((s) => [s.id, s.closureProbability]))
   let total = 0
   for (const d of deals) {
-    if (d.status !== "active") continue
+    if (!isOpenDealStatus(d.status)) continue
     if (isTerminalStage(d.funnelStageName)) continue
     const prob = probByStageId.get(d.funnelStageId) ?? d.funnelStageProbability
     total += dealAmount(d.value) * prob

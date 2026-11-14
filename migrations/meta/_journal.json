@@ -148,6 +148,13 @@
       "when": 1794652081407,
       "tag": "0020_work_calendar_ru_2026_2027",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794653662487,
+      "tag": "0021_topics_phase5_deal_bridge",
+      "breakpoints": true
     }
   ]
 }

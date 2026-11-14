@@ -53,13 +53,12 @@ import {
 } from "@/components/ui/alert-dialog"
 import {
   Sparkles,
-  Send,
-  Mail,
-  Phone,
   Plus,
   Link2,
   AlertTriangle,
   Save,
+  PauseCircle,
+  PlayCircle,
 } from "lucide-react"
 import type { TaskStatus, DealStatus } from "@/db/schema"
 import { mockAtRisk, mockRiskReason } from "@/lib/deal-mocks"
@@ -78,12 +77,17 @@ import type {
   DealFunnelStageOption,
   DealActivityRow,
   DealClientOption,
+  DealTypeOption,
 } from "@/app/api/deals/route"
 import type { TaskRow } from "@/app/api/tasks/route"
 import { dealStageLabel } from "@/lib/deal-funnel"
 import { CURRENCY_SYMBOL } from "@/lib/deal-board"
 import { DealInitiatorPopover } from "@/components/blocks/deal-initiator-popover"
 import { DealContactsRoles } from "@/components/blocks/deal-contacts-roles"
+import { DealProvenanceTab } from "@/components/blocks/deal-provenance-tab"
+import { DealPauseDialog } from "@/components/blocks/deal-lifecycle-dialogs"
+import { DealCreatedByAgentBadge } from "@/components/blocks/deal-kanban-card"
+import { formatPauseUntil, isOpenDealStatus } from "@/lib/deal-funnel"
 
 // Тот же список, что раньше был в модалке-редакторе (form-deal-edit.tsx) —
 // не импортируем оттуда, чтобы не тянуть create-only компонент ради одной
@@ -94,27 +98,32 @@ const DEAL_STATUS_OPTIONS: { value: DealStatus; label: string }[] = [
   { value: "deleted", label: "Удалена (скрыта, исключена из поиска)" },
 ]
 
+// `paused` is set only by «Поставить на паузу» (date + reason); in the status
+// select it is shown (disabled) only while the deal is paused.
+const PAUSED_STATUS_LABEL = "На паузе"
+
+// Sentinel for «Без типа» — Radix Select forbids an empty item value.
+const NO_TYPE = "__none__"
+
 type DealEditFormData = {
   name: string
   description: string
   clientId: string
   value: string
   status: DealStatus
+  // "" = без типа.
+  dealTypeId: string
 }
 
-// МОК происхождения сделки (UX №14): из какого канала заведена. Реальный
-// источник должен приходить с бэка (source_item сделки). Детерминированно
-// по id, чтобы не мигало между рендерами.
-// TODO(backend): брать канал из первичного source_item сделки.
-function dealOriginMock(id: string): { label: string; Icon: typeof Send } {
-  let h = 0
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
-  const variants = [
-    { label: "из письма", Icon: Mail },
-    { label: "из Telegram", Icon: Send },
-    { label: "из звонка", Icon: Phone },
-  ] as const
-  return variants[h % variants.length]
+function formDefaults(deal: DealRow): DealEditFormData {
+  return {
+    name: deal.name,
+    description: deal.description ?? "",
+    clientId: deal.clientId,
+    value: deal.value ?? "",
+    status: deal.status,
+    dealTypeId: deal.dealTypeId ?? "",
+  }
 }
 
 function formatDate(iso: string): string {
@@ -148,6 +157,7 @@ export function DealDetailDrawer({
   onOpenChange,
   onChanged,
   onRequestStageChange,
+  onUndoAgent,
 }: {
   deal: DealRow | null
   stages: DealFunnelStageOption[]
@@ -165,6 +175,8 @@ export function DealDetailDrawer({
   // pendingMove/pendingOutcome + DealMoveDialog/DealOutcomeDialog) — не
   // дублируем эту логику здесь и не переводим стадию в обход диалога.
   onRequestStageChange: (deal: DealRow, toStageId: string) => void
+  // «Отменить» у бейджа «создал агент» — диалог подтверждения на доске.
+  onUndoAgent?: (deal: DealRow) => void
 }) {
   // Стадию берём прямо из deal.funnelStageId — после перевода onChanged →
   // router.refresh обновляет проп (deal выводится из живого списка на доске).
@@ -191,6 +203,12 @@ export function DealDetailDrawer({
   // Drives the FollowCursorTooltip's `disabled` on the name field — the tip
   // is suppressed while the field is actually focused/being edited.
   const [nameFieldFocused, setNameFieldFocused] = useState(false)
+  // Активный таб — «Происхождение» грузит данные только когда виден.
+  const [tab, setTab] = useState("info")
+  const [pauseOpen, setPauseOpen] = useState(false)
+  // Типы сделок организации (для выбора в форме). Скрытые не предлагаем,
+  // кроме текущего типа сделки.
+  const [dealTypes, setDealTypes] = useState<DealTypeOption[]>([])
 
   const dealId = deal?.id
   // Загрузка задач сделки, вынесена для повторного вызова после создания
@@ -285,6 +303,51 @@ export function DealDetailDrawer({
     reloadTasks(dealId)
   }, [open, dealId, reloadTasks])
 
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    fetch("/api/deals?dealTypes=1")
+      .then((r) => r.json())
+      .then((data: { types?: DealTypeOption[] }) => {
+        if (!cancelled) setDealTypes(data.types ?? [])
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  // Новая сделка в дровере — снова с первого таба («adjust state during
+  // render», без setState в эффекте).
+  const [tabDealId, setTabDealId] = useState(dealId)
+  if (tabDealId !== dealId) {
+    setTabDealId(dealId)
+    setTab("info")
+  }
+
+  // «Снять с паузы» → PUT { action: "resume" } (журналируется движком).
+  const resumeDeal = () => {
+    if (!deal) return
+    startTransition(async () => {
+      try {
+        const res = await fetch("/api/deals", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: deal.id, action: "resume" }),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          toast.error(err.error || "Не удалось снять с паузы")
+          return
+        }
+        toast.success("Пауза снята")
+        onChanged()
+      } catch {
+        toast.error("Не удалось снять с паузы")
+      }
+    })
+  }
+
   // Перезагружаем хронологию не только при открытии, но и при любом
   // изменении updatedAt — перевод стадии могли сделать с доски (drag,
   // диалог, дропдаун этого же дровера), пока дровер открыт для этой сделки.
@@ -306,13 +369,16 @@ export function DealDetailDrawer({
   // сюда сознательно НЕ входит — этап меняется только через отдельный
   // Select ниже (handleStageChange → moveDealStage, с записью в журнал).
   const editForm = useForm<DealEditFormData>({
-    defaultValues: {
-      name: deal?.name ?? "",
-      description: deal?.description ?? "",
-      clientId: deal?.clientId ?? "",
-      value: deal?.value ?? "",
-      status: deal?.status ?? "active",
-    },
+    defaultValues: deal
+      ? formDefaults(deal)
+      : {
+          name: "",
+          description: "",
+          clientId: "",
+          value: "",
+          status: "active",
+          dealTypeId: "",
+        },
   })
   const watchedClientId = editForm.watch("clientId")
   const currencySymbol =
@@ -327,15 +393,18 @@ export function DealDetailDrawer({
   // новые ссылки на все deal-объекты) стирал бы недосохранённый ввод.
   useEffect(() => {
     if (!deal) return
-    editForm.reset({
-      name: deal.name,
-      description: deal.description ?? "",
-      clientId: deal.clientId,
-      value: deal.value ?? "",
-      status: deal.status,
-    })
+    editForm.reset(formDefaults(deal))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deal?.id])
+
+  // Статус меняют и вне формы (пауза / снятие с паузы, отмена сделки
+  // агента) — подтягиваем его в форму, если поле статуса не трогали.
+  useEffect(() => {
+    if (!deal) return
+    if (editForm.getFieldState("status").isDirty) return
+    editForm.resetField("status", { defaultValue: deal.status })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deal?.status])
 
   function onSaveDeal(data: DealEditFormData, opts?: { closeAfter?: boolean }) {
     if (!deal) return
@@ -357,6 +426,7 @@ export function DealDetailDrawer({
             clientId: data.clientId,
             value: numericValue,
             status: data.status,
+            dealTypeId: data.dealTypeId || null,
           }),
         })
         if (!res.ok) {
@@ -386,22 +456,19 @@ export function DealDetailDrawer({
   }
 
   function discardAndClose() {
-    if (deal) {
-      editForm.reset({
-        name: deal.name,
-        description: deal.description ?? "",
-        clientId: deal.clientId,
-        value: deal.value ?? "",
-        status: deal.status,
-      })
-    }
+    if (deal) editForm.reset(formDefaults(deal))
     setConfirmCloseOpen(false)
     onOpenChange(false)
   }
 
   if (!deal) return null
 
-  const isActive = deal.status === "active"
+  // Открытая сделка = active или paused (пауза — статус, не стадия).
+  const isActive = isOpenDealStatus(deal.status)
+  const isPaused = deal.status === "paused"
+  const typeChoices = dealTypes.filter(
+    (t) => !t.isHidden || t.id === deal.dealTypeId,
+  )
   const tasks = taskData && taskData.dealId === deal.id ? taskData.items : []
 
   return (
@@ -435,7 +502,8 @@ export function DealDetailDrawer({
                 при открытии другой сделки снова начинаем с первого таба. */}
             <Tabs
               key={deal.id}
-              defaultValue="info"
+              value={tab}
+              onValueChange={setTab}
               className="flex flex-1 min-h-0 flex-col gap-0"
             >
             {/* Визуальный заголовок — само поле «Название», редактируемое.
@@ -604,6 +672,45 @@ export function DealDetailDrawer({
               />
               <FormField
                 control={editForm.control}
+                name="dealTypeId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs text-muted-foreground">
+                      Тип сделки
+                    </FormLabel>
+                    <Select
+                      value={field.value || NO_TYPE}
+                      onValueChange={(v) =>
+                        field.onChange(v === NO_TYPE ? "" : v)
+                      }
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Без типа">
+                            {field.value
+                              ? (typeChoices.find((t) => t.id === field.value)
+                                  ?.labelRu ??
+                                deal.dealTypeLabel ??
+                                "—")
+                              : "Без типа"}
+                          </SelectValue>
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value={NO_TYPE}>Без типа</SelectItem>
+                        {typeChoices.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.labelRu}
+                            {t.isHidden ? " (скрыт)" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
                 name="status"
                 render={({ field }) => (
                   <FormItem>
@@ -619,25 +726,76 @@ export function DealDetailDrawer({
                       <SelectContent>
                         {DEAL_STATUS_OPTIONS.map((o) => (
                           <SelectItem key={o.value} value={o.value}>
-                            {o.label}
+                            {isPaused && o.value === "active"
+                              ? "Активна (снять с паузы)"
+                              : o.label}
                           </SelectItem>
                         ))}
+                        {isPaused && (
+                          <SelectItem value="paused" disabled>
+                            {PAUSED_STATUS_LABEL}
+                          </SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                   </FormItem>
                 )}
               />
 
-              <div className="flex items-center justify-between gap-2">
-                {deal.lastMovedBy === "agent" && (
-                  <Badge
-                    variant="secondary"
-                    className="gap-1 bg-violet-500/15 text-violet-600 dark:text-violet-300"
+              {/* Пауза (§9.2): до какой даты и почему + «Снять с паузы»;
+                  для открытой сделки без паузы — «Поставить на паузу». */}
+              {isPaused ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                    <PauseCircle className="h-3.5 w-3.5" />
+                    {deal.pausedUntil
+                      ? `На паузе до ${formatPauseUntil(deal.pausedUntil)}`
+                      : "На паузе"}
+                  </div>
+                  {deal.pauseReason && (
+                    <div className="max-w-[32rem] whitespace-pre-wrap">
+                      {deal.pauseReason}
+                    </div>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={resumeDeal}
+                    disabled={isPending}
                   >
-                    <Sparkles className="h-3 w-3" />
-                    перевёл агент
-                  </Badge>
-                )}
+                    <PlayCircle className="h-4 w-4 mr-1" />
+                    Снять с паузы
+                  </Button>
+                </div>
+              ) : (
+                isActive && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPauseOpen(true)}
+                    disabled={isPending}
+                  >
+                    <PauseCircle className="h-4 w-4 mr-1" />
+                    Поставить на паузу
+                  </Button>
+                )
+              )}
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1">
+                  <DealCreatedByAgentBadge deal={deal} onUndo={onUndoAgent} />
+                  {deal.lastMovedBy === "agent" && (
+                    <Badge
+                      variant="secondary"
+                      className="gap-1 bg-violet-500/15 text-violet-600 dark:text-violet-300"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      перевёл агент
+                    </Badge>
+                  )}
+                </div>
                 {/* size="default" (не "sm") — иначе высота кнопки не совпадала
                     с Select/Input рядом (sm = h-8, default = h-9, как у них). */}
                 <Button
@@ -741,6 +899,18 @@ export function DealDetailDrawer({
                 activityItems.map((a) => {
                   if (!a.fromStageName) {
                     return { date: a.createdAt, text: "Сделка создана" }
+                  }
+                  // Событие без перевода (пауза, снятие паузы, отмена сделки
+                  // агента, привязка темы — phase 5): from = to, смысл в note.
+                  if (a.fromStageName === a.toStageName && a.note) {
+                    return {
+                      date: a.createdAt,
+                      text: a.note,
+                      meta:
+                        a.actor === "agent"
+                          ? "агент"
+                          : (a.actorUserName ?? "изменение"),
+                    }
                   }
                   const move = `${dealStageLabel(a.fromStageName)} → ${dealStageLabel(a.toStageName ?? "")}`
                   const parts = [move]
@@ -911,15 +1081,7 @@ export function DealDetailDrawer({
               и она просвечивала сквозь блок снизу. Перенесено в обычный таб,
               чтобы не зависеть от независимого от скролла позиционирования. */}
           <TabsContent value="origin" className="py-4 text-sm">
-            {(() => {
-              const origin = dealOriginMock(deal.id)
-              return (
-                <div className="flex items-center gap-1.5 text-muted-foreground">
-                  <origin.Icon className="h-3.5 w-3.5 shrink-0" />
-                  Создано {origin.label} · {formatDate(deal.createdAt)}
-                </div>
-              )
-            })()}
+            <DealProvenanceTab deal={deal} active={open && tab === "origin"} />
           </TabsContent>
             </div>
             </Tabs>
@@ -963,6 +1125,13 @@ export function DealDetailDrawer({
       {/* Попытка закрыть дровер с несохранённой правкой (крестик/Esc/клик
           вовне) — три исхода: сохранить и закрыть, отменить правку и
           закрыть, либо остаться в редактировании. */}
+      <DealPauseDialog
+        deal={deal}
+        open={pauseOpen}
+        onOpenChange={setPauseOpen}
+        onDone={onChanged}
+      />
+
       <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

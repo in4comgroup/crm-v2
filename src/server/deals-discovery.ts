@@ -25,9 +25,12 @@ import {
   or,
   sql,
 } from "drizzle-orm"
+import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { getServerSession } from "@/lib/get-session"
 import { getTextObject } from "@/server/storage"
 import { aiGenerateText } from "@/server/ai/runtime"
+import { openAgentDeals } from "@/server/deal-engine"
+import { getTopicsMode } from "@/server/topics/mode"
 import { Output } from "ai"
 import { z } from "zod"
 import { randomUUID } from "crypto"
@@ -337,9 +340,9 @@ export async function generateDeals(
     .where(
       and(
         eq(deal.organizationId, activeOrgId),
-        // Only active deals are match targets — cancelled / deleted are
+        // Only open (active / paused) deals are match targets — cancelled / deleted are
         // soft-deleted and out of the identify/match/move logic entirely.
-        eq(deal.status, "active"),
+        inArray(deal.status, [...OPEN_DEAL_STATUSES]),
         // «Область 0» (isPrePipeline) — вероятность 0, но НЕ терминал:
         // холодный контакт должен уметь перейти в «Новую возможность».
         sql`((${dealFunnelStage.closureProbability} > 0 AND ${dealFunnelStage.closureProbability} < 1) OR ${dealFunnelStage.isPrePipeline})`,
@@ -366,6 +369,15 @@ export async function generateDeals(
   const existingDealKeys = new Set(
     existingDealRows.map((d) => dealDedupKey(d.clientId, d.name)),
   )
+
+  // Topics deal bridge (spec topics/01 §9.2): while the org's topics mode is
+  // `on`, the engine owns its deals. This old name-based discovery stays
+  // (until plan phase 12) but never creates a deal for a client that has an
+  // open agent deal, and never moves an agent deal — counted as duplicates.
+  const agentOwned =
+    (await getTopicsMode(activeOrgId)) === "on"
+      ? await openAgentDeals(activeOrgId)
+      : { dealIds: new Set<string>(), clientIds: new Set<string>() }
 
   // Funnel stages — same resolution as listDealFunnelStages: org-scoped
   // if any active org rows exist for this org, else system. Repeated here
@@ -567,6 +579,15 @@ export async function generateDeals(
             itemIdsToStamp.push(item.id)
             return
           }
+          if (agentOwned.clientIds.has(clientId)) {
+            result.skippedDuplicate++
+            result.errors.push({
+              sourceItemId: item.id,
+              message: `client has an open deal created by the topics engine: "${output.newDealClientName}"`,
+            })
+            itemIdsToStamp.push(item.id)
+            return
+          }
           const stageId = stageByName.get(
             normaliseName(output.newDealStageName),
           )
@@ -679,6 +700,15 @@ export async function generateDeals(
           result.errors.push({
             sourceItemId: item.id,
             message: `unknown matched deal: "${output.matchedDealName}"`,
+          })
+          itemIdsToStamp.push(item.id)
+          return
+        }
+        if (agentOwned.dealIds.has(matchedDealId)) {
+          result.skippedDuplicate++
+          result.errors.push({
+            sourceItemId: item.id,
+            message: `deal is managed by the topics engine: "${output.matchedDealName}"`,
           })
           itemIdsToStamp.push(item.id)
           return

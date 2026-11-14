@@ -20,9 +20,12 @@ import { and, desc, eq, inArray, notInArray } from "drizzle-orm"
 import {
   CARD_REJECT_REASON_LABELS_RU,
   isCardRejectReason,
+  isDealCardKind,
+  type DealCardProposal,
   type TopicCardEvent,
   type TopicCardMeta,
 } from "@/lib/topics/cards"
+import { acceptDealCard, proposalOf, rejectDealCard } from "@/server/topics/cards/deal-cards"
 import { effectiveCardStatus } from "@/server/topics/cards/logic"
 import { userCardFilter } from "@/server/topics/cards/visibility"
 import {
@@ -104,6 +107,10 @@ export type CardRow = {
   events: TopicCardEvent[] | null
   rejectReasonCode: string | null
   decidedAt: string | null
+  // Deal cards (kind deal_proposal / stage_confirmation, topics phase 5):
+  // the proposal the card executes and the deal it created / moved.
+  dealId: string | null
+  proposal: DealCardProposal | null
   createdAt: string
   updatedAt: string
 }
@@ -121,6 +128,8 @@ function topicCardFields(c: typeof card.$inferSelect, now: Date) {
     events: Array.isArray(c.events) ? (c.events as TopicCardEvent[]) : null,
     rejectReasonCode: c.rejectReasonCode,
     decidedAt: c.decidedAt ? c.decidedAt.toISOString() : null,
+    dealId: c.dealId,
+    proposal: isDealCardKind(c.kind) ? proposalOf(c) : null,
   }
 }
 
@@ -778,6 +787,7 @@ export async function acceptCard(
   const { session, activeOrgId } = await requireOrgContext()
   const current = await assertCardInOrg(cardId, activeOrgId)
   const isTopicCard = current.kind !== null
+  if (isDealCardKind(current.kind)) throw new Error("Deal cards are decided with action deal_execute")
   if (isTopicCard) {
     // Shadow / off: users must not act on cards they cannot see.
     if (!(await userCardVisible(activeOrgId, current))) throw new Error("Card not found")
@@ -828,6 +838,11 @@ export async function rejectCard(
   assertTopicCardOpen(current)
   const code = opts?.reasonCode
   if (!isCardRejectReason(code)) throw new Error("Rejection reason code is required")
+  if (isDealCardKind(current.kind)) {
+    // «Не сделка» / «Отклонить»: same columns + a topic_event (phase 5).
+    await rejectDealCard(activeOrgId, cardId, session.user.id, code, trimmed)
+    return
+  }
   await db
     .update(card)
     .set({
@@ -848,6 +863,21 @@ async function userCardVisible(orgId: string, current: typeof card.$inferSelect)
     .where(and(eq(card.id, current.id), await userCardFilter(orgId)))
     .limit(1)
   return rows.length > 0
+}
+
+/**
+ * «Создать» on a `deal_proposal` card / «Подтвердить» on a
+ * `stage_confirmation` card (topics phase 5, spec §9.1): executes the
+ * proposal (creates the deal / moves the stage) as the signed-in user.
+ * Only while the card is open and visible (org topics mode `on`).
+ */
+export async function executeDealCard(cardId: string): Promise<{ dealId: string; linked?: boolean }> {
+  const { session, activeOrgId } = await requireOrgContext()
+  const current = await assertCardInOrg(cardId, activeOrgId)
+  if (!isDealCardKind(current.kind)) throw new Error("Not a deal card")
+  if (!(await userCardVisible(activeOrgId, current))) throw new Error("Card not found")
+  assertTopicCardOpen(current)
+  return acceptDealCard(activeOrgId, cardId, session.user.id)
 }
 
 export async function deleteCard(cardId: string) {

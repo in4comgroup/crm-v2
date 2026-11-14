@@ -27,6 +27,9 @@ import {
   ChevronRight,
   Trophy,
   Trash2,
+  PauseCircle,
+  Bot,
+  Undo2,
   type LucideIcon,
 } from "lucide-react"
 import type { DealRow } from "@/app/api/deals/route"
@@ -34,6 +37,7 @@ import type { DealIntel, IntelBadge } from "@/server/deals-mock"
 import type { DealTaskInfo } from "@/hooks/use-board-intel"
 import { mockAtRisk, mockRiskReason } from "@/lib/deal-mocks"
 import { formatAmount } from "@/lib/deal-board"
+import { formatPauseUntil, isOpenDealStatus } from "@/lib/deal-funnel"
 
 // Мок-бейджи (из /api/deals/intel) несут имя lucide-иконки в kebab-case.
 const BADGE_ICON: Record<string, LucideIcon> = {
@@ -73,6 +77,89 @@ function DealTitle({ deal }: { deal: DealRow }) {
           {product}
         </div>
       )}
+      {/* Тип сделки (topics phase 5, §9.2) — мелкой строкой под названием. */}
+      {deal.dealTypeLabel && (
+        <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted-foreground/80 truncate">
+          {deal.dealTypeLabel}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// «Пауза до …» (status `paused`, §9.2): сделка остаётся в своей стадии,
+// бейдж показывает дату возврата, причина — в подсказке по наведению.
+export function DealPausedBadge({ deal }: { deal: DealRow }) {
+  if (deal.status !== "paused") return null
+  const until = formatPauseUntil(deal.pausedUntil)
+  const badge = (
+    <Badge
+      variant="secondary"
+      className="gap-1 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+    >
+      <PauseCircle className="h-3 w-3" />
+      {until ? `Пауза до ${until}` : "На паузе"}
+    </Badge>
+  )
+  if (!deal.pauseReason) return badge
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className="inline-flex cursor-help"
+          aria-label="Почему сделка на паузе"
+          onPointerDown={stop}
+          onClick={stop}
+        >
+          {badge}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent align="start" className="max-w-xs text-xs">
+        {deal.pauseReason}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+// Бейдж «создал агент» (topics phase 5): сделку создал движок тем. Пока
+// сделка открыта (active / paused) — рядом кнопка «Отменить» (undo →
+// подтверждение в диалоге доски, сделка уходит в `deleted`, причина
+// сохраняется).
+export function DealCreatedByAgentBadge({
+  deal,
+  onUndo,
+}: {
+  deal: DealRow
+  onUndo?: (deal: DealRow) => void
+}) {
+  if (!deal.createdByAgent) return null
+  const canUndo = Boolean(onUndo) && isOpenDealStatus(deal.status)
+  return (
+    <div className="flex items-center gap-1">
+      <Badge
+        variant="secondary"
+        className="gap-1 bg-violet-500/15 text-violet-600 dark:text-violet-300"
+      >
+        <Bot className="h-3 w-3" />
+        создал агент
+      </Badge>
+      {canUndo && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-5 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+          onPointerDown={stop}
+          onClick={(e) => {
+            stop(e)
+            onUndo?.(deal)
+          }}
+        >
+          <Undo2 className="h-3 w-3" />
+          Отменить
+        </Button>
+      )}
     </div>
   )
 }
@@ -97,9 +184,13 @@ export function DealKanbanCard({
   tasks = [],
   intel,
   intelLoaded = false,
+  onUndoAgent,
 }: {
   deal: DealRow
   onOpen: (deal: DealRow) => void
+  // «Отменить» у бейджа «создал агент» — открывает диалог подтверждения на
+  // доске (deals-board.tsx). Без пропа кнопки нет.
+  onUndoAgent?: (deal: DealRow) => void
   // Все задачи сделки (по createdAt desc). Карточка листает их шевронами.
   tasks?: DealTaskInfo[]
   // Мок-интел по сделке (остывание/бейджи). undefined до загрузки.
@@ -116,7 +207,9 @@ export function DealKanbanCard({
   // Перетаскиваются ВСЕ активные сделки — человек вправе двигать как хочет
   // (в т.ч. переигрывать агентские переводы). Заблокированы только
   // отменённые/удалённые: их статус терминальный, перенос не имеет смысла.
-  const isActive = deal.status === "active"
+  // Сделка на паузе (`paused`) — открытая: остаётся в своей стадии и
+  // перетаскивается как активная (§9.2: пауза — статус, не стадия).
+  const isActive = isOpenDealStatus(deal.status)
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: deal.id,
     disabled: !isActive,
@@ -137,7 +230,9 @@ export function DealKanbanCard({
 
   // Инсайты «остывание»/«риск» на закрытых карточках не показываем — сделка
   // уже завершена, тревожные бейджи там бессмысленны.
-  const isStale = Boolean(intel?.isStale) && !isTerminal
+  // На паузе напоминания остановлены (§9.2) — «остывание» тоже не показываем.
+  const isStale =
+    Boolean(intel?.isStale) && !isTerminal && deal.status !== "paused"
   // На карточке НЕ показываем: бейдж происхождения (kind==='source', UX №9 —
   // он в подробностях) и мок-бейдж «авто-задача по правилу» (kind==='auto') —
   // он противоречил реальному блоку задач («Задач нет» рядом с «авто-задача»).
@@ -151,7 +246,14 @@ export function DealKanbanCard({
   // Инсайт «риск проигрыша» (UX №12, мок). isStale («долго висит») уже есть.
   // На закрытых карточках риск не показываем (см. isStale выше).
   const atRisk = isActive && !isTerminal && mockAtRisk(deal.id)
-  const hasBadgeRow = badges.length > 0 || isStale || movedByAgent || atRisk
+  const isPaused = deal.status === "paused"
+  const hasBadgeRow =
+    badges.length > 0 ||
+    isStale ||
+    movedByAgent ||
+    atRisk ||
+    isPaused ||
+    deal.createdByAgent
 
   // «Негативные» карточки (удалённые/отменённые/не состоявшиеся = активная
   // Rejected) — обычная тема-зависимая поверхность карточки, просто
@@ -324,6 +426,8 @@ export function DealKanbanCard({
       {hasBadgeRow && (
         // Все бейджи строго в столбик, один под другим — не строкой/wrap.
         <div className="flex flex-col items-start gap-1">
+          <DealPausedBadge deal={deal} />
+          <DealCreatedByAgentBadge deal={deal} onUndo={onUndoAgent} />
           {badges.map((b, i) => {
             const Icon = BADGE_ICON[b.icon]
             return (

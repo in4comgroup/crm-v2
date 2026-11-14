@@ -39,9 +39,10 @@ Managed mostly by better-auth (`src/lib/auth.ts`).
 | Table | Purpose | Key columns / relations |
 | --- | --- | --- |
 | `deal_funnel_stage` | Funnel stages | `name` (English, stable key), `displayName` (org rename), `closureProbability` (numeric 0–1), `sortOrder`, `isSystem`, `ownerOrganizationId`, `isActive`, `isPrePipeline`, `isHidden` |
-| `deal` | Sales opportunity | `name`, `description`, `funnelStageId` (**restrict**), `clientId` (**restrict**), `value` (numeric), `currency`, `status` (`deal_status`), `position` (fractional index for manual order in a column), `reasoning` / `changes` (LLM provenance, card display), `lastMovedBy` (`user` / `agent`) |
+| `deal` | Sales opportunity | `name`, `description`, `funnelStageId` (**restrict**), `clientId` (**restrict**), `value` (numeric), `currency`, `status` (`deal_status`), `position` (fractional index for manual order in a column), `reasoning` / `changes` (LLM provenance, card display), `lastMovedBy` (`user` / `agent`); topics phase 5: `dealTypeId` (→ `deal_type`, **set null**), `pausedUntil` / `pauseReason` (status `paused`), `outcomeReason` (won / lost / withdrawn / undo reason), `createdByAgent` (badge «создал агент»). Index (org, client, type) = auto-create dedupe |
+| `deal_type` | Per-org deal types (tenant data, topics phase 5, R13 / R22) | `organizationId`, `code` (unique per org; generic: `new_location`, `listing`, `tender`, `supply_agreement`, `renewal`), `labelRu`, `sort`, `isHidden`. Created by `ensureDefaultDealTypes` (`src/server/deal-types.ts`), never by a migration; never deleted (hide instead) |
 | `deal_contact` | Deal ↔ contact (many-to-many) | PK `(dealId, contactId)`, `role` (`deal_contact_role`) |
-| `deal_activity` | Append-only deal journal | `dealId`, `actor` (`user` / `agent`), `actorUserId`, `fromStageId`, `toStageId`, `note`, `reasoning`, `createdAt`. Source of the drawer «Хронология» and the «Лента решений» feed. |
+| `deal_activity` | Append-only deal journal | `dealId`, `actor` (`user` / `agent`), `actorUserId`, `fromStageId`, `toStageId`, `note`, `reasoning`, `createdAt`; topics phase 5 provenance: `topicId`, `sourceItemId`, `ruleId` (→ `signal_stage_rule`), `evidence` (all **set null**). Non-move events (link, pause, resume, undo) have from = to = the current stage. Source of the drawer «Хронология» / «Происхождение» and the «Лента решений» feed. |
 
 Stage resolution is **org-or-system**: if the org has its own active stages, only
 those are used; otherwise the system stages (seeded: Qualification 0.05,
@@ -157,6 +158,8 @@ for the columns, `0020_work_calendar_ru_2026_2027` for the calendar seed; spec
 | --- | --- | --- |
 | `topic` (attention columns) | Result of the attention engine per topic | `attention` (jsonb `TopicAttention`, `src/lib/topics/attention-types.ts`: score after boosts, band, class, lead, boosts, profiles, list, escalations I1–I5, deadline, rank + `rankKey`, cycle, card expiry, next check, Russian explanation, engine memory), `display_profile` (P8 / P6 / D4 / W1 / null), `list` (now / digest / week / none; indexed with the org), `next_attention_check_at` (when the hourly run must recompute; phase 3 writes set it to now; indexed with the org), `cycle_started_at`, `cycle_reason`, `cycle_reminders` (phase 7), `waiting_since`, `snoozed_at`, `owner_user_id` (assignee; deal owner by default, **set null**) |
 | `topic_event` (new type) | Journal of list changes | `type = attention_changed`, `payload` { from, to, reason, escalations, score, profile } |
+| `topic_event` (phase 5 types) | Deal bridge journal | `deal_decision` (one per decided signal instance = idempotency marker: `payload.instanceId`, `code`, `confidence`, `topicScore`, `dryRun`, `results[{ ruleId, effect, action, reason, dealId, cardId, stageId }]`), `deal_context` (in-stage code: `dealId`, `code`, `evidence`), `deal_undone`, `deal_proposal_accepted` / `_rejected`, `stage_confirmed` / `stage_confirmation_rejected` |
+| `card` (phase 5 kinds) | Deal cards | `kind` = `deal_proposal` or `stage_confirmation`, `proposal` (jsonb `DealCardProposal`, `src/lib/topics/cards.ts`: action, rule, code, evidence, client, type, target / from stage, deal), `dealId` (created / moved deal, **set null**); one open card per topic and kind |
 | `work_calendar_day` | Russian production calendar (platform reference data, one custom migration per year) | PK (`region` = RU, `day`), `is_working`, `is_short` (pre-holiday, −1 h), `note`. Only exceptions of Mon–Fri are stored; a year with no rows = plain Mon–Fri. Seeded: 2026, 2027 |
 
 ## 8. Admin and audit
@@ -172,7 +175,7 @@ for the columns, `0020_work_calendar_ru_2026_2027` for the calendar seed; spec
 | `role` (org) | `member`, `admin`, `owner` |
 | `entity_status` (client, contact, product) | `active`, `suspended`, `initial`, `deleted`, `blocked` |
 | `funnel_phase` (client) | `awareness`, `interest`, `decision`, `action`, `retention` |
-| `deal_status` | `active`, `cancelled`, `deleted` |
+| `deal_status` | `active`, `cancelled`, `deleted`, `paused` (phase 5: a status, not a stage) |
 | `deal_contact_role` | `decision_maker`, `influencer`, `expert`, `initiator`, `economic_buyer`, `champion`, `blocker`, `user`, `gatekeeper` |
 | `task_type` / `task_priority` / `task_status` | `meet, call, email, offer, docs, support, other` / `low, medium, high` / `todo, in_progress, done, closed` |
 | `card_priority` / `card_category` | `normal, high` / `client_activity, colleagues_activity, business_info, action_required, ambiguity, data_intelligence, momentum, log_only, new_order, support` |

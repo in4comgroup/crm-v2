@@ -29,3 +29,21 @@ export function stageDisplayLabel(
 // системной воронке: в диалоге она уже видна, а создаётся при первом
 // сохранении (saveFunnelStageSettings в src/server/deals.ts).
 export const PRE_PIPELINE_VIRTUAL_ID = "__pre_pipeline__"
+
+// Lifecycle statuses of an OPEN deal (topics plan phase 5, spec 01 §9.2):
+// `paused` keeps its stage and stays on the board, in pickers, search and
+// the open-deal dedupe — it is treated like `active` everywhere except the
+// pause / resume actions themselves. Client-safe (no DB import).
+export const OPEN_DEAL_STATUSES = ["active", "paused"] as const
+
+export function isOpenDealStatus(status: string): boolean {
+  return status === "active" || status === "paused"
+}
+
+// «Пауза до 20 нояб.» — short Russian date for the pause badge.
+export function formatPauseUntil(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })
+}

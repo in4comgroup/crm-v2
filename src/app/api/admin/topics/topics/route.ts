@@ -11,6 +11,7 @@ import {
 import { runTopicResolutionForItem, type ResolveItemOutcome } from "@/server/topics/resolve-phase"
 import { AiBudgetExceededError } from "@/server/ai/budget"
 import { rewriteTopicCard, TopicCardError, type TopicCardResult } from "@/server/topics/cards/phase"
+import { runDealsForTopic, type TopicDealsRunResult } from "@/server/topics/deals/phase"
 import {
   detachItemFromTopic,
   dismissTopic,
@@ -22,6 +23,10 @@ import {
 
 export type {
   TopicDebugCard,
+  TopicDebugDeal,
+  TopicDebugDealCard,
+  TopicDebugDealDecision,
+  TopicDebugDealResult,
   TopicDebugDetail,
   TopicDebugEvent,
   TopicDebugInstance,
@@ -44,12 +49,15 @@ export type {
 //         (null when it was deleted); outcome = resolver result for
 //         resolveItem; card = card engine result for rewriteCard («Переписать
 //         карточку»: one `topics.card_writer` call now, any org mode).
+//       action runDeals («Решить по сделке», phase 5): the deal bridge for
+//       this topic now (undecided instances; real writes only in mode `on`,
+//       else a dry run) → `deals: TopicDealsRunResult`.
 //       400 TopicActionError / TopicCardError / bad input, 404
 //       TopicNotFoundError, 409 AI budget exceeded.
 
 export const maxDuration = 60
 
-const ACTIONS = ["done", "dismiss", "merge", "detachItem", "resolveItem", "rewriteCard"] as const
+const ACTIONS = ["done", "dismiss", "merge", "detachItem", "resolveItem", "rewriteCard", "runDeals"] as const
 type Action = (typeof ACTIONS)[number]
 
 export type AdminTopicsListResponse = TopicDebugList
@@ -58,6 +66,7 @@ export type AdminTopicActionResponse = {
   detail: TopicDebugDetail | null
   outcome?: ResolveItemOutcome
   card?: TopicCardResult
+  deals?: TopicDealsRunResult
 }
 
 async function requireAdmin() {
@@ -125,6 +134,7 @@ export async function POST(request: NextRequest) {
   try {
     let outcome: ResolveItemOutcome | undefined
     let cardResult: TopicCardResult | undefined
+    let dealsResult: TopicDealsRunResult | undefined
     switch (action) {
       case "done":
         await markTopicDone(orgId, topicId, userId, note)
@@ -153,12 +163,16 @@ export async function POST(request: NextRequest) {
       case "rewriteCard":
         cardResult = await rewriteTopicCard(orgId, topicId)
         break
+      case "runDeals":
+        dealsResult = await runDealsForTopic(orgId, topicId)
+        break
     }
     const detail = topicId ? await getTopicDebugDetail(orgId, topicId) : null
     const res: AdminTopicActionResponse = {
       detail,
       ...(outcome ? { outcome } : {}),
       ...(cardResult ? { card: cardResult } : {}),
+      ...(dealsResult ? { deals: dealsResult } : {}),
     }
     return NextResponse.json(res)
   } catch (error) {

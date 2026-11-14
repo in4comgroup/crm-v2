@@ -1,6 +1,6 @@
 # Topics — signals automation: go-live runbook
 
-Status: **draft, 2026-11-14.** Covers what is built: phases 0–4 (foundations, signals registry, signal extraction, hourly intake, topic engine, attention, topic cards). Extend it when phases 5–6 add deal automation and the user UI.
+Status: **draft, 2026-11-14.** Covers what is built: phases 0–5 (foundations, signals registry, signal extraction, hourly intake, topic engine, attention, topic cards, deal bridge). Extend it when phases 5a–6 add deal state / risks and the user UI.
 
 Purpose: one step-by-step list of what to switch on / off and what to check, so the whole signals flow works in a **new environment** (the first production deployment). Today there is only one environment and one DB (the DB in `.env`, a test DB). Some parts cannot be tested there (§3), so they must be checked at the switch-on.
 
@@ -24,7 +24,8 @@ Related: spec [01-specification.md](01-specification.md) (§5 extraction, §13 o
 | 5 | **Topics phase**: items with `signal_status = done`, same window, oldest first, one at a time, 200 / org / run → counterparty → hard reference key → candidates → AI matcher `topics.topic_match` → attach / new topic; closing, reopen, dormant / expired sweep; re-link of unresolved topics | `src/server/topics/resolve-phase.ts`, `resolver.ts`, `topic-store.ts` | Same hourly run, after «signals» |
 | 6 | **Attention phase**: due topics (`next_attention_check_at ≤ now`, new, changed params) → profile, list («Сейчас / Сводка / Неделя»), escalations, cycle, card expiry (working days from `work_calendar_day`) | `src/server/topics/attention/` | Same hourly run, after «topics»; also right after every topic change |
 | 7 | **Cards phase**: one open topic card per placed topic; AI `topics.card_writer` only on first placement / new cycle (≤ 40 / org / run); close / expire with the topic | `src/server/topics/cards/` | Same hourly run, after «attention». Cards are **hidden from users unless the org mode is `on`** |
-| 8 | Deals, deal state | `phases.ts` | **Not built** (stubs, phases 5–5a). The user lists UI is phase 6: in mode `on` topic cards appear in the existing dashboard card feed |
+| 8 | **Deals phase**: new signals of the last 30 days on topics (50 topics / run) → the org's stage rules → auto-create (score ≥ 7, high confidence, client resolved, no open deal of client + type) / `deal_proposal` card / forward move / `stage_confirmation` card / outcome / pause; every change journaled with topic, item, rule, evidence | `src/server/topics/deals/`, `src/server/deal-engine.ts` | Same hourly run, after «cards». **In `shadow`: dry run** — decisions and hidden cards are stored, deals are not changed. Without org stage rules the phase skips the org |
+| 9 | Deal state | `phases.ts` | **Not built** (stub, phase 5a). The user lists UI is phase 6: in mode `on` topic cards appear in the existing dashboard card feed |
 
 **Latency:** every message of an org in `shadow` / `on` gets signals in ≤ 1 hour (sync, parse and signals run in the same hourly run). The «intake» phase is skipped while a daily pipeline run is in progress (no double parse); the next hour catches up. Code: `src/server/topics/intake.ts`.
 
@@ -71,7 +72,8 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | T2 | `pnpm db:migrate` against the production `DATABASE_URL`; then `pnpm db:check` | Migration log ends with «migrations applied successfully»; `drizzle.__drizzle_migrations` has 18 rows (`0000`–`0017`) |
 | T3 | Deploy | Vercel → Crons shows `/api/cron/daily` (`0 3 * * *`) and `/api/cron/topics` (`0 * * * *`) |
 | T4 | «Модели»: «Синхронизировать» the catalog. «Процессы ИИ»: check the model of «Извлечение сигналов» and of the parse processes | The model is available and compatible (no warning on the process row) |
-| T5 | «Сигналы» → pick the org → packs: `base` on; no overrides; copy the rule templates when phase 5 needs them. Wait ≥ 1 minute (cache) | Code list: «активно для организации: 144»; registry version shown; «Экспорт в Markdown» opens |
+| T5 | «Сигналы» → pick the org → packs: `base` on; no overrides; **copy the stage-rule templates** and check the mapping S1–S5 / won / lost to the org's funnel stages. Wait ≥ 1 minute (cache) | Code list: «активно для организации: 144»; the org section lists the copied rules with the right target stages; «Экспорт в Markdown» opens |
+| T5a | /deals → «Типы сделок» (org owner) | The 5 generic types exist; labels fit the business; rename or hide types the org does not use |
 | T6 | Sources: every source connected (credentials «Configured ✓»), automation «Вкл»; Telegram: save the credentials once so the webhook registers | «Синхронизировать» returns new items; a test Telegram message appears in Sources within seconds |
 | T7 | Press «Синхронизировать и обработать» per source once (the hourly «intake» takes over after T9; the daily run covers orgs in `off`) | Sources: new items with status «complete» |
 | T8 | Exclusions, blocklist and own-org identity filled by the owner (B5) **before** switching on | Sources → «Исключения из анализа» shows the list; a test item from an excluded address is not stored |
@@ -99,6 +101,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | # | Check | Where | Normal |
 |---|---|---|---|
 | M1 | Hourly runs | «Темы» → «Запуски» | One `success` row per hour; per-org phase «signals» without errors |
+| M1c | Deals | /deals: badge «создал агент»; «Происхождение» tab; «Темы (отладка)» → «Сделка» decision log | Every agent deal and move has a topic and an evidence quote; few «Отменить» undos; proposals decided within days |
 | M1b | Cards | «Темы (отладка)» card column; «Использование ИИ» process «Текст карточки темы» | Writer calls only on new cycles; duplicate cards per topic < 5 % (exit gate of phase 4) |
 | M1a | Topics | «Темы (отладка)» counts per status | New topics per day in line with the counted signals; few `context`-only attaches; no growth of unresolved counterparties |
 | M2 | Item status mix | «Темы» → «Сигналы сообщений» (stats) | Most items `done` or `skipped`; `failed` near 0; `deferred` only on budget days |
@@ -128,6 +131,7 @@ GROUP BY 1 ORDER BY 2 DESC;
 | Cost spike | Lower the org budget on «Дневной бюджет ИИ» | Background AI stops for the org for the day; items wait as `deferred` |
 | One noisy sender / chat | «Исключения из анализа» | Not stored / not analysed from now on; already parsed items need a re-parse to drop (O4) |
 | Bad code text | Edit the code in «Сигналы» (new version), or set its stage to `onHold` | Next items use the new text; stored signals are not re-scored (re-run «Извлечь заново» per item if needed) |
+| Wrong agent deals | Org setting `deals.autoCreateEnabled = false` (proposals only), or set the org back to `shadow` (deals: dry run) | No new automatic deals; existing ones can be undone with «Отменить» |
 | Whole engine | Remove the topics cron from `vercel.ts` and redeploy | No hourly run for any org |
 
 ## 8. Re-checks after a change

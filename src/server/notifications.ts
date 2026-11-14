@@ -10,6 +10,7 @@ import {
   type CardCategory,
 } from "@/db/schema"
 import { and, count, desc, eq, gt, inArray } from "drizzle-orm"
+import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { getServerSession } from "@/lib/get-session"
 import { userCardFilter } from "@/server/topics/cards/visibility"
 
@@ -109,7 +110,7 @@ export async function listNotifications() {
     db
       .select({ id: deal.id, name: deal.name, createdAt: deal.createdAt })
       .from(deal)
-      .where(and(eq(deal.organizationId, activeOrgId), eq(deal.status, "active")))
+      .where(and(eq(deal.organizationId, activeOrgId), inArray(deal.status, [...OPEN_DEAL_STATUSES])))
       .orderBy(desc(deal.createdAt))
       .limit(PER_TYPE_CAP),
     db
@@ -138,7 +139,7 @@ export async function listNotifications() {
         .where(
           and(
             eq(deal.organizationId, activeOrgId),
-            eq(deal.status, "active"),
+            inArray(deal.status, [...OPEN_DEAL_STATUSES]),
             gt(deal.createdAt, since),
           ),
         ),

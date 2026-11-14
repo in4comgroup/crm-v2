@@ -15,7 +15,7 @@ import type { TopicsMode } from "./mode"
 // `{ skipped: "<reason>" }`. Throwing is allowed — the pipeline catches it
 // per phase, records the error and goes on with the next phase.
 //
-// Phases «signals» (plan phase 2) and «topics» (plan phase 3) are built; the others are stubs. A stub takes no
+// Phases intake, signals, topics, attention, cards and deals (plan phases 2–5) are built; dealState (5a) is a stub. A stub takes no
 // arguments yet — give it `(ctx: TopicsPhaseContext)` when it is built. The TODO(phase N) tags
 // point at docs/specs/topics/03-development-plan.md.
 
@@ -81,10 +81,12 @@ async function runCards(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
   return runCardsPhase(ctx)
 }
 
-// TODO(phase 5): deal bridge — link topics to deals, propose / apply stage
-// moves; automatic writes are authored by `ctx.actorUserId`.
-async function runDeals(): Promise<TopicsPhaseResult> {
-  return NOT_BUILT
+// Phase 5: deal bridge — src/server/topics/deals/phase.ts (stage rules →
+// create / move / outcome / pause deals, deal_proposal and
+// stage_confirmation cards); automatic writes are authored by `ctx.actorUserId`.
+async function runDeals(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runDealsPhase } = await import("@/server/topics/deals/phase")
+  return runDealsPhase(ctx)
 }
 
 // TODO(phase 5a): deal state — debounced state text + risks per touched deal

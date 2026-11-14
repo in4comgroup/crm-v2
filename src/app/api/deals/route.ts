@@ -14,7 +14,18 @@ import {
   listRejectedDealOrigins,
   getFunnelStageSettings,
   saveFunnelStageSettings,
+  getDealTypeSettings,
+  saveDealTypeSettings,
+  getDealProvenance,
+  pauseDealForUser,
+  resumeDealForUser,
+  undoAgentCreatedDeal,
 } from "@/server/deals"
+import { DealEngineError } from "@/server/deal-engine"
+import {
+  DealTypeForbiddenError,
+  DealTypeValidationError,
+} from "@/server/deal-types"
 import type { DealStatus } from "@/db/schema"
 import { DEAL_STATUSES } from "@/server/db-enums"
 
@@ -26,9 +37,22 @@ export {
   type DealContactSummary,
   type DealActivityRow,
   type FunnelStageSetting,
+  type DealTypeOption,
+  type DealProvenanceResult,
 } from "@/server/deals"
 
 function errorResponse(error: unknown) {
+  if (error instanceof DealTypeForbiddenError) {
+    return NextResponse.json({ error: error.message }, { status: 403 })
+  }
+  if (error instanceof DealTypeValidationError) {
+    return NextResponse.json({ error: error.message }, { status: 400 })
+  }
+  if (error instanceof DealEngineError) {
+    const status =
+      error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 400
+    return NextResponse.json({ error: error.message }, { status })
+  }
   const message = error instanceof Error ? error.message : "Unknown error"
   const status =
     message === "Unauthorized" || message === "No active organization"
@@ -55,9 +79,21 @@ export async function GET(request: NextRequest) {
       const stages = await getFunnelStageSettings()
       return NextResponse.json({ stages })
     }
+    // Deal types (org list; the owner edits it next to «Настройки стадий»).
+    // Creates the generic defaults on first use.
+    if (url.searchParams.get("dealTypes") === "1") {
+      const { types, canManage } = await getDealTypeSettings()
+      return NextResponse.json({ types, canManage })
+    }
     if (url.searchParams.get("funnelStages") === "1") {
       const stages = await listDealFunnelStages()
       return NextResponse.json({ stages })
+    }
+    // Deal drawer «Происхождение»: topics + items + provenance journal.
+    const provenanceFor = url.searchParams.get("provenanceFor")
+    if (provenanceFor) {
+      const provenance = await getDealProvenance(provenanceFor)
+      return NextResponse.json({ provenance })
     }
     const activityFor = url.searchParams.get("activityFor")
     if (activityFor) {
@@ -96,6 +132,7 @@ export async function POST(request: NextRequest) {
       clientId,
       contactIds,
       value,
+      dealTypeId,
     } = body
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 })
@@ -119,6 +156,8 @@ export async function POST(request: NextRequest) {
       clientId,
       contactIds,
       value,
+      dealTypeId:
+        typeof dealTypeId === "string" && dealTypeId ? dealTypeId : null,
     })
     return NextResponse.json({ success: true, id: result.id })
   } catch (error) {
@@ -146,6 +185,34 @@ export async function PUT(request: NextRequest) {
       await saveFunnelStageSettings(entries)
       return NextResponse.json({ success: true })
     }
+    // Deal types editor (org owner): { dealTypes: [{ id?, code?, labelRu,
+    // sort, isHidden }] } — existing rows by id, new rows with a code.
+    if (Array.isArray(body?.dealTypes)) {
+      const rows = (body.dealTypes as unknown[]).flatMap((e) => {
+        const r = e as {
+          id?: unknown
+          code?: unknown
+          labelRu?: unknown
+          sort?: unknown
+          isHidden?: unknown
+        }
+        if (typeof r?.labelRu !== "string") return []
+        return [
+          {
+            id: typeof r.id === "string" && r.id ? r.id : undefined,
+            code: typeof r.code === "string" ? r.code : undefined,
+            labelRu: r.labelRu,
+            sort:
+              typeof r.sort === "number" && Number.isFinite(r.sort)
+                ? Math.round(r.sort)
+                : 0,
+            isHidden: r.isHidden === true,
+          },
+        ]
+      })
+      const types = await saveDealTypeSettings(rows)
+      return NextResponse.json({ success: true, types })
+    }
     const {
       id,
       statusOnly,
@@ -158,9 +225,34 @@ export async function PUT(request: NextRequest) {
       clientId,
       contactIds,
       value,
+      dealTypeId,
     } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
+    }
+    // Deal bridge lifecycle (topics phase 5): { id, action: "pause", until
+    // (YYYY-MM-DD), reason } | { id, action: "resume" } | { id, action:
+    // "undoAgent", reason? } → the deal engine (journaled).
+    if (typeof body.action === "string") {
+      if (body.action === "pause") {
+        await pauseDealForUser(id, {
+          until: typeof body.until === "string" ? body.until : "",
+          reason: typeof body.reason === "string" ? body.reason : "",
+        })
+        return NextResponse.json({ success: true })
+      }
+      if (body.action === "resume") {
+        await resumeDealForUser(id)
+        return NextResponse.json({ success: true })
+      }
+      if (body.action === "undoAgent") {
+        await undoAgentCreatedDeal(
+          id,
+          typeof body.reason === "string" ? body.reason : null,
+        )
+        return NextResponse.json({ success: true })
+      }
+      return NextResponse.json({ error: "Unknown action" }, { status: 400 })
     }
     // Кросс-стадийный перевод через диалог: ставит funnelStageId + заметку-
     // основание (наш путь). `position` (append в целевую колонку) может
@@ -210,7 +302,7 @@ export async function PUT(request: NextRequest) {
     if (statusOnly) {
       if (!isValidStatus(status)) {
         return NextResponse.json(
-          { error: "status must be one of: active, cancelled, deleted" },
+          { error: "status must be one of: active, cancelled, deleted, paused" },
           { status: 400 },
         )
       }
@@ -219,7 +311,7 @@ export async function PUT(request: NextRequest) {
     }
     if (status !== undefined && !isValidStatus(status)) {
       return NextResponse.json(
-        { error: "status must be one of: active, cancelled, deleted" },
+        { error: "status must be one of: active, cancelled, deleted, paused" },
         { status: 400 },
       )
     }
@@ -231,6 +323,13 @@ export async function PUT(request: NextRequest) {
       contactIds,
       value,
       status,
+      // undefined = keep; null / "" = untyped.
+      dealTypeId:
+        dealTypeId === undefined
+          ? undefined
+          : typeof dealTypeId === "string" && dealTypeId
+            ? dealTypeId
+            : null,
     })
     return NextResponse.json({ success: true })
   } catch (error) {

@@ -338,6 +338,9 @@ export const dealStatus = pgEnum("deal_status", [
   "active",
   "cancelled",
   "deleted",
+  // Topics plan phase 5 (spec topics/01 §9.2): a status, not a stage — the
+  // deal keeps its stage; `paused_until` / `pause_reason` say when / why.
+  "paused",
 ])
 
 export type DealStatus = (typeof dealStatus.enumValues)[number]
@@ -765,6 +768,15 @@ export const deal = pgTable(
     // the end by updatedAt". Set/refreshed by `moveDeal` on drag. See
     // `src/lib/kanban-move.ts` (computePosition) + `refs/kanban-spec.md`.
     position: text("position"),
+    // ── Topics plan phase 5 (deal bridge, spec topics/01 §9.2) ──
+    // Deal type from the org's list (`deal_type`, R13); null = untyped.
+    dealTypeId: text("deal_type_id").references((): AnyPgColumn => dealType.id, { onDelete: "set null" }),
+    pausedUntil: timestamp("paused_until"),
+    pauseReason: text("pause_reason"),
+    // Why the deal ended (won / lost / withdrawn / cancelled by the agent's undo).
+    outcomeReason: text("outcome_reason"),
+    // Badge «создал агент»: created by the topics engine (system actor).
+    createdByAgent: boolean("created_by_agent").notNull().default(false),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -785,7 +797,33 @@ export const deal = pgTable(
     index("deal_status_idx").on(table.status),
     // Composite index for the per-column ordered read (stage + manual order).
     index("deal_stage_position_idx").on(table.funnelStageId, table.position),
+    // Auto-create dedupe (org + client + type + open status, spec §9.2).
+    index("deal_org_client_type_idx").on(table.organizationId, table.clientId, table.dealTypeId),
   ],
+)
+
+// Per-org deal types (spec topics/01 §9.2, R13). Generic default codes
+// (R22): new_location, listing, tender, supply_agreement, renewal — tenant
+// data, created per org by src/server/deal-types.ts (never a migration).
+// Stage rules name a type by `code` (`signal_stage_rule.deal_types`).
+export const dealType = pgTable(
+  "deal_type",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    labelRu: text("label_ru").notNull(),
+    sort: integer("sort").notNull().default(0),
+    isHidden: boolean("is_hidden").notNull().default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [uniqueIndex("deal_type_org_code_uq").on(table.organizationId, table.code)],
 )
 
 // Append-only журнал событий сделки (создание + каждый перевод стадии) —
@@ -815,10 +853,17 @@ export const dealActivity = pgTable(
     }),
     note: text("note"),
     reasoning: text("reasoning"),
+    // Topics plan phase 5: provenance of an engine move (spec §9.2) — the
+    // topic, the item, the stage rule and the evidence quote.
+    topicId: text("topic_id").references((): AnyPgColumn => topic.id, { onDelete: "set null" }),
+    sourceItemId: text("source_item_id").references((): AnyPgColumn => sourceItem.id, { onDelete: "set null" }),
+    ruleId: text("rule_id").references((): AnyPgColumn => signalStageRule.id, { onDelete: "set null" }),
+    evidence: text("evidence"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
     index("deal_activity_dealId_idx").on(table.dealId),
+    index("deal_activity_topic_idx").on(table.topicId),
     index("deal_activity_createdAt_idx").on(table.createdAt),
   ],
 )

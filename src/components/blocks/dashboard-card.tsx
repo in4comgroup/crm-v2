@@ -29,6 +29,7 @@ import {
   Contact,
   FileText,
   ListTodo,
+  Handshake,
   ShoppingCart,
   Users,
   X,
@@ -39,6 +40,11 @@ import TaskEditDialog from "@/components/forms/form-task-edit"
 import { SourceMessageDialog } from "@/components/blocks/source-message-dialog"
 import type { CardRow } from "@/app/api/cards/route"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
+import {
+  DEAL_CARD_ACCEPT_LABEL_RU,
+  DEAL_CARD_REJECT_LABEL_RU,
+  isDealCardKind,
+} from "@/lib/topics/cards"
 import type {
   CardCategory,
   CardPriority,
@@ -238,6 +244,9 @@ export function DashboardCard({
   const [rejectReason, setRejectReason] = useState("")
   // Topic cards (card.kind set) need a reason CODE; the text is optional.
   const isTopicCard = !!card.kind
+  // Deal cards (topics phase 5): «Создать» / «Подтвердить» execute the
+  // proposal; «Не сделка» / «Отклонить» = reject with a reason code.
+  const dealKind = isDealCardKind(card.kind) ? card.kind : null
   const [rejectCode, setRejectCode] = useState("")
   const rejectReady = isTopicCard ? !!rejectCode : !!rejectReason.trim()
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -298,6 +307,33 @@ export function DashboardCard({
         onChanged()
       } catch {
         toast.error("Не удалось принять карточку")
+      }
+    })
+  }
+
+  const handleDealExecute = () => {
+    startTransition(async () => {
+      try {
+        const res = await fetch("/api/cards", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: card.id, action: "deal_execute" }),
+        })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          toast.error(body.error || "Не удалось выполнить действие")
+          return
+        }
+        toast.success(
+          dealKind === "deal_proposal"
+            ? body.linked
+              ? "Тема привязана к открытой сделке"
+              : "Сделка создана"
+            : "Стадия сделки обновлена",
+        )
+        onChanged()
+      } catch {
+        toast.error("Не удалось выполнить действие")
       }
     })
   }
@@ -649,7 +685,18 @@ export function DashboardCard({
                 and a THIRD button living inside the Рекомендация block (the
                 earlier approach) looked bolted-on next to this row. One
                 slot, one action per category, same visual rhythm either way. */}
-            {card.category === "new_order" ? (
+            {dealKind ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="flex-1 bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:hover:bg-emerald-400/25"
+                disabled={isPending}
+                onClick={handleDealExecute}
+              >
+                <Handshake className="h-4 w-4 mr-1" />
+                {DEAL_CARD_ACCEPT_LABEL_RU[dealKind]}
+              </Button>
+            ) : card.category === "new_order" ? (
               onCreateOrder ? (
                 // Opens the New Order dialog right on the dashboard,
                 // prefilled with the linked client + the verbatim client
@@ -714,19 +761,26 @@ export function DashboardCard({
                   disabled={isPending}
                 >
                   <X className="h-4 w-4 mr-1" />
-                  Отклонить
+                  {dealKind ? DEAL_CARD_REJECT_LABEL_RU[dealKind] : "Отклонить"}
                 </Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                  <DialogTitle>Отклонить карточку</DialogTitle>
+                  <DialogTitle>
+                    {dealKind === "deal_proposal" ? "Это не сделка" : "Отклонить карточку"}
+                  </DialogTitle>
                   <DialogDescription>
                     Укажите краткую причину. Она сохранится вместе с карточкой,
                     чтобы команда видела, почему её отклонили.
                   </DialogDescription>
                 </DialogHeader>
                 {isTopicCard && (
-                  <CardRejectReasonSelect value={rejectCode} onChange={setRejectCode} disabled={isPending} />
+                  <CardRejectReasonSelect
+                    value={rejectCode}
+                    onChange={setRejectCode}
+                    disabled={isPending}
+                    kind={card.kind}
+                  />
                 )}
                 <Textarea
                   value={rejectReason}
@@ -761,6 +815,19 @@ export function DashboardCard({
             {/* Куда ведёт принятие рекомендации — задача или заказ, смотря
                 что реально создалось (см. handleAccept / onCreateOrder выше,
                 resultTaskId/resultOrderId стамповаются в момент создания). */}
+            {resolved && dealKind && card.dealId && card.accepted && (
+              <Button
+                asChild
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground hover:text-foreground"
+              >
+                <Link href={`/deals?openDeal=${card.dealId}`}>
+                  <Handshake className="h-4 w-4 mr-1" />
+                  Открыть сделку
+                </Link>
+              </Button>
+            )}
             {resolved && (card.resultTaskId || card.resultOrderId) && (
               <Button
                 asChild

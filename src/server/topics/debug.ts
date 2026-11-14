@@ -2,7 +2,26 @@ import "server-only"
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { card, client, contact, signalInstance, source, sourceItem, topic, topicEvent, topicItem, user } from "@/db/schema"
+import {
+  card,
+  client,
+  contact,
+  deal,
+  dealFunnelStage,
+  dealType,
+  signalInstance,
+  signalStageRule,
+  source,
+  sourceItem,
+  topic,
+  topicEvent,
+  topicItem,
+  user,
+} from "@/db/schema"
+import { stageDisplayLabel } from "@/lib/deal-funnel"
+import type { DealCardProposal } from "@/lib/topics/cards"
+import { DEAL_REASON_LABELS_RU } from "./deals/rules"
+import { proposalOf } from "./cards/deal-cards"
 import type { TopicAttention } from "@/lib/topics/attention-types"
 import type { TopicCardEvent } from "@/lib/topics/cards"
 import { isTopicStatus, TOPIC_STATUSES, type TopicStatus } from "@/lib/topics/types"
@@ -128,6 +147,59 @@ export type TopicDebugEvent = {
   createdAt: string
 }
 
+/** Deal linked to the topic (phase 5, `topic.deal_id`). */
+export type TopicDebugDeal = {
+  id: string
+  name: string
+  status: string
+  stageLabel: string | null
+  dealTypeLabel: string | null
+  createdByAgent: boolean
+  pausedUntil: string | null
+  outcomeReason: string | null
+}
+
+/** One rule result of a `deal_decision` event (phase 5). */
+export type TopicDebugDealResult = {
+  ruleId: string
+  ruleNote: string | null
+  effect: string
+  action: string
+  reason: string
+  reasonRu: string
+  dealId: string | null
+  cardId: string | null
+  stageLabel: string | null
+  error: string | null
+}
+
+/** One `deal_decision` event (one signal instance decided by the deal bridge). */
+export type TopicDebugDealDecision = {
+  id: string
+  createdAt: string
+  instanceId: string
+  code: string
+  labelRu: string | null
+  confidence: string | null
+  topicScore: number | null
+  dryRun: boolean
+  results: TopicDebugDealResult[]
+}
+
+/** A `deal_proposal` / `stage_confirmation` card of the topic. */
+export type TopicDebugDealCard = {
+  id: string
+  kind: string
+  status: string | null
+  headline: string
+  proposal: DealCardProposal | null
+  dealId: string | null
+  rejectReasonCode: string | null
+  rejectionReason: string | null
+  decidedAt: string | null
+  createdAt: string
+}
+
 export type TopicDebugDetail = {
   topic: TopicDebugRow & {
     references: { kind: string; value: string; key: string }[]
@@ -141,6 +213,10 @@ export type TopicDebugDetail = {
   /** `topic.attention` (null until the attention phase ran). */
   attention: TopicAttention | null
   cards: TopicDebugCard[]
+  /** Deal bridge (phase 5): linked deal, decision log, deal cards. */
+  deal: TopicDebugDeal | null
+  dealDecisions: TopicDebugDealDecision[]
+  dealCards: TopicDebugDealCard[]
 }
 
 export type ItemTopicLink = { topicId: string; title: string; status: string; role: string; band: string; score: number }
@@ -331,6 +407,7 @@ export async function getTopicDebugDetail(orgId: string, topicId: string): Promi
   ])
   const now = new Date()
   const t = head.t
+  const { linkedDeal, dealDecisions, dealCards } = await loadDealDebug(orgId, topicId, t.dealId, events, labels)
   return {
     topic: {
       ...toRow(head, labels),
@@ -382,6 +459,136 @@ export async function getTopicDebugDetail(orgId: string, topicId: string): Promi
     })),
     attention: attentionOf(t.attention),
     cards: cards.map((c) => toDebugCard(c, now)),
+    deal: linkedDeal,
+    dealDecisions,
+    dealCards,
+  }
+}
+
+async function loadDealDebug(
+  orgId: string,
+  topicId: string,
+  dealId: string | null,
+  events: { e: typeof topicEvent.$inferSelect }[],
+  labels: Map<string, string>,
+): Promise<{ linkedDeal: TopicDebugDeal | null; dealDecisions: TopicDebugDealDecision[]; dealCards: TopicDebugDealCard[] }> {
+  const decisionEvents = events.filter(({ e }) => e.type === "deal_decision")
+  type Raw = { ruleId?: string; effect?: string; action?: string; reason?: string; dealId?: string | null; cardId?: string | null; stageId?: string | null; error?: string }
+  const raws = decisionEvents.flatMap(({ e }) => ((e.payload.results as Raw[] | undefined) ?? []))
+  const ruleIds = [...new Set(raws.map((r) => r.ruleId).filter((x): x is string => !!x))]
+  const stageIds = [...new Set(raws.map((r) => r.stageId).filter((x): x is string => !!x))]
+  const [dealRows, rules, stages, cards] = await Promise.all([
+    dealId
+      ? db
+          .select({
+            id: deal.id,
+            name: deal.name,
+            status: deal.status,
+            stageName: dealFunnelStage.name,
+            stageDisplayName: dealFunnelStage.displayName,
+            typeLabel: dealType.labelRu,
+            createdByAgent: deal.createdByAgent,
+            pausedUntil: deal.pausedUntil,
+            outcomeReason: deal.outcomeReason,
+          })
+          .from(deal)
+          .leftJoin(dealFunnelStage, eq(dealFunnelStage.id, deal.funnelStageId))
+          .leftJoin(dealType, eq(dealType.id, deal.dealTypeId))
+          .where(and(eq(deal.organizationId, orgId), eq(deal.id, dealId)))
+      : Promise.resolve([]),
+    ruleIds.length
+      ? db
+          .select({ id: signalStageRule.id, noteRu: signalStageRule.noteRu, code: signalStageRule.code, effect: signalStageRule.effect })
+          .from(signalStageRule)
+          .where(inArray(signalStageRule.id, ruleIds))
+      : Promise.resolve([]),
+    stageIds.length
+      ? db
+          .select({ id: dealFunnelStage.id, name: dealFunnelStage.name, displayName: dealFunnelStage.displayName })
+          .from(dealFunnelStage)
+          .where(inArray(dealFunnelStage.id, stageIds))
+      : Promise.resolve([]),
+    db
+      .select()
+      .from(card)
+      .where(
+        and(
+          eq(card.organizationId, orgId),
+          eq(card.topicId, topicId),
+          inArray(card.kind, ["deal_proposal", "stage_confirmation"]),
+        ),
+      )
+      .orderBy(desc(card.createdAt)),
+  ])
+  const ruleById = new Map(rules.map((r) => [r.id, r]))
+  const stageById = new Map(stages.map((s) => [s.id, stageDisplayLabel(s.name, s.displayName)]))
+  const d = dealRows[0]
+  return {
+    linkedDeal: d
+      ? {
+          id: d.id,
+          name: d.name,
+          status: d.status,
+          stageLabel: d.stageName ? stageDisplayLabel(d.stageName, d.stageDisplayName) : null,
+          dealTypeLabel: d.typeLabel ?? null,
+          createdByAgent: d.createdByAgent,
+          pausedUntil: iso(d.pausedUntil),
+          outcomeReason: d.outcomeReason,
+        }
+      : null,
+    dealDecisions: decisionEvents
+      .map(({ e }) => {
+        const p = e.payload as {
+          instanceId?: string
+          code?: string
+          confidence?: string
+          topicScore?: number
+          dryRun?: boolean
+          results?: Raw[]
+        }
+        return {
+          id: e.id,
+          createdAt: e.createdAt.toISOString(),
+          instanceId: p.instanceId ?? "",
+          code: p.code ?? "",
+          labelRu: p.code ? (labels.get(p.code) ?? null) : null,
+          confidence: p.confidence ?? null,
+          topicScore: typeof p.topicScore === "number" ? p.topicScore : null,
+          dryRun: p.dryRun === true,
+          results: (p.results ?? []).map((r) => {
+            const rule = r.ruleId ? ruleById.get(r.ruleId) : undefined
+            const reason = r.reason ?? ""
+            return {
+              ruleId: r.ruleId ?? "",
+              ruleNote: rule ? (rule.noteRu ?? `${rule.code} → ${rule.effect}`) : null,
+              effect: r.effect ?? "",
+              action: r.action ?? "",
+              reason,
+              reasonRu: DEAL_REASON_LABELS_RU[reason] ?? reason,
+              dealId: r.dealId ?? null,
+              cardId: r.cardId ?? null,
+              stageLabel: r.stageId ? (stageById.get(r.stageId) ?? null) : null,
+              error: r.error ?? null,
+            }
+          }),
+        }
+      })
+      .reverse(),
+    dealCards: cards.map((c) => {
+      const msg = (c.message ?? {}) as { dealCard?: { headline?: string } }
+      return {
+        id: c.id,
+        kind: c.kind ?? "",
+        status: c.status,
+        headline: msg.dealCard?.headline ?? "",
+        proposal: proposalOf(c),
+        dealId: c.dealId,
+        rejectReasonCode: c.rejectReasonCode,
+        rejectionReason: c.rejectionReason,
+        decidedAt: iso(c.decidedAt),
+        createdAt: c.createdAt.toISOString(),
+      }
+    }),
   }
 }
 

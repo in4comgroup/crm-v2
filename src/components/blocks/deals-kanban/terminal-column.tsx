@@ -72,6 +72,7 @@ export function TerminalColumn({
   tasksByDeal,
   intelLoaded,
   onOpen,
+  onUndoAgent,
 }: {
   cards: DealRow[]
   wonDeals: DealRow[]
@@ -88,6 +89,8 @@ export function TerminalColumn({
   tasksByDeal: Record<string, DealTaskInfo[]>
   intelLoaded: boolean
   onOpen: (deal: DealRow) => void
+  // «Отменить» у бейджа «создал агент» (диалог подтверждения — на доске).
+  onUndoAgent?: (deal: DealRow) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${FINAL_DROP_ID}`,
@@ -297,6 +300,7 @@ export function TerminalColumn({
                     key={d.id}
                     deal={d}
                     onOpen={onOpen}
+                    onUndoAgent={onUndoAgent}
                     tasks={tasksByDeal[d.id] ?? []}
                     intel={intelById[d.id]}
                     intelLoaded={intelLoaded}
@@ -314,6 +318,7 @@ export function TerminalColumn({
                         key={d.id}
                         deal={d}
                         onOpen={onOpen}
+                        onUndoAgent={onUndoAgent}
                         tasks={tasksByDeal[d.id] ?? []}
                         intel={intelById[d.id]}
                         intelLoaded={intelLoaded}

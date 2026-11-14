@@ -7,6 +7,7 @@ import {
   acceptCard,
   rejectCard,
   deleteCard,
+  executeDealCard,
 } from "@/server/cards"
 
 export {
@@ -105,6 +106,13 @@ export async function PUT(request: NextRequest) {
     } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
+    }
+    // Deal cards (topics phase 5): «Создать» (deal_proposal) / «Подтвердить»
+    // (stage_confirmation). «Не сделка» / «Отклонить» = action "reject"
+    // with a reason code.
+    if (action === "deal_execute") {
+      const result = await executeDealCard(id)
+      return NextResponse.json({ success: true, ...result })
     }
     if (action === "accept") {
       await acceptCard(id, {

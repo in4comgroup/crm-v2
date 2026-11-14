@@ -47,6 +47,7 @@ export function Column({
   tasksByDeal,
   intelLoaded,
   onOpen,
+  onUndoAgent,
   onCollapse,
   onSortChange,
 }: {
@@ -61,6 +62,8 @@ export function Column({
   tasksByDeal: Record<string, DealTaskInfo[]>
   intelLoaded: boolean
   onOpen: (deal: DealRow) => void
+  // «Отменить» у бейджа «создал агент» (диалог подтверждения — на доске).
+  onUndoAgent?: (deal: DealRow) => void
   onCollapse: () => void
   onSortChange: (mode: SortMode) => void
 }) {
@@ -228,6 +231,7 @@ export function Column({
             key={d.id}
             deal={d}
             onOpen={onOpen}
+            onUndoAgent={onUndoAgent}
             tasks={tasksByDeal[d.id] ?? []}
             intel={intelById[d.id]}
             intelLoaded={intelLoaded}
@@ -247,6 +251,7 @@ export function Column({
                 key={d.id}
                 deal={d}
                 onOpen={onOpen}
+                onUndoAgent={onUndoAgent}
                 tasks={tasksByDeal[d.id] ?? []}
                 intel={intelById[d.id]}
                 intelLoaded={intelLoaded}

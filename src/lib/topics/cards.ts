@@ -42,6 +42,10 @@ export const CARD_REJECT_REASONS = [
   "wrong_priority",
   "duplicate",
   "not_now",
+  // Deal cards (phase 5): «Не сделка» / «Отклонить» перевод стадии.
+  "not_a_deal",
+  "deal_exists",
+  "wrong_stage",
   "other",
 ] as const
 export type CardRejectReason = (typeof CARD_REJECT_REASONS)[number]
@@ -54,7 +58,17 @@ export const CARD_REJECT_REASON_LABELS_RU: Record<CardRejectReason, string> = {
   wrong_priority: "Неверная важность",
   duplicate: "Дубликат другой карточки",
   not_now: "Не сейчас",
+  not_a_deal: "Это не сделка",
+  deal_exists: "Сделка уже есть",
+  wrong_stage: "Неверная стадия",
   other: "Другое",
+}
+
+/** Reason codes offered per card kind (the list in the reject dialog). */
+export const CARD_REJECT_REASONS_BY_KIND: Record<CardKind, readonly CardRejectReason[]> = {
+  topic: ["not_relevant", "already_done", "wrong_counterparty", "wrong_facts", "wrong_priority", "duplicate", "not_now", "other"],
+  deal_proposal: ["not_a_deal", "deal_exists", "wrong_counterparty", "wrong_facts", "not_now", "other"],
+  stage_confirmation: ["wrong_stage", "wrong_facts", "not_now", "other"],
 }
 
 export function isCardKind(v: unknown): v is CardKind {
@@ -130,4 +144,62 @@ export type TopicCardMeta = TopicCardText & {
   writtenAt: string
   /** R17 / admin: force one UPDATE on the next run. */
   force: { reason: string; at: string } | null
+}
+
+// ── Deal cards (topics plan phase 5, spec §9.1 / §9.2) ────────────────────
+
+/** What «Создать» / «Подтвердить» does on a deal card. */
+export const DEAL_CARD_ACTIONS = ["create", "move", "outcome_won", "outcome_lost", "pause", "resume"] as const
+export type DealCardAction = (typeof DEAL_CARD_ACTIONS)[number]
+
+/**
+ * `card.proposal` of a `deal_proposal` / `stage_confirmation` card, written
+ * by the deal bridge (src/server/topics/deals/). Russian labels are a
+ * snapshot for display; the ids are what the action uses.
+ */
+export type DealCardProposal = {
+  v: 1
+  action: DealCardAction
+  ruleId: string | null
+  code: string
+  codeLabelRu: string
+  instanceId: string | null
+  sourceItemId: string | null
+  /** Verbatim evidence quote of the instance. */
+  evidence: string
+  confidence: "low" | "medium" | "high"
+  topicScore: number
+  /** Why a person decides (Russian, e.g. «уверенность ниже порога автосоздания»). */
+  reasonRu: string
+  reasonCode: string
+  clientId: string | null
+  clientName: string | null
+  contactId: string | null
+  contactName: string | null
+  /** Proposed deal name (the topic title). */
+  dealName: string
+  dealTypeId: string | null
+  dealTypeCode: string | null
+  dealTypeLabelRu: string | null
+  /** Target stage (create: entry stage; move / outcome: new stage). */
+  stageId: string | null
+  stageLabelRu: string | null
+  fromStageId: string | null
+  fromStageLabelRu: string | null
+  /** Existing deal (stage_confirmation). */
+  dealId: string | null
+}
+
+/** Short Russian label of the button that executes a deal card. */
+export const DEAL_CARD_ACCEPT_LABEL_RU: Record<"deal_proposal" | "stage_confirmation", string> = {
+  deal_proposal: "Создать",
+  stage_confirmation: "Подтвердить",
+}
+export const DEAL_CARD_REJECT_LABEL_RU: Record<"deal_proposal" | "stage_confirmation", string> = {
+  deal_proposal: "Не сделка",
+  stage_confirmation: "Отклонить",
+}
+
+export function isDealCardKind(v: unknown): v is "deal_proposal" | "stage_confirmation" {
+  return v === "deal_proposal" || v === "stage_confirmation"
 }

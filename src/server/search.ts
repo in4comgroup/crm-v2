@@ -6,12 +6,14 @@ import {
   and,
   desc,
   eq,
+  inArray,
   notInArray,
   or,
   sql,
   type AnyColumn,
   type SQL,
 } from "drizzle-orm"
+import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { getServerSession } from "@/lib/get-session"
 import { userCardFilter } from "@/server/topics/cards/visibility"
 
@@ -232,7 +234,7 @@ export async function searchAcrossEntities(
       .where(
         and(
           eq(deal.organizationId, activeOrgId),
-          eq(deal.status, "active"),
+          inArray(deal.status, [...OPEN_DEAL_STATUSES]),
           or(...dealFields.map(matches)),
         ),
       )

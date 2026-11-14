@@ -24,6 +24,7 @@ import {
   FileText,
   Link2,
   ListTodo,
+  Handshake,
   ShoppingCart,
   Users,
   X,
@@ -33,6 +34,11 @@ import { cn } from "@/lib/utils"
 import TaskEditDialog from "@/components/forms/form-task-edit"
 import type { CardRow } from "@/app/api/cards/route"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
+import {
+  DEAL_CARD_ACCEPT_LABEL_RU,
+  DEAL_CARD_REJECT_LABEL_RU,
+  isDealCardKind,
+} from "@/lib/topics/cards"
 import type {
   CardCategory,
   CardPriority,
@@ -91,6 +97,8 @@ export function CardDetailShell({ card }: { card: CardRow }) {
   const [rejectReason, setRejectReason] = useState("")
   // Topic cards (card.kind set) need a reason CODE; the text is optional.
   const isTopicCard = !!card.kind
+  // Deal cards (topics phase 5) — see DashboardCard.
+  const dealKind = isDealCardKind(card.kind) ? card.kind : null
   const [rejectCode, setRejectCode] = useState("")
   const rejectReady = isTopicCard ? !!rejectCode : !!rejectReason.trim()
   const [isPending, startTransition] = useTransition()
@@ -131,6 +139,33 @@ export function CardDetailShell({ card }: { card: CardRow }) {
         router.refresh()
       } catch {
         toast.error("Не удалось принять карточку")
+      }
+    })
+  }
+
+  const handleDealExecute = () => {
+    startTransition(async () => {
+      try {
+        const res = await fetch("/api/cards", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: card.id, action: "deal_execute" }),
+        })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          toast.error(body.error || "Не удалось выполнить действие")
+          return
+        }
+        toast.success(
+          dealKind === "deal_proposal"
+            ? body.linked
+              ? "Тема привязана к открытой сделке"
+              : "Сделка создана"
+            : "Стадия сделки обновлена",
+        )
+        router.refresh()
+      } catch {
+        toast.error("Не удалось выполнить действие")
       }
     })
   }
@@ -314,7 +349,12 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                   same slot — same consolidation as dashboard-card.tsx: one
                   recommendation, one action, not a competing task button
                   next to a separate order button. */}
-              {card.category === "new_order" ? (
+              {dealKind ? (
+                <Button disabled={isPending} className="flex-1" onClick={handleDealExecute}>
+                  <Handshake className="h-4 w-4 mr-1" />
+                  {DEAL_CARD_ACCEPT_LABEL_RU[dealKind]}
+                </Button>
+              ) : card.category === "new_order" ? (
                 <Button
                   asChild
                   disabled={isPending}
@@ -351,7 +391,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                     className="flex-1"
                   >
                     <X className="h-4 w-4 mr-1" />
-                    Отклонить
+                    {dealKind ? DEAL_CARD_REJECT_LABEL_RU[dealKind] : "Отклонить"}
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-md">
@@ -363,7 +403,12 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                     </DialogDescription>
                   </DialogHeader>
                   {isTopicCard && (
-                    <CardRejectReasonSelect value={rejectCode} onChange={setRejectCode} disabled={isPending} />
+                    <CardRejectReasonSelect
+                      value={rejectCode}
+                      onChange={setRejectCode}
+                      disabled={isPending}
+                      kind={card.kind}
+                    />
                   )}
                   <Textarea
                     value={rejectReason}
@@ -394,6 +439,18 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                 </DialogContent>
               </Dialog>
             </div>
+          )}
+          {resolved && dealKind && card.dealId && card.accepted && (
+            <Button
+              asChild
+              variant="ghost"
+              className="w-full justify-start text-muted-foreground hover:text-foreground mt-3"
+            >
+              <Link href={`/deals?openDeal=${card.dealId}`}>
+                <Handshake className="h-4 w-4 mr-1" />
+                Открыть сделку
+              </Link>
+            </Button>
           )}
           {resolved && (card.resultTaskId || card.resultOrderId) && (
             <Button

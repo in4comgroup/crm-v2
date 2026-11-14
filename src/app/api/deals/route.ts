@@ -15,7 +15,8 @@ import {
   getFunnelStageSettings,
   saveFunnelStageSettings,
 } from "@/server/deals"
-import { dealStatus, type DealStatus } from "@/db/schema"
+import type { DealStatus } from "@/db/schema"
+import { DEAL_STATUSES } from "@/server/db-enums"
 
 export {
   type DealRow,
@@ -203,7 +204,7 @@ export async function PUT(request: NextRequest) {
     }
     const isValidStatus = (s: unknown): s is DealStatus =>
       typeof s === "string" &&
-      (dealStatus.enumValues as readonly string[]).includes(s)
+      (DEAL_STATUSES as readonly string[]).includes(s)
     // `statusOnly` is the quick cancel / delete / restore shortcut (mirrors
     // tasks' `statusOnly`). Anything else goes through the full update.
     if (statusOnly) {

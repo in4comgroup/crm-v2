@@ -18,6 +18,12 @@ import {
   type SyncResult,
   type SyncOptions,
 } from "./_shared"
+import {
+  advanceExclusionSkipWatermark,
+  cursorWithSkipWatermark,
+  loadAnalysisExclusions,
+} from "@/server/analysis-exclusions"
+import { matchAnalysisExclusion } from "@/lib/analysis-exclusion-match"
 
 // Pulls inbox messages from Nylas, upserts each into source_item.
 // Two modes:
@@ -53,7 +59,12 @@ export async function syncNylasEmails(
   const windowSince = windowBoundSeconds(opts?.sinceIso)
   const windowUntil = windowBoundSeconds(opts?.untilIso, { endOfDay: true })
 
-  const cursor = await getLatestSourceCreatedAt(sourceId)
+  // Cursor = newest stored item, or the newest message skipped by an
+  // analysis exclusion if that is later (skipped mail is never stored).
+  const cursor = cursorWithSkipWatermark(
+    await getLatestSourceCreatedAt(sourceId),
+    ctx.providerConfig,
+  )
   const cursorFloor = cursor
     ? Math.floor(cursor.getTime() / 1000) - CURSOR_OVERLAP_SECONDS
     : null
@@ -84,19 +95,42 @@ export async function syncNylasEmails(
     throw describeNylasError(err, ctx.id)
   }
 
+  // «Исключения из анализа»: loaded once per run. A message with ANY
+  // excluded address (from / to / cc / bcc / reply-to) is not stored at all.
+  const exclusions = ctx.organizationId
+    ? await loadAnalysisExclusions(ctx.organizationId)
+    : []
+  let newestSkipped: Date | null = null
+
   let inserted = 0
   let updated = 0
 
   for (const msg of response.data ?? []) {
     if (!msg.id) continue
+    const msgDate =
+      typeof msg.date === "number" ? new Date(msg.date * 1000) : null
+    if (exclusions.length > 0) {
+      const emails = [
+        ...(msg.from ?? []),
+        ...(msg.to ?? []),
+        ...(msg.cc ?? []),
+        ...(msg.bcc ?? []),
+        ...(msg.replyTo ?? []),
+      ].map((p) => p.email ?? "")
+      if (matchAnalysisExclusion(exclusions, { emails, chatKeys: [] })) {
+        if (msgDate && (!newestSkipped || msgDate > newestSkipped)) {
+          newestSkipped = msgDate
+        }
+        continue
+      }
+    }
     const result = await upsertSourceItem({
       sourceId: ctx.id,
       organizationId: ctx.organizationId,
       externalId: msg.id,
       externalType: "email",
       threadExternalId: msg.threadId ?? null,
-      sourceCreatedAt:
-        typeof msg.date === "number" ? new Date(msg.date * 1000) : null,
+      sourceCreatedAt: msgDate,
       metadataJson: {
         subject: msg.subject ?? "",
         snippet: msg.snippet ?? "",
@@ -111,6 +145,7 @@ export async function syncNylasEmails(
     else updated++
   }
 
+  await advanceExclusionSkipWatermark(ctx.id, ctx.providerConfig, newestSkipped)
   await stampLastSyncedAt(ctx.id)
 
   return {

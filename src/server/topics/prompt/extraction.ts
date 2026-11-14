@@ -2,6 +2,7 @@ import "server-only"
 import { z } from "zod"
 import type { AntiCue } from "@/lib/signals/types"
 import { getCurrentVersion, getEffectiveSignals, getRegistry } from "@/server/signals/registry"
+import { evidenceInText } from "@/server/topics/signals/evidence"
 
 // Signal-extraction prompt (spec 01 §5.3, registry 05 §6).
 //
@@ -77,7 +78,7 @@ export type PromptCodeSet = {
 export class SignalsNotEnabledError extends Error {
   constructor(public orgId: string) {
     super(
-      "Для организации не включены сигналы. Примените шаблон в «Сигналы» (например, «Пилот дистрибуции (IN4COM)») и повторите.",
+      "Для организации не включены сигналы. Включите пакет «Базовый пакет» в «Сигналы» и повторите.",
     )
     this.name = "SignalsNotEnabledError"
   }
@@ -198,7 +199,7 @@ function attributeBlock(attributes: readonly PromptAttribute[]): string {
     .join("\n")
 }
 
-const INSTRUCTIONS = `Ты — аналитик деловой переписки CRM. «Мы» — компания-пользователь CRM (указана в конверте как «Наша компания»); блоки DS — отраслевые коды дистрибьютора вина и крепкого алкоголя. Ты получаешь ОДНО сообщение (письмо, сообщение в чате, документ) и находишь в нём сигналы из списка кодов ниже.
+const INSTRUCTIONS = `Ты — аналитик деловой переписки CRM. «Мы» — компания-пользователь CRM (указана в конверте как «Наша компания»). Ты получаешь ОДНО сообщение (письмо, сообщение в чате, документ) и находишь в нём сигналы из списка кодов ниже.
 
 ПРАВИЛА
 1. Доказательство или ничего. Каждый код подтверждается дословной цитатой (evidence) из текста ЭТОГО сообщения. Нет цитаты — нет кода. Пустой результат — норма: в большинстве сообщений сигналов нет.
@@ -216,8 +217,8 @@ const INSTRUCTIONS = `Ты — аналитик деловой переписк�
 - signals[]: code, evidence (дословная цитата), confidence, subjectIndex (индекс в subjects[]; -1 = относится ко всем).
 - attributes[]: не более одного атрибута на группу (emotion, tone, brevity); code и evidence. Ставь атрибут только при явном маркере.
 - subjects[] (не более ${EXTRACTION_LIMITS.subjects}, один на пару «контрагент × вопрос»): counterparty — компания, с которой вопрос ("" = внутренний вопрос); onBehalfOf — настоящий владелец, если контрагент — агент, логистика, IT ("" если нет); matter — 3–8 слов по-русски в именительном падеже («счёт 124 за октябрь»); references[] — {kind, value}; products[] — названия товаров, как в тексте.
-  Виды ссылок (kind): заказ №, заявка № → order; счёт №, УПД №, счёт-фактура, ТОРГ-12 → invoice; ТТН ЕГАИС, накладная ЕГАИС → other (value с префиксом «ТТН»); акт расхождений, ТОРГ-2, претензия, рекламация → claim; договор поставки, доп. соглашение, спецификация → contract; КП №, тендер / закупка № → offer.
-- facts: amounts[] (не более ${EXTRACTION_LIMITS.amounts}: value — число; currency — RUB, USD, EUR, CNY или ""; scope — total | per_unit | per_month | per_year; vat — incl | excl | unknown; evidence; subjectIndex); deadlines[] (не более ${EXTRACTION_LIMITS.deadlines}: date YYYY-MM-DD; precision — exact (дата названа) | resolved (вычислена из относительной); what — что к сроку, по-русски; owner — us | them | unknown; evidence; subjectIndex); contractEndDate, proposedMeetingDate, licenseEndDate — YYYY-MM-DD или ""; licenseStatus — active | expiring | suspended | revoked | ""; paymentTermsDays — целое число дней отсрочки или -1; creditLimitRequested — сумма или -1.
+  Виды ссылок (kind): заказ №, заявка № → order; счёт №, УПД №, счёт-фактура, ТОРГ-12 → invoice; ТТН, транспортная накладная → other (value с префиксом «ТТН»); акт расхождений, ТОРГ-2, претензия, рекламация → claim; договор поставки, доп. соглашение, спецификация → contract; КП №, тендер / закупка № → offer.
+- facts: amounts[] (не более ${EXTRACTION_LIMITS.amounts}: value — число; currency — RUB, USD, EUR, CNY или ""; scope — total | per_unit | per_month | per_year; vat — incl | excl | unknown; evidence; subjectIndex); deadlines[] (не более ${EXTRACTION_LIMITS.deadlines}: date YYYY-MM-DD; precision — exact (дата названа) | resolved (вычислена из относительной); what — что к сроку, по-русски; owner — us | them | unknown; evidence; subjectIndex); contractEndDate, proposedMeetingDate — YYYY-MM-DD или ""; paymentTermsDays — целое число дней отсрочки или -1; creditLimitRequested — сумма или -1.
 - direction: inbound (автор — внешний контрагент, пишет нам), outbound (автор — мы), internal (переписка внутри нашей компании). Подсказка «авторство» в конверте — результат автоматической проверки, она может ошибаться.
 - Если поле неизвестно — пустая строка "", -1 или пустой список. Не выдумывай значения.`
 
@@ -269,7 +270,7 @@ export function buildBlockClassifierPrompt(codes: readonly PromptCode[]): {
         .map((c) => `${c.labelRu} (${c.cuesPromptRu.slice(0, 3).map((q) => `«${q}»`).join(", ")})`)
         .join("; "),
   )
-  const system = `Ты — классификатор деловой переписки CRM дистрибьютора вина. Определи, какие блоки сигналов могут встретиться в сообщении. Сообщение может быть на любом языке. Оценивай только текст автора, не цитируемую историю. Выбирай блок, если в сообщении есть хотя бы намёк на событие из этого блока; лучше выбрать лишний блок, чем пропустить нужный. Если сигналов нет — пустой список.
+  const system = `Ты — классификатор деловой переписки CRM. Определи, какие блоки сигналов могут встретиться в сообщении. Сообщение может быть на любом языке. Оценивай только текст автора, не цитируемую историю. Выбирай блок, если в сообщении есть хотя бы намёк на событие из этого блока; лучше выбрать лишний блок, чем пропустить нужный. Если сигналов нет — пустой список.
 
 БЛОКИ
 ${lines.join("\n")}`
@@ -277,7 +278,7 @@ ${lines.join("\n")}`
 }
 
 export const blockClassifierSchema = z.object({
-  blocks: z.array(z.string()).describe("Коды выбранных блоков из списка, например DS1, A"),
+  blocks: z.array(z.string()).describe("Коды выбранных блоков из списка, например A, O"),
 })
 
 // ── Envelope + item ────────────────────────────────────────────────────────
@@ -374,8 +375,6 @@ export const extractionOutputSchema = z.object({
     ),
     contractEndDate: z.string().describe('YYYY-MM-DD или ""'),
     proposedMeetingDate: z.string().describe('YYYY-MM-DD или ""'),
-    licenseEndDate: z.string().describe('YYYY-MM-DD или ""'),
-    licenseStatus: z.string().describe('active | expiring | suspended | revoked | ""'),
     paymentTermsDays: z.number().int().describe("-1 = неизвестно"),
     creditLimitRequested: z.number().describe("-1 = неизвестно"),
   }),
@@ -400,33 +399,27 @@ export type NormalizedExtraction = Omit<ExtractionOutput, "signals"> & {
   unknownAttributes: string[]
 }
 
-const squash = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[«»"“”„'’]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-
-export function evidenceInText(evidence: string, text: string): boolean {
-  const e = squash(evidence).replace(/^[.…\s]+|[.…\s]+$/g, "")
-  if (!e) return false
-  const t = squash(text)
-  if (t.includes(e)) return true
-  // Ellipsis-joined quotes: every fragment must be present.
-  const parts = e.split(/…|\.\.\./).map((p) => p.trim()).filter((p) => p.length > 3)
-  return parts.length > 1 && parts.every((p) => t.includes(p))
-}
+// Evidence matching lives in a pure module (unit-tested, used by the
+// post-processing too); re-exported here for existing callers.
+export { evidenceInText } from "@/server/topics/signals/evidence"
 
 export function normalizeExtraction(
   output: ExtractionOutput,
-  opts: { allowedCodes: readonly string[]; attributes: readonly PromptAttribute[]; text: string },
+  opts: {
+    allowedCodes: readonly string[]
+    attributes: readonly PromptAttribute[]
+    text: string
+    /** Retired code → successor (spec §5.4 rule 1: retired codes map to their successor). */
+    successors?: ReadonlyMap<string, string>
+  },
 ): NormalizedExtraction {
   const allowed = new Set(opts.allowedCodes)
   const unknownCodes: string[] = []
   const signals: NormalizedSignal[] = []
   const seen = new Set<string>()
   for (const s of output.signals) {
-    const code = s.code.trim().toUpperCase()
+    const raw = s.code.trim().toUpperCase()
+    const code = opts.successors?.get(raw) ?? raw
     if (!allowed.has(code)) {
       unknownCodes.push(code)
       continue

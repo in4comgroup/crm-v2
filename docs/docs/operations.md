@@ -33,8 +33,9 @@ against it.
 | `pnpm db:custom --name <what>` | Create an empty custom SQL migration |
 | `pnpm db:migrate` | Apply pending migrations to `DATABASE_URL` |
 | `pnpm db:check` | Check the migration folder |
+| `pnpm test` | Unit tests (vitest, `vitest.config.mts`; `src/**/*.test.ts`; `@/` alias; `server-only` is stubbed so pure server modules can be tested). Today: the Russian mail library `src/lib/ru-mail/` and the topics signal post-processing / gates. |
 
-There are no automated tests in the repository.
+Unit tests cover only pure functions; there are no integration or UI tests.
 
 ## Environment variables
 
@@ -148,8 +149,11 @@ are not needed to build a DB.
 - `next.config.ts` wraps the config with `withWorkflow()` (Vercel Workflow SDK).
   Routes under `src/app/.well-known/workflow/` are generated at build and
   git-ignored.
-- `vercel.ts` (replaces `vercel.json`) declares one cron:
-  `/api/cron/daily` at `0 3 * * *` (03:00 UTC). The same expression is in
+- `vercel.ts` (replaces `vercel.json`) declares two crons: `/api/cron/daily`
+  at `0 3 * * *` (03:00 UTC) and `/api/cron/topics` hourly (`0 * * * *`, topics
+  engine — spec `docs/specs/topics/`). **A cron more often than daily needs the
+  Vercel Pro plan; a Hobby deployment with it is rejected.** The daily one is
+  at `0 3 * * *` (03:00 UTC). The same expression is in
   `src/server/orchestration/config.ts`; change both together. Set
   `CRON_SECRET` as a Vercel env var — Vercel then sends the bearer header.
   The daily run first syncs the AI model catalog (prices) and fetches exact
@@ -223,4 +227,4 @@ are not needed to build a DB.
 - Guest order link has no rate limiting.
 - Seven API routes still access the database directly (see
   [architecture.md](./architecture.md#layering-rule)).
-- No automated tests; type errors do not fail the build.
+- Unit tests only for a few pure modules (`pnpm test`); type errors do not fail the build.

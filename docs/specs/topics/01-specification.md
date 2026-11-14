@@ -1,11 +1,11 @@
 # Topics — specification
 
-Status: reviewed 2026-11-13 · no code changes
+Status: reviewed 2026-11-13; updated 2026-11-14 for R22 (one generic signal set) · no code changes
 Inputs and findings: [00-source-analysis.md](00-source-analysis.md) · Open questions: [02-open-questions.md](02-open-questions.md) · Plan: [03-development-plan.md](03-development-plan.md)
 
 All questions that change this spec were answered on 2026-11-10 (see `02-open-questions.md` → Decisions). Markers **[Qn]** point to the decision.
 
-**Decisions 2026-11-13.** The product owner decided R1–R20 (see [02-open-questions.md](02-open-questions.md) § F). They are applied in place in this file; markers **[Rn]** point to them. Main points: the stack is this repo (Next.js on Vercel, Neon, Drizzle migrations from `0010`, Vercel Cron + Workflow) [R1]; every LLM step is an AI process of the AI layer `src/server/ai/` [R2]; topics run hourly [R3]; cost = the existing `ai_usage_event` ledger, budget in the AI layer [R4]; MVP seeds only `base` + `distribution` [R5]; the signals registry is DB data with a full editor [R11]. Q20 «dedicated environments» is superseded by R1.
+**Decisions 2026-11-13.** The product owner decided R1–R20 (see [02-open-questions.md](02-open-questions.md) § F). They are applied in place in this file; markers **[Rn]** point to them. Main points: the stack is this repo (Next.js on Vercel, Neon, Drizzle migrations from `0010`, Vercel Cron + Workflow) [R1]; every LLM step is an AI process of the AI layer `src/server/ai/` [R2]; topics run hourly [R3]; cost = the existing `ai_usage_event` ledger, budget in the AI layer [R4]; MVP seeds only `base` + `distribution` [R5]; the signals registry is DB data with a full editor [R11]. Q20 «dedicated environments» is superseded by R1. Later: R21 (2026-11-13) merged the two packs into one, `base`; **R22 (2026-11-14) made it one generic set for every org** — no wine / alcohol content, no IN4COM-specific signals or rules, no presets; the live prompt carries every `active` code (migration `0016`, supersedes R6).
 
 Update 2026-11-10 (later): merged the Q24 answers ([02-open-questions-answers.md](02-open-questions-answers.md)) and the business requirements v2 ([Описание требований - v2.md](Описание%20требований%20-%20v2.md)): deal state text (§9.3), deal risk indicator (§9.4), forecast estimate (§9.5), no go / no-go anywhere, N7 profile removed, no limit on codes per item, W1 expiry, P6 repeat cap, trend list, deferred blocks H and J for the agency pack. Q28–Q34 answered the same day (`02-open-questions.md` → Decisions).
 
@@ -21,7 +21,7 @@ The MVP builds the communications origin end to end. The topic and signal model 
 
 ### 1.1 In scope
 
-1. Signal taxonomy as data (platform base + vertical packs + per-org activation), with Russian cues. DB tables hold ALL parameters and settings; version 1 is seeded by a Drizzle custom migration; after that the DB is the master [R11]. Managed by the platform admin only in a new Settings tab «Сигналы» with a **full editor** in the MVP, and a Markdown export of the full current registry (decided Q3). MVP seeds the packs `base` and `distribution` only [R5].
+1. Signal taxonomy as data (one platform pack `base` — R21 — with per-org activation of single codes; the pack model stays for later), with Russian cues. DB tables hold ALL parameters and settings; version 1 is seeded by a Drizzle custom migration; after that the DB is the master [R11]. Managed by the platform admin only in a new Settings tab «Сигналы» with a **full editor** in the MVP, and a Markdown export of the full current registry (decided Q3). MVP seeded the packs `base` and `distribution` only [R5]; since R21 / R22 there is one generic pack `base` for every org.
 2. Signal extraction per source item (deterministic gates + one LLM call), server-side scoring.
 3. Thread normalisation per provider.
 4. Topic entity: resolution (attach / create), lifecycle, history.
@@ -65,7 +65,7 @@ The MVP builds the communications origin end to end. The topic and signal model 
 | **Topic** | **One single point of business communication between the organisation and a client or vendor** (decided Q7): one question, request, problem or development that needs, or may need, action from us. It can come from a communication (the client wants something or complains), from the system of record (a client has not bought for a while), or from an external signal (market news about a client found by web search). It concerns a client (`client_id`) and/or a contact (`contact_id`): a topic may concern a person without a company [R14]. It has signals, a lifecycle, a history and at most one open card. Topics are *instances*, not categories: "Счёт №124 — Ромашка просрочен" and "Счёт №125 — Ромашка просрочен" are two topics. A topic may have no source item (system-of-record and external origins). |
 | **Card** | What a person sees for one topic: headline, why now, what changed, ≤3 steps. One card relates to one topic only. A card has a **kind** that sets its actions: `topic`, `deal_proposal`, `stage_confirmation` (§9.1). |
 | **Deal** | Existing entity = one commercial **opportunity** (Maslov «возможность»). One deal has many topics; a topic has at most one deal. A deal has a **deal type** (`deal.deal_type`, from a per-org type list) [R13]. |
-| **Pack** | A named set of signal codes for a vertical: `base`, `agency` (Maslov N1–N4), `distribution` (wine). The platform admin activates packs and codes per org. The MVP seeds `base` + `distribution`; `agency` is phase 9 [R5]. |
+| **Pack** | A named set of signal codes. **Today there is one generic pack, `base` (R21, R22)**: blocks A–N plus the generic B2B trade blocks O–U (orders, stock / samples / promo, client assortment and new locations, delivery and returns, documents, payment). Agency codes (Maslov N1–N4, phase 9) will be added to the same pack. An org switches the pack on; every code whose own stage is `active` then acts. Org overrides stay possible but are not used. |
 | **Funnel taxonomy** | The org's own list of deal stages (`deal_funnel_stage`, org-scoped) plus the org's rules that map signals to stage effects (`signal_stage_rule`). Every org can have its own; Maslov's 0–5 stages are one org's configuration, not a built-in. |
 | **Deal state** | ≤ 3 short sentences (≤ 50 words) in Russian that tell the current situation of one deal: what happens now, the next step and who must do it, what blocks. Stored with a version history and links to its sources (§9.3). It never repeats the stage name. |
 | **Deal risk** | A named warning type («Затягивание решения», «Потеря ключевого контакта» …) from a per-pack dictionary (`deal_risk_type`, platform data; per-org stage guards in `deal_risk_stage_guard`). It becomes active on a deal when its trigger signals are found on a topic of that deal and its conditions are met; it clears when a clearing signal or outcome arrives (§9.4). A risk never moves the stage. |
@@ -99,16 +99,16 @@ Examples (the evaluation set must include these):
 | Agency (phase 9): «Добавьте ещё два направления, бюджет и дата прежние» | 1 risk topic (REQUIREMENTS_CHANGED + SCOPE_WITHOUT_ADJUSTMENT merged); no stage change |
 | «Исправление приняли, вопрос закрыт» | Closes the complaint topic (S1); stops repeats |
 | Newsletter from a supplier | No signal → no topic |
-| IN4COM: Telegram «Прошу отгрузить 12 кор. Шабли 2021 к пятнице» | 1 topic (`ORDER_REQUESTED`, weight 5 → «Сводка»; deadline Friday escalates it to «Сейчас» when < 24 h) → card with «Создать заказ»; no deal [R7, R8] |
-| IN4COM: «В поставке от 05.11 бой 3 бутылки, акт приложили», then «Когда замените?» | 1 claim topic (delivery 05.11), UPDATE: waiting on us |
-| IN4COM: «Не можем подтвердить ТТН №4512 в ЕГАИС» | 1 topic (ЕГАИС issue, reference ТТН 4512), «Сейчас» |
-| IN4COM: «Открываем второй ресторан в марте, хотим обсудить винную карту» | 1 topic (new venue / listing) → deal of type «новая точка» auto-created if confidence high and score ≥ 7 and no open deal of this client and type exists; else a «Новая возможность?» proposal |
-| IN4COM: Telegram from a sommelier with no known company: «Пришлите прайс на игристое» | 1 topic on the contact only (`contact_id`, no `client_id`) [R14] |
+| IN4COM: Telegram «Прошу отгрузить 12 коробок артикула 4410 к пятнице» | 1 topic (`ORDER_REQUESTED`, weight 5 → «Сводка»; deadline Friday escalates it to «Сейчас» when < 24 h) → card with «Создать заказ»; no deal [R7, R8] |
+| IN4COM: «В поставке от 05.11 брак 3 единицы, акт приложили», then «Когда замените?» | 1 claim topic (delivery 05.11), UPDATE: waiting on us |
+| IN4COM: «Пришлите, пожалуйста, исправленную УПД №4512, в ней ошибка в реквизитах» | 1 topic (documents, reference УПД 4512) |
+| IN4COM: «Открываем второй магазин в марте, хотим обсудить ассортимент» | 1 topic (new location / listing) → deal of type `new_location` «новая точка» auto-created if confidence high and score ≥ 7 and no open deal of this client and type exists; else a «Новая возможность?» proposal |
+| IN4COM: Telegram from a buyer with no known company: «Пришлите прайс на вашу продукцию» | 1 topic on the contact only (`contact_id`, no `client_id`) [R14] |
 | IN4COM: «Замену получили, всё в порядке» with no open discrepancy topic | S1 code logged on the item; no topic, no card |
-| Producer email (EN): «The container is delayed, new ETA 2 December» | 1 supplier topic (`SUPPLIER_DELIVERY_DELAY`, weight 5 for IN4COM) [R20] |
-| System of record: client «Винотека» ordered every ~30 days, last order 75 days ago | 1 topic (`ACCOUNT_DORMANT`, origin system_of_record), no source item (phase 8) |
+| Producer email (EN): «The container is delayed, new ETA 2 December» | 1 supplier topic (`SUPPLIER_DELIVERY_DELAY`, weight from the registry) [R20] |
+| System of record: client «Альфа» ordered every ~30 days, last order 75 days ago | 1 topic (`ACCOUNT_DORMANT`, origin system_of_record), no source item (phase 8) |
 | External: web search finds «Ромашка открывает 5 новых ресторанов» | 1 topic (`SIGNAL_EXPANSION`, origin external, URL as evidence) (phase 11) |
-| Deal topic (IN4COM risk «Решение откладывается»): «Решение по поставщику перенесём на после праздников», two weeks later «Пока не готовы, вернёмся позже» (no date, no next step) | Same topic, 2 postponements → risk active; deal state text updated; the topic card gets UPDATE with the risk; stage unchanged |
+| Deal topic (generic risk «Решение откладывается»): «Решение по поставщику перенесём на после праздников», two weeks later «Пока не готовы, вернёмся позже» (no date, no next step) | Same topic, 2 postponements → risk active; deal state text updated; the topic card gets UPDATE with the risk; stage unchanged |
 | Then: «Давайте встречу 20.11 с финдиректором, после неё решим» | Risk cleared (date + next step agreed), history kept; state text: next step = встреча 20.11 |
 | «Спасибо, получили» on a deal topic | NOOP: no state change, no new card |
 
@@ -163,12 +163,14 @@ Full registry (all codes, parameters, Russian cues, attributes, relations, risk 
 
 ### 4.1 Storage
 
-> **R21 (2026-11-13):** there is now **one** pack (`base`); «Дистрибуция» was merged into it (migration `0014`). Text below that speaks of the `distribution` pack means the distribution codes (blocks DS1–DS7) inside the one pack.
+> **R21 (2026-11-13):** there is now **one** pack (`base`); «Дистрибуция» was merged into it (migration `0014`).
+>
+> **R22 (2026-11-14):** the pack is **one generic set for every org** (migration `0016_signals_generic_registry`): 7 alcohol-only codes deleted, blocks DS1–DS7 renamed O–U with neutral labels, all texts / risk types / rule templates neutral, no presets. Text below that speaks of the `distribution` pack means the generic trade codes (blocks O–U) inside the one pack.
 
-Platform dictionary tables (data, not code) **[Q2, R11]**. They hold ALL parameters and settings of the registry. Version 1 is built from the reviewed catalogs (05a–05c) and seeded by a Drizzle **custom migration** as platform reference data: fixed ids, `ON CONFLICT DO NOTHING` (root `AGENTS.md` rule 3). After that the DB is the master; there is no `db/seeds/*.json` and no seed script. Only `base` and `distribution` are seeded [R5].
+Platform dictionary tables (data, not code) **[Q2, R11]**. They hold ALL parameters and settings of the registry. Version 1 was built from the reviewed catalogs (05a–05c; 05c is deleted since R22) and seeded by a Drizzle **custom migration** as platform reference data: fixed ids, `ON CONFLICT DO NOTHING` (root `AGENTS.md` rule 3). After that the DB is the master; there is no `db/seeds/*.json` and no seed script. Only `base` and `distribution` were seeded [R5]; since R21 / R22 there is one generic pack.
 
-- `signal_pack` — `code` (`base` | `agency` | `distribution` | …), label RU.
-- `signal_block` — `code` (A…N, N1…N4), label RU, audience (`client_activity` | `colleagues_activity` | `business_info`), `internal_only`, `first_party_only`.
+- `signal_pack` — `code` (`base` | `agency` | …), label RU. Today only `base` (R21, R22).
+- `signal_block` — `code` (A…N, O…U, N1…N4), label RU, audience (`client_activity` | `colleagues_activity` | `business_info`), `internal_only`, `first_party_only`.
 - `signal_category` — see 4.2.
 - `signal_attribute` — code, group (exclusive), scope (`message` | `account` | `contact`), weight −1…+2, stage, profiles, RU cues.
 - `signal_relation` — `outranks` | `leads_over` | `both` | `merges_into` (Maslov §5.5 merges) | `dampens` (06 §5.2 H4), A, B.
@@ -187,7 +189,7 @@ Platform dictionary tables (data, not code) **[Q2, R11]**. They hold ALL paramet
 
 | Field | Values | Notes |
 |---|---|---|
-| `code` | UPPER_SNAKE | Stable. Retired codes are kept with `retired_at`, `successor_code`. |
+| `code` | UPPER_SNAKE | Stable. Retired codes are kept with `retired_at`, `successor_code` (none exist since R23, `0017`). |
 | `pack`, `block` | FK | |
 | `label_ru`, `definition_ru` | text | Shown in UI and used in prompts. |
 | `boundary_ru` | text | «Граница» — what does NOT count. Mandatory for every active code. |
@@ -204,17 +206,16 @@ Platform dictionary tables (data, not code) **[Q2, R11]**. They hold ALL paramet
 | `carries_amount` | bool | |
 | `inbound_only` | bool | Dropped on items authored by us. |
 | `display_profile` | `W1` \| `D4` \| `P6` \| `P8` \| `S0` \| `S1` \| null | null = derive from score. The Maslov profile N7 is **removed** (Q24-1). |
-| `recipient_role` | `relationship` \| `opportunity` \| `account` \| `finance` \| `accounting` \| `logistics` \| `team` \| `new_biz` \| `events` | Maslov roles + `logistics` for distribution, see §8.3. Stored only; no `orders` role in the MVP (IN4COM orders go to the client's sales manager). |
+| `recipient_role` | `relationship` \| `opportunity` \| `account` \| `finance` \| `accounting` \| `logistics` \| `team` \| `new_biz` \| `events` | Maslov roles + `logistics` for the trade blocks O–U, see §8.3. Stored only; no `orders` role in the MVP (IN4COM orders go to the client's sales manager). |
 | `closes_codes` | text[] | Which codes on the same topic it closes. Allowed on `state` / S1 codes **and on event codes** [R12]: `INVOICE_PAID` closes `PAYMENT_PROMISE`; `ORDER_CANCELLED` closes `ORDER_REQUESTED`, `ORDER_CHANGE_REQUESTED`. A pack may change `closes_codes` of a base code. |
 | `date_gate` | jsonb | `{ fact, test: within\|beyond, settingKey }`. |
 | `card_note_ru` | text | Per-code writing guidance for the card writer. |
 
-### 4.3 Packs at launch (decided: pilot = IN4COM)
+### 4.3 Packs at launch (decided: pilot = IN4COM; generic set — R22)
 
 | Pack | Content | Source | Pilot (IN4COM) |
 |---|---|---|---|
-| `base` | Blocks A Sales, B Contracts, C Delivery, D Invoices, E Feedback, F Meetings, G Contacts, I Bounce, N Suppliers. Rewritten with RU definitions, boundaries, cues. H (market), J (team), K (account), L (competitors), M (internal): for IN4COM only the codes marked «on» in 05b are active; everything else imports as `onHold` / `parked`. | Truffalo v204 tables | **on** (subset: only codes marked «on»; «review» codes run only in an offline eval batch until switched on, R6) |
-| `distribution` | New codes for B2B wine / spirits distribution: orders, stock, samples, tastings, listings, delivery discrepancies, returns, ЕГАИС / marking / licence issues, payment terms, documents. `ORDER_*` codes make topics and cards only, never deals; the `ORDER_REQUESTED` card gets «Создать заказ» (§9.1) [R7]. Draft: [04-distribution-pack-draft.md](04-distribution-pack-draft.md). | New — confirmed in the IN4COM review of the draft pack (Q25) | **on** (same «on» / «review» rule, R6) |
+| `base` | Blocks A Sales, B Contracts, C Delivery, D Invoices, E Feedback, F Meetings, G Contacts, I Bounce, N Suppliers, H (market), J (team), K (account), L (competitors), M (internal), rewritten with RU definitions, boundaries, cues; each code has its own stage (`active` / `onHold` / `parked` / `gated`). **Plus the generic B2B trade blocks O–U** (24 codes, ex-«Дистрибуция», R21 + R22): O «Заказы», P «Наличие, образцы, промо», Q «Ассортимент клиента и новые точки», R «Доставка и возвраты», S «Документы», T «Оплата и взаиморасчёты», U «Предложено дополнительно». `ORDER_*` codes make topics and cards only, never deals; the `ORDER_REQUESTED` card gets «Создать заказ» (§9.1) [R7]. | Truffalo v204 tables + the former distribution codes, made generic by `0016` | **on**: the `base` pack is switched on, no overrides; every code whose own stage is `active` (≈109 then; 144 active / 123 in the prompt since R23) is in the live prompt (R22; supersedes R6) |
 | `agency` | N1 PITCH (19), N2 PROSPECT (10), N3 account (15), N4 risks (18), with Maslov weights, profiles, recipients, closures, merges, plus the 26 deal risk types (§9.4). Q24 answers apply (see below). | Maslov catalog + Q24 answers | off; **not seeded in the MVP** — document only until phase 9 (second pilot after IN4COM, Q29, R5) |
 
 **Agency pack rules from the Q24 answers** — agency (phase 9), not built in the MVP (values for the phase-9 seed; the full text is in `02-open-questions-answers.md`):
@@ -296,7 +297,7 @@ Prompt rules (Russian text, see §10.4):
 - Copy references and product names exactly.
 - The item may be in any language (Russian, English, French, Italian …). `matter` and Russian fields are always written in Russian; evidence is copied in the original language [R20].
 
-Prompt size control **[Q5, R6]**: send only the org's **active** codes (for IN4COM: only the codes marked «on», ~50; «review» codes run only in an offline eval batch until switched on); for each code send label, definition, boundary, ≤8 cues. If the prompt exceeds the model's budget, use two passes: (1) block classifier (process `topics.signal_block_classifier`, added only if needed), (2) codes of the chosen blocks.
+Prompt size control **[Q5, R22]**: send only the org's **active** codes (with the `base` pack on and no overrides: every code whose own stage is `active` and is not a process code: 123 codes, ≈ 123k characters since R23; R22 superseded R6's «on» / «review» split); for each code send label, definition, boundary, ≤8 cues. If the prompt exceeds the model's budget, use two passes: (1) block classifier (process `topics.signal_block_classifier`, added only if needed), (2) codes of the chosen blocks.
 
 Model choice **[Q5 → R2]**: a spike compares 2–3 gateway models, switched on «Процессы ИИ» and measured with `ai_usage_event` (cost, latency) and the golden set (quality).
 
@@ -474,7 +475,7 @@ Lists recompute on events (attach, close, user action, deal change) and on the h
 | Бухгалтерия | `accounting` | org | members with function `accounting` (payment facts; no deal decisions) |
 | Менеджеры и эксперты | `team` | per deal / client | deal team (later); now: `account` |
 | Контакты и мероприятия | `events` | org | members with function `events` (contact lists, invitations) |
-| Логистика (distribution pack) | `logistics` | org | members with function `logistics` + `account` (delivery, ЕГАИС, documents) |
+| Логистика (trade blocks O–U) | `logistics` | org | members with function `logistics` + `account` (delivery, returns, documents) |
 
 **Senior team («Старшая команда») gets no routing** (Q24-7): no go / no-go cards, no automatic risk distribution to it.
 
@@ -522,8 +523,8 @@ Stored with the settings ladder user → org (`org_setting`, a new per-org key/v
   - guards: `min_confidence`, `min_score`, `from_stages` (allowed current stages), `forward_only` (default true), `requires_confirmation` (a `stage_confirmation` card instead of an automatic move — an org-level choice for cautious orgs; **not** an internal go / no-go, Q24-7), `deal_type` (which kind of deal it creates or moves), `requires_fact` (e.g. «concrete task»: a concrete need fact in `facts` — used by the agency rule for `PROSPECT_NEED_EXPRESSED`, §2);
   - several rules per code are allowed (e.g. one rule for stage 2, another for stage 3 when the deal is already in 2).
 - Rules for all orgs: risks never move stages; amounts never enter the forecast automatically; every move is journaled with the rule id, topic and evidence.
-- **Deal vs order (decided Q26):** a **deal** is a general agreement / contract with the client (new client or venue, listing in a wine card or chain, tender, annual supply agreement, renewal). An **order** is a purchase of a specific product or service. **Step one covers deals only:** `ORDER_*` codes create topics and cards but never create or move deals; the order link is the «Создать заказ» action on the card (§9.1, R7).
-- **Deal type [R13]:** new column `deal.deal_type` → a per-org type list (`deal_type` table: org, code, label_ru, sort, hidden). IN4COM types: `new_venue` «Новый клиент / новая точка», `wine_card_listing` «Ввод в винную карту», `chain_listing` «Листинг в сети», `tender` «Тендер», `supply_agreement` «Годовой договор поставки», `renewal` «Продление». A stage rule's `deal_type` guard names the type; the auto-create dedupe uses it.
+- **Deal vs order (decided Q26):** a **deal** is a general agreement / contract with the client (new client or location, listing in the client's assortment or a chain, tender, annual supply agreement, renewal). An **order** is a purchase of a specific product or service. **Step one covers deals only:** `ORDER_*` codes create topics and cards but never create or move deals; the order link is the «Создать заказ» action on the card (§9.1, R7).
+- **Deal type [R13]:** new column `deal.deal_type` → a per-org type list (`deal_type` table: org, code, label_ru, sort, hidden). Generic types (R22; used by the stage-rule templates): `new_location` «Новый клиент / новая точка», `listing` «Ввод в ассортимент / листинг», `tender` «Тендер», `supply_agreement` «Годовой договор поставки», `renewal` «Продление». *(Before R22: IN4COM types `new_venue`, `wine_card_listing`, `chain_listing` — replaced.)* A stage rule's `deal_type` guard names the type; the auto-create dedupe uses it.
 - Behaviour (decided Q12: the system may create deals itself; start values Q27, per-org settings `deals.autoCreate*`):
   - Topic with a deal-entry code, no open deal of this client and deal type (dedupe key = org + client + `deal_type` + deal status `active`/`paused`):
     - `deals.autoCreateEnabled` AND confidence ≥ `deals.autoCreateMinConfidence` (`high`) AND topic score ≥ `deals.autoCreateMinScore` (7) AND counterparty resolved to a client AND the rule's guards pass → **create the deal** (`createDeal`, actor = system agent user, badge «создал агент»), link `topic.deal_id`, journal in `deal_activity` with `topic_id` + `source_item_id` + evidence. The user can undo (deal status `deleted`, reason kept).
@@ -552,10 +553,10 @@ Goal: a person who does not know the deal reads one block and knows **where we a
 ### 9.4 Deal risks («Есть риски», requirements v2)
 
 - **One model, two tables:**
-  - `deal_risk_type` — **platform** data, per pack, edited in «Сигналы»: `code`, `label_ru` (e.g. «Затягивание решения»), `description_ru` (the fixed explanation text), `trigger_codes[]`, `clear_codes[]`, `severity` 1–9, `min_occurrences` (default 1), `trigger_scope` (`deal` | `client` | `org_sku`, 05c open point 10), `condition` (named server check, optional), `reaction_role`, `stage`.
+  - `deal_risk_type` — **platform** data, per pack, edited in «Сигналы»: `code`, `label_ru` (e.g. «Затягивание решения»), `description_ru` (the fixed explanation text), `trigger_codes[]`, `clear_codes[]`, `severity` 1–9, `min_occurrences` (default 1), `trigger_scope` (`deal` | `client` | `org_sku`, former 05c open point 10), `condition` (named server check, optional), `reaction_role`, `stage`.
   - `deal_risk_stage_guard` — **per org**: risk type × org × allowed stage ids (the org's own `deal_funnel_stage` rows). v2: "no budget at an early stage is not necessarily a risk". No guard row for an org = the risk applies at every stage of that org.
-  - IN4COM uses its own list from `05c` (draft in `04-distribution-pack-draft.md` §4, accepted as drafted and confirmed in the golden-set review, Q30). Agency (phase 9): the **26 Maslov risks** (05d, with their signals and «Снятие предупреждения») — not seeded in the MVP.
-- **Activation** (deterministic): a trigger code is counted on a topic linked to the deal (or in the type's `trigger_scope`), the org's stage guard allows the deal's stage, the occurrence count is reached, the condition is true → `deal_risk` row `active` with the trigger instance ids. Examples from Q24 (agency wording; the same rules apply to the IN4COM risk «Решение откладывается»):
+  - Every org (IN4COM too) uses the **9 generic risk types** of `base` (seeded in `0012`, texts made neutral in `0016`, R22; the source files 04 / 05c are deleted). They are confirmed in the golden-set review (Q30). Agency (phase 9): the **26 Maslov risks** (05d, with their signals and «Снятие предупреждения») — not seeded in the MVP.
+- **Activation** (deterministic): a trigger code is counted on a topic linked to the deal (or in the type's `trigger_scope`), the org's stage guard allows the deal's stage, the occurrence count is reached, the condition is true → `deal_risk` row `active` with the trigger instance ids. Examples from Q24 (agency wording; the same rules apply to the generic risk «Решение откладывается»):
   - «Затягивание решения» (Q24-3): `min_occurrences = 2` distinct postponements (`PITCH_DECISION_DELAYED_BY_CLIENT`) of the **same decision in the current selection cycle**, with no new date + next step agreed after them. Repeated mentions of one postponement and postponed unrelated meetings do not count. Agreeing a date and a next step clears it; history stays.
   - «Потеря ключевого контакта» (Q24-2): condition = the person **supported this deal** (linked in `deal_contact`) AND no handover / working access to the stakeholder is confirmed. A job move alone does not trigger it.
   - Risks referring to parked codes (blocks H, J for the agency pack) never trigger (Q24-8).
@@ -596,7 +597,7 @@ Not built in the MVP [R5]; the columns ship with phase 9.
 
 ### 10.2 Cues per code
 
-Every active code in `base` / `distribution` (and `agency` in phase 9) needs `cues_ru` (written, not translated). Supplier / producer codes also need English cues (§10.5). Examples:
+Every active code in `base` (and `agency` in phase 9) needs `cues_ru` (written, not translated). Supplier / producer codes also need English cues (§10.5). Examples:
 
 - SALES_OFFER_REQUESTED: «пришлите КП», «коммерческое предложение», «просчитайте», «смета», «сколько будет стоить проект».
 - SALES_PRICE_REQUEST: «прайс», «цены», «условия», «скидка от объёма», «какая цена».
@@ -634,13 +635,13 @@ All changes follow root `AGENTS.md` rule 3 (Drizzle migrations only) [R1]:
 - Expand first (new tables, nullable columns), contract later. A new enum value (`ALTER TYPE … ADD VALUE`) is not used in the same migration file.
 - No out-of-band scripts (`scripts/` does not exist): one-time backfills are custom migrations or resumable engine steps.
 
-The next free number is **`0010`** (`0000`–`0009` exist; `0009` = `platform_setting`). The numbers and names below are the planned order; the real names come from `pnpm db:generate --name` / `pnpm db:custom`, and the order follows the plan (`03-development-plan.md`).
+**Done (2026-11-13):** `0010_topics_phase0_foundations` (org_setting + log, topics_run, topics_golden_item, topics_eval_result), `0011_signal_registry`, `0012_signals_registry_v1`, `0013_signals_registry_v2_fixes`, `0014_signals_single_pack` (R21). **Done (2026-11-14):** `0015_topics_phase2_signals` = the planned `0013_source_item_signals` **plus** `0018_analysis_exclusion` and a new `topics_eval_run` (stored eval metrics); `0016_signals_generic_registry` (custom, R22: 7 alcohol-only codes hard-deleted with their relations, stage-rule templates and org overrides; blocks DS1–DS7 → O–U; neutral texts, risk types and pack description; generic deal types in the rule templates; registry version 4 on a fresh DB). Status values are text columns validated in code (like the registry), not pg enums; extra item columns `signal_reason`, `signal_attempts`; instance columns `evidence_found`, `not_counted_reason`. `0017_signals_activate_onhold_drop_retired` (custom, R23: every `onHold` code `active`, the 11 retired codes deleted). **The next free number is `0018`**; the remaining planned rows below shift accordingly (`0018_topics`, `0019_card_topic`, …). The numbers and names below are the planned order; the real names come from `pnpm db:generate --name` / `pnpm db:custom`, and the order follows the plan (`03-development-plan.md`).
 
 | Migration (planned) | Kind | Objects |
 |---|---|---|
 | `0010_org_setting` | generate | `org_setting` (org, key, value jsonb, updated_by, updated_at; unique org + key) + `org_setting_log` — a per-org key/value store like `platform_setting`, with typed keys in a server module (zod schema + default). Holds `topics.enabled` (`off` \| `shadow` \| `on`, default `off`), the attention / deal settings of §8.4 that an org overrides. |
 | `0011_signal_registry` | generate | `signal_pack`, `signal_block`, `signal_category` (all §4.2 fields + 05 §2 columns: `family`, `relevance_days`, `cues_prompt_ru`, `synonyms_ru`, `anti_cues_ru`, `example_ru`, `counter_example_ru`, `trigger_rule`), `signal_attribute`, `signal_relation` (incl. kind `dampens`), `signal_pack_override` (pack × base code: weight, display_profile, recipient_role, stage, closes_codes), `organization_signal_setting` (org: active packs; org × code: stage, weight, display_profile, recipient_role), `signal_stage_rule` (per org: code, effect, target stage, outcome, guards incl. `deal_type`, `requires_confirmation`, `requires_fact`), `deal_risk_type` (platform, per pack, §9.4), `deal_risk_stage_guard` (org × risk type × stage ids), `signal_taxonomy_version`; enums `signal_class`, `signal_kind`, `signal_stage`, `signal_score_rule`, `signal_effort`, `display_profile`, `recipient_role`, `signal_relation_kind` |
-| `0012_signals_registry_v1` | custom | Version 1 of the registry as platform reference data with **fixed ids** and `ON CONFLICT DO NOTHING` [R11]: packs `base` + `distribution` only [R5], blocks, codes, attributes, relations, pack overrides, IN4COM risk types. Built from the reviewed 05a–05c. Org activation, org overrides and IN4COM stage rules / stage guards are **tenant data**: they are not in a migration; the platform admin sets them in «Сигналы» (the 05c templates are copied there). |
+| `0012_signals_registry_v1` | custom | Version 1 of the registry as platform reference data with **fixed ids** and `ON CONFLICT DO NOTHING` [R11]: packs `base` + `distribution` only [R5], blocks, codes, attributes, relations, pack overrides, risk types. Built from the reviewed 05a–05c (later: one pack — `0014`, R21; generic — `0016`, R22). Org activation, org overrides and org stage rules / stage guards are **tenant data**: they are not in a migration; the platform admin sets them in «Сигналы» (the rule templates in the DB are copied there). |
 | `0013_source_item_signals` | generate | `signal_instance` (org, code, **origin** `communication`\|`system_of_record`\|`external`, source_item_id nullable, process_key nullable, external_url nullable, evidence, confidence, subject_index, counted, score_contrib, topic_id nullable, taxonomy_version, created_at); `source_item_subject` (item, index, counterparty, client_id, contact_id, on_behalf_of, matter, references jsonb, products text[]); `source_item` new nullable columns: `thread_key`, `signal_status` (incl. `skipped`, `deferred`), `signal_score`, `signal_band`, `signal_facts` jsonb, `signal_scanned_at`, `taxonomy_version`; index `(organization_id, signal_scanned_at)` |
 | `0014_topics` | generate | `topic` (id, org, client_id nullable, **contact_id nullable** [R14], counterparty_raw, deal_id, title, matter, family, status, sub_state, lead_code, class, score, band, display_profile, owner_user_id, references jsonb, next_deadline_at, next_attention_check_at, attention jsonb, cycle fields, snoozed_until, first_seen_at, last_activity_at, closed_at, closed_reason, related_topic_id, merged_into_topic_id, taxonomy_version, timestamps); `topic_item` (topic, item, subject_index, role `origin`\|`update`\|`closing`\|`context`); `topic_event` (append-only journal: type, actor `agent`\|`user`, user id, payload jsonb, item id); enums `topic_status`, `topic_sub_state`, `topic_item_role` |
 | `0015_card_topic` | generate | `card` new nullable columns: `topic_id`, **`kind`** (new enum `card_kind`: `topic` \| `deal_proposal` \| `stage_confirmation`; null = old card), `status` (new enum `card_status`), `score`, `band`, `display_profile`, `signal_class`, `lead_code`, `since_last`, `taxonomy_version`, `reject_reason_code`, `decided_at`, `deal_id` (for `deal_proposal` / `stage_confirmation`), `proposal` jsonb (proposed deal type / stage, rule id); partial unique index: one open card per topic and kind. Old cards keep `topic_id` NULL [R10]. |
@@ -671,8 +672,8 @@ Teardown (`src/server/teardown.ts`) must delete topics / topic items / signals t
   - **deal risks:** precision of active risks in a human review (target ≥ 0.8); share of risks cleared with a cited item;
   - cost per 100 items (from `ai_usage_event`, USD), p95 latency per AI process.
 - **Shadow mode** = the org flag `topics.enabled = shadow` (in `org_setting`), not a status of a topic or a card. The engine runs and stores topics / cards normally; the UI hides them from users until the targets are met for the org. Then the platform admin sets the flag to `on`.
-- **Offline eval batch [R6]:** codes marked «review» run only here (golden set + a sample of recent items), never in the live prompt, until the admin switches them on.
-- **Evaluation harness:** a `server-only` engine function runs extraction + resolution on the golden set and stores the metrics; the platform admin starts it from «Сигналы» (no CLI script; `scripts/` does not exist). It has a recorded-response mode to avoid LLM cost. Unit tests of the deterministic parts (06 §16) need a test runner, which the repo does not have yet.
+- ~~**Offline eval batch [R6]:** codes marked «review» run only here~~ — superseded by R22: there is no «review» set; every `active` code is in the live prompt. An optional batch over non-`active` codes (golden set + a sample of recent items) can test a code before the admin makes it `active`.
+- **Evaluation harness:** a `server-only` engine function runs extraction + resolution on the golden set and stores the metrics; the platform admin starts it from «Сигналы» (no CLI script; `scripts/` does not exist). It has a recorded-response mode to avoid LLM cost. Unit tests of the deterministic parts run with `pnpm test` (vitest, added in phase 2); the 06 §16 attention tests are added in phase 4. The eval runner is on the «Темы» tab (phase 2), not on «Сигналы».
 
 ## 13. Operations
 

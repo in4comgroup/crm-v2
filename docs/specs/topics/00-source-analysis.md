@@ -31,7 +31,7 @@ Inputs:
 
 Key facts:
 
-- The tenant is a **PR / marketing / advertising agency**. It sells services (pitch, tender, brief, credentials, re-pitch). It has no product catalog or order lines. The repo also serves a **wine / spirits distributor** tenant (orders, catalog, client types `on_trade` …). The two verticals need different signal packs.
+- The tenant is a **PR / marketing / advertising agency**. It sells services (pitch, tender, brief, credentials, re-pitch). It has no product catalog or order lines. The repo also serves a ~~**wine / spirits distributor**~~ trading tenant (orders, catalog, client types `on_trade` …). ~~The two verticals need different signal packs.~~ *(Superseded by R22, 2026-11-14: one generic signal set for every org; no vertical content.)*
 - Size: **193 unique signals** = 131 Truffalo v195 base codes (88 active, 29 onHold, 8 parked, 6 gated) + 62 new codes:
   - N1 PITCH (19) — pitch and agency selection;
   - N2 PROSPECT (10) — contact before a request («Контакт до запроса», area 0);
@@ -103,7 +103,7 @@ The export describes a **running** system (taxonomy version 204). It is German-l
 1. **The sources agree on the core mechanism.** LLM extracts codes + evidence + facts; the server scores (MAX + attributes ±2), bands, gates and closes; the LLM writes card text only. Reuse this split.
 2. **The missing piece in all three is a persisted Topic.** Truffalo uses "one open card per thread" + a free-text label. Maslov rejects thread or company as the merge unit and asks for "one business question". The concept diagram makes Topic a first-class entity. This is the main new design work.
 3. **Detection for Russian must be built.** Neither document gives Russian cues. Quote markers, reply prefixes, bounce / OOO / calendar patterns, money (₽, `1 234,50`, тыс., млн, НДС), dates (genitive months, relative phrases, production calendar), legal forms, name declension — all must be added.
-4. **Two verticals, one engine.** The agency (Maslov) and the distributor (wine) need different signal packs on the same engine. The Truffalo base fits the agency better; the distributor needs order / stock / samples / claims / ЕГАИС-type codes.
+4. ~~**Two verticals, one engine.** The agency (Maslov) and the distributor (wine) need different signal packs on the same engine. The Truffalo base fits the agency better; the distributor needs order / stock / samples / claims / ЕГАИС-type codes.~~ *Superseded by R22 (2026-11-14): one generic signal set (incl. generic order / stock / samples / claims codes, blocks O–U) for every org; the vertical-only codes are deleted (migration `0016`).*
 5. **Our foundation is thinner than Truffalo's.** We have no taxonomy tables, no scoring, no thread model, no cost tracking, no scheduled card runs, no delivery. The plan must build these first.
 
 ## 6. Requirements v2 (input 6)

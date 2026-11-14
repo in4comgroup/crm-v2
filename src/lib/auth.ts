@@ -1,8 +1,8 @@
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { db } from "@/db/drizzle"
-import { schema, invitation } from "@/db/schema"
-import { and, eq, gt } from "drizzle-orm"
+import { schema } from "@/db/schema"
+import { hasPendingInvitationForEmail } from "@/server/invitations"
 import { sendEmails } from "@/lib/email"
 import { organization, admin, emailOTP } from "better-auth/plugins"
 import { apiKey } from "@better-auth/api-key"
@@ -85,18 +85,7 @@ export const auth = betterAuth({
           // Skip default-org creation when the user is signing up in response
           // to an invitation — they'll join the inviter's org via
           // acceptInvitation. Otherwise they'd end up in two orgs.
-          const pendingInvites = await db
-            .select({ id: invitation.id })
-            .from(invitation)
-            .where(
-              and(
-                eq(invitation.email, user.email),
-                eq(invitation.status, "pending"),
-                gt(invitation.expiresAt, new Date()),
-              ),
-            )
-            .limit(1)
-          if (pendingInvites.length > 0) return
+          if (await hasPendingInvitationForEmail(user.email)) return
 
           const slug = uniqueUsernameGenerator(config)
           await auth.api.createOrganization({

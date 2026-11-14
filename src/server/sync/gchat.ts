@@ -17,6 +17,12 @@ import {
   stampLastSyncedAt,
   type SyncResult,
 } from "./_shared"
+import {
+  advanceExclusionSkipWatermark,
+  cursorWithSkipWatermark,
+  loadAnalysisExclusions,
+} from "@/server/analysis-exclusions"
+import { matchAnalysisExclusion } from "@/lib/analysis-exclusion-match"
 
 export async function syncGoogleChatMessages(
   sourceId: string,
@@ -30,6 +36,18 @@ export async function syncGoogleChatMessages(
 
   const config = gchatProviderConfigSchema.parse(ctx.providerConfig)
   const creds = getGchatCredentials(ctx.id, ctx.credentialsRef)
+  // «Исключения из анализа»: an excluded space (`gchat:spaces/…`) is not
+  // synced at all; a message whose sender address is excluded is skipped.
+  const exclusions = ctx.organizationId
+    ? await loadAnalysisExclusions(ctx.organizationId)
+    : []
+  const spaceKey = `gchat:${config.spaceId}`
+  if (exclusions.some((e) => e.kind === "chat" && e.normalizedValue === spaceKey)) {
+    await stampLastSyncedAt(ctx.id)
+    return { fetched: 0, inserted: 0, updated: 0 }
+  }
+  let newestSkipped: Date | null = null
+
   const chat = getChatClient(creds)
 
   // Fetch space members once so we can resolve each message's sender to a
@@ -46,7 +64,10 @@ export async function syncGoogleChatMessages(
     }
   }
 
-  const cursor = await getLatestSourceCreatedAt(sourceId)
+  const cursor = cursorWithSkipWatermark(
+    await getLatestSourceCreatedAt(sourceId),
+    ctx.providerConfig,
+  )
   // Chat's filter syntax wants RFC3339 with the `T…Z` suffix.
   const cursorIso = cursor
     ? new Date(cursor.getTime() - CURSOR_OVERLAP_SECONDS * 1000).toISOString()
@@ -72,6 +93,17 @@ export async function syncGoogleChatMessages(
     const sender = senderResource
       ? senderByResource.get(senderResource)
       : undefined
+    const createdAt = msg.createTime ? new Date(msg.createTime) : null
+    if (
+      sender &&
+      exclusions.length > 0 &&
+      matchAnalysisExclusion(exclusions, { emails: [sender.email], chatKeys: [] })
+    ) {
+      if (createdAt && (!newestSkipped || createdAt > newestSkipped)) {
+        newestSkipped = createdAt
+      }
+      continue
+    }
     const result = await upsertSourceItem({
       sourceId: ctx.id,
       organizationId: ctx.organizationId,
@@ -80,8 +112,10 @@ export async function syncGoogleChatMessages(
       externalId: msg.name,
       externalType: "chat_message",
       threadExternalId: msg.thread?.name?.split("/").pop() ?? null,
-      sourceCreatedAt: msg.createTime ? new Date(msg.createTime) : null,
+      sourceCreatedAt: createdAt,
       metadataJson: {
+        // Space of the message — read by the analysis-exclusion probe.
+        spaceName: config.spaceId,
         author: msg.sender?.displayName ?? "Unknown",
         authorType: msg.sender?.type ?? "HUMAN",
         text: msg.text ?? "",
@@ -95,6 +129,7 @@ export async function syncGoogleChatMessages(
     else updated++
   }
 
+  await advanceExclusionSkipWatermark(ctx.id, ctx.providerConfig, newestSkipped)
   await stampLastSyncedAt(ctx.id)
 
   return {

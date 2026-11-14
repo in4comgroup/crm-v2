@@ -16,6 +16,12 @@ import {
 import { getImapCredentials } from "@/server/providers/credentials"
 import { imapProviderConfigSchema } from "@/server/providers/handlers"
 import { buildImapClient } from "@/lib/imap"
+import {
+  advanceExclusionSkipWatermark,
+  cursorWithSkipWatermark,
+  loadAnalysisExclusions,
+} from "@/server/analysis-exclusions"
+import { matchAnalysisExclusion } from "@/lib/analysis-exclusion-match"
 
 // Map an imapflow envelope address to the canonical {name,email} shape that
 // discovery's `extractParticipants` reads (the Nylas from/to/cc fallback).
@@ -60,7 +66,12 @@ export async function syncImapEmails(
   const windowSince = windowBoundSeconds(opts?.sinceIso)
   const windowUntil = windowBoundSeconds(opts?.untilIso, { endOfDay: true })
 
-  const cursor = await getLatestSourceCreatedAt(sourceId)
+  // Cursor = newest stored item, or the newest message skipped by an
+  // analysis exclusion if that is later (skipped mail is never stored).
+  const cursor = cursorWithSkipWatermark(
+    await getLatestSourceCreatedAt(sourceId),
+    ctx.providerConfig,
+  )
   const cursorFloorSec = cursor
     ? Math.floor(cursor.getTime() / 1000) - CURSOR_OVERLAP_SECONDS
     : null
@@ -73,6 +84,13 @@ export async function syncImapEmails(
   }
   const since = sinceSec !== null ? new Date(sinceSec * 1000) : null
   const before = windowUntil !== null ? new Date(windowUntil * 1000) : null
+
+  // «Исключения из анализа»: loaded once per run. A message with ANY
+  // excluded address (from / to / cc) is not stored at all.
+  const exclusions = ctx.organizationId
+    ? await loadAnalysisExclusions(ctx.organizationId)
+    : []
+  let newestSkipped: Date | null = null
 
   const client = buildImapClient(creds)
   let fetched = 0
@@ -115,6 +133,22 @@ export async function syncImapEmails(
             : null
       const sourceCreatedAt = internalDate ?? env?.date ?? null
 
+      const from = toParticipants(env?.from)
+      const to = toParticipants(env?.to)
+      const cc = toParticipants(env?.cc)
+      if (
+        exclusions.length > 0 &&
+        matchAnalysisExclusion(exclusions, {
+          emails: [...from, ...to, ...cc].map((p) => p.email),
+          chatKeys: [],
+        })
+      ) {
+        if (sourceCreatedAt && (!newestSkipped || sourceCreatedAt > newestSkipped)) {
+          newestSkipped = sourceCreatedAt
+        }
+        continue
+      }
+
       const result = await upsertSourceItem({
         sourceId: ctx.id,
         organizationId: ctx.organizationId,
@@ -128,15 +162,16 @@ export async function syncImapEmails(
           uidValidity,
           messageId: env?.messageId ?? "",
           subject: env?.subject ?? "",
-          from: toParticipants(env?.from),
-          to: toParticipants(env?.to),
-          cc: toParticipants(env?.cc),
+          from,
+          to,
+          cc,
         },
       })
       if (result.inserted) inserted++
       else updated++
     }
 
+    await advanceExclusionSkipWatermark(ctx.id, ctx.providerConfig, newestSkipped)
     await stampLastSyncedAt(ctx.id)
     return { fetched, inserted, updated }
   } finally {

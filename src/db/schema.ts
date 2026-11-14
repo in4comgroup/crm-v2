@@ -1660,6 +1660,26 @@ export const sourceItem = pgTable(
     // because card analysis and deal discovery are orthogonal — running
     // one shouldn't lock out the other.
     dealAnalysisScannedAt: timestamp("deal_analysis_scanned_at"),
+    // ── Topics engine, signal extraction (spec topics/01 §5, §11; plan
+    // phase 2). Written only by `src/server/topics/signals/`. Text columns
+    // validated in code (same choice as the signals registry).
+    // Normalised thread key (spec §6.1) — filled from phase 3.
+    threadKey: text("thread_key"),
+    // done | skipped | deferred | failed. null = never considered.
+    signalStatus: text("signal_status"),
+    // Why the item was skipped (gate name) or why it failed (message).
+    signalReason: text("signal_reason"),
+    // Item score (§5.4 rule 6) and band (§5.5: none | low | normal | high |
+    // very_high | critical). A stored score is never re-scored when weights
+    // change — only an explicit re-run does.
+    signalScore: integer("signal_score"),
+    signalBand: text("signal_band"),
+    // { facts, direction, attributes, dropped[], model, … } of the run.
+    signalFacts: jsonb("signal_facts").$type<Record<string, unknown> | null>(),
+    signalScannedAt: timestamp("signal_scanned_at"),
+    // Failed attempts in a row (the runner gives up after a few).
+    signalAttempts: integer("signal_attempts").notNull().default(0),
+    signalTaxonomyVersion: integer("signal_taxonomy_version"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -1695,6 +1715,14 @@ export const sourceItem = pgTable(
     index("source_item_org_attribution_own_idx")
       .on(table.organizationId)
       .where(sql`${table.orgAttribution} = 'own_org'`),
+    // Topics engine work queue + shadow review lists.
+    index("source_item_org_signal_scanned_idx").on(
+      table.organizationId,
+      table.signalScannedAt,
+    ),
+    index("source_item_org_thread_key_idx")
+      .on(table.organizationId, table.threadKey)
+      .where(sql`${table.threadKey} is not null`),
   ],
 )
 
@@ -2584,7 +2612,7 @@ export const signalPack = pgTable("signal_pack", {
 })
 
 export const signalBlock = pgTable("signal_block", {
-  code: text("code").primaryKey(), // A … N, N1 … N4, DS1 … DS7
+  code: text("code").primaryKey(), // A … U (N1 … N4 in older versions)
   packCode: text("pack_code")
     .notNull()
     .references(() => signalPack.code),
@@ -2853,6 +2881,141 @@ export const signalRegistryChange = pgTable(
     index("signal_registry_change_version_idx").on(table.version),
     index("signal_registry_change_entity_idx").on(table.entity, table.entityKey),
   ],
+)
+
+// ─── Topics engine: signal extraction (spec topics/01 §5, §11; plan phase 2) ─
+//
+// Value lists (origin, confidence, status, kind) are text validated in code
+// (src/lib/signals/extraction-types.ts), like the registry.
+
+// One signal code found once. Origin `communication` = a source item
+// (evidence = verbatim quote); `system_of_record` / `external` come in
+// phases 8 / 11 with source_item_id null.
+export const signalInstance = pgTable(
+  "signal_instance",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    // communication | system_of_record | external
+    origin: text("origin").notNull().default("communication"),
+    sourceItemId: text("source_item_id").references(() => sourceItem.id, {
+      onDelete: "cascade",
+    }),
+    // AI process (or deterministic gate, e.g. `gate.bounce`) that emitted it.
+    processKey: text("process_key"),
+    externalUrl: text("external_url"),
+    evidence: text("evidence").notNull(),
+    // Evidence found in the item's own text (fuzzy, whitespace-insensitive).
+    evidenceFound: boolean("evidence_found").notNull().default(true),
+    confidence: text("confidence").notNull(), // high | medium | low
+    // Index into the item's subjects; -1 = all subjects.
+    subjectIndex: integer("subject_index").notNull().default(-1),
+    // Counts for the score (§5.4): false for low confidence, outranked,
+    // state codes, process codes.
+    counted: boolean("counted").notNull().default(false),
+    // Why the instance does not count (low_confidence | outranked | state | …).
+    notCountedReason: text("not_counted_reason"),
+    // Effective weight at extraction time (0 when not counted).
+    scoreContrib: integer("score_contrib").notNull().default(0),
+    // Topic it was attached to — set by topic resolution (phase 3).
+    topicId: text("topic_id"),
+    taxonomyVersion: integer("taxonomy_version").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("signal_instance_item_idx").on(table.sourceItemId),
+    index("signal_instance_org_code_idx").on(table.organizationId, table.code, table.createdAt),
+    index("signal_instance_topic_idx")
+      .on(table.topicId)
+      .where(sql`${table.topicId} is not null`),
+  ],
+)
+
+// One (counterparty × matter) pair inside an item (spec §5.3 subjects[]).
+// client_id / contact_id are resolved in phase 3 (topic resolution).
+export const sourceItemSubject = pgTable(
+  "source_item_subject",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    sourceItemId: text("source_item_id")
+      .notNull()
+      .references(() => sourceItem.id, { onDelete: "cascade" }),
+    subjectIndex: integer("subject_index").notNull(),
+    counterparty: text("counterparty").notNull().default(""),
+    onBehalfOf: text("on_behalf_of").notNull().default(""),
+    matter: text("matter").notNull().default(""),
+    // [{ kind: invoice|order|offer|contract|claim|other, value }]
+    references: jsonb("references")
+      .$type<{ kind: string; value: string }[]>()
+      .notNull()
+      .default([]),
+    products: text("products").array().notNull().default(sql`'{}'::text[]`),
+    clientId: text("client_id").references(() => client.id, { onDelete: "set null" }),
+    contactId: text("contact_id").references(() => contact.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("source_item_subject_item_idx_uidx").on(table.sourceItemId, table.subjectIndex),
+    index("source_item_subject_org_idx").on(table.organizationId),
+  ],
+)
+
+// «Исключения из анализа» (spec §5.2 gate 3a; Q31, R18): addresses, domains
+// and chats of one org that the engine never analyses. Managed by the org
+// owner. normalized_value = lower(email) | bare host | chat id / chat name.
+export const analysisExclusion = pgTable(
+  "analysis_exclusion",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // email | domain | chat
+    value: text("value").notNull(),
+    normalizedValue: text("normalized_value").notNull(),
+    note: text("note"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("analysis_exclusion_org_kind_value_uidx").on(
+      table.organizationId,
+      table.kind,
+      table.normalizedValue,
+    ),
+  ],
+)
+
+// Stored metrics of one eval run over the golden set (plan phase 2 task 8).
+// Per-item results stay in topics_eval_result; this row keeps the summary
+// (per-code precision / recall, gate verdict) so runs can be compared later
+// even after golden items change.
+export const topicsEvalRun = pgTable(
+  "topics_eval_run",
+  {
+    id: text("id").primaryKey(), // = topics_eval_result.run_id
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // spike | eval
+    kind: text("kind").notNull().default("eval"),
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+    metrics: jsonb("metrics").$type<Record<string, unknown> | null>(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [index("topics_eval_run_org_idx").on(table.organizationId, table.createdAt)],
 )
 
 export const schema = {

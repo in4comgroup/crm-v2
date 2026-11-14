@@ -12,13 +12,18 @@ import "server-only"
 
 import { timingSafeEqual } from "node:crypto"
 import { eq } from "drizzle-orm"
-import type { Message, Update } from "grammy/types"
+import type { Message, MessageOrigin, Update } from "grammy/types"
 import { db } from "@/db/drizzle"
 import { source } from "@/db/schema"
 import { getTelegramCredentials } from "@/server/providers/credentials"
 import { upsertSourceItem } from "@/server/source-items"
 import { parseSourceItem } from "@/server/parse-source-item"
 import { uploadSourceItem } from "@/server/upload-source-item"
+import { loadAnalysisExclusions } from "@/server/analysis-exclusions"
+import {
+  exclusionProbeFromItem,
+  matchAnalysisExclusion,
+} from "@/lib/analysis-exclusion-match"
 import {
   getTelegramUpdates,
   isTelegramWebhookConflict,
@@ -167,6 +172,58 @@ function senderMetadata(message: Message): Record<string, unknown> | null {
     : null
 }
 
+// Compact descriptor of where a forwarded message came from (spec topics/01
+// §5.3 "Forwarded messages") — stored as `metadata_json.telegram.forwardOrigin`
+// so the engine can tell the original author from the person who forwarded
+// it. Null when the message is not a forward.
+export type TelegramForwardOrigin =
+  | {
+      type: "user"
+      date: number
+      user: { id: number; firstName: string | null; lastName: string | null; username: string | null }
+    }
+  | { type: "hidden_user"; date: number; senderUserName: string }
+  | {
+      type: "chat" | "channel"
+      date: number
+      chat: { chatId: number; title: string | null; username: string | null }
+    }
+
+function forwardOriginMetadata(message: Message): TelegramForwardOrigin | null {
+  const origin: MessageOrigin | undefined = message.forward_origin
+  if (!origin) return null
+  switch (origin.type) {
+    case "user":
+      return {
+        type: "user",
+        date: origin.date,
+        user: {
+          id: origin.sender_user.id,
+          firstName: origin.sender_user.first_name ?? null,
+          lastName: origin.sender_user.last_name ?? null,
+          username: origin.sender_user.username ?? null,
+        },
+      }
+    case "hidden_user":
+      return { type: "hidden_user", date: origin.date, senderUserName: origin.sender_user_name }
+    case "chat":
+    case "channel": {
+      const c = origin.type === "chat" ? origin.sender_chat : origin.chat
+      return {
+        type: origin.type,
+        date: origin.date,
+        chat: {
+          chatId: c.id,
+          title: "title" in c && typeof c.title === "string" ? c.title : null,
+          username: "username" in c && typeof c.username === "string" ? c.username : null,
+        },
+      }
+    }
+    default:
+      return null
+  }
+}
+
 // A voice memo (`message.voice`, Opus-in-Ogg) or an audio file
 // (`message.audio`, usually mp3/m4a). Both carry a stable `file_id` we
 // re-resolve to bytes at parse time. `message.caption` (if any) rides along
@@ -228,6 +285,28 @@ async function persistTelegramMessage(
     chatType: message.chat.type,
     date: message.date,
     from: senderMetadata(message),
+    forwardOrigin: forwardOriginMetadata(message),
+  }
+
+  // «Исключения из анализа»: a message from an excluded chat / user (incl. a
+  // forward whose origin is excluded) is not stored at all. The webhook
+  // still answers 200 so Telegram does not redeliver it, and the manual
+  // fetch still advances its offset past it; no chat reply is sent.
+  if (scope.organizationId) {
+    const exclusions = await loadAnalysisExclusions(scope.organizationId)
+    if (
+      exclusions.length > 0 &&
+      matchAnalysisExclusion(
+        exclusions,
+        exclusionProbeFromItem({
+          provider: "telegram",
+          metadataJson: { telegram: telegramMeta },
+          threadExternalId: String(message.chat.id),
+        }),
+      )
+    ) {
+      return { outcome: "ignored" }
+    }
   }
   const baseUpsert = {
     sourceId: scope.sourceId,

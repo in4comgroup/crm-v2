@@ -54,6 +54,8 @@ export async function runExtraction(args: {
   codeSet?: ExtractionCodeSet
   /** Preloaded codes (must match orgId / codeSet); loaded when omitted. */
   promptSet?: PromptCodeSet
+  /** Retired code → successor, applied before the code check (spec §5.4 rule 1). */
+  successors?: ReadonlyMap<string, string>
   ref: Record<string, unknown>
 }): Promise<ExtractionRun> {
   const variant = args.variant ?? "single"
@@ -120,6 +122,7 @@ export async function runExtraction(args: {
       allowedCodes: sys.codes,
       attributes: promptSet.attributes,
       text: args.text,
+      successors: args.successors,
     }),
     variant,
     codeSet,

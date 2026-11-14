@@ -1,10 +1,12 @@
 # Topics — questions to resolve 
 
+> **R22 (2026-11-14) supersedes the vertical assumptions in this file.** IN4COM is not treated as a wine / spirits distributor; there is one generic signal set for every org and no `distribution` pack. The draft `04-distribution-pack-draft.md` is deleted (git history keeps it). See [02-open-questions.md](02-open-questions.md) § F, R22.
+
 ## A. Scope and business
 
 ### Q1. Which tenant and vertical go first? — ✅ answered: IN4COM (see Decisions)
 
-The Maslov catalog is for a PR / marketing **agency** (pitch, tender, brief). The repo also serves a **wine / spirits distributor** (orders, catalog, client types). The signal packs differ a lot.
+The Maslov catalog is for a PR / marketing **agency** (pitch, tender, brief). The repo also serves a ~~**wine / spirits distributor**~~ trading tenant (orders, catalog, client types; vertical removed by R22). The signal packs differ a lot.
 
 - a) Agency first (Maslov catalog is ready and detailed).  
 - b) Distributor first (needs a new pack and a workshop).  
@@ -42,7 +44,7 @@ Today: Custom-rule card generation (incl. the «Cards pop-up rule — Telegram o
 - a) Keep both for orgs with topics `off`; topics replace them for orgs with topics `on`.  
 - b) Remove them when topics ship.
 
-**Rec. a).** The `new_order` flow becomes the code `ORDER_REQUESTED` in the distribution pack; its card keeps the «Создать заказ» button.
+**Rec. a).** The `new_order` flow becomes the code `ORDER_REQUESTED` (generic block O «Заказы» since R22); its card keeps the «Создать заказ» button.
 
 ### Q12. How much may the system do with deals on its own? — ✅ answered: auto-create on high probability (see Q27)
 
@@ -185,13 +187,13 @@ No token tracking exists today. **Rec.:** add `llm_usage` in phase 0; set a mont
 
 ### Q25. IN4COM signal pack — who confirms it? — ✅ answered: the Q17 business users review the draft
 
-The draft in [04-distribution-pack-draft.md](04-distribution-pack-draft.md) is our proposal (≈ 25 new codes \+ base codes to switch on), written from domain knowledge only. Signals are the input to everything (which messages become topics, which list, when a deal is created), so IN4COM users confirm: which situations matter, how important each is, what does NOT count, and the Russian phrases they really see. No separate workshop is needed; a review of the draft by the same users who do the tests (Q17) is enough.
+*(Superseded by R22: no IN4COM pack; 04 deleted.)* The draft (04) was our proposal (≈ 25 new codes \+ base codes to switch on), written from domain knowledge only. Signals are the input to everything (which messages become topics, which list, when a deal is created), so IN4COM users confirm: which situations matter, how important each is, what does NOT count, and the Russian phrases they really see. No separate workshop is needed; a review of the draft by the same users who do the tests (Q17) is enough.
 
 ### Q26. What is a "deal" for IN4COM, and what is an "order"? — ✅ answered: deals only in step one
 
 Decision: deal \= a general agreement / contract with the client; order \= purchase of a specific product or service. The first step covers deals only; the order link comes later.
 
-Original question: IN4COM already has orders (draft → sent → confirmed → finalized) and a deal funnel. A routine repeat order must NOT create a deal. Candidates for a deal: a new venue / new client listing, a chain listing or tender, a new wine-card placement, a renewal of an annual agreement. **Rec.:** deal \= a new or expanded *relationship* opportunity (listing, new client, tender, annual agreement); order \= a single purchase. `ORDER_REQUESTED` feeds the order flow, never the deal funnel. Confirm with IN4COM and list the deal types they track.
+Original question: IN4COM already has orders (draft → sent → confirmed → finalized) and a deal funnel. A routine repeat order must NOT create a deal. Candidates for a deal: a new venue / new client listing, a chain listing or tender, ~~a new wine-card placement~~ (removed by R22), a renewal of an annual agreement. **Rec.:** deal \= a new or expanded *relationship* opportunity (listing, new client, tender, annual agreement); order \= a single purchase. `ORDER_REQUESTED` feeds the order flow, never the deal funnel. Confirm with IN4COM and list the deal types they track.
 
 ### Q27. Start values for automatic deal creation (Q12) — ✅ answered: accepted
 

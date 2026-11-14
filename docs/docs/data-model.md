@@ -118,9 +118,25 @@ stage, profile, closes, date gate, trigger rule), `signal_attribute`,
 `signal_relation`, `signal_pack_override`, per-org `organization_signal_pack` /
 `organization_signal_override`, `signal_stage_rule` (org NULL = pack template),
 `deal_risk_type` + per-org `deal_risk_stage_guard`, `signal_taxonomy_version` +
-`signal_registry_change` (every save = new version + change rows). Topics phase
+`signal_registry_change` (every save = new version + change rows). Registry
+migrations: `0011` tables, `0012` seed v1, `0013` fixes, `0014` one pack
+(R21), `0016_signals_generic_registry` (R22: one generic set for every org —
+7 alcohol-only codes deleted, blocks DS1–DS7 renamed O–U, neutral texts, no
+presets), `0017_signals_activate_onhold_drop_retired` (R23: every `onHold`
+code `active`, retired codes deleted). Topics phase
 0: `org_setting` (+ log; `topics.enabled`, `ai.budget.daily_usd`), `topics_run`,
 `topics_golden_item`, `topics_eval_result`.
+
+Topics phase 2 (signal extraction, migration `0015`; text value lists validated
+in `src/lib/signals/extraction-types.ts`):
+
+| Table / columns | Purpose | Key columns |
+| --- | --- | --- |
+| `source_item` (new nullable columns) | Result of signal extraction per root item | `signal_status` (done / skipped / deferred / failed), `signal_reason`, `signal_score`, `signal_band`, `signal_facts` (jsonb: facts, direction, attributes, dropped codes, model), `signal_scanned_at`, `signal_attempts`, `signal_taxonomy_version`; `thread_key` (filled from phase 3) |
+| `signal_instance` | One code found once, with evidence | `code`, `origin` (communication / system_of_record / external), `source_item_id` (**cascade**), `evidence`, `confidence`, `subject_index`, `counted`, `not_counted_reason`, `score_contrib`, `topic_id` (phase 3), `taxonomy_version` |
+| `source_item_subject` | (counterparty × matter) pairs of an item | `source_item_id` (**cascade**), `subject_index`, `counterparty`, `on_behalf_of`, `matter`, `references` (jsonb), `products`, `client_id` / `contact_id` (**set null**, phase 3) |
+| `analysis_exclusion` | «Исключения из анализа»: org owner deny-list of addresses, domains, chats | `kind` (email / domain / chat), `value`, `normalized_value` (unique per org + kind) |
+| `topics_eval_run` | Stored metrics of one eval run over the golden set | `kind` (spike / eval), `config`, `metrics` (jsonb), `finished_at` |
 
 ## 8. Admin and audit
 

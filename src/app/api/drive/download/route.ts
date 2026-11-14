@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { and, eq } from "drizzle-orm"
-import { db } from "@/db/drizzle"
-import { source, sourceItem } from "@/db/schema"
+import { findItemSourceByExternalId } from "@/server/source-items"
 import { getDriveClient } from "@/lib/google-drive"
 import { getServerSession } from "@/lib/get-session"
 import { getGdriveCredentials } from "@/server/providers/credentials"
@@ -72,22 +70,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const rows = await db
-      .select({
-        sourceId: source.id,
-        provider: source.provider,
-        credentialsRef: source.credentialsRef,
-      })
-      .from(sourceItem)
-      .innerJoin(source, eq(source.id, sourceItem.sourceId))
-      .where(
-        and(
-          eq(sourceItem.externalId, fileId),
-          eq(sourceItem.organizationId, activeOrgId),
-        ),
-      )
-      .limit(1)
-    const row = rows[0]
+    const row = await findItemSourceByExternalId(activeOrgId, fileId)
     if (!row) {
       return NextResponse.json(
         { error: "File's source not found in this organization" },

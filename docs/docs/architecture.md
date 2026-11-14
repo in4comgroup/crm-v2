@@ -14,7 +14,7 @@
 | Object storage | S3-compatible via `@aws-sdk/client-s3`, Cloudflare R2 today | Parsed Markdown and user avatars. Provider-neutral layer `src/server/storage` (generic S3 core + provider registry, `STORAGE_PROVIDER`); spec `docs/specs/s3-r2/`. |
 | LLM | Vercel AI SDK v6 (`ai`) through the Vercel AI Gateway | Only through the AI layer `src/server/ai` (`aiGenerateText` / `aiStreamText` with a process key). Model per process is chosen on `/settings` «Процессы ИИ» (defaults: Gemini 2.5 Flash for parsing, Gemini 3.1 Flash Lite elsewhere). Every call is recorded with tokens and exact cost (`ai_usage_event`). Spec `docs/specs/models/`. |
 | AI UI | ai-elements, streamdown, json-render (`@json-render/*`) | Chat rendering and structured AI output. |
-| Background jobs | Vercel Workflow SDK (`workflow`) + Vercel Cron | One daily workflow: AI model catalog sync + usage cost check, then source sync → parse → upload. |
+| Background jobs | Vercel Workflow SDK (`workflow`) + Vercel Cron | Daily workflow: AI model catalog sync + usage cost check, then source sync → parse → upload. Hourly workflow: topics engine (`runTopicsPipeline`; needs Vercel Pro). |
 | Data viz / tables | Recharts 3 (shadcn charts), @tanstack/react-table, @dnd-kit (kanban) | |
 | Integrations | Nylas SDK v8, imapflow + mailparser, node-ical, googleapis, grammY (Telegram), Resend | |
 | File parsing | mammoth (.docx), jszip + @xmldom/xmldom (.pptx), ExcelJS (price-list export) | PDF, image, audio, video go to Gemini as file parts. |
@@ -51,8 +51,11 @@ UI (client components)  →  src/app/api/**/route.ts  →  src/server/*  →  sr
                              map errors to HTTP)          tenant checks, SQL)
 ```
 
-- **Rule:** API routes must not use Drizzle or touch the database. All queries and
-  mutations live in `src/server/` and are called from the routes.
+- **Rule (lint-enforced):** only `src/server/` touches the database. API routes,
+  pages, layouts, components and `src/lib` must not use Drizzle; they call a server
+  function. Exceptions: `src/db/` (client + schema) and the better-auth adapter in
+  `src/lib/auth.ts`. `import type` from the schema is allowed anywhere. ESLint
+  (`DB_ACCESS` in `eslint.config.mjs`) fails on any other DB import.
 - Server modules are either `"use server"` (server actions, callable as RPC) or
   `import "server-only"` (plain server modules that export classes, sync helpers
   or types — for example `teardown.ts`, `blocklist.ts`, `order-links.ts`,

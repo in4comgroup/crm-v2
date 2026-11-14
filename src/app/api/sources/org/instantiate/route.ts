@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "@/lib/get-session"
-import { db } from "@/db/drizzle"
-import { member, sourceTemplate } from "@/db/schema"
-import { and, eq } from "drizzle-orm"
-import { instantiateFromTemplate } from "@/server/templates-instantiate"
+import { getActiveOrgRole } from "@/server/sources"
+import {
+  getTemplateOrgAccess,
+  instantiateFromTemplate,
+} from "@/server/templates-instantiate"
 
 // Org-owner endpoint for the "Add source" picker.
 // Body: { templateId }
@@ -31,22 +32,13 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Owner check (mirrors `requireOrgOwner` in src/server/sources.ts but
-  // inlined here so we only need one auth import in this thin route).
-  const memberRows = await db
-    .select({ role: member.role })
-    .from(member)
-    .where(
-      and(
-        eq(member.userId, session.user.id),
-        eq(member.organizationId, activeOrgId),
-      ),
-    )
-    .limit(1)
-  if (!memberRows[0]) {
+  // Owner check: the caller's role in the active org (getActiveOrgRole
+  // returns null when the caller is not a member of it).
+  const role = await getActiveOrgRole()
+  if (!role || role.organizationId !== activeOrgId) {
     return NextResponse.json({ error: "Not a member of active org" }, { status: 401 })
   }
-  if (memberRows[0].role !== "owner") {
+  if (role.role !== "owner") {
     return NextResponse.json(
       { error: "Only the org owner can add sources" },
       { status: 403 },
@@ -75,22 +67,14 @@ export async function POST(request: NextRequest) {
   // `instantiateFromTemplate` already checks active status, but it
   // doesn't enforce `is_visible_to_orgs` — that's a UI-policy guard
   // (admin-internal templates shouldn't be reachable via this route).
-  const tpl = await db
-    .select({
-      id: sourceTemplate.id,
-      isVisibleToOrgs: sourceTemplate.isVisibleToOrgs,
-      status: sourceTemplate.status,
-    })
-    .from(sourceTemplate)
-    .where(eq(sourceTemplate.id, templateId))
-    .limit(1)
-  if (!tpl[0]) {
+  const tpl = await getTemplateOrgAccess(templateId)
+  if (!tpl) {
     return NextResponse.json({ error: "Template not found" }, { status: 404 })
   }
-  if (tpl[0].status !== "active") {
+  if (tpl.status !== "active") {
     return NextResponse.json({ error: "Template is inactive" }, { status: 404 })
   }
-  if (!tpl[0].isVisibleToOrgs) {
+  if (!tpl.isVisibleToOrgs) {
     return NextResponse.json(
       { error: "Template not available to org owners" },
       { status: 403 },

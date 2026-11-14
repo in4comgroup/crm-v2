@@ -112,3 +112,19 @@ export async function bootstrapDefaultsForOrg(
   }
   return { instantiated, alreadyExisted }
 }
+
+// Status + org visibility of one template, for the org-owner «Add source»
+// route. null = no such template.
+export async function getTemplateOrgAccess(
+  templateId: string,
+): Promise<{ status: string; isVisibleToOrgs: boolean } | null> {
+  const rows = await db
+    .select({
+      status: sourceTemplate.status,
+      isVisibleToOrgs: sourceTemplate.isVisibleToOrgs,
+    })
+    .from(sourceTemplate)
+    .where(eq(sourceTemplate.id, templateId))
+    .limit(1)
+  return rows[0] ?? null
+}

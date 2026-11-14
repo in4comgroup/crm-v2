@@ -12,6 +12,7 @@ import { SyncActionBar } from "@/components/blocks/sync-action-bar"
 import { ProcessRunBar } from "@/components/blocks/process-controls"
 import { useProcessRun } from "@/components/blocks/use-process-run"
 import { WorkflowStatistics } from "@/components/blocks/workflow-statistics"
+import { AnalysisExclusionsSection } from "@/components/blocks/analysis-exclusions-section"
 import type { SourceSummary } from "@/server/sources"
 
 // Local-date "YYYY-MM-DD" for `<input type="date">` (the default processing
@@ -95,6 +96,7 @@ export function SourcesPageShell({
             onBumpRefresh={bumpRefresh}
             onOpenDropoffUpload={() => setUploadOpen(true)}
             onOpenWhatsAppUpload={() => setWhatsAppOpen(true)}
+            canExtractSignals={isAdmin}
           />
         ) : (
           <Card>
@@ -134,6 +136,7 @@ export function SourcesPageShell({
               <TableOrgSources />
             </CardContent>
           </Card>
+          <AnalysisExclusionsSection />
         </TabsContent>
       )}
 
@@ -162,12 +165,15 @@ function SourcesScope({
   onBumpRefresh,
   onOpenDropoffUpload,
   onOpenWhatsAppUpload,
+  canExtractSignals,
 }: {
   sources: SourceSummary[]
   refreshKey: number
   onBumpRefresh: () => void
   onOpenDropoffUpload: () => void
   onOpenWhatsAppUpload: () => void
+  // Platform admin: per-row «Извлечь сигналы» (topics engine, shadow review).
+  canExtractSignals: boolean
 }) {
   const proc = useProcessRun({ onRefresh: onBumpRefresh })
   // "Processing period" — bounds which fetched items the sync→process chain
@@ -232,6 +238,7 @@ function SourcesScope({
             onRunAll={proc.run}
             periodFrom={procDateFrom}
             periodTo={procDateTo}
+            canExtractSignals={canExtractSignals}
           />
         </CardContent>
       </Card>

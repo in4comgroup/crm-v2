@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { eq } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
-import { db } from "@/db/drizzle"
-import { sourceItem } from "@/db/schema"
 import { getTextObject } from "@/server/storage"
 import {
   assertSourceItemInScope,
+  getSourceItemMarkdownState,
   SourceItemScopeError,
 } from "@/server/source-items"
 
@@ -42,17 +40,7 @@ export async function GET(
     throw error
   }
 
-  const rows = await db
-    .select({
-      parseStatus: sourceItem.parseStatus,
-      parsedMarkdown: sourceItem.parsedMarkdown,
-      markdownR2Key: sourceItem.markdownR2Key,
-      parseError: sourceItem.parseError,
-    })
-    .from(sourceItem)
-    .where(eq(sourceItem.id, id))
-    .limit(1)
-  const row = rows[0]
+  const row = await getSourceItemMarkdownState(id)
   if (!row) {
     return NextResponse.json({ error: "Source item not found" }, { status: 404 })
   }

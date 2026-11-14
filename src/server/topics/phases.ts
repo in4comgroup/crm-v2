@@ -14,7 +14,7 @@ import type { TopicsMode } from "./mode"
 // `{ skipped: "<reason>" }`. Throwing is allowed — the pipeline catches it
 // per phase, records the error and goes on with the next phase.
 //
-// All phases are stubs now (plan phase 0, task 6); a stub takes no
+// Phase «signals» is built (plan phase 2); the others are stubs. A stub takes no
 // arguments yet — give it `(ctx: TopicsPhaseContext)` when it is built. The TODO(phase N) tags
 // point at docs/specs/topics/03-development-plan.md.
 
@@ -44,11 +44,11 @@ export type TopicsPhase = {
 
 const NOT_BUILT = { skipped: "not built yet" } as const
 
-// TODO(phase 2): signal extraction over new root items of the last
-// ORCHESTRATION_CONFIG.topics.startHistoryDays days (AI process
-// `topics.signal_extraction`), capped per org; stamps `signal_scanned_at`.
-async function runSignals(): Promise<TopicsPhaseResult> {
-  return NOT_BUILT
+// Phase 2 (built): signal extraction — src/server/topics/signals/runner.ts.
+// Imported lazily: the runner imports this module's types.
+async function runSignals(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runSignalsPhase } = await import("@/server/topics/signals/runner")
+  return runSignalsPhase(ctx)
 }
 
 // TODO(phase 3): topic resolution — match new signals to open topics or

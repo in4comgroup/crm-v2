@@ -1,11 +1,11 @@
 # Topics — signals registry (full specification)
 
-Status: reviewed 2026-11-13 (decisions R1–R20 in [02-open-questions.md](02-open-questions.md) § F applied) · seed data, no code changes
+Status: reviewed 2026-11-13 (decisions R1–R20 in [02-open-questions.md](02-open-questions.md) § F applied); updated 2026-11-14 for **R22** (one generic signal set, migration `0016`) and **R23** (all `onHold` codes `active`, retired codes deleted, migration `0017`) · seed data, no code changes
 Extends [01-specification.md](01-specification.md) §4 (taxonomy) and §10 (Russian language). Attention rules that use these fields: [06-attention-engine.md](06-attention-engine.md).
 
 The registry is the full list of signal codes with all parameters, Russian texts and Russian cues. It is **data** (DB tables with all parameters and settings: codes, packs, per-org activation and overrides, stage rules, risk types, relations), managed by the platform admin in Settings → «Сигналы» (Q3) with a **full editor** in the MVP. These files are the **source of version 1**: after review, version 1 is written into a Drizzle **custom migration** (`pnpm db:custom --name signals_registry_v1`) as platform reference data with fixed ids and `ON CONFLICT DO NOTHING` (root `AGENTS.md` rule 3). After that the DB is the master; these files are not loaded again (no `db/seeds/*.json`, no scripts). The «Экспорт в Markdown» of the tab writes the same format back (spec §4.1).
 
-Only the packs `base` and `distribution` are seeded (R5). The `agency` pack (05d) stays a document until phase 9 (second pilot).
+Only the packs `base` and `distribution` were seeded (R5); since migration `0014` (R21) they are **one pack, `base`**. Since migration `0016` (R22) this pack is **one generic set for every org**: no vertical (wine / alcohol) content, no org-specific signals or rules, neutral pack description. The `agency` pack (05d) stays a document until phase 9 (second pilot).
 
 Items marked **[new]** were not in the 2026-11-10 spec; they are listed in §10 and were accepted on 2026-11-13.
 
@@ -17,8 +17,12 @@ Items marked **[new]** were not in the 2026-11-10 spec; they are listed in §10 
 |---|---|---|
 | [05a-signals-base-a-g.md](05a-signals-base-a-g.md) | `base` pack, blocks A Продажи · B Договоры · C Исполнение · D Счета · E Обратная связь · F Встречи · G Контакты | 55 (45 active) |
 | [05b-signals-base-h-n.md](05b-signals-base-h-n.md) | `base` pack, blocks H Рынок · I Недоставка · J Команда · K Аккаунт · L Конкуренты · M Внутреннее · N Поставщики; **attributes**; **relations** | 79 + 26 attributes + 22 relations |
-| [05c-signals-distribution.md](05c-signals-distribution.md) | `distribution` pack (wine / spirits, pilot IN4COM); IN4COM deal-risk types; IN4COM stage-rule template | 23 + 8 proposed; 9 risk types; 28 stage-rule rows |
+| ~~05c-signals-distribution.md~~ | **Deleted (R22).** Was the seed source of the former distribution codes, risk types and stage-rule templates. Git history keeps it. Today these codes live only in the DB (blocks O–U, see below) | — |
 | [05d-signals-agency.md](05d-signals-agency.md) | `agency` pack (Maslov N1–N4); agency overrides of base codes; funnel stage-rule template; 26 deal-risk types. **Phase 9 / agency: not seeded in the MVP.** | 62 (N1 19 · N2 10 · N3 15 · N4 18); 26 risk types; stage rules R0–R37 |
+
+05a / 05b are the **historical** seed source. The DB is the master; R22 (`0016`) cleaned the DB texts, and 05a / 05b are not updated.
+
+**Blocks O–U** (former distribution blocks DS1–DS7, renamed and made generic by `0016`; 24 codes, DB only): O «Заказы» · P «Наличие, образцы, промо» · Q «Ассортимент клиента и новые точки» · R «Доставка и возвраты» · S «Документы» · T «Оплата и взаиморасчёты» · U «Предложено дополнительно». The 9 deal-risk types and the stage-rule templates (deal types `listing`, `new_location`, `tender`, `supply_agreement`, `renewal`) also live in the DB.
 
 Every code has the same entry format: a parameter table, then Russian definition, boundary, prompt cues, full synonym list, anti-cues, example, counter-example and card note (§4).
 
@@ -44,9 +48,9 @@ Tables from spec §4.1 (full list in spec §11: packs, blocks, codes, attributes
 
 | Field | Values | Rules |
 |---|---|---|
-| `code` | `UPPER_SNAKE`, ≤ 48 chars | Stable forever. A retired code keeps its row (`retired_at`, `successor_code`). |
-| `pack` | `base` \| `distribution` \| `agency` \| … | One pack per code. |
-| `block` | `A`…`N`, `N1`…`N4`, distribution blocks `DS1`…`DS7` | Groups codes in UI, prompt and export. |
+| `code` | `UPPER_SNAKE`, ≤ 48 chars | Stable forever. A retired code keeps its row (`retired_at`, `successor_code`); the 11 retired codes of the seed were deleted by R23 (`0017`). |
+| `pack` | `base` \| `agency` \| … | One pack per code. Today only `base` exists (R21, R22). |
+| `block` | `A`…`N`, `O`…`U` (generic trade blocks, ex-`DS1`…`DS7`, R22), `N1`…`N4` (agency) | Groups codes in UI, prompt and export. |
 | `family` | `offer` · `order` · `invoice` · `contract` · `complaint` · `meeting` · `contact` · `pitch` · `delivery` · `account` · `market` · `supplier` · `team` · `internal` · `competitor` | Exactly one. Used by the topic matcher (spec §6.2) and by boost R (06 §4.4). |
 | `label_ru` | ≤ 60 chars | UI and card. Says what the **counterparty** did, not what we must do. |
 
@@ -70,7 +74,7 @@ Use this scale for new codes and for org overrides. The band and the default lis
 |---|---|---|---|
 | 9 | Existential or a large one-time result: the relationship or a big sum is decided now | tender invitation, contract terminated, client insolvency | «Сейчас» P8 |
 | 8 | Act today: money or the relationship is at risk, or a binding win | escalated complaint, contract expiry < 8 weeks, binding order, budget cut | «Сейчас» P8 |
-| 7 | Act today or tomorrow: the client asked for work of value, or a concrete risk appeared | offer requested, overdue invoice, complaint, order received, ЕГАИС issue | «Сейчас» P6 |
+| 7 | Act today or tomorrow: the client asked for work of value, or a concrete risk appeared | offer requested, overdue invoice, complaint, order received, delivery problem | «Сейчас» P6 |
 | 6 | Act in 1–2 days | price list requested, offer declined, return requested | «Сейчас» P6 |
 | 5 | Act this week | catalog requested, samples, referral, new stakeholder | «Сводка» D4 |
 | 4 | Know this week; small action | budget mentioned, out-of-office, reconciliation requested | «Сводка» D4 |
@@ -131,15 +135,15 @@ Too little data → no instance (spec §5.6: insufficient data never produces a 
 
 1. **Write, do not translate.** Cues are phrases Russian clients really use. German / English hints from Truffalo v204 are only a starting point.
 2. **Cover both registers.** Formal email («Просим направить коммерческое предложение») and chat («скиньте КП плиз», «ну что там по КП?»).
-3. **Terms and abbreviations** belong to `terms`: КП, ТЗ, ДС, УПД, ТТН, ТОРГ-12, ТОРГ-2, ЕГАИС, ФСМ, НМЦК, 44-ФЗ, 223-ФЗ, акт сверки.
+3. **Terms and abbreviations** belong to `terms`: КП, ТЗ, ДС, УПД, ТТН, ТОРГ-12, ТОРГ-2, НМЦК, 44-ФЗ, 223-ФЗ, акт сверки.
 4. **Inflection:** cues are hints for the model, not regexes. Where a stem matters, write it with variants: «просрочк(а/и/у)», «оплатил(и)». The model handles case and aspect.
 5. **Prompt cues ≤ 8** per code: the most frequent and the least ambiguous. The full synonym list may hold 10–25 items.
 6. **Every look-alike gets an anti-cue** with the right code: «есть ли в наличии?» → `STOCK_AVAILABILITY_REQUEST`, not `ORDER_REQUESTED`.
 7. **Author rule in the cue:** a cue describes what the counterparty writes. Our own phrases appear only for `state` codes we emit on our own items («направляем КП» → `SALES_OFFER_SENT`).
 8. **Negation and hedging** are anti-cues: «пока не планируем тендер», «может быть, когда-нибудь» do not give the code.
 9. **Quoted history never counts** (spec §5.3): a cue in a quoted block is context only.
-10. **Industry cues** that make sense only in one pack are marked «(дистрибуция)» or «(агентство)» in base entries.
-11. **Foreign-language mail (R20).** Producers write in English, French or Italian. Extraction works on any language; the prompt says so. Supplier / producer codes (block N, family `supplier`, e.g. `SUPPLIER_*`) also get **English cue phrases** in `cues_prompt_ru` / `synonyms_ru`, marked «(EN)» (e.g. «shipment delayed», «new price list», «price increase from»). Other codes may get them where producers use them. The English cues are added in the IN4COM pack review; 05a–05d do not hold them yet.
+10. **Industry cues** that make sense only in one pack are marked «(агентство)» in base entries. There are no vertical trade cues since R22; generic trade cues need no mark.
+11. **Foreign-language mail (R20).** Producers write in English, French or Italian. Extraction works on any language; the prompt says so. Supplier / producer codes (block N, family `supplier`, e.g. `SUPPLIER_*`) also get **English cue phrases** in `cues_prompt_ru` / `synonyms_ru`, marked «(EN)» (e.g. «shipment delayed», «new price list», «price increase from»). Other codes may get them where producers use them. The English cues are added in the IN4COM text review; 05a–05d do not hold them.
 
 ---
 
@@ -155,25 +159,26 @@ AND (code not in a block parked for this pack, e.g. agency: H, J)
 → all other fields = base / pack value (not overridable in the MVP)
 ```
 
-- Base codes used by a vertical pack carry the **vertical override** in that pack file (agency overrides in 05d; IN4COM switches in the «IN4COM» column of 05a / 05b). A pack override may change `closes_codes` of a base code (R12); an org override may not.
+- Base codes used by a vertical pack carry the **vertical override** in that pack file (agency overrides in 05d). ~~IN4COM switches in the «IN4COM» column of 05a / 05b~~ — not used since R22. A pack override may change `closes_codes` of a base code (R12); an org override may not.
 - Overrides are rows in the registry tables (`signal_pack_override`, `organization_signal_setting`), edited in «Сигналы».
 - `signal_stage_rule` and the stage guards of risk types are per org (spec §9.2, §9.4). One model: the risk type is platform data (`deal_risk_type`); the org's stages where it applies are rows in `deal_risk_stage_guard` (risk type × org × allowed stage ids). No guard row = the risk applies at every stage. The pack files give templates; the admin copies them to the org.
 
-> **R21 (2026-11-13): one pack.** After phase 1 the «Дистрибуция» pack was merged into `base` (migration `0014`). The pack / pack-override model below stays in the schema, but today there is one pack; the codes that act for an org are chosen per code (presets, org overrides). The «distribution» column names below describe where a code came from (05c), not a separate pack.
+> **R21 (2026-11-13): one pack.** After phase 1 the «Дистрибуция» pack was merged into `base` (migration `0014`). The pack / pack-override model below stays in the schema, but today there is one pack.
+>
+> **R22 (2026-11-14): one generic set.** Migration `0016` deleted the 7 alcohol-only codes and renamed blocks DS1–DS7 to O–U; no code, text or rule is specific to one org.
 
-### 5.1 IN4COM activation (pilot)
+### 5.1 Org activation (pilot IN4COM)
 
-| Pack | Active codes | Notes |
+There are **no presets** now. The preset «Пилот дистрибуции (IN4COM)» (`distribution-pilot`) is removed (R22); the preset mechanism stays in the code for later use.
+
+An org gets signals by switching the `base` pack on in «Сигналы». No org overrides are needed: every code whose **own** stage is `active` acts: 144 codes, of which 123 go into the live extraction prompt (the other 21 are process codes). Codes with stage `parked` (8) / `gated` (6) stay out. Since R23 (`0017`) no code is `onHold` and no retired code exists. IN4COM on the dev DB: `base` on, all its earlier org overrides deleted.
+
+| Pack | State | Notes |
 |---|---|---|
-| `base` | 31 on (A–G 27, H–N 4), 28 review, 75 off | column «IN4COM» in 05a / 05b; source: 04 §2 |
-| `distribution` | 19 on, 12 review | 4 draft codes and all 8 «Предложено дополнительно» codes wait for the IN4COM review |
-| `agency` | off, not seeded | phase 9, second pilot (Q29, R5) |
+| `base` | on for IN4COM, 144 active codes (123 in the prompt) | generic for every org (R22, R23) |
+| `agency` | not seeded | phase 9, second pilot (Q29, R5) |
 
-How the column values act (R6):
-
-- **on** = `active` for IN4COM. Only these codes (~50) go into the **live** extraction prompt.
-- **review** = imported as `onHold` for IN4COM. They run only in an **offline eval batch** on the golden set until the platform admin switches them on.
-- **off** = imported as `onHold` or `parked`. Base blocks H, J, K, L, M: only the codes marked «on» in 05b are active for IN4COM; everything else in these blocks imports as `onHold` / `parked`.
+~~R6: only codes marked "on" for IN4COM (~50) in the live prompt; "review" codes in an offline eval batch.~~ Superseded by R22. Org overrides stay possible (e.g. for test specifics, R22: "if necessary for the tests we will add specifics later").
 
 ---
 
@@ -188,7 +193,7 @@ CODE — label_ru
   Признаки: cues_prompt_ru (≤ 8)
 ```
 
-- Process codes, `state` codes emitted only by the CRM, parked / onHold / off codes are not sent. For IN4COM this means only the codes marked «on» (§5.1); «review» codes are sent only by the offline eval batch.
+- Process codes, `state` codes emitted only by the CRM, parked / onHold / off codes are not sent. With the `base` pack on and no overrides this means every `active` non-process code (123, §5.1).
 - The prompt states that the item may be in any language (Russian, English, French, Italian …); cues are hints, not a language filter (R20).
 - Codes are grouped by block; blocks are ordered by the org's active-code count.
 - Size budget (Q5): if the prompt exceeds the model's budget, two passes — (1) block classifier with block labels and 3 cues per code, (2) full entries of the chosen blocks only.
@@ -239,4 +244,4 @@ The editor validates on save (all rules above) and refuses the save with the lis
 | R1 | New columns: `family`, `relevance_days`, `cues_prompt_ru`, `synonyms_ru`, `anti_cues_ru`, `example_ru`, `counter_example_ru`, `trigger_rule` (§2) | **Yes.** Without them the full cue model and the process rules stay in documents, not in data. |
 | R2 | New relation kind `dampens` (06 §5.2 H4) | **Yes**, seed one rule (`PAYMENT_PROMISE` → `INVOICE_OVERDUE`). |
 | R3 | Weight scale §3.3 as the rule for new codes and overrides | **Yes.** |
-| R4 | Open points listed at the end of 05a–05d | Review with the pack owners (IN4COM users for base + distribution; agency later). |
+| R4 | Open points listed at the end of 05a–05d | Review with the pack owners (IN4COM users for the generic `base` set; agency later). |

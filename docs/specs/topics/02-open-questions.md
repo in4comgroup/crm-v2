@@ -1,6 +1,6 @@
 # Topics — questions to resolve before development
 
-Status: **all questions decided** (review of 2026-11-13: § F). Earlier status: draft for review · 2026-11-10
+Status: **all questions decided** (review of 2026-11-13: § F; R22 added 2026-11-14). Earlier status: draft for review · 2026-11-10
 
 Each question has: why it matters, options, and a recommendation (**Rec.**). Numbers match the `[D?n]` links in [01-specification.md](01-specification.md).
 Blocking = must be answered before phase 1 starts (see [03-development-plan.md](03-development-plan.md)).
@@ -18,12 +18,31 @@ The product owner reviewed the spec against the real repository (crm-v2) and dec
 | Plan "every 15 min" | R3 | Every **60 minutes** |
 | Q8 / plan phase 10 (old «Telegram orders» rule kept for IN4COM) | R7 | Rule switched off when IN4COM topics go `on`; «Создать заказ» on the `ORDER_REQUESTED` topic card |
 
+## Decision 2026-11-14 — R22: one generic signal set
+
+> **R22 (product owner):** "IN4COM is a full set of signals for all possible scenarios. Remnants from wine and alcohol distribution must be deleted. IN4COM does not have specific signals or rules and inherits all generic ones only. If necessary for the tests we will add specifics later."
+
+| Earlier | Superseded by | Now |
+|---|---|---|
+| Q1 / Q25 / Q30 / R5 / R13 / R21 / pack row (IN4COM = wine / spirits distributor; a vertical `distribution` pack or its codes) | R22 | One **generic** signal set for every org (pack `base`). No vertical content. 7 vertical-only codes deleted, blocks DS1–DS7 renamed O–U with neutral labels (migration `0016`) |
+| R6 (live prompt = only codes "on" for IN4COM; "review" codes offline) | R22 | The live prompt carries **every code whose own stage is `active`** (≈109 then; **144 active / 123 in the prompt since R23**). No presets; an org switches the `base` pack on in «Сигналы» |
+| R13 IN4COM deal types | R22 | Generic deal types: `new_location`, `listing`, `tender`, `supply_agreement`, `renewal` |
+
+## Decision 2026-11-14 — R23: every proposed code acts, no retired codes
+
+> **R23 (product owner):** "Make those onHold active. Clean up retired codes, we don't need to keep history for now."
+
+| Earlier | Now |
+|---|---|
+| A code starts as `onHold` and acts only after approval; 35 codes were `onHold` | All 35 are `active` (migration `0017`). The live prompt for an org with `base` on carries **123 codes** (144 `active` minus 21 process codes) |
+| Retired codes keep their row (`retired_at`, `successor_code`) | The 11 retired codes are deleted (migration `0017`). The retire field and the successor mapping stay in the code for future retirements |
+
 ## Decisions (2026-11-10)
 
 | Q | Decision | Consequence |
 |---|---|---|
-| Q1 | **Pilot = IN4COM** (org `1dNkC4rBtl9FEvnK95Svlfs63oSU57Ni`, wine / spirits distributor, ~16.8k catalog products). | Pilot packs = `base` + `distribution`. The `distribution` pack is now on the critical path (draft: [04-distribution-pack-draft.md](04-distribution-pack-draft.md)). The `agency` pack (Maslov) is seeded but stays off until a second pilot. |
-| Q2 | v204 base + Maslov additions, as recommended. | Seed = v204 tables + `agency` pack + `distribution` pack; own version line "RU v1". |
+| Q1 | **Pilot = IN4COM** (org `1dNkC4rBtl9FEvnK95Svlfs63oSU57Ni`, ~16.8k catalog products). *(Superseded by R22: no vertical — earlier text said ~~wine / spirits distributor~~.)* | ~~Pilot packs = `base` + `distribution`; draft `04-distribution-pack-draft.md` (deleted, see git history).~~ **R22:** IN4COM uses the one generic set (`base`). The `agency` pack (Maslov) stays a document until a second pilot. |
+| Q2 | v204 base + Maslov additions, as recommended. | Seed = v204 tables + `agency` pack + ~~`distribution` pack~~ (R5, R21, R22); own version line "RU v1". |
 | Q3 | **Platform admin only** manages signals. New Settings tab «Сигналы» = signals registry, with **Markdown export** of the actual list with all parameters. | Org owners have no signal settings in MVP; per-org activation and stage rules are also set by the platform admin (spec §4.1, §14). |
 | Q7 | Topic = **one single point of business communication between the organisation and a client or vendor**. It can come from external signals (web search for market news), from the system of record (a client has not bought for a while), or from communications (a client wants something or complains). | Topic may have no source item; signal instances get an `origin` (communication / system_of_record / external). MVP builds communications; system of record = phase 8, web search = phase 11. Edge cases: market event = its own topic; supplier delay = a topic with the vendor. |
 | Q8 | **Scrap the old cards and logic** once topics are implemented. | Phase 12 removes Custom-rule card generation and name-based deal discovery, then a contract migration drops the old columns. The «Telegram orders» rule stays for IN4COM until the orders link (phase 10). |
@@ -46,12 +65,12 @@ The product owner reviewed the spec against the real repository (crm-v2) and dec
 | Q22 | Mail watchdogs after the order-based checks, as recommended. | Plan phase 8. |
 | Q17 | IN4COM business users review and assess the tests. Synthetic (fake) test messages are allowed for evals. | Golden set = real IN4COM items + synthetic items for rare codes; synthetic items are marked and reported separately. |
 | Q24 | **Answered** (full text: [02-open-questions-answers.md](02-open-questions-answers.md)). Main points: N7 removed; no go / no-go anywhere; no limit on codes per item; W1 expiry 10 working days; P6 ≤ 3 evening reminders per cycle; trend list with D4 ceiling; blocks H and J parked; owner's win estimate for the forecast; rules for no-response codes. | Spec §2, §4.3, §5.3–5.6, §8.1, §8.4, §9.1–9.5. Short summary per item in Q24 below. |
-| Q25 | No workshop needed: the IN4COM business users from Q17 review the draft pack ([04-…](04-distribution-pack-draft.md)) and confirm codes, importance, boundaries and Russian phrases. | Review happens in phase 0; RU texts confirmed in phase 1. |
+| Q25 | ~~No workshop needed: the IN4COM business users from Q17 review the draft pack (04, deleted) and confirm codes, importance, boundaries and Russian phrases.~~ **Superseded by R22:** no IN4COM-specific pack; IN4COM users review the generic texts in the golden-set review. | Review happens in phase 0; RU texts confirmed in phase 1. |
 | Q26 | **Deals only in the first step.** Deal = a general agreement / contract with the client. Order = purchase of a specific product or service. The order link is decided later. | Topics drive deals only. `ORDER_*` codes make topics and cards (attention) but no order or deal automation. The old «Telegram orders» card rule stays on for IN4COM until the orders step. |
 | Q27 | Start values accepted. | Spec §9.2 values are the defaults. |
 | Q28 | Q24 wins: **no go / no-go**. Business aligns the v2 funnel text. | Spec §2, §9.2 follow Q24. |
-| Q29 | Agency = **second pilot after IN4COM**. | Plan phase 9, after the MVP. Pilot packs stay `base` + `distribution`. |
-| Q30 | IN4COM deal risks: our draft, confirmed by IN4COM users in the pack review. | 04 §4; seed in plan phase 5a. |
+| Q29 | Agency = **second pilot after IN4COM**. | Plan phase 9, after the MVP. ~~Pilot packs stay `base` + `distribution`.~~ Pilot set = `base` (R21, R22). |
+| Q30 | IN4COM deal risks: our draft, confirmed by IN4COM users in the pack review. *(R22: the 9 risk types are generic, texts neutral; no IN4COM-specific list.)* | ~~04 §4~~ (deleted); seeded in `0012`, cleaned in `0016`. |
 | Q31 | **Org owner** manages the exclusion list. Excluded items: skip at sync where the provider allows a filter, else store the envelope only, never parse, never send to an LLM. All orgs. | Spec §5.2 gate 3a, §14; plan phase 2. |
 | Q32 | As recommended: forwarded messages in the topics MVP (original sender = author); Telegram group chats and voice notes = separate tasks before the agency pilot. | Spec §1.2, §5.3; plan phase 2. |
 | Q33 | **Functional rights and roles are a separate task**, not part of topics (too much risk of errors). | Plan phase 13 moved out of this plan. MVP: every org member sees everything; anyone who may edit a deal may enter the win estimate (author, date, note recorded). |
@@ -69,8 +88,8 @@ Requirements v2 ([Описание требований - v2.md](Описани�
 
 | Item | Who | Needed before |
 |---|---|---|
-| Real phrases, missing situations and the ЕГАИС / marking codes (04 §3 items 5, 7) | IN4COM business users, in the golden-set review | Phase 1 seed |
-| IN4COM deal risk list (04 §4, Q30) and deal types (R13) | IN4COM business users | Phase 5 / 5a |
+| Real phrases and missing situations in the generic texts (~~ЕГАИС / marking codes~~ deleted by R22) | IN4COM business users, in the golden-set review | Phase 2 eval |
+| Generic deal risk list (Q30) and deal types (R13, R22) | IN4COM business users | Phase 5 / 5a |
 | Align the v2 «Структура воронки» text with Q24 (remove go / no-go) — Q28 follow-up | Business (document only) | Phase 9 |
 
 Out of this plan (separate tasks): functional roles and rights (Q33); Telegram group chats and voice notes (Q32); Telegram files (Q11).
@@ -91,15 +110,15 @@ Product-owner answers to the review of 2026-11-13. «As recommended» = the reco
 | R2 | Models | **Vercel AI Gateway through the AI layer**, as all LLM calls today: one AI process per LLM step, model chosen on «Процессы ИИ»; spike on 2–3 gateway models. |
 | R3 | Run frequency | **Every 60 minutes** (hourly cron; needs the Vercel Pro plan). Deadline escalation is also evaluated when a list is read. |
 | R4 | Per-org daily AI budget | **Yes, 5 USD by default**, in the AI layer (background stops at the cap, interactive warns). Spec belongs to `docs/specs/models/`. |
-| R5 | Packs to seed | **`base` + `distribution` only**; `agency` (05d) stays a document until phase 9. |
-| R6 | Live prompt | **Only codes marked "on"** for IN4COM (~50); "review" codes run in an offline eval batch. |
+| R5 | Packs to seed | **`base` + `distribution` only**; `agency` (05d) stays a document until phase 9. *(Later R21: the two seeded packs became one, `base`. R22: the former distribution codes are generic; vertical-only codes deleted.)* |
+| R6 | Live prompt | ~~**Only codes marked "on"** for IN4COM (~50); "review" codes run in an offline eval batch.~~ **Superseded by R22:** the live prompt carries every code whose own stage is `active` (≈109 then; 144 active / 123 in the prompt since R23). |
 | R7 | «Telegram orders» rule | **Switched off** when IN4COM topics go `on`; «Создать заказ» on the `ORDER_REQUESTED` topic card. |
 | R8 | `ORDER_REQUESTED` weight | **5** (D4 «Сводка») + deadline escalation. |
 | R9 | Mock deal agent | **Removed now** for all orgs; deal discovery journals its moves. |
 | R10 | Old cards | **No migration**; read-only history. |
 | R11 | Signals registry | **DB registry with all parameters and settings**; Settings tab «Сигналы» with the registry, a **full editor in the MVP**, and Markdown export of the current list. Version 1 seeded by a Drizzle migration; then the DB is the master. |
 | R12 | Packs change `closes_codes`; event codes may close codes | **Yes.** |
-| R13 | `deal.deal_type` | **Yes**; IN4COM types: new client / venue, wine-card listing, chain listing, tender, annual supply agreement, renewal (confirmed in the review). |
+| R13 | `deal.deal_type` | **Yes**; ~~IN4COM types: new client / venue, wine-card listing, chain listing, tender, annual supply agreement, renewal~~. **R22:** generic types `new_location`, `listing`, `tender`, `supply_agreement`, `renewal`. |
 | R14 | Topic for a contact without a company | **Yes** (`topic.contact_id`). |
 | R15 | Matcher unsure | **Attach only without a conflicting reference / product / amount**; else a new topic. |
 | R16 | Deal state trigger and length | **Any new deal information** (debounced 10 min); **≤ 3 sentences / 50 words**. |
@@ -107,8 +126,10 @@ Product-owner answers to the review of 2026-11-13. «As recommended» = the reco
 | R18 | Exclusions | **Deny-list** (org owner); without a provider filter store only the dedupe id. |
 | R19 | Client reminder | **Counts once** (boost R only). |
 | R20 | Foreign-language mail | **In scope**; English cues for supplier codes. |
-| R21 | Packs (decided after phase 1) | **One pack.** «Дистрибуция» is merged into «Базовый пакет» (migration `0014`, registry version 3): its 31 signals, blocks DS1–DS7, 9 risk types, 25 rule templates and relations move to `base`; `INVOICE_PAID` itself closes `PAYMENT_PROMISE`. Nothing retired. Which codes act for an org is set per code (presets / org overrides). Agency codes (phase 9) also go into this one pack. |
-| Pack | 04 §3 questions | **As proposed:** orders handled by the client's sales manager (no orders role in MVP); always-P8: `SALES_TENDER_INVITATION`, `CONTRACT_TERMINATED`, `SIGNAL_INSOLVENCY`, `COMPLAINT_ESCALATED`; `SUPPLIER_DELIVERY_DELAY` = risk at 5; ЕГАИС codes and the risk list confirmed in the review. |
+| R21 | Packs (decided after phase 1) | **One pack.** «Дистрибуция» is merged into «Базовый пакет» (migration `0014`, registry version 3): its 31 signals, blocks DS1–DS7, 9 risk types, 25 rule templates and relations move to `base`; `INVOICE_PAID` itself closes `PAYMENT_PROMISE`. Nothing retired. ~~Which codes act for an org is set per code (presets / org overrides).~~ Agency codes (phase 9) also go into this one pack. *(R22: blocks DS1–DS7 renamed O–U, 7 vertical-only codes deleted, no presets — migration `0016`.)* |
+| Pack | 04 §3 questions (04 deleted) | **As proposed:** orders handled by the client's sales manager (no orders role in MVP); always-P8: `SALES_TENDER_INVITATION`, `CONTRACT_TERMINATED`, `SIGNAL_INSOLVENCY`, `COMPLAINT_ESCALATED`; `SUPPLIER_DELIVERY_DELAY` = risk at 5; ~~ЕГАИС codes~~ (deleted by R22) and the risk list confirmed in the review. |
+| **R22** | Vertical content (2026-11-14) | **One generic signal set for every org.** "IN4COM is a full set of signals for all possible scenarios. Remnants from wine and alcohol distribution must be deleted. IN4COM does not have specific signals or rules and inherits all generic ones only. If necessary for the tests we will add specifics later." Migration `0016_signals_generic_registry`: 7 alcohol-only codes deleted (`EGAIS_ISSUE`, `EGAIS_ISSUE_RESOLVED`, `MARKING_ISSUE`, `LICENSE_EXPIRING`, `EXCISE_PRICE_QUERY`, `TASTING_REQUESTED`, `ALLOCATION_REQUESTED`), blocks DS1–DS7 → O–U, all texts neutral, generic deal types; preset `distribution-pilot` removed (no presets). Supersedes R6 and the vertical parts of Q1, Q25, Q29, Q30, R5, R13, R21. |
+| **R23** | Code stages (2026-11-14) | **Every proposed code acts; no retired codes.** "Make those onHold active. Clean up retired codes, we don't need to keep history for now." Migration `0017_signals_activate_onhold_drop_retired`: the 35 `onHold` codes become `active` (20 read by the extraction prompt, 15 process codes that act once their process is built — phase 8); the 11 retired codes are deleted with all rows that point to them. `parked` (8) and `gated` (6) codes are unchanged. Registry now: 158 codes = 144 `active` (123 in the prompt) + 8 `parked` + 6 `gated`. The retire mechanism stays in the code for later. |
 | Q35 | Attention rules A1–A8 (06 §15) | **All as recommended.** |
 | Q36 | Registry additions R1–R4 (05 §10) | **All as recommended.** |
 
@@ -117,6 +138,8 @@ Product-owner answers to the review of 2026-11-13. «As recommended» = the reco
 ## A. Scope and business
 
 ### Q1. Which tenant and vertical go first? — ✅ answered: IN4COM (see Decisions)
+> *Superseded in part by R22 (2026-11-14): no vertical pack; IN4COM uses the generic set. The text below is the original question.*
+
 The Maslov catalog is for a PR / marketing **agency** (pitch, tender, brief). The repo also serves a **wine / spirits distributor** (orders, catalog, client types). The signal packs differ a lot.
 - a) Agency first (Maslov catalog is ready and detailed).
 - b) Distributor first (needs a new pack and a workshop).
@@ -147,7 +170,7 @@ Today: Custom-rule card generation (incl. the «Cards pop-up rule — Telegram o
 - a) Keep both for orgs with topics `off`; topics replace them for orgs with topics `on`.
 - b) Remove them when topics ship.
 
-**Rec. a).** The `new_order` flow becomes the code `ORDER_REQUESTED` in the distribution pack; its card keeps the «Создать заказ» button.
+**Rec. a).** The `new_order` flow becomes the code `ORDER_REQUESTED` (generic block O «Заказы» since R22); its card keeps the «Создать заказ» button.
 
 ### Q12. How much may the system do with deals on its own? — ✅ answered: auto-create on high probability (see Q27)
 Maslov: stage 1 needs an internal **go**; risks never move stages; amounts never go to the forecast automatically.
@@ -272,13 +295,15 @@ No token tracking exists today.
 ## D. New questions after the 2026-11-10 decisions
 
 ### Q25. IN4COM signal pack — who confirms it? — ✅ answered: the Q17 business users review the draft
-The draft in [04-distribution-pack-draft.md](04-distribution-pack-draft.md) is our proposal (≈ 25 new codes + base codes to switch on), written from domain knowledge only. Signals are the input to everything (which messages become topics, which list, when a deal is created), so IN4COM users confirm: which situations matter, how important each is, what does NOT count, and the Russian phrases they really see. No separate workshop is needed; a review of the draft by the same users who do the tests (Q17) is enough.
+> *Superseded by R22: there is no IN4COM pack; the draft `04-distribution-pack-draft.md` is deleted (git history keeps it).*
+
+The draft (04) was our proposal (≈ 25 new codes + base codes to switch on), written from domain knowledge only. Signals are the input to everything (which messages become topics, which list, when a deal is created), so IN4COM users confirm: which situations matter, how important each is, what does NOT count, and the Russian phrases they really see. No separate workshop is needed; a review of the draft by the same users who do the tests (Q17) is enough.
 
 ### Q26. What is a "deal" for IN4COM, and what is an "order"? — ✅ answered: deals only in step one
 Decision: deal = a general agreement / contract with the client; order = purchase of a specific product or service. The first step covers deals only; the order link comes later.
 
 Original question:
-IN4COM already has orders (draft → sent → confirmed → finalized) and a deal funnel. A routine repeat order must NOT create a deal. Candidates for a deal: a new venue / new client listing, a chain listing or tender, a new wine-card placement, a renewal of an annual agreement.
+IN4COM already has orders (draft → sent → confirmed → finalized) and a deal funnel. A routine repeat order must NOT create a deal. Candidates for a deal: a new location / new client listing, a chain listing or tender, ~~a new wine-card placement~~ (removed by R22), a renewal of an annual agreement.
 **Rec.:** deal = a new or expanded *relationship* opportunity (listing, new client, tender, annual agreement); order = a single purchase. `ORDER_REQUESTED` feeds the order flow, never the deal funnel. Confirm with IN4COM and list the deal types they track.
 
 ### Q27. Start values for automatic deal creation (Q12) — ✅ answered: accepted
@@ -306,7 +331,7 @@ Q1 decided IN4COM. v2 describes an agency pilot (≈ 8 directors, Telegram group
 **Rec. a).** Deal state and deal risks are built generically in the MVP, so the agency gets them in phase 9 with its own risk list (the 26 Maslov risks).
 
 ### Q30. IN4COM deal risks — ✅ answered: as suggested
-The deal risk indicator is for every org, but the v2 examples are agency risks. IN4COM needs its own list, built from `base` + `distribution` codes. Draft in [04-distribution-pack-draft.md](04-distribution-pack-draft.md) §4 (9 risks).
+The deal risk indicator is for every org, but the v2 examples are agency risks. IN4COM needs its own list, built from `base` + `distribution` codes. Draft in 04 §4 (9 risks; file deleted). *(R22: the 9 risk types are generic for every org.)*
 **Rec.:** IN4COM users confirm it together with the pack review (no extra meeting).
 
 ### Q31. Exclusions from analysis — ✅ answered: org owner manages; rest as recommended

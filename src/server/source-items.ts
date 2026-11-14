@@ -853,3 +853,47 @@ export async function assertSourceItemInScope(
   }
   return row
 }
+
+// The source that owns the item with this provider-side external id in
+// this org — used by the attachment / file download proxies
+// (/api/emails/attachments, /api/chats/attachments, /api/drive/download)
+// to pick the source's credentials. Tenant scope: the item must belong to
+// `organizationId`, so a guessed external id from another org finds nothing.
+export async function findItemSourceByExternalId(
+  organizationId: string,
+  externalId: string,
+): Promise<{ sourceId: string; provider: SourceProvider; credentialsRef: string | null } | null> {
+  const rows = await db
+    .select({
+      sourceId: source.id,
+      provider: source.provider,
+      credentialsRef: source.credentialsRef,
+    })
+    .from(sourceItem)
+    .innerJoin(source, eq(source.id, sourceItem.sourceId))
+    .where(
+      and(
+        eq(sourceItem.externalId, externalId),
+        eq(sourceItem.organizationId, organizationId),
+      ),
+    )
+    .limit(1)
+  return rows[0] ?? null
+}
+
+// Parse + storage state of one item, for the «Показать» (Show) modal
+// (GET /api/sources/items/[id]/markdown). The caller checks scope first
+// (assertSourceItemInScope).
+export async function getSourceItemMarkdownState(sourceItemId: string) {
+  const rows = await db
+    .select({
+      parseStatus: sourceItem.parseStatus,
+      parsedMarkdown: sourceItem.parsedMarkdown,
+      markdownR2Key: sourceItem.markdownR2Key,
+      parseError: sourceItem.parseError,
+    })
+    .from(sourceItem)
+    .where(eq(sourceItem.id, sourceItemId))
+    .limit(1)
+  return rows[0] ?? null
+}

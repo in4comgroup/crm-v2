@@ -7,7 +7,7 @@ import {
   setDealContactRole,
   removeDealContact,
 } from "@/server/deals"
-import { dealContactRole } from "@/db/schema"
+import { DEAL_CONTACT_ROLES } from "@/server/db-enums"
 
 export { type DealContactWithRole } from "@/server/deals"
 
@@ -65,7 +65,7 @@ export async function PUT(
     } else if (action === "remove") {
       await removeDealContact(id, contactId)
     } else if (action === "setRole") {
-      const valid = role === null || dealContactRole.enumValues.includes(role)
+      const valid = role === null || DEAL_CONTACT_ROLES.includes(role)
       if (!valid) {
         return NextResponse.json({ error: "Invalid role" }, { status: 400 })
       }

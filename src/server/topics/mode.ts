@@ -1,8 +1,8 @@
 import "server-only"
 
-import { asc, eq, inArray } from "drizzle-orm"
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { organization } from "@/db/schema"
+import { organization, orgSetting, orgSettingLog } from "@/db/schema"
 import {
   getOrgSetting,
   listOrgSettingLog,
@@ -128,4 +128,33 @@ export async function organizationExists(organizationId: string): Promise<boolea
     .where(eq(organization.id, organizationId))
     .limit(1)
   return rows.length > 0
+}
+
+/**
+ * Start of the org's CURRENT enabled period: the latest switch of
+ * `topics.enabled` from off (or unset) to shadow / on in the change log;
+ * shadow ↔ on keeps the period. Fallback: the stored setting's update time.
+ * Null when the org is off. The engine processes items from 7 days before
+ * this moment (spec §13 Q16); a re-enable after `off` starts a new window.
+ */
+export async function getTopicsStartedAt(organizationId: string): Promise<Date | null> {
+  const [last] = await db
+    .select({ at: orgSettingLog.changedAt })
+    .from(orgSettingLog)
+    .where(
+      and(
+        eq(orgSettingLog.organizationId, organizationId),
+        eq(orgSettingLog.key, "topics.enabled"),
+        sql`${orgSettingLog.newValue} #>> '{}' in ('shadow', 'on')`,
+        sql`coalesce(${orgSettingLog.oldValue} #>> '{}', 'off') not in ('shadow', 'on')`,
+      ),
+    )
+    .orderBy(desc(orgSettingLog.changedAt))
+    .limit(1)
+  const [row] = await db
+    .select({ at: orgSetting.updatedAt, value: orgSetting.value })
+    .from(orgSetting)
+    .where(and(eq(orgSetting.organizationId, organizationId), eq(orgSetting.key, "topics.enabled")))
+  if (!row || (row.value !== "shadow" && row.value !== "on")) return null
+  return last?.at ?? row.at
 }

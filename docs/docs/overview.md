@@ -5,7 +5,7 @@
 ## What the product does
 
 salesdaily is a sales operating system for B2B companies (the first pilot tenant
-sells wine and spirits). It reads the company's own communication channels,
+is a B2B trading company). It reads the company's own communication channels,
 understands them with LLMs, and keeps the CRM up to date with as little manual
 typing as possible:
 
@@ -103,7 +103,7 @@ Step by step:
 | Global search | Cross-entity search box in every page header | header |
 | AI chat panel | Chat over CRM data and the web, on every page | header button |
 | Notifications | Bell in the header with recent events | header |
-| Admin tools | Users, orgs, templates, sources, source teardown; AI models registry, model per AI process + model rules, AI usage statistics + markup | `/settings` «Настройки» |
+| Admin tools | Users, orgs, templates, sources, source teardown; AI models registry, model per AI process + model rules, AI usage statistics + markup + daily AI budget; topics engine (modes, runs, golden set, model test — in development) and the signals registry «Сигналы» | `/settings` «Настройки» |
 | Profile & organization | User profile, org profile, members, invitations, AI usage with markup (owners) | `/profile`, `/account` |
 
 ## Navigation (sidebar)

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { randomUUID } from "node:crypto"
-import { and, eq } from "drizzle-orm"
-import { db } from "@/db/drizzle"
-import { source, sourceItem } from "@/db/schema"
 import { getServerSession } from "@/lib/get-session"
+import {
+  findActiveOrgSourceByProvider,
+  insertSourceItem,
+} from "@/server/source-uploads"
 import {
   parseDropoffFile,
   UnsupportedDropoffTypeError,
@@ -57,21 +58,10 @@ export async function POST(request: NextRequest) {
   // Drop-off source for the caller's active org. After per-org sources
   // landed, the previous `is_system = true` lookup no longer matches —
   // every drop-off source is owned by exactly one org now.
-  const sourceRows = await db
-    .select({
-      id: source.id,
-      organizationId: source.ownerOrganizationId,
-    })
-    .from(source)
-    .where(
-      and(
-        eq(source.provider, "dropoff"),
-        eq(source.ownerOrganizationId, activeOrgId),
-        eq(source.status, "active"),
-      ),
-    )
-    .limit(1)
-  const dropoffSource = sourceRows[0]
+  const dropoffSource = await findActiveOrgSourceByProvider(
+    "dropoff",
+    activeOrgId,
+  )
   if (!dropoffSource) {
     return NextResponse.json(
       { error: "No drop-off source configured for this organization" },
@@ -100,7 +90,7 @@ export async function POST(request: NextRequest) {
       const now = new Date()
       const rootId = randomUUID()
       const firstBlock = parsed.blocks[0]
-      await db.insert(sourceItem).values({
+      await insertSourceItem({
         id: rootId,
         sourceId: dropoffSource.id,
         organizationId: dropoffSource.organizationId,
@@ -128,7 +118,7 @@ export async function POST(request: NextRequest) {
       let childCount = 0
       for (let i = 1; i < parsed.blocks.length; i++) {
         const extra = parsed.blocks[i]
-        await db.insert(sourceItem).values({
+        await insertSourceItem({
           id: randomUUID(),
           sourceId: dropoffSource.id,
           organizationId: dropoffSource.organizationId,

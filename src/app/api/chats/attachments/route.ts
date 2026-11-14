@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { and, eq } from "drizzle-orm"
-import { db } from "@/db/drizzle"
-import { source, sourceItem } from "@/db/schema"
+import { findItemSourceByExternalId } from "@/server/source-items"
 import { downloadChatAttachmentBytes } from "@/lib/google-chat"
 import { getServerSession } from "@/lib/get-session"
 import { getGchatCredentials } from "@/server/providers/credentials"
@@ -65,22 +63,7 @@ export async function GET(request: NextRequest) {
     }
     const messageResource = messageMatch[1]
 
-    const rows = await db
-      .select({
-        sourceId: source.id,
-        provider: source.provider,
-        credentialsRef: source.credentialsRef,
-      })
-      .from(sourceItem)
-      .innerJoin(source, eq(source.id, sourceItem.sourceId))
-      .where(
-        and(
-          eq(sourceItem.externalId, messageResource),
-          eq(sourceItem.organizationId, activeOrgId),
-        ),
-      )
-      .limit(1)
-    const row = rows[0]
+    const row = await findItemSourceByExternalId(activeOrgId, messageResource)
     if (!row) {
       return NextResponse.json(
         { error: "Attachment's source not found in this organization" },

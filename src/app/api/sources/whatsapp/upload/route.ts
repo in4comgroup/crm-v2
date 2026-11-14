@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createHash, randomUUID } from "node:crypto"
-import { and, eq } from "drizzle-orm"
-import { db } from "@/db/drizzle"
-import { source, sourceItem } from "@/db/schema"
 import { getServerSession } from "@/lib/get-session"
+import {
+  findActiveOrgSourceByProvider,
+  findSourceItemIdByExternalId,
+  insertSourceItem,
+  listChatMessageItems,
+} from "@/server/source-uploads"
 import {
   parseChatTxt,
   renderGroupTranscript,
@@ -22,6 +25,12 @@ import {
   OfficeTooLargeError,
   UnsupportedOfficeTypeError,
 } from "@/server/parsers/dropoff"
+import { loadAnalysisExclusions } from "@/server/analysis-exclusions"
+import {
+  exclusionProbeFromItem,
+  exclusionReason,
+  matchAnalysisExclusion,
+} from "@/lib/analysis-exclusion-match"
 
 // WhatsApp video parsing dominates wall-clock — match the per-item
 // Parse route's ceiling so a 50 MB MP4 still fits comfortably.
@@ -90,21 +99,7 @@ export async function POST(request: NextRequest) {
 
   // Locate the WhatsApp Archive source for this org. Per spec there's
   // exactly one per org (seeded via scripts/seed-whatsapp-source.ts).
-  const sourceRows = await db
-    .select({
-      id: source.id,
-      organizationId: source.ownerOrganizationId,
-    })
-    .from(source)
-    .where(
-      and(
-        eq(source.provider, "whatsapp"),
-        eq(source.ownerOrganizationId, activeOrgId),
-        eq(source.status, "active"),
-      ),
-    )
-    .limit(1)
-  const wa = sourceRows[0]
+  const wa = await findActiveOrgSourceByProvider("whatsapp", activeOrgId)
   if (!wa) {
     return NextResponse.json(
       { error: "No WhatsApp Archive source configured for this organization" },
@@ -135,23 +130,23 @@ export async function POST(request: NextRequest) {
   // chunk 0 carries `_chat.txt` and inserts groups; chunks 1+ carry
   // only media files but still need to find their parent group rows.
   const claimedBy: Map<string, string> = new Map()
-  const existingGroupRows = await db
-    .select({
-      id: sourceItem.id,
-      metadataJson: sourceItem.metadataJson,
-    })
-    .from(sourceItem)
-    .where(
-      and(
-        eq(sourceItem.sourceId, wa.id),
-        eq(sourceItem.externalType, "chat_message"),
-      ),
-    )
+  // «Исключения из анализа»: attachments of an excluded chat group are
+  // never parsed (no LLM call) and never stored. Filled from excluded
+  // groups of this request AND excluded tombstone rows of earlier chunks.
+  const exclusions = await loadAnalysisExclusions(activeOrgId)
+  const excludedFilenames = new Set<string>()
+  const existingGroupRows = await listChatMessageItems(wa.id)
   for (const row of existingGroupRows) {
-    const meta = row.metadataJson as { attachmentFilenames?: unknown }
+    const meta = row.metadataJson as {
+      attachmentFilenames?: unknown
+      analysisExcluded?: unknown
+    }
     const filenames = Array.isArray(meta.attachmentFilenames)
       ? meta.attachmentFilenames.filter((v): v is string => typeof v === "string")
       : []
+    if (meta.analysisExcluded === true) {
+      for (const filename of filenames) excludedFilenames.add(filename)
+    }
     for (const filename of filenames) {
       // First reference wins — same filename in two groups is rare, and
       // we don't want a later partial-archive re-import to silently
@@ -169,26 +164,54 @@ export async function POST(request: NextRequest) {
     const externalId = `whatsapp:group:${group.groupKey}`
 
     // Dedup: same archive re-uploaded → existing row stays as-is.
-    const existing = await db
-      .select({ id: sourceItem.id })
-      .from(sourceItem)
-      .where(
-        and(
-          eq(sourceItem.sourceId, wa.id),
-          eq(sourceItem.externalId, externalId),
-        ),
-      )
-      .limit(1)
+    const existingId = await findSourceItemIdByExternalId(wa.id, externalId)
+
+    // Excluded chat (an author name = a `whatsapp:<name>` entry): store only
+    // the dedupe id + the attachment filenames (needed so media chunks of
+    // the same archive are skipped too) — no transcript, no authors, no
+    // timestamps. The row is 'skipped' and never parsed.
+    const excluded = matchAnalysisExclusion(
+      exclusions,
+      exclusionProbeFromItem({
+        provider: "whatsapp",
+        metadataJson: { authors: group.authors },
+        threadExternalId: null,
+      }),
+    )
+    if (excluded) {
+      for (const filename of group.attachmentFilenames) excludedFilenames.add(filename)
+      if (!existingId) {
+        await insertSourceItem({
+          id: randomUUID(),
+          sourceId: wa.id,
+          organizationId: wa.organizationId,
+          externalId,
+          externalType: "chat_message",
+          metadataJson: {
+            provider: "whatsapp",
+            analysisExcluded: true,
+            attachmentFilenames: group.attachmentFilenames,
+          },
+          filename: null,
+          mimeType: null,
+          fetchedAt: now,
+          parseStatus: "skipped",
+          parseError: exclusionReason(excluded),
+          parsedAt: now,
+        })
+      }
+      continue
+    }
 
     let rowId: string
     let inserted: boolean
-    if (existing.length > 0) {
-      rowId = existing[0].id
+    if (existingId) {
+      rowId = existingId
       inserted = false
     } else {
       rowId = randomUUID()
       inserted = true
-      await db.insert(sourceItem).values({
+      await insertSourceItem({
         id: rowId,
         sourceId: wa.id,
         organizationId: wa.organizationId,
@@ -246,6 +269,8 @@ export async function POST(request: NextRequest) {
     if (i === chatFileIndex) continue
     const file = files[i]
     const fileName = file.name || "untitled"
+    // Attachment of an excluded chat — not parsed, not stored.
+    if (excludedFilenames.has(fileName)) continue
 
     let bytes: Uint8Array
     try {
@@ -271,21 +296,12 @@ export async function POST(request: NextRequest) {
     const parentRowId = claimedBy.get(fileName) ?? null
 
     // Dedup before parsing — saves the LLM call on a redundant re-upload.
-    const existing = await db
-      .select({ id: sourceItem.id })
-      .from(sourceItem)
-      .where(
-        and(
-          eq(sourceItem.sourceId, wa.id),
-          eq(sourceItem.externalId, externalId),
-        ),
-      )
-      .limit(1)
-    if (existing.length > 0) {
+    const existingId = await findSourceItemIdByExternalId(wa.id, externalId)
+    if (existingId) {
       attachmentResults.push({
         kind: "attachment",
         fileName,
-        itemId: existing[0].id,
+        itemId: existingId,
         ok: true,
         inserted: false,
         parentItemId: parentRowId,
@@ -308,7 +324,7 @@ export async function POST(request: NextRequest) {
 
       const rootId = randomUUID()
       const firstBlock = parsed.blocks[0]
-      await db.insert(sourceItem).values({
+      await insertSourceItem({
         id: rootId,
         sourceId: wa.id,
         organizationId: wa.organizationId,
@@ -338,7 +354,7 @@ export async function POST(request: NextRequest) {
       // not the chat group, mirroring the existing dropoff convention.
       for (let b = 1; b < parsed.blocks.length; b++) {
         const extra = parsed.blocks[b]
-        await db.insert(sourceItem).values({
+        await insertSourceItem({
           id: randomUUID(),
           sourceId: wa.id,
           organizationId: wa.organizationId,

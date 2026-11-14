@@ -148,10 +148,10 @@ function OrgPresets() {
   return (
     <FormSection
       title="Шаблоны активации"
-      description="Шаблон включает пакеты и задаёт стадии кодов для организации (например, пилот IN4COM, 05 §5.1)."
+      description="Шаблон включает пакеты и задаёт стадии кодов для организации (05 §5.1). Без шаблона организация получает все коды включённых пакетов."
     >
       {presets.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Для этой организации шаблонов нет.</p>
+        <p className="text-sm text-muted-foreground">Шаблонов нет.</p>
       ) : (
         <div className="divide-y rounded-lg border">
           {presets.map((p) => (

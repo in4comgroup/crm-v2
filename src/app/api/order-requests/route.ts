@@ -6,7 +6,8 @@ import {
   updateOrderRequestItemStatus,
   setOrderRequestStatus,
 } from "@/server/order-requests"
-import { orderRequestItemStatus, type OrderRequestItemStatus } from "@/db/schema"
+import type { OrderRequestItemStatus } from "@/db/schema"
+import { ORDER_REQUEST_ITEM_STATUSES } from "@/server/db-enums"
 
 export {
   type OrderRequestItemView,
@@ -27,7 +28,7 @@ function errorResponse(error: unknown) {
 
 const isItemStatus = (v: unknown): v is OrderRequestItemStatus =>
   typeof v === "string" &&
-  (orderRequestItemStatus.enumValues as readonly string[]).includes(v)
+  (ORDER_REQUEST_ITEM_STATUSES as readonly string[]).includes(v)
 
 // GET /api/order-requests?id=…  → { request }  (404 if missing)
 export async function GET(request: NextRequest) {

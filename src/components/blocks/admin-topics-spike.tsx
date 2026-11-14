@@ -1,16 +1,22 @@
 "use client"
 
-// Topics model spike / eval runner (plan phase 0 task 8) — platform admin.
-// Runs topics.signal_extraction over the org's golden set in small batches
-// (POST /api/admin/topics/spike, resumable by runId) and shows the report:
-// failures, latency, tokens / cost from the usage ledger, codes found and
-// precision / recall against the reviewed `expected` answers.
+// Topics extraction eval (plan phase 0 task 8 = model spike; phase 2 task 8 =
+// eval) — platform admin. Runs topics.signal_extraction + the server
+// post-processing over the org's golden set in small batches (POST
+// /api/admin/topics/spike, resumable by runId) and shows the report:
+// failures, latency, tokens / cost from the usage ledger, precision / recall
+// / F1 per code on raw model codes and on the codes the engine keeps, real
+// and synthetic items apart, and the quality-gate verdict. Finished runs
+// store a report snapshot (topics_eval_run.metrics) that can be reopened.
+// Second input: «Выборка последних сообщений» = offline batch for «review»
+// codes (R6) over recent items outside the golden set — lists which
+// review-only codes fired, with quotes and item ids.
 // The model under test is the one assigned to «Извлечение сигналов» on
 // «Процессы ИИ»; switch it there between runs to compare models.
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { Loader, Play, RefreshCcw, Square } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy, Loader, Play, RefreshCcw, Save, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -33,8 +39,19 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useGoldenOrgs } from "@/components/blocks/admin-topics-golden"
+import {
+  SIGNAL_BAND_LABELS_RU,
+  SIGNAL_DROP_REASONS,
+  SIGNAL_NOT_COUNTED_REASONS,
+  SIGNAL_SKIP_REASONS,
+  type SignalBand,
+} from "@/lib/signals/extraction-types"
 import type {
+  EvalBucket,
+  EvalGate,
+  EvalReport,
   PrStats,
+  SampleReport,
   SpikeBatchResult,
   SpikeReport,
   SpikeRunRow,
@@ -48,13 +65,35 @@ const CODESET_LABEL: Record<string, string> = {
   live: "Активные коды («on»)",
   review: "Активные + на проверке",
 }
+const INPUT_LABEL: Record<string, string> = {
+  golden: "Эталонный набор",
+  sample: "Выборка последних сообщений",
+}
+const BUCKET_LABEL: Record<EvalBucket, string> = {
+  all: "Все",
+  real: "Реальные",
+  synthetic: "Синтетические",
+}
+const VERDICT: Record<EvalGate["verdict"], { label: string; variant: "default" | "destructive" | "secondary" }> = {
+  pass: { label: "Пройден", variant: "default" },
+  fail: { label: "Не пройден", variant: "destructive" },
+  insufficient_data: { label: "Мало данных", variant: "secondary" },
+}
+const GATE_STATUS: Record<string, string> = { pass: "да", fail: "нет", insufficient: "мало данных" }
+const GATED_LABEL: Record<string, string> = {
+  ...SIGNAL_SKIP_REASONS,
+  gate: "Детерминированная проверка",
+}
+const SAMPLE_MAX = 100
 
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })
+const fmtDate = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "—"
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${(v * 100).toFixed(0)} %`)
 const ms = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${(v / 1000).toFixed(1)} с`)
 const usd = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `$${v.toFixed(4)}`)
 const num = (v: number) => v.toLocaleString("ru-RU")
+const labelOf = (map: Record<string, string>, k: string) => map[k] ?? k
+const entries = (m: Record<string, number>) => Object.entries(m).sort((a, b) => b[1] - a[1])
 
 function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -66,16 +105,46 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
   )
 }
 
+function VerdictBadge({ verdict }: { verdict: EvalGate["verdict"] | null }) {
+  if (!verdict) return <span className="text-muted-foreground">—</span>
+  const v = VERDICT[verdict]
+  return <Badge variant={v.variant}>{v.label}</Badge>
+}
+
+function ItemId({ id }: { id: string }) {
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 font-mono text-xs hover:underline"
+      title={`${id} — скопировать`}
+      onClick={() => {
+        navigator.clipboard.writeText(id).then(
+          () => toast.success("ID скопирован"),
+          () => toast.error("Не удалось скопировать"),
+        )
+      }}
+    >
+      {id.slice(0, 8)}
+      <Copy className="size-3 opacity-60" />
+    </button>
+  )
+}
+
+type ReportState = { report: EvalReport; stored: boolean; savedAt: string | null }
+
 export function AdminTopicsSpike() {
   const { orgs } = useGoldenOrgs()
   const [orgId, setOrgId] = useState("")
+  const [input, setInput] = useState<"golden" | "sample">("golden")
   const [variant, setVariant] = useState("single")
   const [codeSet, setCodeSet] = useState("live")
+  const [sampleSize, setSampleSize] = useState("50")
   const [batch, setBatch] = useState("5")
   const [runs, setRuns] = useState<SpikeRunRow[]>([])
   const [runId, setRunId] = useState<string | null>(null)
-  const [report, setReport] = useState<SpikeReport | null>(null)
+  const [state, setState] = useState<ReportState | null>(null)
   const [loadingReport, setLoadingReport] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const stopRef = useRef(false)
   const [stopping, setStopping] = useState(false)
@@ -87,25 +156,30 @@ export function AdminTopicsSpike() {
     }
   }, [orgs, orgId])
 
-  const loadRuns = useCallback(async () => {
-    if (!orgId) return
+  const loadRuns = useCallback(async (): Promise<SpikeRunRow[]> => {
+    if (!orgId) return []
     try {
       const res = await fetch(`/api/admin/topics/spike?orgId=${encodeURIComponent(orgId)}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Ошибка")
       setRuns(data.runs ?? [])
+      return data.runs ?? []
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось загрузить прогоны")
+      return []
     }
   }, [orgId])
 
-  const loadReport = useCallback(async (id: string) => {
+  /** `stored` = the snapshot in topics_eval_run.metrics; else computed now. */
+  const loadReport = useCallback(async (id: string, stored: boolean) => {
     setLoadingReport(true)
     try {
-      const res = await fetch(`/api/admin/topics/spike?runId=${encodeURIComponent(id)}`)
+      const res = await fetch(
+        `/api/admin/topics/spike?runId=${encodeURIComponent(id)}${stored ? "&stored=1" : ""}`,
+      )
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Ошибка")
-      setReport(data.report)
+      setState({ report: data.report, stored, savedAt: data.savedAt ?? null })
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось загрузить отчёт")
     } finally {
@@ -113,9 +187,29 @@ export function AdminTopicsSpike() {
     }
   }, [])
 
+  const saveMetrics = async (id: string) => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/admin/topics/spike", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", runId: id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Ошибка")
+      setState({ report: data.report, stored: true, savedAt: new Date().toISOString() })
+      toast.success("Метрики сохранены")
+      await loadRuns()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось сохранить метрики")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   useEffect(() => {
     setRunId(null)
-    setReport(null)
+    setState(null)
     loadRuns()
   }, [loadRuns])
 
@@ -137,7 +231,9 @@ export function AdminTopicsSpike() {
             runId: currentId,
             limit: Math.max(1, Math.min(10, Number(batch) || 5)),
             variant,
-            codeSet,
+            codeSet: input === "sample" ? "review" : codeSet,
+            input,
+            sampleSize: Math.max(1, Math.min(SAMPLE_MAX, Number(sampleSize) || 50)),
           }),
         })
         const data = (await res.json()) as SpikeBatchResult & { error?: string }
@@ -158,7 +254,7 @@ export function AdminTopicsSpike() {
       await loadRuns()
       if (currentId) {
         setRunId(currentId)
-        await loadReport(currentId)
+        await loadReport(currentId, false)
       }
     }
   }
@@ -185,6 +281,21 @@ export function AdminTopicsSpike() {
           </Select>
         </div>
         <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Вход</Label>
+          <Select value={input} onValueChange={(v) => setInput(v === "sample" ? "sample" : "golden")} disabled={running}>
+            <SelectTrigger size="sm" className="w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(INPUT_LABEL).map(([k, v]) => (
+                <SelectItem key={k} value={k}>
+                  {v}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Вариант</Label>
           <Select value={variant} onValueChange={setVariant} disabled={running}>
             <SelectTrigger size="sm" className="w-40">
@@ -201,7 +312,11 @@ export function AdminTopicsSpike() {
         </div>
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Набор кодов</Label>
-          <Select value={codeSet} onValueChange={setCodeSet} disabled={running}>
+          <Select
+            value={input === "sample" ? "review" : codeSet}
+            onValueChange={setCodeSet}
+            disabled={running || input === "sample"}
+          >
             <SelectTrigger size="sm" className="w-52">
               <SelectValue />
             </SelectTrigger>
@@ -214,6 +329,20 @@ export function AdminTopicsSpike() {
             </SelectContent>
           </Select>
         </div>
+        {input === "sample" && (
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">Сообщений (≤ {SAMPLE_MAX})</Label>
+            <Input
+              className="h-8 w-20"
+              type="number"
+              min={1}
+              max={SAMPLE_MAX}
+              value={sampleSize}
+              onChange={(e) => setSampleSize(e.target.value)}
+              disabled={running}
+            />
+          </div>
+        )}
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Пакет</Label>
           <Input
@@ -230,17 +359,21 @@ export function AdminTopicsSpike() {
           <Play className="size-4" />
           Новый прогон
         </Button>
-        {selectedRun && selectedRun.items > 0 && (
+        {selectedRun && (
           <Button size="sm" variant="outline" onClick={() => run(selectedRun.runId)} disabled={running}>
             <Play className="size-4" />
             Продолжить выбранный
           </Button>
         )}
         {running && (
-          <Button size="sm" variant="destructive" onClick={() => {
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => {
               stopRef.current = true
               setStopping(true)
-            }}>
+            }}
+          >
             <Square className="size-4" />
             Остановить
           </Button>
@@ -274,7 +407,8 @@ export function AdminTopicsSpike() {
 
       <div className="text-xs text-muted-foreground">
         Модель берётся из «Процессы ИИ» → «Извлечение сигналов» в момент вызова. Для сравнения моделей
-        переключите её там и запустите новый прогон.
+        переключите её там и запустите новый прогон. Выборка последних сообщений берёт разобранные сообщения
+        вне эталонного набора и проверяет коды «на проверке» (без точности и полноты — оценивает человек).
       </div>
 
       <Card className="py-0">
@@ -282,18 +416,20 @@ export function AdminTopicsSpike() {
           <TableHeader>
             <TableRow>
               <TableHead>Начат</TableHead>
+              <TableHead>Вход</TableHead>
               <TableHead>Вариант</TableHead>
               <TableHead>Коды</TableHead>
               <TableHead>Модели</TableHead>
               <TableHead className="text-right">Элементы</TableHead>
               <TableHead className="text-right">Успешно</TableHead>
               <TableHead className="text-right">Ср. время</TableHead>
+              <TableHead>Итог</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {runs.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-6 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-6 text-center text-muted-foreground">
                   Прогонов ещё нет.
                 </TableCell>
               </TableRow>
@@ -304,16 +440,39 @@ export function AdminTopicsSpike() {
                 className={`cursor-pointer even:bg-muted/40 ${r.runId === runId ? "bg-accent" : ""}`}
                 onClick={() => {
                   setRunId(r.runId)
-                  loadReport(r.runId)
+                  loadReport(r.runId, r.stored)
                 }}
               >
                 <TableCell className="whitespace-nowrap text-xs">{fmtDate(r.startedAt)}</TableCell>
+                <TableCell className="text-xs">
+                  {r.input === "sample" ? "Выборка" : "Эталон"}
+                  {r.kind === "spike" && <span className="ml-1 text-muted-foreground">(спайк)</span>}
+                </TableCell>
                 <TableCell className="text-xs">{VARIANT_LABEL[r.variant ?? ""] ?? r.variant ?? "—"}</TableCell>
                 <TableCell className="text-xs">{CODESET_LABEL[r.codeSet ?? ""] ?? r.codeSet ?? "—"}</TableCell>
                 <TableCell className="text-xs font-mono">{r.models.join(", ") || "—"}</TableCell>
-                <TableCell className="text-right">{r.items}</TableCell>
+                <TableCell className="text-right">
+                  {r.items}
+                  {r.planned !== null ? ` / ${r.planned}` : ""}
+                </TableCell>
                 <TableCell className="text-right">{r.ok}</TableCell>
                 <TableCell className="text-right">{ms(r.avgDurationMs)}</TableCell>
+                <TableCell className="text-xs whitespace-nowrap">
+                  {r.input === "sample" ? (
+                    r.finishedAt ? (
+                      "готова"
+                    ) : (
+                      <span className="text-muted-foreground">не завершена</span>
+                    )
+                  ) : r.stored ? (
+                    <span className="flex items-center gap-1">
+                      <VerdictBadge verdict={r.verdict} />
+                      {!r.finishedAt && <span className="text-muted-foreground">не завершён</span>}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">не сохранён</span>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -325,10 +484,45 @@ export function AdminTopicsSpike() {
           <Loader className="size-4 animate-spin" /> Загрузка отчёта…
         </div>
       )}
-      {report && !loadingReport && <SpikeReportView report={report} />}
+      {state && !loadingReport && (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-2 text-xs">
+            <span className="text-muted-foreground">
+              {state.stored
+                ? `Сохранённые метрики${state.savedAt ? ` от ${fmtDate(state.savedAt)}` : ""}`
+                : "Метрики пересчитаны сейчас по результатам прогона и текущему эталонному набору"}
+            </span>
+            <div className="ml-auto flex gap-2">
+              {state.stored ? (
+                <Button size="xs" variant="outline" onClick={() => loadReport(state.report.runId, false)}>
+                  <RefreshCcw className="size-3" />
+                  Пересчитать
+                </Button>
+              ) : (
+                selectedRun?.stored && (
+                  <Button size="xs" variant="outline" onClick={() => loadReport(state.report.runId, true)}>
+                    Сохранённые
+                  </Button>
+                )
+              )}
+              <Button size="xs" variant="outline" onClick={() => saveMetrics(state.report.runId)} disabled={saving || running}>
+                {saving ? <Loader className="size-3 animate-spin" /> : <Save className="size-3" />}
+                Сохранить метрики
+              </Button>
+            </div>
+          </div>
+          {state.report.input === "sample" ? (
+            <SampleReportView report={state.report} />
+          ) : (
+            <SpikeReportView report={state.report} />
+          )}
+        </div>
+      )}
     </div>
   )
 }
+
+// ── Golden-set report ────────────────────────────────────────────────────
 
 function PrRow({ label, s }: { label: string; s: PrStats }) {
   return (
@@ -340,15 +534,108 @@ function PrRow({ label, s }: { label: string; s: PrStats }) {
       <TableCell className="text-right">{s.fn}</TableCell>
       <TableCell className="text-right font-medium">{pct(s.precision)}</TableCell>
       <TableCell className="text-right font-medium">{pct(s.recall)}</TableCell>
+      <TableCell className="text-right">{pct(s.f1)}</TableCell>
     </TableRow>
   )
 }
 
+function GateCard({ gate }: { gate: EvalGate }) {
+  const [showAll, setShowAll] = useState(false)
+  const t = gate.thresholds
+  const judged = gate.codes.filter((c) => c.status !== "insufficient")
+  const shown = showAll ? gate.codes : judged
+  return (
+    <Card className="gap-2 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium">Порог качества (реальные элементы, после обработки)</span>
+        <VerdictBadge verdict={gate.verdict} />
+        <span className="text-xs text-muted-foreground">
+          точность ≥ {pct(t.precisionMin)} для кодов P6 / P8 (или без профиля с весом ≥ {t.minWeightNoProfile}),
+          полнота ≥ {pct(t.recallMin)}; код с ожидаемыми случаями &lt; {t.minExpectedPerCode} не оценивается
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        <span>
+          Полнота: <b>{pct(gate.recall.value)}</b> ({GATE_STATUS[gate.recall.status]}, ожидаемых {gate.recall.expected})
+        </span>
+        <span>Реальных элементов: {gate.realItems}</span>
+        <span>
+          Коды P6 / P8: прошли {gate.counts.pass} · не прошли {gate.counts.fail} · мало данных {gate.counts.insufficient}
+        </span>
+      </div>
+      {gate.reasons.length > 0 && (
+        <ul className="list-disc pl-5 text-xs text-muted-foreground">
+          {gate.reasons.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+      )}
+      {gate.codes.length > 0 && (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Код</TableHead>
+                <TableHead>Название</TableHead>
+                <TableHead>Профиль</TableHead>
+                <TableHead className="text-right">Вес</TableHead>
+                <TableHead className="text-right">Ожидался</TableHead>
+                <TableHead className="text-right">TP</TableHead>
+                <TableHead className="text-right">FP</TableHead>
+                <TableHead className="text-right">Точность</TableHead>
+                <TableHead>Прошёл</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {shown.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={9} className="py-3 text-center text-xs text-muted-foreground">
+                    Ни один код P6 / P8 не набрал {t.minExpectedPerCode} ожидаемых случаев.
+                  </TableCell>
+                </TableRow>
+              )}
+              {shown.map((c) => (
+                <TableRow key={c.code} className="even:bg-muted/40">
+                  <TableCell className="font-mono text-xs">{c.code}</TableCell>
+                  <TableCell className="text-xs">{c.labelRu}</TableCell>
+                  <TableCell className="text-xs">
+                    {c.effectiveProfile ?? "—"}
+                    {!c.profile && c.effectiveProfile && <span className="text-muted-foreground"> (по весу)</span>}
+                  </TableCell>
+                  <TableCell className="text-right">{c.weight ?? "—"}</TableCell>
+                  <TableCell className="text-right">{c.expected}</TableCell>
+                  <TableCell className="text-right">{c.tp}</TableCell>
+                  <TableCell className="text-right">{c.fp}</TableCell>
+                  <TableCell className="text-right font-medium">{pct(c.precision)}</TableCell>
+                  <TableCell
+                    className={`text-xs ${c.status === "fail" ? "text-destructive" : c.status === "insufficient" ? "text-muted-foreground" : ""}`}
+                  >
+                    {GATE_STATUS[c.status]}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          {gate.counts.insufficient > 0 && (
+            <Button size="xs" variant="ghost" className="self-start" onClick={() => setShowAll((v) => !v)}>
+              {showAll ? "Скрыть коды с малым числом данных" : `Показать коды с малым числом данных (${gate.counts.insufficient})`}
+            </Button>
+          )}
+        </>
+      )}
+    </Card>
+  )
+}
+
 function SpikeReportView({ report: r }: { report: SpikeReport }) {
+  const [bucket, setBucket] = useState<EvalBucket>("real")
+  const notCounted = entries(r.post.notCounted)
+  const dropped = entries(r.post.dropped)
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="font-medium">Отчёт прогона</span>
+        <Badge variant="outline">{r.kind === "spike" ? "Спайк (фаза 0)" : "Eval"}</Badge>
         <Badge variant="outline">{VARIANT_LABEL[r.variant] ?? r.variant}</Badge>
         <Badge variant="outline">{CODESET_LABEL[r.codeSet] ?? r.codeSet}</Badge>
         {r.models.map((m) => (
@@ -364,8 +651,14 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
         </span>
       </div>
 
+      <GateCard gate={r.gate} />
+
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
-        <Tile label="Элементы" value={`${r.items.ok} / ${r.items.total}`} hint={`ошибок ${r.items.failed}`} />
+        <Tile
+          label="Элементы"
+          value={`${r.items.ok} / ${r.items.total}`}
+          hint={`ошибок ${r.items.failed} · с ответом: реальн. ${r.items.judgedReal}, синт. ${r.items.judgedSynthetic}`}
+        />
         <Tile
           label="Сбои структуры"
           value={pct(r.items.structuredFailureRate)}
@@ -380,12 +673,12 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
         />
         <Tile label="Стоимость" value={usd(r.usage.costUsd)} hint={`на элемент ${usd(r.usage.costPerItemUsd)}`} />
         <Tile
-          label="Точность (реальные)"
-          value={pct(r.overall.real.precision)}
-          hint={`полнота ${pct(r.overall.real.recall)} · ${r.overall.real.items} эл.`}
+          label="Точность (реальные, после обработки)"
+          value={pct(r.overall.post.real.precision)}
+          hint={`полнота ${pct(r.overall.post.real.recall)} · F1 ${pct(r.overall.post.real.f1)} · ${r.overall.post.real.items} эл.`}
         />
         <Tile
-          label="Сигналы"
+          label="Сигналы модели"
           value={num(r.signals.total)}
           hint={`low ${r.signals.lowConfidence} · без цитаты ${r.signals.evidenceNotFound} · чужие ${r.signals.unknownCodes}`}
         />
@@ -395,22 +688,56 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Итого (по элементам с ожидаемым ответом)</TableHead>
+              <TableHead>Итого (элементы с проверенным ответом)</TableHead>
               <TableHead className="text-right">Элементы</TableHead>
               <TableHead className="text-right">TP</TableHead>
               <TableHead className="text-right">FP</TableHead>
               <TableHead className="text-right">FN</TableHead>
               <TableHead className="text-right">Точность</TableHead>
               <TableHead className="text-right">Полнота</TableHead>
+              <TableHead className="text-right">F1</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            <PrRow label="Все" s={r.overall.all} />
-            <PrRow label="Реальные" s={r.overall.real} />
-            <PrRow label="Синтетические" s={r.overall.synthetic} />
+            <PrRow label="После обработки · реальные" s={r.overall.post.real} />
+            <PrRow label="После обработки · синтетические" s={r.overall.post.synthetic} />
+            <PrRow label="После обработки · все" s={r.overall.post.all} />
+            <PrRow label="Модель (сырые) · реальные" s={r.overall.raw.real} />
+            <PrRow label="Модель (сырые) · синтетические" s={r.overall.raw.synthetic} />
+            <PrRow label="Модель (сырые) · все" s={r.overall.raw.all} />
           </TableBody>
         </Table>
       </Card>
+
+      <div className="rounded-xl border bg-card p-3 text-xs">
+        <div className="mb-1 font-medium">
+          Постобработка: {r.post.items} эл., экземпляров {r.post.instances}, учтено {r.post.counted}
+          {r.post.items < r.items.ok && (
+            <span className="font-normal text-muted-foreground">
+              {" "}
+              · у {r.items.ok - r.post.items} эл. нет постобработки (прогон до фазы 2)
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+          <span>
+            Не учтены:{" "}
+            {notCounted.length
+              ? notCounted.map(([k, n]) => `${labelOf(SIGNAL_NOT_COUNTED_REASONS, k)} ${n}`).join(" · ")
+              : "—"}
+          </span>
+          <span>
+            Отброшены:{" "}
+            {dropped.length ? dropped.map(([k, n]) => `${labelOf(SIGNAL_DROP_REASONS, k)} ${n}`).join(" · ") : "—"}
+          </span>
+          <span>
+            Полосы:{" "}
+            {entries(r.post.bands)
+              .map(([k, n]) => `${SIGNAL_BAND_LABELS_RU[k as SignalBand] ?? k} ${n}`)
+              .join(" · ") || "—"}
+          </span>
+        </div>
+      </div>
 
       {r.usage.byProcessModel.length > 0 && (
         <Card className="py-0">
@@ -443,6 +770,15 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
         </Card>
       )}
 
+      <div className="flex flex-wrap items-center gap-1 text-xs">
+        <span className="mr-1 text-muted-foreground">Коды по элементам:</span>
+        {(Object.keys(BUCKET_LABEL) as EvalBucket[]).map((b) => (
+          <Button key={b} size="xs" variant={bucket === b ? "secondary" : "ghost"} onClick={() => setBucket(b)}>
+            {BUCKET_LABEL[b]}
+          </Button>
+        ))}
+        <span className="ml-2 text-muted-foreground">* — код порога качества (P6 / P8)</span>
+      </div>
       <Card className="py-0">
         <Table>
           <TableHeader>
@@ -450,42 +786,73 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
               <TableHead>Код</TableHead>
               <TableHead>Название</TableHead>
               <TableHead>Статус</TableHead>
-              <TableHead className="text-right">Найден</TableHead>
+              <TableHead>Профиль</TableHead>
+              <TableHead className="text-right">Вес</TableHead>
+              <TableHead className="text-right" title="Модель вернула (high / medium), все элементы">
+                Найден
+              </TableHead>
               <TableHead className="text-right">low</TableHead>
+              <TableHead className="text-right" title="Движок оставил (учтён или код состояния)">
+                Оставлен
+              </TableHead>
               <TableHead className="text-right">Ожидался</TableHead>
+              <TableHead className="text-right" title="Точность / полнота по сырому ответу модели">
+                Сырые Т / П
+              </TableHead>
               <TableHead className="text-right">TP</TableHead>
               <TableHead className="text-right">FP</TableHead>
               <TableHead className="text-right">FN</TableHead>
               <TableHead className="text-right">Точность</TableHead>
               <TableHead className="text-right">Полнота</TableHead>
+              <TableHead className="text-right">F1</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {r.codes.length === 0 && (
               <TableRow>
-                <TableCell colSpan={11} className="py-6 text-center text-muted-foreground">
+                <TableCell colSpan={16} className="py-6 text-center text-muted-foreground">
                   Коды не найдены.
                 </TableCell>
               </TableRow>
             )}
-            {r.codes.map((c) => (
-              <TableRow key={c.code} className="even:bg-muted/40">
-                <TableCell className="font-mono text-xs">{c.code}</TableCell>
-                <TableCell className="text-xs">{c.labelRu}</TableCell>
-                <TableCell className="text-xs">{c.status ?? "—"}</TableCell>
-                <TableCell className="text-right">{c.found}</TableCell>
-                <TableCell className="text-right">{c.foundLow}</TableCell>
-                <TableCell className="text-right">{c.expected}</TableCell>
-                <TableCell className="text-right">{c.tp}</TableCell>
-                <TableCell className="text-right">{c.fp}</TableCell>
-                <TableCell className="text-right">{c.fn}</TableCell>
-                <TableCell className="text-right">{pct(c.precision)}</TableCell>
-                <TableCell className="text-right">{pct(c.recall)}</TableCell>
-              </TableRow>
-            ))}
+            {r.codes.map((c) => {
+              const s = c.stats[bucket]
+              return (
+                <TableRow key={c.code} className="even:bg-muted/40">
+                  <TableCell className="font-mono text-xs">
+                    {c.code}
+                    {c.gateCode && "*"}
+                  </TableCell>
+                  <TableCell className="text-xs">{c.labelRu}</TableCell>
+                  <TableCell className="text-xs">{c.status ?? "—"}</TableCell>
+                  <TableCell className="text-xs">
+                    {c.effectiveProfile ?? "—"}
+                    {!c.profile && c.effectiveProfile && <span className="text-muted-foreground">˚</span>}
+                  </TableCell>
+                  <TableCell className="text-right">{c.weight ?? "—"}</TableCell>
+                  <TableCell className="text-right">{c.found}</TableCell>
+                  <TableCell className="text-right">{c.foundLow}</TableCell>
+                  <TableCell className="text-right">{c.kept}</TableCell>
+                  <TableCell className="text-right">{s.post.tp + s.post.fn || s.raw.tp + s.raw.fn}</TableCell>
+                  <TableCell className="text-right whitespace-nowrap text-xs text-muted-foreground">
+                    {pct(s.raw.precision)} / {pct(s.raw.recall)}
+                  </TableCell>
+                  <TableCell className="text-right">{s.post.tp}</TableCell>
+                  <TableCell className="text-right">{s.post.fp}</TableCell>
+                  <TableCell className="text-right">{s.post.fn}</TableCell>
+                  <TableCell className="text-right font-medium">{pct(s.post.precision)}</TableCell>
+                  <TableCell className="text-right font-medium">{pct(s.post.recall)}</TableCell>
+                  <TableCell className="text-right">{pct(s.post.f1)}</TableCell>
+                </TableRow>
+              )
+            })}
           </TableBody>
         </Table>
       </Card>
+      <div className="text-xs text-muted-foreground">
+        TP / FP / FN, точность, полнота и F1 — по кодам, которые движок оставил после обработки (низкая
+        уверенность, перекрытые и отброшенные коды не считаются найденными). ˚ — профиль по весу (полоса §5.5).
+      </div>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         <Card className="py-0">
@@ -546,7 +913,8 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
               <TableRow>
                 <TableHead>Расхождения</TableHead>
                 <TableHead>Ожидалось</TableHead>
-                <TableHead>Найдено</TableHead>
+                <TableHead>Модель</TableHead>
+                <TableHead>Оставлено</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -558,6 +926,172 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
                   </TableCell>
                   <TableCell className="text-xs">{m.expected.join(", ") || "нет сигнала"}</TableCell>
                   <TableCell className="text-xs">{m.predicted.join(", ") || "нет сигнала"}</TableCell>
+                  <TableCell className="text-xs">
+                    {m.kept === null ? <span className="text-muted-foreground">—</span> : m.kept.join(", ") || "нет сигнала"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+// ── Review sample report (R6) ────────────────────────────────────────────
+
+function SampleReportView({ report: r }: { report: SampleReport }) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const s = r.summary
+  const toggle = (code: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      return next
+    })
+  const gated = entries(s.gatedBy)
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium">Выборка последних сообщений: коды «на проверке»</span>
+        <Badge variant="outline">{VARIANT_LABEL[r.variant] ?? r.variant}</Badge>
+        {r.models.map((m) => (
+          <Badge key={m} variant="secondary" className="font-mono">
+            {m}
+          </Badge>
+        ))}
+        <span className="text-muted-foreground">
+          {fmtDate(r.startedAt)} — {fmtDate(r.lastAt)}
+          {r.taxonomyVersions.length > 0 && ` · версия реестра ${r.taxonomyVersions.join(", ")}`}
+          {r.remaining > 0 && ` · не обработано: ${r.remaining}`}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+        <Tile label="Сообщения" value={`${s.items.total} / ${r.planned}`} hint={`ошибок ${s.items.failed}`} />
+        <Tile
+          label="Отсеяно проверками"
+          value={num(s.items.gated)}
+          hint={gated.map(([k, n]) => `${labelOf(GATED_LABEL, k)} ${n}`).join(" · ") || "—"}
+        />
+        <Tile label="С сигналами" value={num(s.items.withSignals)} />
+        <Tile label="Задержка p50" value={ms(r.latency.p50)} hint={`p95 ${ms(r.latency.p95)}`} />
+        <Tile
+          label="Токены"
+          value={num(r.usage.inputTokens + r.usage.outputTokens)}
+          hint={`вход ${num(r.usage.inputTokens)} · выход ${num(r.usage.outputTokens)}`}
+        />
+        <Tile label="Стоимость" value={usd(r.usage.costUsd)} hint={`на сообщение ${usd(r.usage.costPerItemUsd)}`} />
+      </div>
+
+      <Card className="py-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-6" />
+              <TableHead>Код «на проверке»</TableHead>
+              <TableHead>Название</TableHead>
+              <TableHead>Профиль</TableHead>
+              <TableHead className="text-right">Вес</TableHead>
+              <TableHead className="text-right" title="Сообщения, где модель вернула код">
+                Сообщений
+              </TableHead>
+              <TableHead className="text-right" title="Учтён в оценке сообщения">
+                Учтён
+              </TableHead>
+              <TableHead className="text-right">Только low</TableHead>
+              <TableHead className="text-right" title="Отброшен постобработкой">
+                Отброшен
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {s.reviewCodes.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} className="py-6 text-center text-muted-foreground">
+                  Нет кодов «на проверке».
+                </TableCell>
+              </TableRow>
+            )}
+            {s.reviewCodes.map((c) => {
+              const isOpen = open.has(c.code)
+              return (
+                <Fragment key={c.code}>
+                  <TableRow
+                    className={`even:bg-muted/40 ${c.examples.length ? "cursor-pointer" : ""}`}
+                    onClick={() => c.examples.length && toggle(c.code)}
+                  >
+                    <TableCell>
+                      {c.examples.length > 0 &&
+                        (isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{c.code}</TableCell>
+                    <TableCell className="text-xs">{c.labelRu}</TableCell>
+                    <TableCell className="text-xs">{c.effectiveProfile ?? "—"}</TableCell>
+                    <TableCell className="text-right">{c.weight ?? "—"}</TableCell>
+                    <TableCell className="text-right font-medium">{c.items}</TableCell>
+                    <TableCell className="text-right">{c.counted}</TableCell>
+                    <TableCell className="text-right">{c.low}</TableCell>
+                    <TableCell className="text-right">{c.dropped}</TableCell>
+                  </TableRow>
+                  {isOpen &&
+                    c.examples.map((e, i) => (
+                      <TableRow key={`${c.code}-${e.itemId}-${i}`} className="bg-muted/20">
+                        <TableCell />
+                        <TableCell>
+                          <ItemId id={e.itemId} />
+                        </TableCell>
+                        <TableCell colSpan={5} className="text-xs">
+                          <div className="text-muted-foreground">
+                            {fmtDate(e.date)}
+                            {e.subject ? ` · ${e.subject}` : ""}
+                          </div>
+                          <div className="whitespace-pre-wrap">«{e.evidence}»</div>
+                        </TableCell>
+                        <TableCell colSpan={2} className="text-xs">
+                          {e.confidence}
+                          {e.counted
+                            ? " · учтён"
+                            : e.notCountedReason
+                              ? ` · ${labelOf(SIGNAL_NOT_COUNTED_REASONS, e.notCountedReason)}`
+                              : ""}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </Fragment>
+              )
+            })}
+          </TableBody>
+        </Table>
+      </Card>
+
+      {s.liveCodes.length > 0 && (
+        <div className="rounded-xl border bg-card p-3 text-xs">
+          <span className="font-medium">Активные коды в выборке: </span>
+          <span className="text-muted-foreground">
+            {s.liveCodes.map((c) => `${c.code} ${c.items}`).join(" · ")}
+          </span>
+        </div>
+      )}
+
+      {s.failed.length > 0 && (
+        <Card className="py-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Ошибки</TableHead>
+                <TableHead>Сообщение</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {s.failed.map((f) => (
+                <TableRow key={f.itemId} className="even:bg-muted/40">
+                  <TableCell>
+                    <ItemId id={f.itemId} />
+                  </TableCell>
+                  <TableCell className="max-w-md truncate text-xs">{f.error}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

@@ -2,8 +2,7 @@ import "server-only"
 import { randomUUID } from "crypto"
 import { and, asc, eq, ne, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { aiUsageEvent, topicsEvalResult, topicsGoldenItem } from "@/db/schema"
-import { getEffectiveSignals, getRegistry } from "@/server/signals/registry"
+import { topicsEvalResult, topicsEvalRun, topicsGoldenItem } from "@/db/schema"
 import {
   EXTRACTION_CODE_SETS,
   EXTRACTION_VARIANTS,
@@ -18,28 +17,76 @@ import {
   runExtraction,
 } from "@/server/topics/prompt/run-extraction"
 import { loadGoldenWorkItems } from "@/server/topics/golden-set"
+import { loadCodeInfo, loadEvalContext, postprocessForEval } from "@/server/topics/eval/context"
+import {
+  computeEvalMetrics,
+  evalGateVerdict,
+  parseExpected,
+  percentile,
+  postPrediction,
+  rawPrediction,
+  type EvalBucket,
+  type EvalCodeRow,
+  type EvalGate,
+  type EvalMismatch,
+  type EvalPostStored,
+  type MetricItem,
+  type PrStats,
+} from "@/server/topics/eval/metrics"
+import {
+  clearEvalRunFinished,
+  createEvalRunRow,
+  ensureEvalRunRow,
+  EvalError,
+  getEvalRunRow,
+  getStoredEvalReport,
+  legacyRunSettings,
+  saveEvalRunReport,
+  spikeUsage,
+  usageTotals,
+  type EvalInput,
+  type EvalRunKind,
+  type SpikeUsageRow,
+} from "@/server/topics/eval/run-store"
+import { getSampleReport, runSampleBatch, SAMPLE_MAX, startSampleRun, type SampleReport } from "@/server/topics/eval/sample-run"
 
-// Model spike / eval runner (plan phase 0 task 8; spec 01 §12).
+// Eval runner (plan phase 0 task 8 = model spike; phase 2 task 8 = eval;
+// spec 01 §12). Platform-admin tooling; org id explicit.
 //
-// A run = one runId over the org's golden set (all items except `excluded`).
-// runSpikeBatch processes the next items the run has not seen yet, so the UI
-// loops in small batches under the route's maxDuration (resumable). Each item
-// gives one topics_eval_result row; tokens and cost come from ai_usage_event
-// (ref = { evalRunId, goldenItemId }).
+// Two inputs:
+//   golden = the org's golden set (all items except `excluded`). Each item
+//            gives one topics_eval_result row; `output` = the normalized
+//            model output (as in phase 0) + `post` = the server
+//            post-processing of spec §5.4 (EvalPostStored: instances with
+//            counted / notCountedReason / scoreContrib, dropped, score, band,
+//            direction). Rows from before phase 2 have no `post`; they still
+//            report raw metrics. The report has precision / recall / F1 per
+//            code on raw model codes and on post-processed kept codes, real
+//            and synthetic items apart, and the quality-gate verdict
+//            (eval/metrics.ts → EVAL_GATE).
+//   sample = offline batch for «review» codes (R6) over recent items outside
+//            the golden set — see eval/sample-run.ts.
+//
+// A run = one runId with a topics_eval_run row (eval/run-store.ts). Batches
+// process the next items the run has not seen yet, so the UI loops in small
+// batches under the route's maxDuration (resumable). When nothing remains,
+// the report snapshot is stored in topics_eval_run.metrics + finishedAt.
+// Tokens and cost come from ai_usage_event (ref = { evalRunId, … }).
 //
 // The model under test is whatever «Процессы ИИ» assigns to
 // topics.signal_extraction at call time; it is recorded per result. To compare
-// models the admin switches the assignment between runs.
+// models the admin switches the assignment between runs (the phase 0 spike).
 //
 // The codes come from the org's effective signals registry (loaded once per
 // batch, so all items of a batch share one taxonomy version, recorded in
-// `config.taxonomyVersion` with the exact `config.codes` list). An org with
-// no active code fails the batch with SignalsNotEnabledError (route → 400).
+// `config.taxonomyVersion` with the exact `config.codes` list); post-
+// processing uses the same version (eval/context.ts). An org with no active
+// code fails the batch with SignalsNotEnabledError (route → 400).
 
 export const SPIKE_BATCH_MAX = 10
+export { SAMPLE_MAX }
+export { EvalError as SpikeError }
 const CONCURRENCY = 3
-
-export class SpikeError extends Error {}
 
 type ResultConfig = {
   process: string
@@ -59,22 +106,6 @@ type ResultConfig = {
   synthetic: boolean
 }
 
-async function runSettings(runId: string) {
-  const [first] = await db
-    .select({ organizationId: topicsEvalResult.organizationId, config: topicsEvalResult.config })
-    .from(topicsEvalResult)
-    .where(eq(topicsEvalResult.runId, runId))
-    .orderBy(asc(topicsEvalResult.createdAt))
-    .limit(1)
-  if (!first) return null
-  const c = first.config as Partial<ResultConfig>
-  return {
-    orgId: first.organizationId,
-    variant: (c.variant ?? "single") as ExtractionVariant,
-    codeSet: (c.codeSet ?? "live") as ExtractionCodeSet,
-  }
-}
-
 async function remainingItemIds(orgId: string, runId: string): Promise<string[]> {
   const rows = await db
     .select({ id: topicsGoldenItem.id })
@@ -92,6 +123,7 @@ async function remainingItemIds(orgId: string, runId: string): Promise<string[]>
 
 export type SpikeBatchResult = {
   runId: string
+  input: EvalInput
   variant: ExtractionVariant
   codeSet: ExtractionCodeSet
   processed: number
@@ -102,40 +134,90 @@ export type SpikeBatchResult = {
 }
 
 /**
- * Process the next `limit` (≤ 10) golden items of the run. A new run starts
- * when runId is omitted. A resumed run keeps the variant / code set of its
- * first result.
+ * Process the next `limit` (≤ 10) items of the run. A new run starts when
+ * runId is omitted (input golden or sample). A resumed run keeps its stored
+ * settings (input / variant / code set).
  */
 export async function runSpikeBatch(args: {
   orgId: string
+  userId: string | null
   runId?: string | null
   limit?: number
   variant?: ExtractionVariant
   codeSet?: ExtractionCodeSet
+  input?: EvalInput
+  sampleSize?: number
 }): Promise<SpikeBatchResult> {
   const limit = Math.max(1, Math.min(SPIKE_BATCH_MAX, Math.floor(args.limit ?? 5)))
-  let variant: ExtractionVariant = args.variant ?? "single"
-  let codeSet: ExtractionCodeSet = args.codeSet ?? "live"
-  if (!EXTRACTION_VARIANTS.includes(variant)) throw new SpikeError(`Неизвестный вариант: ${variant}`)
-  if (!EXTRACTION_CODE_SETS.includes(codeSet)) throw new SpikeError(`Неизвестный набор кодов: ${codeSet}`)
+  const variant: ExtractionVariant = args.variant ?? "single"
+  const codeSet: ExtractionCodeSet = args.codeSet ?? "live"
+  if (!EXTRACTION_VARIANTS.includes(variant)) throw new EvalError(`Неизвестный вариант: ${variant}`)
+  if (!EXTRACTION_CODE_SETS.includes(codeSet)) throw new EvalError(`Неизвестный набор кодов: ${codeSet}`)
 
-  const runId = args.runId || `spike_${randomUUID()}`
-  if (args.runId) {
-    const existing = await runSettings(args.runId)
-    if (existing) {
-      if (existing.orgId !== args.orgId) throw new SpikeError("Прогон относится к другой организации")
-      variant = existing.variant
-      codeSet = existing.codeSet
-    }
+  let runId = args.runId || null
+  if (runId) {
+    // Org check before any write (also for phase 0 runs without a row).
+    const row = await getEvalRunRow(runId)
+    const owner = row?.organizationId ?? (await legacyRunSettings(runId))?.orgId
+    if (!owner) throw new EvalError("Прогон не найден")
+    if (owner !== args.orgId) throw new EvalError("Прогон относится к другой организации")
+  } else if (args.input === "sample") {
+    runId = await startSampleRun({
+      orgId: args.orgId,
+      userId: args.userId,
+      size: args.sampleSize ?? 50,
+      variant,
+    })
+  } else {
+    // Fails before any write when the org has no active code.
+    const promptSet = await loadPromptCodes(args.orgId, codeSet)
+    runId = `eval_${randomUUID()}`
+    await createEvalRunRow({
+      id: runId,
+      orgId: args.orgId,
+      kind: "eval",
+      userId: args.userId,
+      config: {
+        input: "golden",
+        process: EXTRACTION_PROCESS,
+        variant,
+        codeSet,
+        taxonomyVersion: promptSet.taxonomyVersion,
+        codes: promptSet.codes.map((c) => c.code),
+        reviewCodes: promptSet.codes.filter((c) => c.reviewOnly).map((c) => c.code),
+      },
+      metrics: { schema: 1 },
+    })
   }
 
+  const run = await ensureEvalRunRow(runId, args.userId)
+  if (!run) throw new EvalError("Прогон не найден")
+  if (run.config.input === "sample") {
+    const r = await runSampleBatch(run, limit)
+    return { runId, input: "sample", variant: run.config.variant, codeSet: run.config.codeSet, ...r }
+  }
+  return runGoldenBatch(run.id, args.orgId, run.config.variant, run.config.codeSet, limit, run.finishedAt !== null)
+}
+
+async function runGoldenBatch(
+  runId: string,
+  orgId: string,
+  variant: ExtractionVariant,
+  codeSet: ExtractionCodeSet,
+  limit: number,
+  wasFinished: boolean,
+): Promise<SpikeBatchResult> {
   // Before any write: an org without active codes fails the whole batch.
-  const promptSet = await loadPromptCodes(args.orgId, codeSet)
+  const promptSet = await loadPromptCodes(orgId, codeSet)
   const setCodes = promptSet.codes.map((c) => c.code)
 
-  const pending = await remainingItemIds(args.orgId, runId)
+  const pending = await remainingItemIds(orgId, runId)
   const batchIds = pending.slice(0, limit)
-  const items = await loadGoldenWorkItems(args.orgId, batchIds)
+  if (batchIds.length > 0 && wasFinished) await clearEvalRunFinished(runId)
+  const [items, ctx] = await Promise.all([
+    loadGoldenWorkItems(orgId, batchIds),
+    batchIds.length > 0 ? loadEvalContext(orgId, promptSet) : null,
+  ])
   const loaded = new Set(items.map((i) => i.id))
 
   // Items without text: record a failed result so the run moves on.
@@ -145,7 +227,7 @@ export async function runSpikeBatch(args: {
       missing.map((id) => ({
         id: randomUUID(),
         runId,
-        organizationId: args.orgId,
+        organizationId: orgId,
         goldenItemId: id,
         config: {
           process: EXTRACTION_PROCESS,
@@ -172,12 +254,18 @@ export async function runSpikeBatch(args: {
         const started = Date.now()
         try {
           const run = await runExtraction({
-            orgId: args.orgId,
+            orgId,
             text: item.text,
             envelope: item.envelope,
             variant,
             promptSet,
+            successors: ctx!.scoring.successors,
             ref: { evalRunId: runId, goldenItemId: item.id },
+          })
+          const post: EvalPostStored = postprocessForEval(run.output, ctx!.scoring, {
+            text: item.text,
+            date: item.date,
+            orgAttribution: item.orgAttribution,
           })
           const config: ResultConfig = {
             process: EXTRACTION_PROCESS,
@@ -198,11 +286,11 @@ export async function runSpikeBatch(args: {
           await db.insert(topicsEvalResult).values({
             id: randomUUID(),
             runId,
-            organizationId: args.orgId,
+            organizationId: orgId,
             goldenItemId: item.id,
             config,
             ok: true,
-            output: (run.output ?? { skipped: "no_blocks" }) as Record<string, unknown>,
+            output: { ...(run.output ?? { skipped: "no_blocks" }), post } as Record<string, unknown>,
             durationMs: run.durationMs,
           })
           ok++
@@ -211,7 +299,7 @@ export async function runSpikeBatch(args: {
           await db.insert(topicsEvalResult).values({
             id: randomUUID(),
             runId,
-            organizationId: args.orgId,
+            organizationId: orgId,
             goldenItemId: item.id,
             config: {
               process: EXTRACTION_PROCESS,
@@ -233,8 +321,13 @@ export async function runSpikeBatch(args: {
   )
 
   const remaining = Math.max(0, pending.length - batchIds.length)
+  if (remaining === 0 && (batchIds.length > 0 || !wasFinished)) {
+    const report = await getSpikeReport(runId)
+    await saveEvalRunReport(runId, { ...report, finishedAt: new Date().toISOString() }, true)
+  }
   return {
     runId,
+    input: "golden",
     variant,
     codeSet,
     processed: batchIds.length,
@@ -249,89 +342,121 @@ export async function runSpikeBatch(args: {
 
 export type SpikeRunRow = {
   runId: string
+  kind: EvalRunKind
+  input: EvalInput
   startedAt: string
   lastAt: string
+  finishedAt: string | null
   items: number
   ok: number
+  /** Sample runs: planned sample size. */
+  planned: number | null
   variant: string | null
   codeSet: string | null
   models: string[]
   avgDurationMs: number | null
+  /** A report snapshot is stored in topics_eval_run.metrics. */
+  stored: boolean
+  verdict: EvalGate["verdict"] | null
 }
 
 export async function listSpikeRuns(orgId: string): Promise<SpikeRunRow[]> {
-  const rows = await db
-    .select({
-      runId: topicsEvalResult.runId,
-      startedAt: sql<string>`min(${topicsEvalResult.createdAt})`,
-      lastAt: sql<string>`max(${topicsEvalResult.createdAt})`,
-      items: sql<number>`count(*)::int`,
-      ok: sql<number>`count(*) filter (where ${topicsEvalResult.ok})::int`,
-      variant: sql<string | null>`min(${topicsEvalResult.config}->>'variant')`,
-      codeSet: sql<string | null>`min(${topicsEvalResult.config}->>'codeSet')`,
-      models: sql<string[] | null>`array_remove(array_agg(distinct ${topicsEvalResult.config}->>'model'), null)`,
-      avgDurationMs: sql<number | null>`avg(${topicsEvalResult.durationMs}) filter (where ${topicsEvalResult.ok})::int`,
+  const sampleItems = sql`jsonb_each(coalesce(${topicsEvalRun.metrics}->'sample'->'items', '{}'::jsonb))`
+  const [resultRuns, runRows] = await Promise.all([
+    db
+      .select({
+        runId: topicsEvalResult.runId,
+        startedAt: sql<string>`min(${topicsEvalResult.createdAt})`,
+        lastAt: sql<string>`max(${topicsEvalResult.createdAt})`,
+        items: sql<number>`count(*)::int`,
+        ok: sql<number>`count(*) filter (where ${topicsEvalResult.ok})::int`,
+        variant: sql<string | null>`min(${topicsEvalResult.config}->>'variant')`,
+        codeSet: sql<string | null>`min(${topicsEvalResult.config}->>'codeSet')`,
+        models: sql<string[] | null>`array_remove(array_agg(distinct ${topicsEvalResult.config}->>'model'), null)`,
+        avgDurationMs: sql<number | null>`avg(${topicsEvalResult.durationMs}) filter (where ${topicsEvalResult.ok})::int`,
+      })
+      .from(topicsEvalResult)
+      .where(eq(topicsEvalResult.organizationId, orgId))
+      .groupBy(topicsEvalResult.runId),
+    db
+      .select({
+        id: topicsEvalRun.id,
+        kind: topicsEvalRun.kind,
+        input: sql<string | null>`${topicsEvalRun.config}->>'input'`,
+        variant: sql<string | null>`${topicsEvalRun.config}->>'variant'`,
+        codeSet: sql<string | null>`${topicsEvalRun.config}->>'codeSet'`,
+        planned: sql<number | null>`jsonb_array_length(coalesce(${topicsEvalRun.config}->'sampleItemIds', '[]'::jsonb))`,
+        createdAt: topicsEvalRun.createdAt,
+        finishedAt: topicsEvalRun.finishedAt,
+        stored: sql<boolean>`coalesce(${topicsEvalRun.metrics} ? 'report', false)`,
+        verdict: sql<string | null>`${topicsEvalRun.metrics}->'report'->'gate'->>'verdict'`,
+        sItems: sql<number>`(select count(*)::int from ${sampleItems})`,
+        sOk: sql<number>`(select count(*)::int from ${sampleItems} e where (e.value->>'ok')::boolean)`,
+        sModels: sql<string[] | null>`(select array_remove(array_agg(distinct e.value->>'model'), null) from ${sampleItems} e)`,
+        sAvg: sql<number | null>`(select avg((e.value->>'durationMs')::int)::int from ${sampleItems} e where (e.value->>'durationMs')::int > 0)`,
+        sLast: sql<string | null>`(select max(e.value->>'at') from ${sampleItems} e)`,
+      })
+      .from(topicsEvalRun)
+      .where(eq(topicsEvalRun.organizationId, orgId)),
+  ])
+  const byRun = new Map(runRows.map((r) => [r.id, r]))
+  const out: SpikeRunRow[] = resultRuns.map((r) => {
+    const row = byRun.get(r.runId)
+    byRun.delete(r.runId)
+    return {
+      runId: r.runId,
+      kind: row?.kind === "eval" ? "eval" : "spike",
+      input: "golden",
+      startedAt: new Date(r.startedAt).toISOString(),
+      lastAt: new Date(r.lastAt).toISOString(),
+      finishedAt: row?.finishedAt?.toISOString() ?? null,
+      items: r.items,
+      ok: r.ok,
+      planned: null,
+      variant: r.variant,
+      codeSet: r.codeSet,
+      models: r.models ?? [],
+      avgDurationMs: r.avgDurationMs,
+      stored: row?.stored ?? false,
+      verdict: (row?.verdict as EvalGate["verdict"] | null) ?? null,
+    }
+  })
+  // Rows without results: sample runs, and golden runs that failed before the first item.
+  for (const row of byRun.values()) {
+    const sample = row.input === "sample"
+    out.push({
+      runId: row.id,
+      kind: row.kind === "spike" ? "spike" : "eval",
+      input: sample ? "sample" : "golden",
+      startedAt: row.createdAt.toISOString(),
+      lastAt: row.sLast ?? row.createdAt.toISOString(),
+      finishedAt: row.finishedAt?.toISOString() ?? null,
+      items: row.sItems,
+      ok: row.sOk,
+      planned: sample ? row.planned : null,
+      variant: row.variant,
+      codeSet: row.codeSet,
+      models: row.sModels ?? [],
+      avgDurationMs: row.sAvg,
+      stored: row.stored,
+      verdict: sample ? null : ((row.verdict as EvalGate["verdict"] | null) ?? null),
     })
-    .from(topicsEvalResult)
-    .where(eq(topicsEvalResult.organizationId, orgId))
-    .groupBy(topicsEvalResult.runId)
-    .orderBy(sql`min(${topicsEvalResult.createdAt}) desc`)
-  return rows.map((r) => ({
-    ...r,
-    startedAt: new Date(r.startedAt).toISOString(),
-    lastAt: new Date(r.lastAt).toISOString(),
-    models: r.models ?? [],
-  }))
+  }
+  return out.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
 }
 
 // ── Report ────────────────────────────────────────────────────────────────
 
-export type PrStats = {
-  items: number
-  tp: number
-  fp: number
-  fn: number
-  precision: number | null
-  recall: number | null
-}
-
-export type SpikeCodeRow = {
-  code: string
-  labelRu: string
-  /** The code's state for the org now: on = live prompt, review = offline only, off. */
-  status: "on" | "review" | "off" | null
-  /** Effective weight for the org (registry). */
-  weight: number | null
-  profile: string | null
-  /** Items where the code was predicted (high / medium confidence). */
-  found: number
-  /** Items where it was predicted with low confidence (count 0, spec §5.4). */
-  foundLow: number
-  expected: number
-  tp: number
-  fp: number
-  fn: number
-  precision: number | null
-  recall: number | null
-}
-
-export type SpikeUsageRow = {
-  process: string
-  model: string
-  calls: number
-  errors: number
-  inputTokens: number
-  outputTokens: number
-  reasoningTokens: number
-  cacheReadTokens: number
-  costUsd: number
-}
+export type { PrStats, EvalBucket, EvalCodeRow, EvalGate, EvalMismatch, SpikeUsageRow, SampleReport }
 
 export type SpikeReport = {
+  input: "golden"
+  kind: EvalRunKind
   runId: string
   orgId: string
   startedAt: string
   lastAt: string
+  finishedAt: string | null
   variant: string
   codeSet: string
   models: string[]
@@ -347,6 +472,9 @@ export type SpikeReport = {
     structuredFailureRate: number
     otherFailures: number
     remaining: number
+    /** Reviewed items with an expected answer (judged): real / synthetic. */
+    judgedReal: number
+    judgedSynthetic: number
   }
   latency: { p50: number | null; p95: number | null; max: number | null; mean: number | null }
   usage: {
@@ -360,6 +488,7 @@ export type SpikeReport = {
     costPerItemUsd: number | null
     byProcessModel: SpikeUsageRow[]
   }
+  /** Raw model output. */
   signals: {
     total: number
     lowConfidence: number
@@ -367,46 +496,26 @@ export type SpikeReport = {
     unknownCodes: number
     itemsWithSignals: number
   }
-  /** Precision / recall over items with an `expected` answer. */
-  overall: { all: PrStats; real: PrStats; synthetic: PrStats }
-  codes: SpikeCodeRow[]
+  /** Server post-processing (ok items with a `post` part). */
+  post: {
+    items: number
+    instances: number
+    counted: number
+    notCounted: Record<string, number>
+    dropped: Record<string, number>
+    bands: Record<string, number>
+  }
+  /** Precision / recall / F1 over judged items: raw model codes and post-processed kept codes. */
+  overall: Record<"raw" | "post", Record<EvalBucket, PrStats>>
+  codes: EvalCodeRow[]
+  gate: EvalGate
   slowest: { goldenItemId: string; durationMs: number; codes: string[]; ok: boolean }[]
   failed: { goldenItemId: string; error: string; errorKind: string }[]
   /** Items with a mismatch against `expected` (up to 50). */
-  mismatches: { goldenItemId: string; synthetic: boolean; expected: string[]; predicted: string[] }[]
+  mismatches: EvalMismatch[]
 }
 
-function percentile(sorted: number[], p: number): number | null {
-  if (sorted.length === 0) return null
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))
-  return sorted[idx]
-}
-
-const ratio = (a: number, b: number) => (b > 0 ? a / b : null)
-
-function pr(items: number, tp: number, fp: number, fn: number): PrStats {
-  return { items, tp, fp, fn, precision: ratio(tp, tp + fp), recall: ratio(tp, tp + fn) }
-}
-
-/** Usage ledger totals of a run (ai_usage_event.ref->>'evalRunId'). */
-export async function spikeUsage(runId: string): Promise<SpikeUsageRow[]> {
-  const rows = await db
-    .select({
-      process: aiUsageEvent.processKey,
-      model: sql<string>`coalesce(${aiUsageEvent.responseModel}, ${aiUsageEvent.requestModel})`,
-      calls: sql<number>`count(*)::int`,
-      errors: sql<number>`count(*) filter (where ${aiUsageEvent.status} <> 'ok')::int`,
-      inputTokens: sql<number>`coalesce(sum(${aiUsageEvent.inputTokens}), 0)::int`,
-      outputTokens: sql<number>`coalesce(sum(${aiUsageEvent.outputTokens}), 0)::int`,
-      reasoningTokens: sql<number>`coalesce(sum(${aiUsageEvent.reasoningTokens}), 0)::int`,
-      cacheReadTokens: sql<number>`coalesce(sum(${aiUsageEvent.cacheReadTokens}), 0)::int`,
-      costUsd: sql<string>`coalesce(sum(coalesce(${aiUsageEvent.costActualUsd}, ${aiUsageEvent.costEstimateUsd})), 0)`,
-    })
-    .from(aiUsageEvent)
-    .where(sql`${aiUsageEvent.ref}->>'evalRunId' = ${runId}`)
-    .groupBy(aiUsageEvent.processKey, sql`2`)
-  return rows.map((r) => ({ ...r, costUsd: Number(r.costUsd) }))
-}
+export type EvalReport = SpikeReport | SampleReport
 
 export async function getSpikeReport(runId: string): Promise<SpikeReport> {
   const rows = await db
@@ -421,12 +530,13 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
       createdAt: topicsEvalResult.createdAt,
       synthetic: topicsGoldenItem.synthetic,
       expected: topicsGoldenItem.expected,
+      status: topicsGoldenItem.status,
     })
     .from(topicsEvalResult)
     .innerJoin(topicsGoldenItem, eq(topicsGoldenItem.id, topicsEvalResult.goldenItemId))
     .where(eq(topicsEvalResult.runId, runId))
     .orderBy(asc(topicsEvalResult.createdAt))
-  if (rows.length === 0) throw new SpikeError("Прогон не найден")
+  if (rows.length === 0) throw new EvalError("Прогон не найден")
 
   const orgId = rows[0].organizationId
   const firstCfg = rows[0].config as Partial<ResultConfig>
@@ -439,9 +549,12 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
     const codes = (r.config as Partial<ResultConfig>).codes
     if (Array.isArray(codes)) for (const c of codes) inSet.add(c)
   }
-  const [registry, effective] = await Promise.all([getRegistry(), getEffectiveSignals(orgId)])
-  const category = new Map(registry.categories.map((c) => [c.code, c]))
-  const eff = new Map(effective.map((e) => [e.code, e]))
+  const [info, runRow, usageRows, remainingIds] = await Promise.all([
+    loadCodeInfo(orgId),
+    getEvalRunRow(runId),
+    spikeUsage(runId),
+    remainingItemIds(orgId, runId),
+  ])
   const taxonomyVersions = [
     ...new Set(
       rows
@@ -463,130 +576,78 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
   const models = new Set<string>()
   let codeBlockChars: number | null = null
   let codesInPrompt: number | null = null
-  const perCode = new Map<string, SpikeCodeRow>()
-  const codeRow = (code: string): SpikeCodeRow => {
-    let row = perCode.get(code)
-    if (!row) {
-      const c = category.get(code)
-      const e = eff.get(code)
-      row = {
-        code,
-        labelRu: c?.labelRu ?? code,
-        status: e ? (e.reviewOnly ? "review" : e.inPrompt ? "on" : "off") : null,
-        weight: e?.weight ?? c?.weight ?? null,
-        profile: e?.displayProfile ?? c?.displayProfile ?? null,
-        found: 0,
-        foundLow: 0,
-        expected: 0,
-        tp: 0,
-        fp: 0,
-        fn: 0,
-        precision: null,
-        recall: null,
-      }
-      perCode.set(code, row)
-    }
-    return row
-  }
-  const totals = {
-    all: { items: 0, tp: 0, fp: 0, fn: 0 },
-    real: { items: 0, tp: 0, fp: 0, fn: 0 },
-    synthetic: { items: 0, tp: 0, fp: 0, fn: 0 },
-  }
   const signals = { total: 0, lowConfidence: 0, evidenceNotFound: 0, unknownCodes: 0, itemsWithSignals: 0 }
-  const mismatches: SpikeReport["mismatches"] = []
+  const post: SpikeReport["post"] = { items: 0, instances: 0, counted: 0, notCounted: {}, dropped: {}, bands: {} }
+  const inc = (m: Record<string, number>, k: string) => {
+    m[k] = (m[k] ?? 0) + 1
+  }
+  const metricItems: MetricItem[] = []
   const predictedById = new Map<string, string[]>()
+  let judgedReal = 0
+  let judgedSynthetic = 0
 
-  for (const r of okRows) {
+  for (const r of rows) {
     const cfg = r.config as Partial<ResultConfig>
+    const expected = parseExpected(r.expected, r.status, inSet)
+    if (expected) {
+      if (r.synthetic) judgedSynthetic++
+      else judgedReal++
+    }
+    if (!r.ok) {
+      metricItems.push({ id: r.goldenItemId, synthetic: r.synthetic, ok: false, expected, raw: null, post: null })
+      continue
+    }
     if (cfg.model) models.add(cfg.model)
     if (codeBlockChars === null && typeof cfg.codeBlockChars === "number" && variant === "single") {
       codeBlockChars = cfg.codeBlockChars
       codesInPrompt = cfg.codesInPrompt ?? null
     }
-    const out = r.output as Partial<NormalizedExtraction> | null
+    const out = r.output as (Partial<NormalizedExtraction> & { post?: EvalPostStored }) | null
     const sigs = Array.isArray(out?.signals) ? out.signals : []
     signals.total += sigs.length
     signals.unknownCodes += Array.isArray(out?.unknownCodes) ? out.unknownCodes.length : 0
     if (sigs.length > 0) signals.itemsWithSignals++
-    const predicted = new Set<string>()
     for (const s of sigs) {
       if (s.evidenceFound === false) signals.evidenceNotFound++
-      if (s.confidence === "low") {
-        signals.lowConfidence++
-        codeRow(s.code).foundLow++
-      } else predicted.add(s.code)
+      if (s.confidence === "low") signals.lowConfidence++
     }
-    predictedById.set(r.goldenItemId, [...predicted])
-    for (const code of predicted) codeRow(code).found++
-
-    const exp = r.expected as { codes?: { code?: string }[] } | null
-    if (!exp || !Array.isArray(exp.codes)) continue
-    const expected = new Set(
-      exp.codes.map((c) => c?.code ?? "").filter((c) => c && inSet.has(c)),
-    )
-    const bucket = r.synthetic ? totals.synthetic : totals.real
-    let tp = 0
-    let fp = 0
-    let fn = 0
-    for (const code of expected) {
-      codeRow(code).expected++
-      if (predicted.has(code)) {
-        tp++
-        codeRow(code).tp++
-      } else {
-        fn++
-        codeRow(code).fn++
+    if (out?.post && Array.isArray(out.post.instances)) {
+      post.items++
+      inc(post.bands, out.post.band)
+      for (const i of out.post.instances) {
+        post.instances++
+        if (i.counted) post.counted++
+        else inc(post.notCounted, i.notCountedReason ?? "other")
       }
+      for (const d of out.post.dropped ?? []) inc(post.dropped, d.reason)
     }
-    for (const code of predicted) {
-      if (!expected.has(code)) {
-        fp++
-        codeRow(code).fp++
-      }
-    }
-    for (const b of [totals.all, bucket]) {
-      b.items++
-      b.tp += tp
-      b.fp += fp
-      b.fn += fn
-    }
-    if ((fp > 0 || fn > 0) && mismatches.length < 50) {
-      mismatches.push({
-        goldenItemId: r.goldenItemId,
-        synthetic: r.synthetic,
-        expected: [...expected],
-        predicted: [...predicted],
-      })
-    }
-  }
-  for (const row of perCode.values()) {
-    row.precision = ratio(row.tp, row.tp + row.fp)
-    row.recall = ratio(row.tp, row.tp + row.fn)
+    const raw = rawPrediction(out)
+    predictedById.set(r.goldenItemId, [...raw.predicted])
+    metricItems.push({
+      id: r.goldenItemId,
+      synthetic: r.synthetic,
+      ok: true,
+      expected,
+      raw,
+      post: postPrediction(out),
+    })
   }
 
-  const usageRows = await spikeUsage(runId)
-  const usage = usageRows.reduce(
-    (acc, u) => ({
-      calls: acc.calls + u.calls,
-      errors: acc.errors + u.errors,
-      inputTokens: acc.inputTokens + u.inputTokens,
-      outputTokens: acc.outputTokens + u.outputTokens,
-      reasoningTokens: acc.reasoningTokens + u.reasoningTokens,
-      cacheReadTokens: acc.cacheReadTokens + u.cacheReadTokens,
-      costUsd: acc.costUsd + u.costUsd,
-    }),
-    { calls: 0, errors: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, costUsd: 0 },
-  )
+  const metrics = computeEvalMetrics(metricItems, info)
+  const gate = evalGateVerdict(metrics, [...inSet], info)
+  if (metrics.postItems === 0) gate.reasons.unshift("Нет результатов постобработки (прогон до фазы 2)")
 
-  const remaining = (await remainingItemIds(orgId, runId)).length
+  const usage = usageTotals(usageRows)
   const sum = durations.reduce((a, b) => a + b, 0)
 
   return {
+    input: "golden",
+    kind: runRow?.kind ?? "spike",
     runId,
     orgId,
     startedAt: rows[0].createdAt.toISOString(),
     lastAt: rows[rows.length - 1].createdAt.toISOString(),
+    finishedAt: runRow?.finishedAt?.toISOString() ?? null,
     variant,
     codeSet,
     models: [...models],
@@ -600,7 +661,9 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
       structuredFailures,
       structuredFailureRate: rows.length ? structuredFailures / rows.length : 0,
       otherFailures: failedRows.length - structuredFailures,
-      remaining,
+      remaining: remainingIds.length,
+      judgedReal,
+      judgedSynthetic,
     },
     latency: {
       p50: percentile(durations, 50),
@@ -614,14 +677,10 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
       byProcessModel: usageRows,
     },
     signals,
-    overall: {
-      all: pr(totals.all.items, totals.all.tp, totals.all.fp, totals.all.fn),
-      real: pr(totals.real.items, totals.real.tp, totals.real.fp, totals.real.fn),
-      synthetic: pr(totals.synthetic.items, totals.synthetic.tp, totals.synthetic.fp, totals.synthetic.fn),
-    },
-    codes: [...perCode.values()].sort(
-      (a, b) => b.found + b.expected - (a.found + a.expected) || a.code.localeCompare(b.code),
-    ),
+    post,
+    overall: metrics.overall,
+    codes: metrics.codes,
+    gate,
     slowest: [...rows]
       .sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0))
       .slice(0, 10)
@@ -636,6 +695,35 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
       error: r.error ?? "",
       errorKind: (r.output as { errorKind?: string } | null)?.errorKind ?? "other",
     })),
-    mismatches,
+    mismatches: metrics.mismatches,
   }
 }
+
+/** Live report of any run (golden or sample). */
+export async function getEvalReport(runId: string): Promise<EvalReport> {
+  const run = await getEvalRunRow(runId)
+  if (run?.config.input === "sample") return getSampleReport(runId, run)
+  return getSpikeReport(runId)
+}
+
+/** The report snapshot stored with the run (null = none yet). */
+export async function getStoredReport(runId: string): Promise<{ report: EvalReport; savedAt: string | null } | null> {
+  return getStoredEvalReport<EvalReport>(runId)
+}
+
+/**
+ * Compute the live report and store it as the run's metrics («Сохранить
+ * метрики»). finishedAt is set only when nothing remains. A phase 0 run gets
+ * its `spike` row here.
+ */
+export async function saveEvalReport(runId: string, userId: string | null): Promise<EvalReport> {
+  const run = await ensureEvalRunRow(runId, userId)
+  if (!run) throw new EvalError("Прогон не найден")
+  const report = await getEvalReport(runId)
+  const remaining = report.input === "sample" ? report.remaining : report.items.remaining
+  const stored = remaining === 0 ? { ...report, finishedAt: report.finishedAt ?? new Date().toISOString() } : report
+  await saveEvalRunReport(runId, stored, remaining === 0)
+  return stored
+}
+
+export type { EvalInput, EvalRunKind }

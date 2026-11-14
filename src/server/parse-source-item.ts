@@ -4,8 +4,10 @@ import { randomUUID } from "node:crypto"
 import { eq, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import {
+  signalInstance,
   source,
   sourceItem,
+  sourceItemSubject,
   type ParseStatus,
   type SourceItemKind,
   type OrgAttribution,
@@ -69,6 +71,8 @@ import {
   UnsupportedOfficeTypeError,
 } from "@/server/parsers/office"
 import { getHandler } from "@/server/providers/handlers"
+import { findItemExclusion } from "@/server/analysis-exclusions"
+import { exclusionReason } from "@/lib/analysis-exclusion-match"
 // These two are also called directly from provider-specific attachment
 // download helpers below (Nylas attachment fetch, Chat attachment fetch)
 // — those branches are already inside provider-conditional code paths,
@@ -121,6 +125,13 @@ export async function reparseSourceItem(itemId: string): Promise<void> {
     .delete(sourceItem)
     .where(eq(sourceItem.parentSourceItemId, itemId))
 
+  // Topics engine output of the old parse (spec topics/01 §11): drop the
+  // item's signal instances and subjects; the columns are reset below.
+  await db.delete(signalInstance).where(eq(signalInstance.sourceItemId, itemId))
+  await db
+    .delete(sourceItemSubject)
+    .where(eq(sourceItemSubject.sourceItemId, itemId))
+
   await db
     .update(sourceItem)
     .set({
@@ -146,6 +157,16 @@ export async function reparseSourceItem(itemId: string): Promise<void> {
       // And the deal-discovery stamp — re-parses should re-trigger deal
       // discovery the same way they re-trigger card analysis.
       dealAnalysisScannedAt: null,
+      // Topics signal extraction must run again on the new parse.
+      // `threadKey` is kept (it does not depend on the parse).
+      signalStatus: null,
+      signalReason: null,
+      signalScore: null,
+      signalBand: null,
+      signalFacts: null,
+      signalScannedAt: null,
+      signalAttempts: 0,
+      signalTaxonomyVersion: null,
     })
     .where(eq(sourceItem.id, itemId))
 }
@@ -216,6 +237,34 @@ export async function parseSourceItem(
   opts: { userId: string | null },
 ): Promise<ParseResult> {
   const ctx = await loadParseContext(itemId, opts.userId)
+
+  // «Исключения из анализа» (spec topics/01 §5.2 gate 3a): an item with an
+  // excluded address / domain / chat is never parsed and never sent to a
+  // model. Covers items synced before the exclusion was added and providers
+  // that cannot filter at sync. Stored like the junk skip: 'skipped' + the
+  // reason on parse_error (`excluded: <kind> <value>`).
+  const exclusion = await findItemExclusion({
+    organizationId: ctx.organizationId,
+    provider: ctx.provider,
+    metadataJson: ctx.metadataJson,
+    threadExternalId: ctx.threadExternalId,
+    externalId: ctx.externalId,
+  })
+  if (exclusion) {
+    const reason = exclusionReason(exclusion)
+    await db
+      .update(sourceItem)
+      .set({ parseStatus: "skipped", parseError: reason, parsedAt: new Date() })
+      .where(eq(sourceItem.id, itemId))
+    return {
+      parentStatus: "skipped",
+      parentMarkdownBytes: 0,
+      childInserted: 0,
+      childSkipped: 0,
+      childFailed: 0,
+      parentParseError: reason,
+    }
+  }
 
   // Mark in-flight so the table shows "Parsing…" even if the user reloads.
   await db

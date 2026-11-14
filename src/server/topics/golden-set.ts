@@ -4,11 +4,12 @@ import { and, asc, count, desc, eq, inArray, sql, type SQL } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "@/db/drizzle"
 import { organization, source, sourceItem, topicsGoldenItem } from "@/db/schema"
-import { getTextObject } from "@/server/storage"
 import { getRegistry } from "@/server/signals/registry"
 import type { ExtractionEnvelope } from "@/server/topics/prompt/extraction"
 import { loadPromptCodes } from "@/server/topics/prompt/extraction"
 import { runExtraction } from "@/server/topics/prompt/run-extraction"
+import { messageContent } from "@/server/topics/signals/evidence"
+import { envelopeFromItem, itemMarkdown, mapPool } from "@/server/topics/signals/item-input"
 
 // Golden set for the topics quality gates (spec 01 §12, plan phase 0 task 7).
 // Platform-admin tooling: every function takes the org id explicitly; the
@@ -59,82 +60,14 @@ export class GoldenSetError extends Error {
   }
 }
 
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length)
-  let next = 0
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++
-        out[i] = await fn(items[i])
-      }
-    }),
-  )
-  return out
-}
-
-// ── Text + envelope ───────────────────────────────────────────────────────
-
-async function itemMarkdown(row: {
-  parsedMarkdown: string | null
-  markdownR2Key: string | null
-}): Promise<string | null> {
-  if (row.parsedMarkdown) return row.parsedMarkdown
-  if (!row.markdownR2Key) return null
-  try {
-    return await getTextObject(row.markdownR2Key)
-  } catch (error) {
-    console.warn("[topics/golden] markdown not readable", row.markdownR2Key, error)
-    return null
-  }
-}
-
-type Addr = { name?: string | null; email?: string | null }
-function formatAddrs(v: unknown): string | null {
-  if (!Array.isArray(v)) return typeof v === "string" ? v : null
-  const parts = (v as Addr[])
-    .map((a) => (a?.name ? `${a.name} <${a.email ?? ""}>` : (a?.email ?? "")))
-    .filter(Boolean)
-  return parts.length ? parts.join(", ") : null
-}
-
-function envelopeFromItem(item: {
-  provider: string | null
-  externalType: string | null
-  sourceCreatedAt: Date | null
-  orgAttribution: string | null
-  metadataJson: unknown
-}): ExtractionEnvelope {
-  const m = (item.metadataJson ?? {}) as Record<string, unknown>
-  const tg = (m.telegram ?? {}) as Record<string, unknown>
-  const tgFrom = (tg.from ?? null) as { firstName?: string; lastName?: string; username?: string } | null
-  const senders = Array.isArray(m.senders) ? (m.senders as unknown[]).filter((s) => typeof s === "string") : []
-  const from =
-    formatAddrs(m.from) ??
-    (tgFrom
-      ? [tgFrom.firstName, tgFrom.lastName].filter(Boolean).join(" ") +
-        (tgFrom.username ? ` (@${tgFrom.username})` : "")
-      : null) ??
-    (senders.length ? senders.join(", ") : null)
-  const fwd = (tg.forwardOrigin ?? tg.forward_origin ?? null) as Record<string, unknown> | null
-  return {
-    provider: item.provider,
-    kind: item.externalType,
-    date: item.sourceCreatedAt?.toISOString() ?? null,
-    subject: typeof m.subject === "string" ? m.subject : null,
-    from,
-    to: formatAddrs(m.to),
-    cc: formatAddrs(m.cc),
-    orgAttribution: item.orgAttribution,
-    originalAuthor: fwd ? JSON.stringify(fwd).slice(0, 200) : null,
-  }
-}
-
 export type GoldenWorkItem = {
   id: string
   synthetic: boolean
   text: string
   envelope: ExtractionEnvelope
+  /** Parse-time authorship (null for synthetic items) and item date — for post-processing. */
+  orgAttribution: string | null
+  date: Date | null
 }
 
 /** Text + envelope of golden items (for extraction). Items without text are left out. */
@@ -163,13 +96,21 @@ export async function loadGoldenWorkItems(orgId: string, ids: string[]): Promise
     .leftJoin(source, eq(source.id, sourceItem.sourceId))
     .where(and(eq(topicsGoldenItem.organizationId, orgId), inArray(topicsGoldenItem.id, ids)))
   const out = await mapPool(rows, 5, async (r): Promise<GoldenWorkItem | null> => {
-    const text = r.text ?? (await itemMarkdown(r))
+    const raw = r.text ?? (await itemMarkdown(r))
+    const text = raw ? messageContent(raw) : null
     if (!text?.trim()) return null
     const envelope: ExtractionEnvelope = r.synthetic
       ? { synthetic: true, date: r.createdAt.toISOString() }
-      : envelopeFromItem(r)
+      : envelopeFromItem(r, text)
     envelope.orgName = org?.name ?? null
-    return { id: r.id, synthetic: r.synthetic, text, envelope }
+    return {
+      id: r.id,
+      synthetic: r.synthetic,
+      text,
+      envelope,
+      orgAttribution: r.synthetic ? null : r.orgAttribution,
+      date: r.synthetic ? r.createdAt : (r.sourceCreatedAt ?? r.createdAt),
+    }
   })
   const byId = new Map(out.filter((x): x is GoldenWorkItem => x !== null).map((x) => [x.id, x]))
   return ids.map((id) => byId.get(id)).filter((x): x is GoldenWorkItem => !!x)

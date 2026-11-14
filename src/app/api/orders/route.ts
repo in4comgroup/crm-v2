@@ -6,7 +6,8 @@ import {
   updateOrder,
   listOrderClientOptions,
 } from "@/server/orders"
-import { orderStatus, type OrderStatus } from "@/db/schema"
+import type { OrderStatus } from "@/db/schema"
+import { ORDER_STATUSES } from "@/server/db-enums"
 
 export {
   type OrderRow,
@@ -27,7 +28,7 @@ function errorResponse(error: unknown) {
 
 const isOrderStatus = (v: unknown): v is OrderStatus =>
   typeof v === "string" &&
-  (orderStatus.enumValues as readonly string[]).includes(v)
+  (ORDER_STATUSES as readonly string[]).includes(v)
 
 // GET /api/orders?q=&status=&limit=&offset=  → { rows, total }
 // GET /api/orders?id=…                       → { order }

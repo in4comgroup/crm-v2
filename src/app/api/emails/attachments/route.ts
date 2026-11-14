@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { and, eq } from "drizzle-orm"
-import { db } from "@/db/drizzle"
-import { source, sourceItem } from "@/db/schema"
+import { findItemSourceByExternalId } from "@/server/source-items"
 import { getNylasClient } from "@/lib/nylas"
 import { getServerSession } from "@/lib/get-session"
 import { getNylasCredentials } from "@/server/providers/credentials"
@@ -43,22 +41,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const rows = await db
-      .select({
-        sourceId: source.id,
-        provider: source.provider,
-        credentialsRef: source.credentialsRef,
-      })
-      .from(sourceItem)
-      .innerJoin(source, eq(source.id, sourceItem.sourceId))
-      .where(
-        and(
-          eq(sourceItem.externalId, messageId),
-          eq(sourceItem.organizationId, activeOrgId),
-        ),
-      )
-      .limit(1)
-    const row = rows[0]
+    const row = await findItemSourceByExternalId(activeOrgId, messageId)
     if (!row) {
       return NextResponse.json(
         { error: "Attachment's source not found in this organization" },

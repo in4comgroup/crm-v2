@@ -1,9 +1,7 @@
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/blocks/app-sidebar"
 import { getServerSession } from "@/lib/get-session"
-import { db } from "@/db/drizzle"
-import { organization } from "@/db/schema"
-import { eq } from "drizzle-orm"
+import { getOrganizationLogo } from "@/server/organizations"
 import { redirect } from "next/navigation"
 import { PanelProvider } from "@/lib/chat-panel-context"
 import { GlobalChatProvider } from "@/lib/global-chat-context"
@@ -21,15 +19,7 @@ export default async function DashboardLayout({
   // session — it's a large base64 data URL and would overflow the session
   // cookie (431 Request Header Fields Too Large). See src/lib/auth.ts note.
   const orgId = session.session.activeOrganizationId
-  let orgLogo: string | null = null
-  if (orgId) {
-    const rows = await db
-      .select({ logo: organization.logo })
-      .from(organization)
-      .where(eq(organization.id, orgId))
-      .limit(1)
-    orgLogo = rows[0]?.logo ?? null
-  }
+  const orgLogo = orgId ? await getOrganizationLogo(orgId) : null
 
   return (
     <SidebarProvider

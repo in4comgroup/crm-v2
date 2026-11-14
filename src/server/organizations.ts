@@ -22,3 +22,15 @@ export async function getActiveOrganization(userId: string) {
 
   return activeOrganization
 }
+
+// The org logo for the sidebar. Loaded by (protected)/layout.tsx, never put
+// on the session: it is a large base64 data URL and would overflow the
+// session cookie (431 Request Header Fields Too Large). See src/lib/auth.ts.
+export async function getOrganizationLogo(organizationId: string): Promise<string | null> {
+  const rows = await db
+    .select({ logo: organization.logo })
+    .from(organization)
+    .where(eq(organization.id, organizationId))
+    .limit(1)
+  return rows[0]?.logo ?? null
+}

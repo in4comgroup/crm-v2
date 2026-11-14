@@ -183,7 +183,7 @@ else:
 
 Example, agency (phase 9): `PITCH_DECISION_DELAYED_BY_CLIENT` has weight 7 but an explicit profile D4. With an angry attribute (+2 → 9, band very_high, one band above high) its base profile becomes P6.
 
-Example, IN4COM: no IN4COM code that is «on» has an explicit profile that differs from its weight band. The rule works the same with an org override of the profile. Say the platform admin sets profile D4 on `PAYMENT_TERMS_REQUEST` (weight 6, band high) for IN4COM. With `ATTR_EMOTION_ANGRY` (+2 → 8, band very_high, one band above high) its base profile becomes P6.
+Example, IN4COM (generic `base` set, R22): few active codes have an explicit profile that differs from their weight band. The rule works the same with an org override of the profile. Say the platform admin sets profile D4 on `PAYMENT_TERMS_REQUEST` (weight 6, band high) for IN4COM. With `ATTR_EMOTION_ANGRY` (+2 → 8, band very_high, one band above high) its base profile becomes P6.
 
 `S0` / `S1` profiles belong to state codes. State codes never score, so they are never the lead. Their effect is in §8.
 
@@ -537,7 +537,7 @@ Explanation at Tue 15:00: «запрошено КП (вес 7); клиент н�
 
 | Item | Effect | Score | List |
 |---|---|---|---|
-| «В поставке от 05.11 бой 3 бутылки, акт приложили» | `DELIVERY_DISCREPANCY` 7, asks us | 7 | «Сейчас» (P6) |
+| «В поставке от 05.11 брак 3 единицы, акт приложили» | `DELIVERY_DISCREPANCY` 7, asks us | 7 | «Сейчас» (P6) |
 | (2 working days, no reply; effort medium) | boost O +1 | 8 | «Сейчас» (P8) |
 | «Когда замените?» | boost R +1 (total boosts 2 = cap) | 9 | «Сейчас» (P8), new cycle |
 | Mon: our reply «Замена в четверг» | `waiting_on_them`: boosts R and O end; H3 lowers P6 → D4; our deadline Thursday (owner us, 3 working days = lead days of effort medium → I3 keeps at least D4) | 7 | «Сводка» (D4) |
@@ -548,7 +548,7 @@ Explanation at Tue 15:00: «запрошено КП (вес 7); клиент н�
 
 | Item | Effect | Score | List |
 |---|---|---|---|
-| «Опять пробковое вино в партии» | `COMPLAINT_QUALITY` 7 + `ATTR_TONE_NEGATIVE` +1 | 8 | «Сейчас» (P8) |
+| «Опять брак в партии, упаковка повреждена» | `COMPLAINT_QUALITY` 7 + `ATTR_TONE_NEGATIVE` +1 | 8 | «Сейчас» (P8) |
 | «Кстати, гостям очень понравилось новое просекко» | other matter → its own topic (`FEEDBACK_QUALITY_PRAISE` 3, «Неделя»). Praise never closes the complaint. | 8 | unchanged |
 | «Подключаю нашего управляющего, вопрос надо решать» | `COMPLAINT_ESCALATED` 8 (base 8); an inbound repeat of the same family with no outbound between → R +1; two risk codes ≥ 6 from two items → C +1 | 8 + 2 = 10 | «Сейчас» (P8, band critical), new cycle |
 
@@ -558,7 +558,7 @@ Explanation at Tue 15:00: «запрошено КП (вес 7); клиент н�
 
 **E6 — trend ceiling**
 
-System-of-record check (phase 8): revenue of «Винотека» −35 % YoY → `ACCOUNT_REVENUE_DECLINE_YOY` (trend, weight 5, as in 05b) → «Сводка» by weight. An angry attribute or a boost cannot lift it: the trend ceiling keeps the score at 5. No escalation can move it to «Сейчас».
+System-of-record check (phase 8): revenue of «Альфа» −35 % YoY → `ACCOUNT_REVENUE_DECLINE_YOY` (trend, weight 5, as in 05b) → «Сводка» by weight. An angry attribute or a boost cannot lift it: the trend ceiling keeps the score at 5. No escalation can move it to «Сейчас».
 
 **E7 — partial closing**
 

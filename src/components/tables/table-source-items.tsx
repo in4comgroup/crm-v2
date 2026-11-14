@@ -25,6 +25,7 @@ import {
   Sparkles,
   Eye,
   RefreshCcw,
+  Radar,
 } from "lucide-react"
 import { toast } from "sonner"
 import { ParsedMarkdownDialog } from "@/components/blocks/parsed-markdown-dialog"
@@ -32,6 +33,11 @@ import { ProcessAllButton } from "@/components/blocks/process-controls"
 import type { ProcessRunFilters } from "@/components/blocks/use-process-run"
 import type { SourceSummary, SystemSource } from "@/server/sources"
 import { getProvider } from "@/lib/sources/providers"
+import {
+  SIGNAL_BAND_LABELS_RU,
+  SIGNAL_SKIP_REASONS,
+} from "@/lib/signals/extraction-types"
+import type { AdminSignalsExtractResponse } from "@/app/api/admin/topics/signals/route"
 
 // ── Types matching the GET /api/sources/items response ───────────────
 
@@ -258,6 +264,7 @@ export function TableSourceItems({
   onRunAll,
   periodFrom = "",
   periodTo = "",
+  canExtractSignals = false,
 }: {
   sources: SourceSummary[]
   // Bumped by the parent on sync / completed batch runs.
@@ -274,6 +281,9 @@ export function TableSourceItems({
   // across every view, and supersedes the table's own date inputs.
   periodFrom?: string
   periodTo?: string
+  // Platform admin only: per-row «Извлечь сигналы» (topics signal
+  // extraction of one root item, POST /api/admin/topics/signals).
+  canExtractSignals?: boolean
 }) {
   const [rows, setRows] = useState<SourceItemRow[]>([])
   const [total, setTotal] = useState(0)
@@ -298,7 +308,7 @@ export function TableSourceItems({
 
   // Per-row in-flight tracking.
   const [actionInFlight, setActionInFlight] = useState<
-    Record<string, "process" | "reparse" | undefined>
+    Record<string, "process" | "reparse" | "signals" | undefined>
   >({})
 
   const [showItemId, setShowItemId] = useState<string | null>(null)
@@ -367,6 +377,54 @@ export function TableSourceItems({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Неизвестная ошибка")
       setLocalBump((n) => n + 1)
+    } finally {
+      setActionInFlight((m) => {
+        const next = { ...m }
+        delete next[rowId]
+        return next
+      })
+    }
+  }
+
+  // Topics signal extraction of one root item (platform admin). The route
+  // uses the session's active org; the result shows in a toast only.
+  async function runExtractSignals(rowId: string) {
+    setActionInFlight((m) => ({ ...m, [rowId]: "signals" }))
+    try {
+      const res = await fetch("/api/admin/topics/signals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId: rowId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Ошибка извлечения сигналов")
+      const { result, item } = data as AdminSignalsExtractResponse
+      const statusLabel: Record<string, string> = {
+        done: "Готово",
+        skipped: "Пропущено",
+        deferred: "Отложено",
+        failed: "Ошибка",
+      }
+      const codes = item?.instances.filter((i) => i.counted).map((i) => i.code) ?? []
+      const reasonKey = (result.reason ?? "").split(":")[0].trim()
+      const reason =
+        result.status === "done"
+          ? null
+          : (SIGNAL_SKIP_REASONS[reasonKey as keyof typeof SIGNAL_SKIP_REASONS] ?? result.reason)
+      const text = [
+        `Сигналы: ${statusLabel[result.status] ?? result.status}`,
+        result.band
+          ? `балл ${result.score ?? 0} (${SIGNAL_BAND_LABELS_RU[result.band]})`
+          : null,
+        codes.length ? `коды: ${codes.join(", ")}` : result.status === "done" ? "без кодов" : null,
+        reason,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+      if (result.status === "failed") toast.error(text)
+      else toast.success(text)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Неизвестная ошибка")
     } finally {
       setActionInFlight((m) => {
         const next = { ...m }
@@ -639,6 +697,9 @@ export function TableSourceItems({
                         onProcess={() => runProcess(row.id)}
                         onReparse={() => runReparse(row.id)}
                         onShow={() => openShow(row)}
+                        onExtractSignals={
+                          canExtractSignals ? () => runExtractSignals(row.id) : undefined
+                        }
                       />
                     </TableCell>
                   </TableRow>
@@ -701,13 +762,16 @@ function RowActions({
   onProcess,
   onReparse,
   onShow,
+  onExtractSignals,
 }: {
   row: SourceItemRow
-  inFlight: "process" | "reparse" | undefined
+  inFlight: "process" | "reparse" | "signals" | undefined
   disabled: boolean
   onProcess: () => void
   onReparse: () => void
   onShow: () => void
+  // Set only for platform admins.
+  onExtractSignals?: () => void
 }) {
   const isRoot = row.parentSourceItemId === null
   const ps = row.parseStatus
@@ -715,6 +779,7 @@ function RowActions({
   const canReparse =
     isRoot && getProvider(row.sourceProvider).capabilities.hasRawBytesPersisted
   const canShow = ps === "complete"
+  const canExtractSignals = !!onExtractSignals && isRoot && ps === "complete"
   // Needs work = not yet parsed, OR parsed-but-unshipped.
   const needsWork =
     ps === "pending" ||
@@ -773,6 +838,23 @@ function RowActions({
             <Loader className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <RefreshCcw className="h-3.5 w-3.5" />
+          )}
+        </Button>
+      )}
+      {canExtractSignals && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0"
+          disabled={disabled || inFlight === "signals"}
+          onClick={onExtractSignals}
+          title="Извлечь сигналы (только для администратора платформы)"
+          aria-label="Извлечь сигналы"
+        >
+          {inFlight === "signals" ? (
+            <Loader className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Radar className="h-3.5 w-3.5" />
           )}
         </Button>
       )}

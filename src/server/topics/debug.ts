@@ -2,10 +2,14 @@ import "server-only"
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { client, contact, signalInstance, source, sourceItem, topic, topicEvent, topicItem, user } from "@/db/schema"
+import { card, client, contact, signalInstance, source, sourceItem, topic, topicEvent, topicItem, user } from "@/db/schema"
+import type { TopicAttention } from "@/lib/topics/attention-types"
+import type { TopicCardEvent } from "@/lib/topics/cards"
 import { isTopicStatus, TOPIC_STATUSES, type TopicStatus } from "@/lib/topics/types"
 import { getRegistry } from "@/server/signals/registry"
 import { envelopeFromItem } from "./signals/item-input"
+import { effectiveCardStatus } from "./cards/logic"
+import { attentionOf, metaOf } from "./cards/store"
 
 // Read models of the admin debug block «Темы (отладка)» (plan phase 3 task
 // 8): topic list with counts per status, one topic with items, signal
@@ -39,6 +43,44 @@ export type TopicDebugRow = {
   closedReason: string | null
   mergedIntoTopicId: string | null
   relatedTopicId: string | null
+  /** Attention (phase 4): list, final profile, score after boosts. */
+  list: string
+  displayProfile: string | null
+  attentionScore: number | null
+  /** Effective status of the newest `topic` card (null = no card). */
+  cardStatus: string | null
+}
+
+/** One `topic` card of a topic (phase 4, spec §9.1), newest first. */
+export type TopicDebugCard = {
+  id: string
+  status: string | null
+  headline: string
+  whyNow: string
+  whatChanged: string
+  sinceLast: string | null
+  steps: string[]
+  taskTitle: string | null
+  decision: string | null
+  cycle: string | null
+  force: string | null
+  category: string
+  priority: string
+  score: number | null
+  band: string | null
+  displayProfile: string | null
+  signalClass: string | null
+  leadCode: string | null
+  expiresAt: string | null
+  events: TopicCardEvent[]
+  orderRequest: string | null
+  rejectReasonCode: string | null
+  rejectionReason: string | null
+  decidedAt: string | null
+  resultTaskId: string | null
+  resultOrderId: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export type TopicDebugList = {
@@ -96,6 +138,9 @@ export type TopicDebugDetail = {
   items: TopicDebugItem[]
   instances: TopicDebugInstance[]
   events: TopicDebugEvent[]
+  /** `topic.attention` (null until the attention phase ran). */
+  attention: TopicAttention | null
+  cards: TopicDebugCard[]
 }
 
 export type ItemTopicLink = { topicId: string; title: string; status: string; role: string; band: string; score: number }
@@ -114,6 +159,10 @@ const rowSelect = {
   contactName: contact.name,
   contactStatus: contact.status,
   itemCount: sql<number>`(select count(*)::int from topic_item ti where ti.topic_id = "topic"."id")`,
+  card: sql<{ status: string | null; expiresAt: string | null } | null>`(
+    select json_build_object('status', c.status, 'expiresAt', c.expires_at)
+    from card c where c.topic_id = "topic"."id" and c.kind = 'topic'
+    order by c.created_at desc limit 1)`,
 }
 
 type RowResult = {
@@ -123,6 +172,7 @@ type RowResult = {
   contactName: string | null
   contactStatus: string | null
   itemCount: number
+  card: { status: string | null; expiresAt: string | null } | null
 }
 
 function toRow(r: RowResult, labels: Map<string, string>): TopicDebugRow {
@@ -153,6 +203,45 @@ function toRow(r: RowResult, labels: Map<string, string>): TopicDebugRow {
     closedReason: t.closedReason,
     mergedIntoTopicId: t.mergedIntoTopicId,
     relatedTopicId: t.relatedTopicId,
+    list: t.list,
+    displayProfile: t.displayProfile,
+    attentionScore: attentionOf(t.attention)?.score ?? null,
+    cardStatus: r.card ? effectiveCardStatus(r.card.status, r.card.expiresAt, new Date()) : null,
+  }
+}
+
+function toDebugCard(c: typeof card.$inferSelect, now: Date): TopicDebugCard {
+  const m = metaOf(c)
+  const msg = (c.message ?? {}) as { orderRequest?: unknown; taskTitle?: unknown }
+  return {
+    id: c.id,
+    status: effectiveCardStatus(c.status, c.expiresAt, now),
+    headline: m?.headline ?? "",
+    whyNow: m?.whyNow ?? "",
+    whatChanged: m?.whatChanged ?? "",
+    sinceLast: c.sinceLast,
+    steps: m?.steps ?? [],
+    taskTitle: typeof msg.taskTitle === "string" ? msg.taskTitle : null,
+    decision: m?.decision ?? null,
+    cycle: m?.cycle ?? null,
+    force: m?.force?.reason ?? null,
+    category: c.category,
+    priority: c.priority,
+    score: c.score,
+    band: c.band,
+    displayProfile: c.displayProfile,
+    signalClass: c.signalClass,
+    leadCode: c.leadCode,
+    expiresAt: iso(c.expiresAt),
+    events: Array.isArray(c.events) ? (c.events as TopicCardEvent[]) : [],
+    orderRequest: typeof msg.orderRequest === "string" ? msg.orderRequest : null,
+    rejectReasonCode: c.rejectReasonCode,
+    rejectionReason: c.rejectionReason,
+    decidedAt: iso(c.decidedAt),
+    resultTaskId: c.resultTaskId,
+    resultOrderId: c.resultOrderId,
+    createdAt: c.createdAt.toISOString(),
+    updatedAt: c.updatedAt.toISOString(),
   }
 }
 
@@ -201,7 +290,7 @@ export async function getTopicDebugDetail(orgId: string, topicId: string): Promi
     .leftJoin(contact, eq(contact.id, topic.contactId))
     .where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId)))
   if (!head) return null
-  const [items, instances, events, labels] = await Promise.all([
+  const [items, instances, events, labels, cards] = await Promise.all([
     db
       .select({
         sourceItemId: topicItem.sourceItemId,
@@ -234,7 +323,13 @@ export async function getTopicDebugDetail(orgId: string, topicId: string): Promi
       .where(and(eq(topicEvent.organizationId, orgId), eq(topicEvent.topicId, topicId)))
       .orderBy(asc(topicEvent.createdAt)),
     codeLabels(),
+    db
+      .select()
+      .from(card)
+      .where(and(eq(card.organizationId, orgId), eq(card.topicId, topicId), eq(card.kind, "topic")))
+      .orderBy(desc(card.createdAt)),
   ])
+  const now = new Date()
   const t = head.t
   return {
     topic: {
@@ -285,6 +380,8 @@ export async function getTopicDebugDetail(orgId: string, topicId: string): Promi
       payload: e.payload,
       createdAt: e.createdAt.toISOString(),
     })),
+    attention: attentionOf(t.attention),
+    cards: cards.map((c) => toDebugCard(c, now)),
   }
 }
 

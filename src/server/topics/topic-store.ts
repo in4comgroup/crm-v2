@@ -466,12 +466,17 @@ function topicValues(t: TopicSnapshot) {
   }
 }
 
-/** Insert (new) or update one topic row from its snapshot (exported for integrations). */
+/**
+ * Insert (new) or update one topic row from its snapshot (exported for integrations).
+ * Every write marks the topic due for the attention engine (phase 4, 06 §10):
+ * `next_attention_check_at` = now → the «attention» phase recomputes it.
+ */
 export function topicUpsertOp(orgId: string, t: TopicSnapshot) {
-  if (t.isNew) return db.insert(topic).values({ id: t.id, organizationId: orgId, ...topicValues(t) })
+  const due = { nextAttentionCheckAt: new Date() }
+  if (t.isNew) return db.insert(topic).values({ id: t.id, organizationId: orgId, ...topicValues(t), ...due })
   return db
     .update(topic)
-    .set({ ...topicValues(t), updatedAt: new Date() })
+    .set({ ...topicValues(t), ...due, updatedAt: new Date() })
     .where(and(eq(topic.organizationId, orgId), eq(topic.id, t.id)))
 }
 
@@ -612,7 +617,7 @@ export async function sweepTopicTimers(orgId: string, now: Date, actorUserId: st
     ops.push(
       db
         .update(topic)
-        .set({ status: next, subState: "none", updatedAt: now })
+        .set({ status: next, subState: "none", nextAttentionCheckAt: now, updatedAt: now })
         .where(and(eq(topic.organizationId, orgId), eq(topic.id, r.id))),
     )
     events.push({ topicId: r.id, type: next as TopicEventDraft["type"], sourceItemId: null, payload: { from: r.status } })
@@ -678,7 +683,7 @@ export async function relinkUnresolvedTopics(
     ops.push(
       db
         .update(topic)
-        .set({ clientId: res.clientId, contactId: res.contactId, title, updatedAt: new Date() })
+        .set({ clientId: res.clientId, contactId: res.contactId, title, nextAttentionCheckAt: new Date(), updatedAt: new Date() })
         .where(and(eq(topic.organizationId, orgId), eq(topic.id, r.id))),
     )
     events.push({
@@ -694,6 +699,20 @@ export async function relinkUnresolvedTopics(
 }
 
 // ── User / admin actions (no UI yet; the caller checks the session) ───────
+
+/**
+ * Attention follows every user action at once (06 §10). Lazy import: the
+ * attention store imports this module. Never fails the action — a failed
+ * recompute leaves the topic due for the next hourly run.
+ */
+async function refreshAttention(orgId: string, topicIds: string[]): Promise<void> {
+  try {
+    const { recomputeTopicsAttention } = await import("./attention/store")
+    await recomputeTopicsAttention(orgId, topicIds)
+  } catch (e) {
+    console.error("[topics/attention] recompute after action failed", topicIds, e)
+  }
+}
 
 export class TopicNotFoundError extends Error {
   constructor(public topicId: string) {
@@ -738,6 +757,7 @@ export async function markTopicDone(orgId: string, topicId: string, userId: stri
     actor: "user",
     userId,
   })
+  await refreshAttention(orgId, [topicId])
   return t
 }
 
@@ -754,6 +774,7 @@ export async function dismissTopic(orgId: string, topicId: string, userId: strin
     actor: "user",
     userId,
   })
+  await refreshAttention(orgId, [topicId])
   return t
 }
 
@@ -822,6 +843,7 @@ export async function mergeTopics(
       db.insert(topicEvent).values(eventRows(orgId, [...events, ...srcEvents], actor)),
     ]),
   )
+  await refreshAttention(orgId, [dst.id, src.id])
   return dst
 }
 
@@ -881,7 +903,9 @@ export async function detachItemFromTopic(
 ): Promise<DetachOutcome> {
   const t = await requireTopic(orgId, topicId)
   if (!t.items.some((l) => l.itemId === sourceItemId)) throw new TopicActionError("Сообщение не относится к теме")
-  return detachFromTopic(orgId, t, sourceItemId, await actionContext(orgId), { actor: "user", userId }, "user")
+  const r = await detachFromTopic(orgId, t, sourceItemId, await actionContext(orgId), { actor: "user", userId }, "user")
+  if (!r.deleted) await refreshAttention(orgId, [r.topicId])
+  return r
 }
 
 /**
@@ -909,14 +933,17 @@ export async function detachSourceItemFromTopics(
     .where(and(eq(signalInstance.organizationId, orgId), eq(signalInstance.sourceItemId, sourceItemId)))
   const ids = [...new Set([...links.map((l) => l.topicId), ...extra.map((e) => e.topicId).filter((x): x is string => !!x)])]
   let deleted = 0
+  const kept: string[] = []
   if (ids.length) {
     const ctx = await actionContext(orgId)
     const rows = await db.select().from(topic).where(and(eq(topic.organizationId, orgId), inArray(topic.id, ids)))
     for (const t of await hydrateTopics(rows)) {
       const r = await detachFromTopic(orgId, t, sourceItemId, ctx, { actor: "agent", userId: opts.actorUserId ?? null }, opts.reason ?? "reparse")
       if (r.deleted) deleted++
+      else kept.push(r.topicId)
     }
   }
+  if (kept.length) await refreshAttention(orgId, kept)
   await db
     .update(sourceItem)
     .set({ topicStatus: null, topicReason: null, topicScannedAt: null, topicAttempts: 0 })

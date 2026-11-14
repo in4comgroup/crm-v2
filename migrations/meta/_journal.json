@@ -134,6 +134,20 @@
       "when": 1794648962030,
       "tag": "0018_topics_phase3",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794651102413,
+      "tag": "0019_topics_phase4_attention_cards",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794652081407,
+      "tag": "0020_work_calendar_ru_2026_2027",
+      "breakpoints": true
     }
   ]
 }

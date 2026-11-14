@@ -11,6 +11,7 @@ import {
 } from "@/db/schema"
 import { and, count, desc, eq, gt, inArray } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
+import { userCardFilter } from "@/server/topics/cards/visibility"
 
 async function requireOrgContext() {
   const session = await getServerSession()
@@ -79,6 +80,8 @@ export async function listNotifications() {
   const { activeOrgId, session } = await requireOrgContext()
   const userId = session.user.id
   const since = await resolveSince(activeOrgId, userId)
+  // Topic (engine) cards only when the org's topics mode is `on`.
+  const cardVisible = await userCardFilter(activeOrgId)
 
   const [clients, contacts, deals, cards, unreadCounts] = await Promise.all([
     db
@@ -117,7 +120,7 @@ export async function listNotifications() {
         createdAt: card.createdAt,
       })
       .from(card)
-      .where(eq(card.organizationId, activeOrgId))
+      .where(and(eq(card.organizationId, activeOrgId), cardVisible))
       .orderBy(desc(card.createdAt))
       .limit(PER_TYPE_CAP),
     Promise.all([
@@ -142,7 +145,7 @@ export async function listNotifications() {
       db
         .select({ n: count() })
         .from(card)
-        .where(and(eq(card.organizationId, activeOrgId), gt(card.createdAt, since))),
+        .where(and(eq(card.organizationId, activeOrgId), cardVisible, gt(card.createdAt, since))),
     ]),
   ])
 

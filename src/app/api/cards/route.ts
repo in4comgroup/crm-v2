@@ -24,7 +24,9 @@ function errorResponse(error: unknown) {
       ? 403
       : message.endsWith("not found")
         ? 404
-        : 400
+        : message === "Card is no longer open"
+          ? 409
+          : 400
   return NextResponse.json({ error: message }, { status })
 }
 
@@ -89,6 +91,7 @@ export async function PUT(request: NextRequest) {
       id,
       action,
       rejectionReason,
+      rejectReasonCode,
       resultTaskId,
       resultOrderId,
       priority,
@@ -111,13 +114,18 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: true })
     }
     if (action === "reject") {
-      if (!rejectionReason || typeof rejectionReason !== "string") {
+      // Old cards: free-text `rejectionReason` (required). Topic cards
+      // (card.kind set): `rejectReasonCode` from CARD_REJECT_REASONS
+      // (required) + optional `rejectionReason` text — rejectCard checks.
+      const text = typeof rejectionReason === "string" ? rejectionReason : ""
+      const code = typeof rejectReasonCode === "string" ? rejectReasonCode : null
+      if (!text.trim() && !code) {
         return NextResponse.json(
-          { error: "rejectionReason is required" },
+          { error: "rejectionReason or rejectReasonCode is required" },
           { status: 400 },
         )
       }
-      await rejectCard(id, rejectionReason)
+      await rejectCard(id, text, { reasonCode: code })
       return NextResponse.json({ success: true })
     }
     await updateCard(id, {

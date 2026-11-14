@@ -19,6 +19,7 @@ import {
   extractWebsiteDomain,
   isFreemailDomain,
 } from "@/lib/email-domain"
+import { userCardFilter } from "@/server/topics/cards/visibility"
 
 // «Последняя активность» по компании — замена прокси `client.updatedAt` /
 // `deal.updatedAt` в бейджах «N дн без активности/контакта» (звонок 26.10:
@@ -58,6 +59,8 @@ export async function loadClientLastActivity(
 
   // Время сообщения, из которого сделана карточка (или самой карточки).
   const cardAt = sql<string>`max(coalesce(${sourceItem.sourceCreatedAt}, ${card.createdAt}))`
+  // Topic (engine) cards count only when the org's topics mode is `on`.
+  const cardVisible = await userCardFilter(organizationId)
 
   const [direct, viaContact, tasks, deals, orders, contacts] =
     await Promise.all([
@@ -69,6 +72,7 @@ export async function loadClientLastActivity(
         .where(
           and(
             eq(card.organizationId, organizationId),
+            cardVisible,
             inArray(cardClient.clientId, ids),
           ),
         )
@@ -82,6 +86,7 @@ export async function loadClientLastActivity(
         .where(
           and(
             eq(card.organizationId, organizationId),
+            cardVisible,
             inArray(contact.clientId, ids),
           ),
         )

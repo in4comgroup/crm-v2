@@ -1,6 +1,6 @@
 # Topics — development plan (final)
 
-Status: **final, 2026-11-13. Progress: phases 0–3 built (not deployed); phase 4 next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
+Status: **final, 2026-11-13. Progress: phases 0–4 built (not deployed); phase 5 next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
 Spec: [01-specification.md](01-specification.md) · Decisions: [02-open-questions.md](02-open-questions.md) (§ F = R1–R23) · Registry: [05-signals-registry.md](05-signals-registry.md) · Attention: [06-attention-engine.md](06-attention-engine.md)
 
 The plan of 2026-11-10 assumed another copy of the product (Yandex models, own PostgreSQL, K8s CronJob, `llm_usage`). It is replaced by this document. Its business content (phases, scope, gates) is kept.
@@ -33,13 +33,13 @@ The plan of 2026-11-10 assumed another copy of the product (Yandex models, own P
 | Deal discovery | Process `deals.discovery` (name match); since phase 0 it journals every stage move (`deal_activity`) | Replaced in phase 5, removed in phase 12 |
 | Mock agent | Removed in phase 0 (R9) | — |
 | Orchestration | Daily cron `0 3 * * *` → `runDailyPipeline` (model catalog sync + cost check, sync → parse → upload), `pipeline_run`; **hourly** cron `0 * * * *` → `runTopicsPipeline` (phase «signals» built in phase 2; the others are stubs), `topics_run` | Phases 3–5a fill the stubs |
-| DB process | Drizzle migrations `0000`–`0018` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics), reference data in migrations | Next topics migration: **0019** |
+| DB process | Drizzle migrations `0000`–`0020` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027), reference data in migrations | Next topics migration: **0021** |
 | Topics foundations (phase 0) | `org_setting` (`topics.enabled`, budget override), system actor «Агент», «Темы» tab (modes, runs, golden set, model spike) | Used by every later phase |
 | Signals registry (phase 1) | DB registry (one generic pack; 158 codes after `0017`: 144 `active`, 8 `parked`, 6 `gated`, no retired codes; attributes, relations, 9 risk types, rule templates), `getEffectiveSignals(orgId)`, «Сигналы» tab with the full editor, Markdown export (preset mechanism kept, no presets defined — R22) | Extraction prompt reads it |
 | Signal extraction (phase 2) | `src/server/topics/signals/` (gates, extraction, post-processing, storage, hourly runner, manual action), `signal_instance`, `source_item_subject`, `source_item.signal_*`, `analysis_exclusion` (owner UI on Sources), `src/lib/ru-mail/`, eval runner with stored metrics, signal review on «Темы» | Input of topic resolution (phase 3): counted instances + subjects per item |
 | Access | Sign-in gate `src/proxy.ts`; routes check the session; `"use server"` modules are session-bound | Engine code is `server-only` and takes `organizationId` explicitly |
 
-Missing today: attention engine, card kinds, deal types, deal state / risks, production calendar. (Thread keys, topics and the hourly intake are built — phase 3.)
+Missing today: deal types, deal bridge, deal state / risks, the user UI (lists «Сейчас / Сводка / Неделя», topic drawer — phase 6). (Thread keys, topics, the hourly intake, attention, the production calendar and topic cards are built — phases 3–4.)
 
 ## Overview
 
@@ -49,8 +49,8 @@ Missing today: attention engine, card kinds, deal types, deal state / risks, pro
 | 1 | Signals registry | 3 | DB registry (all parameters, one pack — R21), seed v1 by migration, «Сигналы» tab with **full editor**, per-org activation / overrides, Markdown export | Admin only | ✅ built |
 | 2 | Signal extraction | 2.5 | Gates, `topics.signal_extraction`, scoring, storage, exclusions, forwarded mail, eval runner | No (shadow) | ✅ built |
 | 3 | Topic engine | 3 | `thread_key`, topics, resolver + `topics.topic_match`, lifecycle, journal, teardown / reparse, debug page | No (shadow) | ✅ built |
-| 4 | Attention and cards | 2 | Attention engine (06, A1–A8), production calendar, card per topic with kinds, `topics.card_writer` | No (shadow) | next |
-| 5 | Deal bridge | 2 | Deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение» | No (shadow) |  |
+| 4 | Attention and cards | 2 | Attention engine (06, A1–A8), production calendar, card per topic with kinds, `topics.card_writer` | No (shadow) | ✅ built |
+| 5 | Deal bridge | 2 | Deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение» | No (shadow) | next |
 | 5a | Deal state and risks | 1.5 | `deals.state_summary`, risk engine, «Есть риски» | No (shadow) |  |
 | 6 | UI and pilot | 2 | «Сейчас / Сводка / Неделя», topic drawer, company / deal tabs, «Создать заказ» on order topics, IN4COM switch-on | **Yes (IN4COM)** |  |
 | **MVP** | | **≈ 17.5** | | |  |
@@ -212,6 +212,21 @@ Exit: grouping precision ≥ 0.9 / recall ≥ 0.8; all spec §2.1 examples pass 
 
 ## Phase 4 — Attention and cards (2 weeks)
 
+**Status 2026-11-14 — built, not deployed.** Migrations `0019_topics_phase4_attention_cards` (topic attention columns, card topic columns, `work_calendar_day`) and `0020_work_calendar_ru_2026_2027` (custom: official production calendar 2026 — decree № 1466 of 24.09.2025, and 2027 — decree № 1187 of 17.09.2026; exceptions to Mon–Fri only, other years fall back to Mon–Fri). `pnpm test`: 217 tests + 1 todo (06 §16 test 12 = evening reminders, phase 7).
+
+| Task | State |
+|---|---|
+| 1 Attention engine | Done: `src/server/topics/attention/engine.ts` (pure, steps A–L of 06: boosts R / O / C, trend cap, band + class, profiles G, state adjustments H incl. dampeners, escalations I1–I4 (I5 = deal risks, input empty until 5a), lists J, rank K, cycles + card expiry in working days L, next check, Russian explanation); 06 §16 tests 1–11, 13–20 and §14 examples E1–E9 as unit tests; working days / hours over `work_calendar_day` + org time zone; params = code defaults + `attention.params` override (org → platform). Store: `topic.display_profile`, `list`, `attention`, `next_attention_check_at`, cycle fields, `attention_changed` events; recompute after every topic change (attach, close, user action, detach). Phase «attention»: due topics (`next_attention_check_at ≤ now`, new topics, changed params), 500 / org / run. Read-time check `readTopicList` for the UI |
+| 2 Migration | Done (`0019`): card `topic_id`, `kind`, `status`, engine snapshot (score, band, profile, class, lead code, taxonomy version), `expires_at`, `events`, reject code, decided by / at, `deal_id`, `proposal`; one open card per topic and kind (partial unique index); old `accepted` written in parallel |
+| 3 Card writer | Done: `topics.card_writer` (NEW / UPDATE / NOOP with the copied id; Russian text trimmed to the §9.1 limits by code; roles, not names; the LLM never sees score / band / profile); runs only on first placement, a new display cycle or a forced rewrite; ≤ 40 calls / org / run |
+| 4 Card lifecycle | Done: one open `topic` card per topic; closed when the topic is resolved / done / dismissed / merged / expired or loses its placement; `expired` after `expires_at`; accept → task, reject → reason code (8 codes) + text; `ORDER_REQUESTED` cards = `new_order` with the verbatim text («Создать заказ»); `forceTopicCardUpdate` for R17 (phase 5a). Topic cards are hidden from every user list (feed, search, notifications) unless the org mode is `on`. Debug block shows list, profile, attention explanation, the card and its history; action «Переписать карточку» |
+
+Live check (IN4COM, one full hourly run in `shadow`, then back to `off`): intake 0 new; signals 1 item → 3 counted instances; topics: 2 new topics from one mail («maslov.agency — правки к договору», «… — запрос коммерческих условий»), 2 matcher calls; attention: both in «Сейчас» (P8 / P6, score 7); cards: 2 written, e.g. «maslov.agency — подготовить ответ по правкам, чтобы согласовать договор»; 0 topic cards visible to users. The 2 topics and cards stay in the DB for the review.
+
+**Open:** exit gate = shadow cards reviewed with IN4COM on 2 weeks of real data, duplicate rate < 5 %. Interpretations to confirm in the review: a dampener ends at 08:00 of the promised date + 1 working day; in step G the explicit profile shift counts profile levels (very_high and critical are both P8); a date-only deadline means 18:00 org time.
+
+Not in phase 4 (later): evening reminders, P6 daily limit, delivery (phase 7); the user lists «Сейчас / Сводка / Неделя», topic drawer and the card actions «Готово» / «Отложить до…» (phase 6); I5 deal risks (phase 5a).
+
 1. Attention engine (pure functions + the 06 §16 tests): bands → profiles, boosts A1, attributes on the dominant instance A2, relevance windows A3, `waiting_on_them` A4, `dampens` A5, expiry A6, reminder cap A7, deadline escalation (also on list read, R3), Russian production calendar (yearly table seeded by migration).
 2. Migration: card columns `topic_id`, `kind` (`topic` / `deal_proposal` / `stage_confirmation`), `status` enum, score snapshot (A8), one open card per topic; the old `accepted` boolean written in parallel (expand / contract).
 3. **`topics.card_writer`:** Russian card text, NEW / UPDATE / NOOP with the copied card id; the LLM never sees the score; compact view ≤ 3 events.
@@ -259,20 +274,20 @@ Exit (go-live sign-off): Q23 targets met for 2 consecutive weeks.
 
 Out of this plan (separate tasks): functional roles and rights (Q33); Telegram group chats, voice notes and files (Q11, Q32).
 
-## Next steps (2026-11-14, after phase 3)
+## Next steps (2026-11-14, after phase 4)
 
-Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0018` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
+Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0020` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
 
-Current state: phases 0–3 built, not deployed. Hourly run per org in `shadow` / `on`: intake (sync → parse → upload, thread keys) → signals → topics; attention / cards / deals are stubs. IN4COM: `base` pack on, topics mode `off`; 3 test topics from the live checks.
+Current state: phases 0–4 built, not deployed. Hourly run per org in `shadow` / `on`: intake → signals → topics → attention → cards; deals / deal state are stubs. Users see nothing new yet (the lists UI is phase 6). IN4COM: `base` pack on, topics mode `off`; test topics and 2 hidden test cards from the live checks.
 
 | # | Step | Who | Blocks |
 |---|---|---|---|
-| 1 | Review and commit phases 0–3 (incl. migrations `0016`–`0018`, runbook 07) | Product owner | — |
-| 2 | IN4COM reviewers: fill the golden set on «Темы» (codes **and** topic groups), review the generic signal texts; then run an eval (signals gate + cost per item) | IN4COM + platform admin | Phase 2 and phase 3 exit gates |
-| 3 | Optional on the test DB: switch IN4COM to `shadow` for some days, so the hourly runs (when the app is deployed or run by «Запустить сейчас») collect real signals and topics for the review in «Темы (отладка)» | Platform admin | Shadow review |
-| 4 | **Phase 4 — attention and cards** (attention engine 06, production calendar, card per topic with kinds, `topics.card_writer`) | Development | Can start now |
+| 1 | Review and commit phases 0–4 (incl. migrations `0016`–`0020`) | Product owner | — |
+| 2 | IN4COM reviewers: golden set (codes and topic groups), signal texts, then an eval | IN4COM + platform admin | Exit gates of phases 2–3 |
+| 3 | Shadow review of topics and cards in «Темы (отладка)» on real data (IN4COM in `shadow`) | IN4COM + platform admin | Exit gate of phase 4 |
+| 4 | **Phase 5 — deal bridge** (deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение») | Development | Can start now |
 
-Note: 15 of the codes made `active` by R23 are process codes (watchdogs, CRM-data trends such as `SALES_OFFER_NO_RESPONSE`, `SIGNAL_SPEND_DOWN`). They are not in the prompt and nothing emits them until phase 8 builds their process.
+Note: 15 of the codes made `active` by R23 are process codes (watchdogs, CRM-data trends). Nothing emits them until phase 8.
 
 ## Risks
 

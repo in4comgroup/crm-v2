@@ -5,6 +5,7 @@ import { desc, eq } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "@/db/drizzle"
 import { platformSetting, platformSettingLog, user } from "@/db/schema"
+import { attentionParamsOverrideSchema, type AttentionParamsOverride } from "@/lib/topics/attention-params"
 
 // Platform-wide settings (table `platform_setting`). Every key is declared
 // here with a zod schema and a default; a missing row means the default.
@@ -32,6 +33,13 @@ export const PLATFORM_SETTINGS = {
   "ai.policy.allowed_vendors": {
     schema: z.array(z.string().min(1)).max(100),
     default: [] as string[],
+  },
+  // Topics attention engine parameters (docs/specs/topics/06 §13): a PARTIAL
+  // override of the code defaults in src/lib/topics/attention-params.ts
+  // (null = defaults). Per-org override: org_setting `attention.params`.
+  "attention.params": {
+    schema: attentionParamsOverrideSchema.nullable(),
+    default: null as AttentionParamsOverride | null,
   },
 } as const
 

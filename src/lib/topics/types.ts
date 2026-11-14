@@ -68,6 +68,8 @@ export const TOPIC_EVENT_TYPES = [
   "merged_into",
   "merged_from",
   "relinked",
+  // Attention engine (phase 4): the list changed (payload { from, to, reason }).
+  "attention_changed",
 ] as const
 export type TopicEventType = (typeof TOPIC_EVENT_TYPES)[number]
 

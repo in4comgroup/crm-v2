@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils"
 import TaskEditDialog from "@/components/forms/form-task-edit"
 import { SourceMessageDialog } from "@/components/blocks/source-message-dialog"
 import type { CardRow } from "@/app/api/cards/route"
+import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
 import type {
   CardCategory,
   CardPriority,
@@ -235,6 +236,10 @@ export function DashboardCard({
 }) {
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState("")
+  // Topic cards (card.kind set) need a reason CODE; the text is optional.
+  const isTopicCard = !!card.kind
+  const [rejectCode, setRejectCode] = useState("")
+  const rejectReady = isTopicCard ? !!rejectCode : !!rejectReason.trim()
   const [sourceOpen, setSourceOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
 
@@ -298,7 +303,7 @@ export function DashboardCard({
   }
 
   const handleReject = () => {
-    if (!rejectReason.trim()) {
+    if (!rejectReady) {
       toast.error("Укажите причину отклонения")
       return
     }
@@ -311,6 +316,7 @@ export function DashboardCard({
             id: card.id,
             action: "reject",
             rejectionReason: rejectReason.trim(),
+            ...(isTopicCard ? { rejectReasonCode: rejectCode } : {}),
           }),
         })
         if (!res.ok) {
@@ -321,6 +327,7 @@ export function DashboardCard({
         toast.success("Карточка отклонена")
         setRejectOpen(false)
         setRejectReason("")
+        setRejectCode("")
         onChanged()
       } catch {
         toast.error("Не удалось отклонить карточку")
@@ -718,10 +725,17 @@ export function DashboardCard({
                     чтобы команда видела, почему её отклонили.
                   </DialogDescription>
                 </DialogHeader>
+                {isTopicCard && (
+                  <CardRejectReasonSelect value={rejectCode} onChange={setRejectCode} disabled={isPending} />
+                )}
                 <Textarea
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
-                  placeholder="Почему вы отклоняете эту карточку?"
+                  placeholder={
+                    isTopicCard
+                      ? "Комментарий (необязательно)"
+                      : "Почему вы отклоняете эту карточку?"
+                  }
                   rows={4}
                   autoFocus
                 />
@@ -735,7 +749,7 @@ export function DashboardCard({
                   </Button>
                   <Button
                     onClick={handleReject}
-                    disabled={isPending || !rejectReason.trim()}
+                    disabled={isPending || !rejectReady}
                   >
                     Отклонить карточку
                   </Button>

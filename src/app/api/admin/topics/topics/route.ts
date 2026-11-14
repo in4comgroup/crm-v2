@@ -9,6 +9,8 @@ import {
   type TopicDebugList,
 } from "@/server/topics/debug"
 import { runTopicResolutionForItem, type ResolveItemOutcome } from "@/server/topics/resolve-phase"
+import { AiBudgetExceededError } from "@/server/ai/budget"
+import { rewriteTopicCard, TopicCardError, type TopicCardResult } from "@/server/topics/cards/phase"
 import {
   detachItemFromTopic,
   dismissTopic,
@@ -19,6 +21,7 @@ import {
 } from "@/server/topics/topic-store"
 
 export type {
+  TopicDebugCard,
   TopicDebugDetail,
   TopicDebugEvent,
   TopicDebugInstance,
@@ -36,19 +39,26 @@ export type {
 //       item of THAT org (any org, unlike /api/sources/items/[id]/markdown,
 //       which reads the admin's active org only)
 //   POST { organizationId, topicId, action, targetTopicId?, sourceItemId?, note? }
-//       action: done | dismiss | merge | detachItem | resolveItem
-//       → { detail, outcome? }  detail = the topic after the action (null when
-//         it was deleted); outcome = resolver result for resolveItem.
-//       400 TopicActionError / bad input, 404 TopicNotFoundError.
+//       action: done | dismiss | merge | detachItem | resolveItem | rewriteCard
+//       → { detail, outcome?, card? }  detail = the topic after the action
+//         (null when it was deleted); outcome = resolver result for
+//         resolveItem; card = card engine result for rewriteCard («Переписать
+//         карточку»: one `topics.card_writer` call now, any org mode).
+//       400 TopicActionError / TopicCardError / bad input, 404
+//       TopicNotFoundError, 409 AI budget exceeded.
 
 export const maxDuration = 60
 
-const ACTIONS = ["done", "dismiss", "merge", "detachItem", "resolveItem"] as const
+const ACTIONS = ["done", "dismiss", "merge", "detachItem", "resolveItem", "rewriteCard"] as const
 type Action = (typeof ACTIONS)[number]
 
 export type AdminTopicsListResponse = TopicDebugList
 export type AdminTopicDetailResponse = { detail: TopicDebugDetail }
-export type AdminTopicActionResponse = { detail: TopicDebugDetail | null; outcome?: ResolveItemOutcome }
+export type AdminTopicActionResponse = {
+  detail: TopicDebugDetail | null
+  outcome?: ResolveItemOutcome
+  card?: TopicCardResult
+}
 
 async function requireAdmin() {
   const session = await getServerSession()
@@ -114,6 +124,7 @@ export async function POST(request: NextRequest) {
   const userId = auth.userId
   try {
     let outcome: ResolveItemOutcome | undefined
+    let cardResult: TopicCardResult | undefined
     switch (action) {
       case "done":
         await markTopicDone(orgId, topicId, userId, note)
@@ -139,15 +150,25 @@ export async function POST(request: NextRequest) {
         outcome = await runTopicResolutionForItem(orgId, itemId, { actorUserId: userId })
         break
       }
+      case "rewriteCard":
+        cardResult = await rewriteTopicCard(orgId, topicId)
+        break
     }
     const detail = topicId ? await getTopicDebugDetail(orgId, topicId) : null
-    const res: AdminTopicActionResponse = { detail, ...(outcome ? { outcome } : {}) }
+    const res: AdminTopicActionResponse = {
+      detail,
+      ...(outcome ? { outcome } : {}),
+      ...(cardResult ? { card: cardResult } : {}),
+    }
     return NextResponse.json(res)
   } catch (error) {
     if (error instanceof TopicNotFoundError) {
       return NextResponse.json({ error: error.message }, { status: 404 })
     }
-    if (error instanceof TopicActionError) {
+    if (error instanceof AiBudgetExceededError) {
+      return NextResponse.json({ error: "Дневной бюджет ИИ организации исчерпан" }, { status: 409 })
+    }
+    if (error instanceof TopicActionError || error instanceof TopicCardError) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
     console.error("[admin/topics/topics] POST error:", error)

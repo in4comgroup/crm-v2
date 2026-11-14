@@ -13,6 +13,7 @@ import {
   type SQL,
 } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
+import { userCardFilter } from "@/server/topics/cards/visibility"
 
 async function requireOrgContext() {
   const session = await getServerSession()
@@ -273,7 +274,12 @@ export async function searchAcrossEntities(
       })
       .from(card)
       .where(
-        and(eq(card.organizationId, activeOrgId), matches(cardMessageNorm)),
+        and(
+          eq(card.organizationId, activeOrgId),
+          // Topic (engine) cards only when the org's topics mode is `on`.
+          await userCardFilter(activeOrgId),
+          matches(cardMessageNorm),
+        ),
       )
       .orderBy(desc(relevance([cardMessageNorm])), desc(card.createdAt))
       .limit(HITS_PER_ENTITY),

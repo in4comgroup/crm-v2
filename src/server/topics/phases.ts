@@ -67,16 +67,18 @@ async function runTopics(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
   return runTopicsPhase(ctx)
 }
 
-// TODO(phase 4): attention lists — recompute who must act on which topic
-// (deterministic; deadline escalation is evaluated on read, spec §8.1).
-async function runAttention(): Promise<TopicsPhaseResult> {
-  return NOT_BUILT
+// Phase 4: attention lists — src/server/topics/attention/phase.ts
+// (deterministic, 06-attention-engine.md; contract src/lib/topics/attention-types.ts).
+async function runAttention(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runAttentionPhase } = await import("@/server/topics/attention/phase")
+  return runAttentionPhase(ctx)
 }
 
-// TODO(phase 4): topic cards — write / refresh cards for topics that need a
-// decision (AI process `topics.card_writer`); hidden from users in shadow.
-async function runCards(): Promise<TopicsPhaseResult> {
-  return NOT_BUILT
+// Phase 4: topic cards — src/server/topics/cards/phase.ts (AI process
+// `topics.card_writer`); stored in shadow too, hidden from users.
+async function runCards(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runCardsPhase } = await import("@/server/topics/cards/phase")
+  return runCardsPhase(ctx)
 }
 
 // TODO(phase 5): deal bridge — link topics to deals, propose / apply stage

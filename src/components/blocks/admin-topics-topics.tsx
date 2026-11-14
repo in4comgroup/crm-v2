@@ -5,11 +5,13 @@
 // /settings. Org select → counts per status → status filter → topics table.
 // A row opens a dialog: topic facts, items (open markdown, detach, resolve
 // again), signal instances with evidence, the event journal, and the
-// actions «Готово» / «Не относится» / «Объединить с…».
+// actions «Готово» / «Не относится» / «Объединить с…»; phase 4: the
+// attention result (list, profile, score, «Почему в этом списке») and the
+// topic card (open card + history) with «Переписать карточку».
 // API: /api/admin/topics/topics. Users never see this.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { ChevronLeft, ChevronRight, FileText, Loader, RefreshCw, RotateCcw, Unlink } from "lucide-react"
+import { ChevronLeft, ChevronRight, FileText, Loader, PenLine, RefreshCw, RotateCcw, Unlink } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -47,11 +49,20 @@ import {
   TOPIC_SUB_STATE_LABELS_RU,
   type TopicStatus,
 } from "@/lib/topics/types"
+import { TOPIC_LIST_LABELS_RU, type TopicList } from "@/lib/topics/attention-types"
+import {
+  CARD_EVENT_GROUP_LABELS_RU,
+  CARD_REJECT_REASON_LABELS_RU,
+  CARD_STATUS_LABELS_RU,
+  type CardRejectReason,
+  type CardStatus,
+} from "@/lib/topics/cards"
 import type { AdminTopicsOrgsResponse } from "@/app/api/admin/topics/route"
 import type {
   AdminTopicActionResponse,
   AdminTopicDetailResponse,
   AdminTopicsListResponse,
+  TopicDebugCard,
   TopicDebugDetail,
   TopicDebugRow,
 } from "@/app/api/admin/topics/topics/route"
@@ -100,6 +111,90 @@ const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "—"
 
 const statusLabel = (s: string) => TOPIC_STATUS_LABELS_RU[s as TopicStatus] ?? s
+const listLabel = (l: string) => TOPIC_LIST_LABELS_RU[l as TopicList] ?? l
+const cardStatusLabel = (s: string | null) => (s ? (CARD_STATUS_LABELS_RU[s as CardStatus] ?? s) : "—")
+
+const CARD_STATUS_CLASS: Partial<Record<CardStatus, string>> = {
+  open: "border-emerald-300 text-emerald-700 dark:text-emerald-400",
+  accepted: "border-sky-300 text-sky-700 dark:text-sky-400",
+  rejected: "border-red-300 text-red-700 dark:text-red-400",
+}
+
+const CARD_OUTCOME_LABEL: Record<string, string> = {
+  created: "Карточка создана",
+  updated: "Карточка обновлена (UPDATE)",
+  superseded: "Создана новая карточка (NEW), старая заменена",
+  noop: "Писатель вернул NOOP — текст не изменился",
+  invalid: "Писатель вернул пустой текст — карточка не изменена",
+  unchanged: "Без изменений",
+  closed: "Карточка закрыта",
+  kept: "Карточка оставлена",
+  skipped: "Пропущено",
+}
+
+function CardStatusBadge({ status }: { status: string | null }) {
+  if (!status) return <span className="text-xs text-muted-foreground">нет</span>
+  return (
+    <Badge variant="outline" className={`w-fit font-normal ${CARD_STATUS_CLASS[status as CardStatus] ?? "text-muted-foreground"}`}>
+      {cardStatusLabel(status)}
+    </Badge>
+  )
+}
+
+/** One topic card: text as the user sees it + engine fields. */
+function TopicCardView({ c, compact = false }: { c: TopicDebugCard; compact?: boolean }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <CardStatusBadge status={c.status} />
+        {c.decision && <Badge variant="secondary" className="font-normal">{c.decision}</Badge>}
+        <span className="text-xs text-muted-foreground">
+          {fmtDate(c.createdAt)} · обновлена {fmtDate(c.updatedAt)}
+          {c.expiresAt && ` · истекает ${fmtDate(c.expiresAt)}`}
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">{c.id}</span>
+      </div>
+      <div className="font-medium">{c.headline || "(без заголовка)"}</div>
+      {!compact && (
+        <>
+          <div><span className="text-muted-foreground">Почему сейчас: </span>{c.whyNow || "—"}</div>
+          <div><span className="text-muted-foreground">Что изменилось: </span>{c.sinceLast || c.whatChanged || "—"}</div>
+          {c.steps.length > 0 && (
+            <ol className="list-decimal pl-5">
+              {c.steps.map((s, i) => <li key={i}>{s}</li>)}
+            </ol>
+          )}
+          {c.taskTitle && <div className="text-xs text-muted-foreground">Задача: {c.taskTitle}</div>}
+          {c.events.length > 0 && (
+            <ul className="flex flex-col gap-0.5 text-xs">
+              {c.events.map((e, i) => (
+                <li key={i}>
+                  <span className="text-muted-foreground">{CARD_EVENT_GROUP_LABELS_RU[e.group] ?? e.group} · {fmtDate(e.at)} · </span>
+                  {e.labelRu}{e.evidence && <span className="italic text-muted-foreground"> «{e.evidence}»</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {c.orderRequest && (
+            <div className="whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-xs">
+              <span className="text-muted-foreground">Запрос для «Создать заказ»: </span>{c.orderRequest}
+            </div>
+          )}
+          <div className="text-xs text-muted-foreground">
+            Снимок: {c.score ?? "—"} · {c.band ?? "—"} · {c.displayProfile ?? "—"} · {c.signalClass ? (CLASS_LABEL[c.signalClass] ?? c.signalClass) : "—"} · {c.leadCode ?? "—"} · категория {c.category} · приоритет {c.priority}
+            {c.force && ` · ожидает обновления: ${c.force}`}
+          </div>
+        </>
+      )}
+      {(c.rejectReasonCode || c.rejectionReason) && (
+        <div className="text-xs text-red-700 dark:text-red-400">
+          Отклонена: {c.rejectReasonCode ? (CARD_REJECT_REASON_LABELS_RU[c.rejectReasonCode as CardRejectReason] ?? c.rejectReasonCode) : ""}
+          {c.rejectionReason && ` — ${c.rejectionReason}`}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function BandBadge({ band, score }: { band: string; score: number }) {
   const b = band as SignalBand
@@ -277,6 +372,8 @@ export function AdminTopicsTopics() {
               <TableHead>Семейство / код</TableHead>
               <TableHead>Балл</TableHead>
               <TableHead>Статус</TableHead>
+              <TableHead>Список</TableHead>
+              <TableHead>Карточка</TableHead>
               <TableHead className="text-right">Сообщ.</TableHead>
               <TableHead>Активность</TableHead>
             </TableRow>
@@ -284,13 +381,13 @@ export function AdminTopicsTopics() {
           <TableBody>
             {error ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-red-500">
+                <TableCell colSpan={9} className="py-10 text-center text-red-500">
                   Не удалось загрузить: {error}
                 </TableCell>
               </TableRow>
             ) : !list ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center">
+                <TableCell colSpan={9} className="py-10 text-center">
                   {orgId ? (
                     <Loader className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
                   ) : (
@@ -300,7 +397,7 @@ export function AdminTopicsTopics() {
               </TableRow>
             ) : list.rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                   Нет тем по фильтру.
                 </TableCell>
               </TableRow>
@@ -327,6 +424,17 @@ export function AdminTopicsTopics() {
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={r.status} subState={r.subState} />
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    <div>{listLabel(r.list)}</div>
+                    {(r.displayProfile || r.attentionScore !== null) && (
+                      <div className="text-muted-foreground">
+                        {r.displayProfile ?? "—"} · {r.attentionScore ?? "—"}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <CardStatusBadge status={r.cardStatus} />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{r.itemCount}</TableCell>
                   <TableCell className="whitespace-nowrap text-xs">{fmtDate(r.lastActivityAt)}</TableCell>
@@ -411,7 +519,7 @@ function TopicDetailDialog({
   }, [orgId, topicId])
 
   const act = async (
-    action: "done" | "dismiss" | "merge" | "detachItem" | "resolveItem",
+    action: "done" | "dismiss" | "merge" | "detachItem" | "resolveItem" | "rewriteCard",
     extra: { targetTopicId?: string; sourceItemId?: string } = {},
   ) => {
     if (!topicId) return
@@ -425,8 +533,9 @@ function TopicDetailDialog({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
-      const { detail: next, outcome } = data as AdminTopicActionResponse
+      const { detail: next, outcome, card } = data as AdminTopicActionResponse
       if (outcome) toast.success(topicOutcomeText(outcome))
+      else if (card) toast.success(CARD_OUTCOME_LABEL[card.outcome] ?? card.outcome)
       else toast.success("Готово")
       onChanged()
       if (!next) {
@@ -550,6 +659,90 @@ function TopicDetailDialog({
                   </Button>
                 </div>
               </div>
+
+              <section className="flex flex-col gap-1">
+                <h3 className="font-medium">Внимание</h3>
+                {!detail.attention ? (
+                  <div className="text-xs text-muted-foreground">Ещё не рассчитано (фаза «attention» не запускалась для темы).</div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-1 rounded-lg border p-3 md:grid-cols-2">
+                    <KV k="Список">
+                      {listLabel(detail.attention.list)}
+                      {detail.attention.hiddenReason && (
+                        <span className="text-muted-foreground"> · скрыта: {detail.attention.hiddenReason}</span>
+                      )}
+                    </KV>
+                    <KV k="Профиль">
+                      {detail.attention.profile ?? "—"}
+                      {detail.attention.baseProfile !== detail.attention.profile && (
+                        <span className="text-muted-foreground"> (базовый {detail.attention.baseProfile ?? "—"})</span>
+                      )}
+                    </KV>
+                    <KV k="Балл внимания">
+                      <BandBadge band={detail.attention.band} score={detail.attention.score} />
+                      {detail.attention.boosts.length > 0 && (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {detail.attention.boosts.map((b) => `${b.code}+${b.points}`).join(", ")}
+                        </span>
+                      )}
+                    </KV>
+                    <KV k="Срок">
+                      {detail.attention.deadline ?? "—"}
+                      {detail.attention.overdue && <span className="text-red-600"> · просрочен</span>}
+                      {detail.attention.escalations.length > 0 && (
+                        <span className="text-muted-foreground"> · {detail.attention.escalations.join(", ")}</span>
+                      )}
+                    </KV>
+                    <KV k="Цикл">
+                      {fmtDate(detail.attention.cycleStartedAt)}
+                      {detail.attention.cycleReason && <span className="text-muted-foreground"> · {detail.attention.cycleReason}</span>}
+                    </KV>
+                    <KV k="Карточка до">{fmtDate(detail.attention.cardExpiresAt)}</KV>
+                    {detail.attention.explanation.length > 0 && (
+                      <div className="md:col-span-2">
+                        <div className="text-muted-foreground">Почему в этом списке:</div>
+                        <ul className="list-disc pl-5">
+                          {detail.attention.explanation.map((l, i) => <li key={i}>{l}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+
+              <section className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium">Карточка ({detail.cards.length})</h3>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="ml-auto"
+                    disabled={busy !== null}
+                    onClick={() => void act("rewriteCard")}
+                  >
+                    {busy === "rewriteCard:" ? <Loader className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}
+                    Переписать карточку
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  «Переписать карточку» вызывает писатель карточек один раз (ИИ), в любом режиме организации. Пользователи видят карточки тем только в режиме «вкл.».
+                </p>
+                {detail.cards.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">Карточки нет.</div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <TopicCardView c={detail.cards[0]} />
+                    {detail.cards.length > 1 && (
+                      <>
+                        <div className="text-xs text-muted-foreground">История</div>
+                        {detail.cards.slice(1).map((c) => (
+                          <TopicCardView key={c.id} c={c} compact />
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </section>
 
               <section className="flex flex-col gap-1">
                 <h3 className="font-medium">Сообщения ({detail.items.length})</h3>

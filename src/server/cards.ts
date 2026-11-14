@@ -18,6 +18,14 @@ import {
 } from "@/db/schema"
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm"
 import {
+  CARD_REJECT_REASON_LABELS_RU,
+  isCardRejectReason,
+  type TopicCardEvent,
+  type TopicCardMeta,
+} from "@/lib/topics/cards"
+import { effectiveCardStatus } from "@/server/topics/cards/logic"
+import { userCardFilter } from "@/server/topics/cards/visibility"
+import {
   domainMatches,
   extractEmailDomain,
   extractWebsiteDomain,
@@ -39,6 +47,10 @@ export type CardMessage = {
   // operator clicks "Принять". Absent on cards generated before this field
   // existed — the UI falls back to the category label.
   taskTitle?: string
+  // Only on topic cards (card.kind = topic): the structured card text +
+  // engine metadata (src/lib/topics/cards.ts). analysis / recommendation
+  // carry the same text in the old shape.
+  topicCard?: TopicCardMeta
 }
 
 export type CardClientRef = { id: string; name: string }
@@ -78,8 +90,38 @@ export type CardRow = {
   // привязывает card_client далеко не всегда, поэтому резолвится цепочкой
   // (см. resolveCardCompanies); null — компанию определить не удалось.
   company: CardClientRef | null
+  // Topic-card columns (topics plan phase 4, spec topics/01 §9.1). All null
+  // on old Custom-rule cards. `status` is the EFFECTIVE status (an open card
+  // past expires_at reads as expired).
+  topicId: string | null
+  kind: string | null
+  status: string | null
+  band: string | null
+  displayProfile: string | null
+  leadCode: string | null
+  sinceLast: string | null
+  expiresAt: string | null
+  events: TopicCardEvent[] | null
+  rejectReasonCode: string | null
+  decidedAt: string | null
   createdAt: string
   updatedAt: string
+}
+
+function topicCardFields(c: typeof card.$inferSelect, now: Date) {
+  return {
+    topicId: c.topicId,
+    kind: c.kind,
+    status: effectiveCardStatus(c.status, c.expiresAt, now),
+    band: c.band,
+    displayProfile: c.displayProfile,
+    leadCode: c.leadCode,
+    sinceLast: c.sinceLast,
+    expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
+    events: Array.isArray(c.events) ? (c.events as TopicCardEvent[]) : null,
+    rejectReasonCode: c.rejectReasonCode,
+    decidedAt: c.decidedAt ? c.decidedAt.toISOString() : null,
+  }
 }
 
 // Raw join columns describing a card's source item (see sourceSummary).
@@ -275,6 +317,9 @@ function normaliseMessage(raw: unknown): CardMessage {
     ...(typeof obj.taskTitle === "string" && obj.taskTitle.trim().length > 0
       ? { taskTitle: obj.taskTitle.trim() }
       : {}),
+    ...(obj.topicCard && typeof obj.topicCard === "object"
+      ? { topicCard: obj.topicCard as TopicCardMeta }
+      : {}),
   }
 }
 
@@ -398,10 +443,12 @@ export async function listCards(): Promise<CardRow[]> {
     .leftJoin(rule, eq(card.ruleId, rule.id))
     .leftJoin(sourceItem, eq(card.sourceItemId, sourceItem.id))
     .leftJoin(source, eq(sourceItem.sourceId, source.id))
-    .where(eq(card.organizationId, activeOrgId))
+    // Engine (topic) cards only when the org's topics mode is `on`.
+    .where(and(eq(card.organizationId, activeOrgId), await userCardFilter(activeOrgId)))
     .orderBy(desc(card.createdAt))
 
   if (cardRows.length === 0) return []
+  const now = new Date()
 
   const cardIds = cardRows.map((r) => r.card.id)
 
@@ -486,6 +533,7 @@ export async function listCards(): Promise<CardRow[]> {
     users: usersByCard.get(r.card.id) ?? [],
     contacts: contactsByCard.get(r.card.id) ?? [],
     company: companies.get(r.card.id) ?? null,
+    ...topicCardFields(r.card, now),
     createdAt: r.card.createdAt.toISOString(),
     updatedAt: r.card.updatedAt.toISOString(),
   }))
@@ -503,7 +551,7 @@ export async function getCard(cardId: string): Promise<CardRow | null> {
     .leftJoin(rule, eq(card.ruleId, rule.id))
     .leftJoin(sourceItem, eq(card.sourceItemId, sourceItem.id))
     .leftJoin(source, eq(sourceItem.sourceId, source.id))
-    .where(eq(card.id, cardId))
+    .where(and(eq(card.id, cardId), eq(card.organizationId, activeOrgId), await userCardFilter(activeOrgId)))
     .limit(1)
   const row = rows[0]
   if (!row) return null
@@ -583,6 +631,7 @@ export async function getCard(cardId: string): Promise<CardRow | null> {
     })),
     contacts,
     company,
+    ...topicCardFields(row.card, new Date()),
     createdAt: row.card.createdAt.toISOString(),
     updatedAt: row.card.updatedAt.toISOString(),
   }
@@ -714,12 +763,26 @@ export async function updateCard(
   }
 }
 
+// Topic cards (card.kind not null): only an OPEN, not expired card can be
+// decided; the decision writes `status` + `decided_*` and the old
+// `accepted` / `rejection_reason` columns in parallel (expand phase).
+function assertTopicCardOpen(current: typeof card.$inferSelect) {
+  const status = effectiveCardStatus(current.status, current.expiresAt, new Date())
+  if (status !== "open") throw new Error("Card is no longer open")
+}
+
 export async function acceptCard(
   cardId: string,
   opts?: { resultTaskId?: string; resultOrderId?: string },
 ) {
-  const { activeOrgId } = await requireOrgContext()
-  await assertCardInOrg(cardId, activeOrgId)
+  const { session, activeOrgId } = await requireOrgContext()
+  const current = await assertCardInOrg(cardId, activeOrgId)
+  const isTopicCard = current.kind !== null
+  if (isTopicCard) {
+    // Shadow / off: users must not act on cards they cannot see.
+    if (!(await userCardVisible(activeOrgId, current))) throw new Error("Card not found")
+    assertTopicCardOpen(current)
+  }
   await db
     .update(card)
     .set({
@@ -727,19 +790,64 @@ export async function acceptCard(
       rejectionReason: null,
       ...(opts?.resultTaskId ? { resultTaskId: opts.resultTaskId } : {}),
       ...(opts?.resultOrderId ? { resultOrderId: opts.resultOrderId } : {}),
+      ...(isTopicCard
+        ? {
+            status: "accepted",
+            rejectReasonCode: null,
+            decidedAt: new Date(),
+            decidedByUserId: session.user.id,
+          }
+        : {}),
     })
     .where(eq(card.id, cardId))
 }
 
-export async function rejectCard(cardId: string, reason: string) {
-  const { activeOrgId } = await requireOrgContext()
-  await assertCardInOrg(cardId, activeOrgId)
+/**
+ * Reject a card. Old cards: free-text reason (required). Topic cards: a
+ * reason CODE from CARD_REJECT_REASONS (required) + optional text; the text
+ * column falls back to the code's Russian label so the old UI still reads
+ * the card as rejected.
+ */
+export async function rejectCard(
+  cardId: string,
+  reason: string | null | undefined,
+  opts?: { reasonCode?: string | null },
+) {
+  const { session, activeOrgId } = await requireOrgContext()
+  const current = await assertCardInOrg(cardId, activeOrgId)
   const trimmed = reason?.trim() ?? ""
-  if (!trimmed) throw new Error("Rejection reason is required")
+  if (current.kind === null) {
+    if (!trimmed) throw new Error("Rejection reason is required")
+    await db
+      .update(card)
+      .set({ accepted: false, rejectionReason: trimmed })
+      .where(eq(card.id, cardId))
+    return
+  }
+  if (!(await userCardVisible(activeOrgId, current))) throw new Error("Card not found")
+  assertTopicCardOpen(current)
+  const code = opts?.reasonCode
+  if (!isCardRejectReason(code)) throw new Error("Rejection reason code is required")
   await db
     .update(card)
-    .set({ accepted: false, rejectionReason: trimmed })
+    .set({
+      accepted: false,
+      rejectionReason: trimmed || CARD_REJECT_REASON_LABELS_RU[code],
+      rejectReasonCode: code,
+      status: "rejected",
+      decidedAt: new Date(),
+      decidedByUserId: session.user.id,
+    })
     .where(eq(card.id, cardId))
+}
+
+async function userCardVisible(orgId: string, current: typeof card.$inferSelect) {
+  const rows = await db
+    .select({ id: card.id })
+    .from(card)
+    .where(and(eq(card.id, current.id), await userCardFilter(orgId)))
+    .limit(1)
+  return rows.length > 0
 }
 
 export async function deleteCard(cardId: string) {

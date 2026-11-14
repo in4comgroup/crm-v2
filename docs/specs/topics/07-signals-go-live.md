@@ -1,6 +1,6 @@
 # Topics — signals automation: go-live runbook
 
-Status: **draft, 2026-11-14.** Covers what is built: phases 0–3 (foundations, signals registry, signal extraction, hourly intake, topic engine). Extend it when phases 4–6 add attention, cards and deal automation.
+Status: **draft, 2026-11-14.** Covers what is built: phases 0–4 (foundations, signals registry, signal extraction, hourly intake, topic engine, attention, topic cards). Extend it when phases 5–6 add deal automation and the user UI.
 
 Purpose: one step-by-step list of what to switch on / off and what to check, so the whole signals flow works in a **new environment** (the first production deployment). Today there is only one environment and one DB (the DB in `.env`, a test DB). Some parts cannot be tested there (§3), so they must be checked at the switch-on.
 
@@ -22,7 +22,9 @@ Related: spec [01-specification.md](01-specification.md) (§5 extraction, §13 o
 | 4d | Post-processing: drops (unknown code, evidence not in the author's own text, inbound-only / internal-only, date gates), outranks / merges, score and band | `postprocess.ts` | — |
 | 4e | Store: `signal_instance`, `source_item_subject`, `source_item.signal_*` (status `done` / `skipped` / `deferred` / `failed`) | `extract-item.ts` | — |
 | 5 | **Topics phase**: items with `signal_status = done`, same window, oldest first, one at a time, 200 / org / run → counterparty → hard reference key → candidates → AI matcher `topics.topic_match` → attach / new topic; closing, reopen, dormant / expired sweep; re-link of unresolved topics | `src/server/topics/resolve-phase.ts`, `resolver.ts`, `topic-store.ts` | Same hourly run, after «signals» |
-| 6 | Attention, cards, deals, deal state | `phases.ts` | **Not built** (stubs, phases 4–5a). Users see nothing from the engine yet, also in mode `on` |
+| 6 | **Attention phase**: due topics (`next_attention_check_at ≤ now`, new, changed params) → profile, list («Сейчас / Сводка / Неделя»), escalations, cycle, card expiry (working days from `work_calendar_day`) | `src/server/topics/attention/` | Same hourly run, after «topics»; also right after every topic change |
+| 7 | **Cards phase**: one open topic card per placed topic; AI `topics.card_writer` only on first placement / new cycle (≤ 40 / org / run); close / expire with the topic | `src/server/topics/cards/` | Same hourly run, after «attention». Cards are **hidden from users unless the org mode is `on`** |
+| 8 | Deals, deal state | `phases.ts` | **Not built** (stubs, phases 5–5a). The user lists UI is phase 6: in mode `on` topic cards appear in the existing dashboard card feed |
 
 **Latency:** every message of an org in `shadow` / `on` gets signals in ≤ 1 hour (sync, parse and signals run in the same hourly run). The «intake» phase is skipped while a daily pipeline run is in progress (no double parse); the next hour catches up. Code: `src/server/topics/intake.ts`.
 
@@ -76,6 +78,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | T9 | «Темы» → set the org to **`shadow`**. Then «Запустить сейчас» once (do not wait for :00) | «Запуски»: a row with status `success`, the org listed; phase «Загрузка и разбор» with `syncFailed = 0`; phase «signals» with `eligible > 0`, `done + skipped > 0`, `failed = 0` |
 | T10 | Wait for 2–3 hourly runs | «Запуски» shows one row per hour; `eligible` goes down to the new-item rate; no row stays `running` > 120 min |
 | T11 | «Сигналы сообщений» on «Темы»: open 10 items with signals and 10 skipped items | Evidence quotes are real text of the author; skip reasons make sense (automated, out-of-office, blocklist …) |
+| T11b | «Темы (отладка)»: open 10 topics in «Сейчас» / «Сводка» | The «Внимание» section explains the list in plain Russian; card text follows §9.1 (headline «Компания — действие, цель», ≤ 3 steps, roles not names, no invented dates); no topic card is visible on the dashboard while the org is `shadow` |
 | T11a | «Темы (отладка)» on «Темы»: phase «topics» in «Запуски» has `failed = 0`; open 10 topics | One business question per topic (§2.1); reminders joined to their request; two invoices = two topics; counterparty linked to the right client / contact; titles «Компания — вопрос» |
 | T12 | «Использование ИИ»: filter process «Извлечение сигналов» | Cost per item and per day as expected (§6 M3); no budget block for the org |
 
@@ -96,6 +99,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | # | Check | Where | Normal |
 |---|---|---|---|
 | M1 | Hourly runs | «Темы» → «Запуски» | One `success` row per hour; per-org phase «signals» without errors |
+| M1b | Cards | «Темы (отладка)» card column; «Использование ИИ» process «Текст карточки темы» | Writer calls only on new cycles; duplicate cards per topic < 5 % (exit gate of phase 4) |
 | M1a | Topics | «Темы (отладка)» counts per status | New topics per day in line with the counted signals; few `context`-only attaches; no growth of unresolved counterparties |
 | M2 | Item status mix | «Темы» → «Сигналы сообщений» (stats) | Most items `done` or `skipped`; `failed` near 0; `deferred` only on budget days |
 | M3 | Cost | «Использование ИИ» (process «Извлечение сигналов») | ≈ 1–3 cents per item with the 123-code prompt (re-measure in B3) |

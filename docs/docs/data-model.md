@@ -148,6 +148,17 @@ validated in `src/lib/topics/types.ts`; written only by `src/server/topics/`):
 | `topic_event` | Append-only topic journal | `topic_id` (**cascade**), `type` (created, item_attached, item_detached, reopened, resolved, dormant, expired, archived, done, dismissed, merged_into, merged_from, relinked), `actor` (agent / user), `user_id`, `source_item_id` (**set null**), `payload` (jsonb: role, codes, how it was matched) |
 | `source_item` (new columns) | Topic-resolution progress per root item | `topic_status` (done / log_only / ignored / deferred / failed), `topic_reason`, `topic_scanned_at`, `topic_attempts` |
 
+Topics phase 4 — attention engine (migration `0019_topics_phase4_attention_cards`
+for the columns, `0020_work_calendar_ru_2026_2027` for the calendar seed; spec
+`docs/specs/topics/06-attention-engine.md`; written only by
+`src/server/topics/attention/`):
+
+| Table / columns | Purpose | Key columns |
+| --- | --- | --- |
+| `topic` (attention columns) | Result of the attention engine per topic | `attention` (jsonb `TopicAttention`, `src/lib/topics/attention-types.ts`: score after boosts, band, class, lead, boosts, profiles, list, escalations I1–I5, deadline, rank + `rankKey`, cycle, card expiry, next check, Russian explanation, engine memory), `display_profile` (P8 / P6 / D4 / W1 / null), `list` (now / digest / week / none; indexed with the org), `next_attention_check_at` (when the hourly run must recompute; phase 3 writes set it to now; indexed with the org), `cycle_started_at`, `cycle_reason`, `cycle_reminders` (phase 7), `waiting_since`, `snoozed_at`, `owner_user_id` (assignee; deal owner by default, **set null**) |
+| `topic_event` (new type) | Journal of list changes | `type = attention_changed`, `payload` { from, to, reason, escalations, score, profile } |
+| `work_calendar_day` | Russian production calendar (platform reference data, one custom migration per year) | PK (`region` = RU, `day`), `is_working`, `is_short` (pre-holiday, −1 h), `note`. Only exceptions of Mon–Fri are stored; a year with no rows = plain Mon–Fri. Seeded: 2026, 2027 |
+
 ## 8. Admin and audit
 
 | Table | Purpose | Key columns |

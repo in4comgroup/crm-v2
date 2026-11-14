@@ -5,6 +5,7 @@ import { and, desc, eq } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "@/db/drizzle"
 import { orgSetting, orgSettingLog, user } from "@/db/schema"
+import { attentionParamsOverrideSchema, type AttentionParamsOverride } from "@/lib/topics/attention-params"
 
 // Per-organization settings (table `org_setting`), the per-org twin of
 // src/server/platform-settings.ts. Every key is declared here with a zod
@@ -24,6 +25,12 @@ export const ORG_SETTINGS = {
   "ai.budget.daily_usd": {
     schema: z.number().min(0).max(100_000).nullable(),
     default: null as number | null,
+  },
+  // Per-org override of the attention engine parameters (06 §13): partial,
+  // on top of platform_setting `attention.params` (null = no override).
+  "attention.params": {
+    schema: attentionParamsOverrideSchema.nullable(),
+    default: null as AttentionParamsOverride | null,
   },
 } as const
 

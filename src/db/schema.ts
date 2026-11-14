@@ -13,6 +13,7 @@ import {
   pgEnum,
   primaryKey,
   foreignKey,
+  date,
   AnyPgColumn,
 } from "drizzle-orm/pg-core"
 import type { ClientCustomFields } from "@/lib/client-custom-fields"
@@ -908,6 +909,34 @@ export const card = pgTable(
     resultOrderId: text("result_order_id").references(() => order.id, {
       onDelete: "set null",
     }),
+    // ── Topic cards (topics plan phase 4, spec topics/01 §9.1). All null on
+    // old Custom-rule cards (R10). Value lists are text validated in code
+    // (src/lib/topics/cards.ts): kind topic | deal_proposal |
+    // stage_confirmation; status open | accepted | rejected | superseded |
+    // expired | closed. The old `accepted` boolean is written in parallel
+    // (expand phase). Engine fields (score … taxonomy_version) are a
+    // snapshot taken when the card is written (06 A8), never by the LLM.
+    topicId: text("topic_id").references((): AnyPgColumn => topic.id, { onDelete: "set null" }),
+    kind: text("kind"),
+    status: text("status"),
+    score: integer("score"),
+    band: text("band"),
+    displayProfile: text("display_profile"),
+    signalClass: text("signal_class"),
+    leadCode: text("lead_code"),
+    // «Что изменилось» of the last UPDATE (≤ 16 words, Russian).
+    sinceLast: text("since_last"),
+    taxonomyVersion: integer("taxonomy_version"),
+    // Card expiry moment (06 §7.3; working days from deadline / cycle start).
+    expiresAt: timestamp("expires_at"),
+    // Compact event view (≤ 3 events, spec §9.1 Q24-12) — written by the engine.
+    events: jsonb("events"),
+    rejectReasonCode: text("reject_reason_code"),
+    decidedAt: timestamp("decided_at"),
+    decidedByUserId: text("decided_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    // deal_proposal / stage_confirmation (phase 5): the deal and the proposal.
+    dealId: text("deal_id").references((): AnyPgColumn => deal.id, { onDelete: "set null" }),
+    proposal: jsonb("proposal"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -923,6 +952,12 @@ export const card = pgTable(
     index("card_ruleId_idx").on(table.ruleId),
     index("card_resultTaskId_idx").on(table.resultTaskId),
     index("card_resultOrderId_idx").on(table.resultOrderId),
+    index("card_topic_idx").on(table.topicId),
+    index("card_org_status_idx").on(table.organizationId, table.status),
+    // At most one OPEN card per topic and kind (spec §9.1).
+    uniqueIndex("card_topic_kind_open_uq")
+      .on(table.topicId, table.kind)
+      .where(sql`${table.status} = 'open' AND ${table.topicId} IS NOT NULL`),
   ],
 )
 
@@ -3037,6 +3072,28 @@ export const topic = pgTable(
     }),
     snoozedUntil: timestamp("snoozed_until"),
     taxonomyVersion: integer("taxonomy_version"),
+    // ── Attention (topics plan phase 4, 06-attention-engine.md). Text value
+    // lists validated in code (src/lib/topics/attention-types.ts).
+    // Display profile after steps G–I: P8 | P6 | D4 | W1 | S0 | null.
+    displayProfile: text("display_profile"),
+    // List after step J: now («Сейчас») | digest («Сводка») | week («Неделя»)
+    // | none (only «Все темы»).
+    list: text("list").notNull().default("none"),
+    // Full result of computeAttention: score after boosts, rank, deadline,
+    // escalations, explanation lines («Почему в этом списке», 06 §11).
+    attention: jsonb("attention"),
+    // When the hourly run must recompute this topic (06 §10).
+    nextAttentionCheckAt: timestamp("next_attention_check_at"),
+    // Display cycle (06 §7.1).
+    cycleStartedAt: timestamp("cycle_started_at"),
+    cycleReminders: integer("cycle_reminders").notNull().default(0),
+    cycleReason: text("cycle_reason"),
+    // Since when the topic waits on us (boost O, 06 §4.4).
+    waitingSince: timestamp("waiting_since"),
+    snoozedAt: timestamp("snoozed_at"),
+    // Assignee for the «Мои» filter (06 §7.2): deal owner, else client's
+    // responsible user, else none.
+    ownerUserId: text("owner_user_id").references(() => user.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -3045,6 +3102,8 @@ export const topic = pgTable(
   },
   (table) => [
     index("topic_org_status_idx").on(table.organizationId, table.status),
+    index("topic_org_list_idx").on(table.organizationId, table.list),
+    index("topic_org_next_check_idx").on(table.organizationId, table.nextAttentionCheckAt),
     index("topic_org_client_idx").on(table.organizationId, table.clientId),
     index("topic_org_contact_idx").on(table.organizationId, table.contactId),
     index("topic_org_last_activity_idx").on(table.organizationId, table.lastActivityAt),
@@ -3181,3 +3240,20 @@ export const schema = {
   cardUser,
   cardContact,
 }
+
+// Russian production calendar (spec topics/01 §8, 06 §2): one row per
+// calendar day that differs from the plain Mon–Fri rule OR every day of a
+// seeded year (seed = platform reference data, one custom migration per
+// year). Read by the attention engine for working days / hours.
+// `is_short` = pre-holiday day shortened by one hour.
+export const workCalendarDay = pgTable(
+  "work_calendar_day",
+  {
+    region: text("region").notNull().default("RU"),
+    day: date("day", { mode: "string" }).notNull(),
+    isWorking: boolean("is_working").notNull(),
+    isShort: boolean("is_short").notNull().default(false),
+    note: text("note"),
+  },
+  (table) => [primaryKey({ columns: [table.region, table.day] })],
+)

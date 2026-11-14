@@ -103,6 +103,8 @@ export type ResolveItemOutcome = {
   matcherCalls: number
   budgetExceeded?: boolean
   error?: string
+  /** Topics written for this item (attention recompute, phase 4). */
+  touchedTopicIds?: string[]
 }
 
 /** Resolve ONE item against the org's topics and store the result. */
@@ -141,7 +143,16 @@ export async function resolveAndStoreItem(batch: TopicBatchContext, itemId: stri
       else attached++
     }
   }
-  return { ...base, status: res.status, created, attached, context, logOnly, matcherCalls: res.matcherCalls }
+  return {
+    ...base,
+    status: res.status,
+    created,
+    attached,
+    context,
+    logOnly,
+    matcherCalls: res.matcherCalls,
+    touchedTopicIds: [...res.touched],
+  }
 }
 
 export async function runTopicsPhase(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
@@ -221,5 +232,16 @@ export async function runTopicResolutionForItem(
   // Re-running replaces the item's earlier result (idempotent).
   await detachSourceItemFromTopics(orgId, itemId, { actorUserId: opts.actorUserId ?? null, reason: "rerun" })
   const batch = await loadTopicBatchContext(orgId, opts)
-  return resolveAndStoreItem(batch, itemId)
+  const out = await resolveAndStoreItem(batch, itemId)
+  // Attention follows at once for the manual action (the hourly run picks
+  // the topics up through `next_attention_check_at` anyway).
+  if (out.touchedTopicIds?.length) {
+    try {
+      const { recomputeTopicsAttention } = await import("./attention/store")
+      await recomputeTopicsAttention(orgId, out.touchedTopicIds, new Date(), { actorUserId: opts.actorUserId ?? null })
+    } catch (e) {
+      console.error("[topics/attention] recompute after manual resolution failed", itemId, e)
+    }
+  }
+  return out
 }

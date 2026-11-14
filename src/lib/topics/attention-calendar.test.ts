@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { WorkCalendar, addCalendarDays, isoWeekday } from "./attention-calendar"
+import { WorkCalendar, addCalendarDays, isoWeekday, weeklyReviewDay } from "./attention-calendar"
 import { ATTENTION_DEFAULTS, attentionParamsHash, mergeAttentionParams } from "./attention-params"
 
 // Exceptions of the official 2026 calendar (decree No. 1466 of 24.09.2025), excerpt.
@@ -40,6 +40,49 @@ describe("production calendar", () => {
   it("next snapshot points", () => {
     expect(cal.nextWorkingDayAt(msk("2026-11-13 08:00"), "07:30").toISOString()).toBe(msk("2026-11-16 07:30").toISOString())
     expect(cal.nextWeekdayAt(msk("2026-11-16 08:00"), 5, "12:00").toISOString()).toBe(msk("2026-11-20 12:00").toISOString())
+  })
+})
+
+// Holiday Fridays of the seeded calendar (migrations/0020_work_calendar_ru_2026_2027.sql):
+// 31.12.2026 (Thu) and 01.01.2027 (Fri) off; 04–08.01.2027 the whole week off;
+// 04.11.2027 (Thu) and 05.11.2027 (Fri) off, 03.11.2027 a short day.
+const RU_NEW_YEAR = [
+  { day: "2026-12-31", isWorking: false, isShort: false },
+  { day: "2027-01-01", isWorking: false, isShort: false },
+  { day: "2027-01-04", isWorking: false, isShort: false },
+  { day: "2027-01-05", isWorking: false, isShort: false },
+  { day: "2027-01-06", isWorking: false, isShort: false },
+  { day: "2027-01-07", isWorking: false, isShort: false },
+  { day: "2027-01-08", isWorking: false, isShort: false },
+  { day: "2027-11-03", isWorking: true, isShort: true },
+  { day: "2027-11-04", isWorking: false, isShort: false },
+  { day: "2027-11-05", isWorking: false, isShort: false },
+]
+const ny = new WorkCalendar(RU_NEW_YEAR, { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
+
+describe("weekly review day on a holiday Friday (06 §7.2, one rule)", () => {
+  it("Friday, or the last working day before it in the same week; none when the week has no working day", () => {
+    expect(weeklyReviewDay(ny, "2026-12-14", 5)).toBe("2026-12-18")
+    expect(weeklyReviewDay(ny, "2027-01-01", 5)).toBe("2026-12-30") // Thu 31.12 and Fri 01.01 off
+    expect(weeklyReviewDay(ny, "2027-01-06", 5)).toBeNull() // 04–08.01 all off
+    expect(weeklyReviewDay(ny, "2027-11-01", 5)).toBe("2027-11-03") // Thu + Fri off → the short Wednesday
+  })
+  it("next / last weekly review moment follow the same rule", () => {
+    expect(ny.nextWeeklyReviewAt(msk("2026-12-28 09:00"), 5, "12:00").toISOString()).toBe(msk("2026-12-30 12:00").toISOString())
+    // After the Wednesday review the next one skips the holiday week.
+    expect(ny.nextWeeklyReviewAt(msk("2026-12-30 12:00"), 5, "12:00").toISOString()).toBe(msk("2027-01-15 12:00").toISOString())
+    expect(ny.lastWeeklyReviewAt(msk("2027-01-09 10:00"), 5, "12:00").toISOString()).toBe(msk("2026-12-30 12:00").toISOString())
+    expect(ny.lastWeeklyReviewAt(msk("2027-01-15 12:00"), 5, "12:00").toISOString()).toBe(msk("2027-01-15 12:00").toISOString())
+    expect(ny.lastWeeklyReviewAt(msk("2027-11-06 10:00"), 5, "12:00").toISOString()).toBe(msk("2027-11-03 12:00").toISOString())
+    // Plain week: same as the plain weekday.
+    expect(ny.nextWeeklyReviewAt(msk("2026-11-16 08:00"), 5, "12:00").toISOString()).toBe(
+      ny.nextWeekdayAt(msk("2026-11-16 08:00"), 5, "12:00").toISOString(),
+    )
+  })
+  it("last «Сводка» point = the morning of the last working day ≤ now", () => {
+    expect(ny.lastWorkingDayAt(msk("2026-12-30 07:29"), "07:30").toISOString()).toBe(msk("2026-12-29 07:30").toISOString())
+    expect(ny.lastWorkingDayAt(msk("2026-12-30 07:30"), "07:30").toISOString()).toBe(msk("2026-12-30 07:30").toISOString())
+    expect(ny.lastWorkingDayAt(msk("2027-01-09 10:00"), "07:30").toISOString()).toBe(msk("2026-12-30 07:30").toISOString())
   })
 })
 

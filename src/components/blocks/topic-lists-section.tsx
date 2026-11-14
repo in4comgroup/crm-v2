@@ -184,8 +184,7 @@ export function TopicListsSection() {
       </div>
     )
   } else if (tab === "digest") {
-    const snapshotAt = data ? new Date(data.digestSnapshotAt) : new Date()
-    const parts = splitDigest(entries, snapshotAt, DIGEST_VISIBLE_ITEMS)
+    const parts = splitDigest(entries, data?.digestVisibleItems ?? DIGEST_VISIBLE_ITEMS)
     body = (
       <div className="space-y-4">
         <SectionTitle hint={`снимок ${formatDateTimeRu(data?.digestSnapshotAt ?? null) ?? ""}`}>Утренняя сводка</SectionTitle>
@@ -231,6 +230,12 @@ export function TopicListsSection() {
           <>
             <SectionTitle hint="нет активности, показ один раз">Тема затихла</SectionTitle>
             <Grid entries={parts.dormant} onChanged={refresh} onOpen={setDrawerId} />
+          </>
+        )}
+        {parts.since.length > 0 && (
+          <>
+            <SectionTitle hint={`${parts.since.length} · войдут в следующий обзор`}>Новое после обзора</SectionTitle>
+            <Grid entries={parts.since} onChanged={refresh} onOpen={setDrawerId} />
           </>
         )}
       </div>

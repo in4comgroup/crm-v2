@@ -5,7 +5,8 @@
 // списке», the card with its actions, deal cards, signals with evidence
 // quotes, the timeline (messages + journal) and the drawer actions:
 // Принять → задача, Отклонить, Готово, Отложить до…, Объединить с…,
-// Отвязать сообщение, Привязать к сделке, «Ответственный», «Не относится».
+// Отвязать сообщение, Привязать к сделке, «Ответственный», «Не относится»,
+// «Заказы» (phase 10: linked orders, «Привязать заказ», «Отвязать»).
 // Self-contained: loads `GET /api/topics?id=` and acts through
 // `POST /api/topics` / `PUT /api/cards`; `onChanged` lets the caller refresh
 // its own list. Used by the dashboard and by the company / contact / deal
@@ -14,7 +15,7 @@
 import { useCallback, useEffect, useState, useTransition } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
-import { Building2, FileText, GitMerge, Handshake, Link2Off, Loader, Unlink, User, Users, XCircle } from "lucide-react"
+import { Building2, FileText, GitMerge, Handshake, Link2Off, Loader, ShoppingCart, Unlink, User, Users, XCircle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -40,6 +41,8 @@ import {
 } from "@/components/blocks/topic-card"
 import { cn } from "@/lib/utils"
 import { CARD_STATUS_LABELS_RU, isCardStatus } from "@/lib/topics/cards"
+import { formatOrderAmount, formatOrderDate, ORDER_STATUS_LABEL } from "@/lib/orders-format"
+import type { OrderStatus } from "@/db/schema"
 import { TOPIC_ITEM_ROLE_LABELS_RU, TOPIC_SUB_STATE_LABELS_RU, type TopicItemRole, type TopicSubState } from "@/lib/topics/types"
 import {
   CYCLE_MARKER_LABELS_RU,
@@ -48,6 +51,7 @@ import {
   type TopicDetailView,
   type TopicItemView,
   type TopicMergeOption,
+  type TopicOrderOption,
   type TopicOwnerOption,
 } from "@/lib/topics/topic-ui"
 
@@ -177,6 +181,7 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
   const [pending, start] = useTransition()
   const [mergeOpen, setMergeOpen] = useState(false)
   const [dealOpen, setDealOpen] = useState(false)
+  const [orderOpen, setOrderOpen] = useState(false)
   const [dismissOpen, setDismissOpen] = useState(false)
   const [dismissReason, setDismissReason] = useState("")
   const [sourceItem, setSourceItem] = useState<TopicItemView | null>(null)
@@ -211,6 +216,7 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
 
   const mergeOptions = useOptions<TopicMergeOption>(mergeOpen && topicId ? `/api/topics?options=merge&id=${topicId}` : null)
   const dealOptions = useOptions<TopicDealOption>(dealOpen && topicId ? `/api/topics?options=deals&id=${topicId}` : null)
+  const orderOptions = useOptions<TopicOrderOption>(orderOpen && topicId ? `/api/topics?options=orders&id=${topicId}` : null)
   const owners = useOptions<TopicOwnerOption>(open && ownersWanted ? "/api/topics?options=owners" : null)
 
   const act = (body: Record<string, unknown>, ok: string, after?: (r: Record<string, unknown>) => void) =>
@@ -335,6 +341,40 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
                   </div>
                 </Section>
               )}
+
+              <Section title={`Заказы (${t.orders.length})`}>
+                {t.orders.length > 0 && (
+                  <ul className="space-y-1.5">
+                    {t.orders.map((o) => (
+                      <li key={o.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border p-2 text-sm">
+                        <Link href={`/products?openOrder=${o.id}`} className="font-medium hover:underline">
+                          Заказ {o.label}
+                        </Link>
+                        <Badge variant="outline" className="font-normal text-xs">
+                          {ORDER_STATUS_LABEL[o.status as OrderStatus] ?? o.status}
+                        </Badge>
+                        <span className="text-muted-foreground">
+                          {formatOrderAmount(o.total, o.currency)} · {formatOrderDate(o.orderDate)}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="ml-auto h-7 px-2"
+                          disabled={pending}
+                          onClick={() => act({ action: "unlink_order", orderId: o.id }, "Заказ отвязан от темы")}
+                        >
+                          <Unlink className="h-3.5 w-3.5 mr-1" />
+                          Отвязать
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Button size="sm" variant="outline" disabled={!t.clientId || t.status === "merged" || pending} onClick={() => setOrderOpen(true)}>
+                  <ShoppingCart className="h-4 w-4 mr-1" />
+                  Привязать заказ
+                </Button>
+              </Section>
 
               <Section title="Действия с темой">
                 <div className="flex flex-wrap gap-2">
@@ -518,6 +558,22 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
           confirm="Привязать"
           pending={pending}
           onConfirm={(id) => act({ action: "link_deal", dealId: id }, "Тема привязана к сделке", () => setDealOpen(false))}
+        />
+        <PickDialog
+          open={orderOpen}
+          onOpenChange={setOrderOpen}
+          title="Привязать заказ"
+          description="Заказы компании этой темы. Подтверждённый заказ закрывает запрос заказа в теме."
+          options={
+            orderOptions?.map((o) => ({
+              id: o.id,
+              label: `${o.label} · ${ORDER_STATUS_LABEL[o.status as OrderStatus] ?? o.status} · ${formatOrderAmount(o.total, o.currency)} · ${formatOrderDate(o.orderDate)}${o.otherTopicTitle ? ` · в теме «${o.otherTopicTitle}»` : ""}`,
+            })) ?? null
+          }
+          empty="У компании нет других заказов."
+          confirm="Привязать"
+          pending={pending}
+          onConfirm={(id) => act({ action: "link_order", orderId: id }, "Заказ привязан к теме", () => setOrderOpen(false))}
         />
         <Dialog open={dismissOpen} onOpenChange={setDismissOpen}>
           <DialogContent className="sm:max-w-md">

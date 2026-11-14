@@ -1,7 +1,7 @@
 import "server-only"
 
 import { randomUUID } from "node:crypto"
-import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
+import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { deal, dealRisk, signalInstance, sourceItem, topic, topicEvent, workCalendarDay } from "@/db/schema"
 import type { SignalItemFacts } from "@/lib/signals/extraction-types"
@@ -10,6 +10,7 @@ import type { TopicAttention, TopicList } from "@/lib/topics/attention-types"
 import { WorkCalendar, type CalendarDay } from "@/lib/topics/attention-calendar"
 import { attentionParamsHash, mergeAttentionParams, type AttentionParams } from "@/lib/topics/attention-params"
 import { cycleRemindersAfter } from "@/lib/topics/delivery-routing"
+import { listAtMoment, type ListChangeEvent, type SnapshotContext, type SnapshotFacts } from "@/lib/topics/list-snapshot"
 import { TOPIC_LIVE_STATUSES, type TopicStatus } from "@/lib/topics/types"
 import { getOrgSetting } from "@/server/org-settings"
 import { getPlatformSetting } from "@/server/platform-settings"
@@ -20,6 +21,7 @@ import {
   compareRank,
   computeAttention,
   placeStoredAttention,
+  readEngineState,
   type AttentionDealRisk,
   type AttentionEnv,
   type AttentionInstance,
@@ -463,4 +465,129 @@ export async function readTopicList(orgId: string, list: TopicList, now: Date = 
     })
   }
   return out.sort((a, b) => compareRank(a.attention, b.attention))
+}
+
+// ── Frozen «Сводка» / «Неделя» (06 §7.2; rules in src/lib/topics/list-snapshot.ts) ──
+
+export type PlacedTopicRow = {
+  topicId: string
+  status: string
+  /** `topic.list` as stored by the last write. */
+  storedList: string
+  ownerUserId: string | null
+  dealId: string | null
+  dealOwnerUserId: string | null
+  lastActivityAt: Date
+  snoozedUntil: Date | null
+  /** Stored attention (null = never computed). */
+  stored: TopicAttention | null
+  /** Read-time placement at `now` (null when `stored` is null). */
+  placed: TopicAttention | null
+}
+
+export type ListState = {
+  params: AttentionParams
+  calendar: WorkCalendar
+  /** Every live topic of the org (open + dormant), read-time placed. */
+  rows: PlacedTopicRow[]
+  snapshot: SnapshotContext
+}
+
+/** `attention_changed` journal rows of the org after `since`, by topic. */
+async function loadListChangeEvents(orgId: string, since: Date): Promise<Map<string, ListChangeEvent[]>> {
+  const rows = await db
+    .select({ topicId: topicEvent.topicId, at: topicEvent.createdAt, payload: topicEvent.payload })
+    .from(topicEvent)
+    .where(and(eq(topicEvent.organizationId, orgId), eq(topicEvent.type, "attention_changed"), gt(topicEvent.createdAt, since)))
+    .orderBy(asc(topicEvent.createdAt))
+    .limit(50_000)
+  const out = new Map<string, ListChangeEvent[]>()
+  for (const r of rows) {
+    const from = typeof r.payload?.from === "string" ? r.payload.from : "none"
+    const to = typeof r.payload?.to === "string" ? r.payload.to : "none"
+    const list = out.get(r.topicId) ?? []
+    list.push({ at: r.at, from, to })
+    out.set(r.topicId, list)
+  }
+  return out
+}
+
+/** Snapshot facts of one topic (list at each snapshot, section, H5 window). */
+function snapshotFactsOf(
+  r: PlacedTopicRow,
+  events: readonly ListChangeEvent[],
+  digestAt: Date,
+  weekAt: Date,
+  now: Date,
+  cal: WorkCalendar,
+  params: AttentionParams,
+): SnapshotFacts {
+  const stored = r.stored
+  const computedAt = stored?.computedAt ? new Date(stored.computedAt) : null
+  const atDigest = stored ? placeStoredAttention(stored, digestAt, cal, params) : null
+  const atWeek = stored ? placeStoredAttention(stored, weekAt, cal, params) : null
+  const weekList = listAtMoment({ storedList: r.storedList, computedAt, placedAt: atWeek?.list ?? null, events }, weekAt)
+  const dormantWindowEnd = r.status === "dormant" ? (readEngineState(stored)?.core?.dormantWindowEnd ?? null) : null
+  return {
+    snoozed: (!!r.snoozedUntil && r.snoozedUntil.getTime() > now.getTime()) || r.placed?.hiddenReason === "snoozed",
+    digestList: listAtMoment({ storedList: r.storedList, computedAt, placedAt: atDigest?.list ?? null, events }, digestAt),
+    weekList,
+    weekSection: atWeek?.list === "week" ? (atWeek.section ?? null) : r.placed?.list === "week" ? (r.placed.section ?? null) : null,
+    dormantWindowEnd,
+  }
+}
+
+/**
+ * Everything the frozen lists need, in two queries: every live topic of the
+ * org placed at `now` (read-time check, no write), the last «Сводка» /
+ * «Неделя» snapshot moments and each topic's list at those moments (rebuilt
+ * from the stored attention + the `attention_changed` journal).
+ */
+export async function readListState(orgId: string, now: Date = new Date()): Promise<ListState> {
+  const [params, days] = await Promise.all([loadAttentionParams(orgId), loadCalendarDays()])
+  const cal = new WorkCalendar(days, { timeZone: params.timeZone, workStart: params.workStart, workEnd: params.workEnd })
+  const digestAt = cal.lastWorkingDayAt(now, params.morningDigestTime)
+  const weekAt = cal.lastWeeklyReviewAt(now, params.weeklyReviewWeekday, params.weeklyReviewTime)
+  const [raw, events] = await Promise.all([
+    db
+      .select({
+        id: topic.id,
+        status: topic.status,
+        list: topic.list,
+        ownerUserId: topic.ownerUserId,
+        dealId: topic.dealId,
+        dealOwnerUserId: deal.userId,
+        lastActivityAt: topic.lastActivityAt,
+        snoozedUntil: topic.snoozedUntil,
+        attention: topic.attention,
+      })
+      .from(topic)
+      .leftJoin(deal, eq(deal.id, topic.dealId))
+      .where(and(eq(topic.organizationId, orgId), inArray(topic.status, LIVE)))
+      .limit(5000),
+    loadListChangeEvents(orgId, new Date(Math.min(digestAt.getTime(), weekAt.getTime()))),
+  ])
+  const rows: PlacedTopicRow[] = raw.map((r) => {
+    const stored = asAttention(r.attention)
+    return {
+      topicId: r.id,
+      status: r.status,
+      storedList: r.list,
+      ownerUserId: r.ownerUserId,
+      dealId: r.dealId,
+      dealOwnerUserId: r.dealOwnerUserId,
+      lastActivityAt: r.lastActivityAt,
+      snoozedUntil: r.snoozedUntil,
+      stored,
+      placed: stored ? placeStoredAttention(stored, now, cal, params) : null,
+    }
+  })
+  const facts: Record<string, SnapshotFacts> = {}
+  for (const r of rows) facts[r.topicId] = snapshotFactsOf(r, events.get(r.topicId) ?? [], digestAt, weekAt, now, cal, params)
+  return {
+    params,
+    calendar: cal,
+    rows,
+    snapshot: { digestAt: digestAt.toISOString(), weekAt: weekAt.toISOString(), facts },
+  }
 }

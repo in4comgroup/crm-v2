@@ -8,8 +8,9 @@
 // topic resolution when the item is `done`; manual action,
 // ignores the org's topics mode). API: /api/admin/topics/signals.
 
+import { DEFAULT_PAGE_SIZE, TablePager } from "@/components/blocks/table-pager"
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react"
-import { ChevronDown, ChevronLeft, ChevronRight, Loader, Play, RefreshCw } from "lucide-react"
+import { ChevronDown, ChevronRight, Loader, Play, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -51,7 +52,6 @@ import type {
 import { topicOutcomeText } from "@/lib/topics/outcome-text"
 
 const ALL = "__all__"
-const PAGE_SIZE = 50
 
 const STATUS_LABEL: Record<SignalItemStatus, string> = {
   done: "Готово",
@@ -385,6 +385,7 @@ export function AdminTopicsSignals() {
   const [codeInput, setCodeInput] = useState("")
   const [code, setCode] = useState("")
   const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [rows, setRows] = useState<SignalReviewItem[] | null>(null)
   const [total, setTotal] = useState(0)
   const [stats, setStats] = useState<SignalStats | null>(null)
@@ -415,7 +416,7 @@ export function AdminTopicsSignals() {
     setLoading(true)
     setError(null)
     try {
-      const sp = new URLSearchParams({ orgId, limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) })
+      const sp = new URLSearchParams({ orgId, limit: String(pageSize), offset: String(page * pageSize) })
       if (status !== ALL) sp.set("status", status)
       if (band !== ALL) sp.set("band", band)
       if (code) sp.set("code", code)
@@ -435,7 +436,7 @@ export function AdminTopicsSignals() {
     } finally {
       setLoading(false)
     }
-  }, [orgId, status, band, code, page])
+  }, [orgId, status, band, code, page, pageSize])
 
   useEffect(() => {
     void load()
@@ -501,8 +502,6 @@ export function AdminTopicsSignals() {
       else next.add(id)
       return next
     })
-
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <div className="flex flex-col gap-3">
@@ -709,27 +708,17 @@ export function AdminTopicsSignals() {
         </Table>
       </Card>
 
-      {total > PAGE_SIZE && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            Всего {total} · страница {page + 1} из {pages}
-          </span>
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" className="h-8" disabled={page === 0 || loading} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8"
-              disabled={page + 1 >= pages || loading}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <TablePager
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        disabled={loading}
+        onPageChange={setPage}
+        onPageSizeChange={(n) => {
+          setPageSize(n)
+          setPage(0)
+        }}
+      />
     </div>
   )
 }

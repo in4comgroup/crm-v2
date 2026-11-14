@@ -29,7 +29,6 @@ import {
   pluralizeDeals,
 } from "@/lib/deal-board"
 import type { DealRow } from "@/app/api/deals/route"
-import type { DealIntel } from "@/server/deals-mock"
 import type { DealTaskInfo } from "@/hooks/use-board-intel"
 import { DealKanbanCard } from "@/components/blocks/deal-kanban-card"
 import {
@@ -68,9 +67,8 @@ export function TerminalColumn({
   collapsed,
   onCollapse,
   onExpand,
-  intelById,
   tasksByDeal,
-  intelLoaded,
+  boardLoaded,
   onOpen,
   onUndoAgent,
 }: {
@@ -85,9 +83,8 @@ export function TerminalColumn({
   collapsed: boolean
   onCollapse: () => void
   onExpand: () => void
-  intelById: Record<string, DealIntel>
   tasksByDeal: Record<string, DealTaskInfo[]>
-  intelLoaded: boolean
+  boardLoaded: boolean
   onOpen: (deal: DealRow) => void
   // «Отменить» у бейджа «создал агент» (диалог подтверждения — на доске).
   onUndoAgent?: (deal: DealRow) => void
@@ -302,8 +299,7 @@ export function TerminalColumn({
                     onOpen={onOpen}
                     onUndoAgent={onUndoAgent}
                     tasks={tasksByDeal[d.id] ?? []}
-                    intel={intelById[d.id]}
-                    intelLoaded={intelLoaded}
+                    boardLoaded={boardLoaded}
                   />
                 ))}
                 {revealLost && (
@@ -320,8 +316,7 @@ export function TerminalColumn({
                         onOpen={onOpen}
                         onUndoAgent={onUndoAgent}
                         tasks={tasksByDeal[d.id] ?? []}
-                        intel={intelById[d.id]}
-                        intelLoaded={intelLoaded}
+                        boardLoaded={boardLoaded}
                       />
                     ))}
                   </>

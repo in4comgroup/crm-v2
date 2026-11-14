@@ -12,8 +12,6 @@ import {
   AudioLines,
   Braces,
   Brain,
-  ChevronLeft,
-  ChevronRight,
   ChevronsUpDown,
   FileText,
   Globe,
@@ -72,8 +70,8 @@ import type {
   AiModelDetail,
   AiModelListRow,
 } from "@/app/api/admin/ai/models/route"
+import { DEFAULT_PAGE_SIZE, TablePager, type PageSize } from "@/components/blocks/table-pager"
 
-const PAGE_SIZE = 50
 const ALL_TYPES = "all"
 
 type Sort = "name" | "vendor" | "cost_input" | "cost_output" | "context"
@@ -555,6 +553,7 @@ export function AdminAiModels() {
   const [sort, setSort] = useState<Sort>("name")
   const [dir, setDir] = useState<"asc" | "desc">("asc")
   const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE)
 
   const [rows, setRows] = useState<AiModelListRow[]>([])
   const [total, setTotal] = useState(0)
@@ -621,8 +620,8 @@ export function AdminAiModels() {
         type,
         sort,
         dir,
-        limit: String(PAGE_SIZE),
-        offset: String(page * PAGE_SIZE),
+        limit: String(pageSize),
+        offset: String(page * pageSize),
       })
       if (q) params.set("q", q)
       if (availableOnly) params.set("available", "1")
@@ -640,7 +639,7 @@ export function AdminAiModels() {
     } finally {
       if (seq === requestSeq.current) setLoading(false)
     }
-  }, [gatewayId, type, sort, dir, page, q, availableOnly, vendors, caps])
+  }, [gatewayId, type, sort, dir, page, pageSize, q, availableOnly, vendors, caps])
 
   useEffect(() => {
     loadModels()
@@ -701,7 +700,6 @@ export function AdminAiModels() {
     [],
   )
 
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const filtered = vendors.length > 0 || caps.length > 0 || q !== ""
 
   return (
@@ -890,29 +888,17 @@ export function AdminAiModels() {
           </Table>
         </Card>
 
-        {pages > 1 && (
-          <div className="flex items-center justify-end gap-2 text-sm">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0 || loading}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <span className="tabular-nums">
-              {page + 1} / {pages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
-              disabled={page >= pages - 1 || loading}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
+        <TablePager
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setPage(0)
+          }}
+          disabled={loading}
+        />
 
         {gatewayId && (
           <ModelDrawer

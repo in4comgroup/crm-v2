@@ -82,7 +82,8 @@ Server functions in `src/server/ai/usage.ts`, all `requireAdmin()`:
 
 | View | Group by | Metrics |
 | --- | --- | --- |
-| Total | day (chart) | calls, errors, input / output tokens, cost, cost with markup |
+| Total | — (KPIs) | calls, errors, input / output tokens, cost, cost with markup |
+| Chart | UTC day / month / year × process or model | calls, cost |
 | Per organization | organization | same + share of total |
 | Per process | process | same + average tokens and cost per call |
 | Per model | response model | same + fallback rate (`response_model ≠ request_model`) |
@@ -98,12 +99,38 @@ Export: CSV of the current view.
 - Toolbar: period, organization, process, model filters.
 - KPI row: «Вызовы», «Токены», «Себестоимость» (gateway cost), «С наценкой»
   (with markup), «Ошибки».
-- Chart: cost per day (stacked by process or by model, toggle).
+- Chart: cost per bucket, stacked by process or by model (toggle). See §6.1.
 - Tabs or segmented control: «Организации» / «Процессы» / «Модели», each a
   sortable table with the metrics in §5; row click filters the page.
 - «Наценка» (Markup) block — see 05.
 - Note under the KPIs: «N вызовов ещё со сметной стоимостью» (N calls still
   estimated) when reconcile is behind.
+
+### 6.1 Cost chart: scale and range (2026-11-14)
+
+- **Scale** «По дням» / «По месяцам» / «По годам» (day / month / year) and
+  **range** «с … по …» (two date inputs, UTC days, both inclusive).
+- **Defaults**: day scale over the page period (the behaviour before this
+  change). While the admin has not set dates: month = the current month and
+  the 11 before it, year = the current year and the 4 before it. «По
+  умолчанию» clears the admin's dates.
+- **Bounds**: day ≤ 366 days, month ≤ 60 months, year ≤ 50 years. Over the
+  bound the chart shows a hint (shorten the range or switch to a larger
+  scale) instead of loading; the API answers 400 with the same text.
+- **Filters**: the chart range replaces ONLY the page period for the chart.
+  Organization, process, model and status filters apply to the chart too.
+  KPIs and tables keep using the page period. A hint line under the chart
+  says so.
+- **Query**: `GET api/admin/ai/usage?chart=1&scale=&from=&to=&stack=` (+ the
+  page filters) → `usageCostBuckets` in `usage-stats.ts`: `date_trunc` of
+  `created_at` (timestamp holding UTC) by the scale, keys `YYYY-MM-DD` /
+  `YYYY-MM` / `YYYY`, cost = `coalesce(cost_actual_usd, cost_estimate_usd)`
+  (no markup — the chart shows gateway cost). A separate request, so a
+  change of scale / range / stacking does not reload the page.
+- **Pure helper** `src/lib/ai-usage-chart.ts` (unit tests
+  `ai-usage-chart.test.ts`): range check, bucket keys, zero fill of empty
+  buckets, series folding (top series + «Прочее»), axis labels `дд.мм`
+  (tooltip `дд.мм.гггг`), `мм.гггг`, `гггг`.
 
 ## 7. Org and user attribution — code changes
 

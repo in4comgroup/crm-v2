@@ -3,9 +3,10 @@ import { getServerSession } from "@/lib/get-session"
 import { AI_PROCESSES } from "@/server/ai/processes"
 import { reconcileUsageCosts } from "@/server/ai/usage"
 import { syncAllModelCatalogs } from "@/server/ai/catalog/sync"
+import { CHART_SCALES, checkChartRange, type ChartScale } from "@/lib/ai-usage-chart"
 import {
   usageBreakdown,
-  usageDaily,
+  usageCostBuckets,
   usageModelOptions,
   usageOrgOptions,
   usageSummary,
@@ -14,9 +15,13 @@ import {
 } from "@/server/ai/usage-stats"
 
 // «Использование ИИ» (AI usage) tab on /settings. Platform admins only.
-//   GET ?from=YYYY-MM-DD&to=YYYY-MM-DD[&org=&process=&model=&status=&stack=process|model]
-//     → everything the page shows (KPIs, daily chart, 3 breakdowns, filter options)
+//   GET ?from=YYYY-MM-DD&to=YYYY-MM-DD[&org=&process=&model=&status=]
+//     → the page (KPIs, 3 breakdowns, filter options, sync status)
 //     `to` is inclusive (whole day). org=system → calls without an organization.
+//   GET ?chart=1&scale=day|month|year&from=&to=[&org=&process=&model=&status=&stack=process|model]
+//     → { chart } cost buckets for the chart. `from` / `to` = the CHART range
+//     (it replaces the page period for the chart only; the other filters
+//     apply). Range bounds: src/lib/ai-usage-chart.ts (day ≤ 366, month ≤ 60).
 //   POST { action: "reconcile" } → fetch exact gateway cost for estimated events now
 //   POST { action: "sync_all" }  → what the daily cron does: price sync from every
 //                                  enabled gateway + exact-cost reconcile (for when
@@ -25,7 +30,6 @@ import {
 
 export type AdminAiUsageResponse = {
   summary: Awaited<ReturnType<typeof usageSummary>>
-  daily: Awaited<ReturnType<typeof usageDaily>>
   byOrg: Awaited<ReturnType<typeof usageBreakdown>>
   byProcess: Awaited<ReturnType<typeof usageBreakdown>>
   byModel: Awaited<ReturnType<typeof usageBreakdown>>
@@ -35,6 +39,16 @@ export type AdminAiUsageResponse = {
     processes: { key: string; label: string }[]
   }
   sync: Awaited<ReturnType<typeof usageSyncStatus>>
+}
+
+export type AdminAiUsageChartResponse = {
+  chart: {
+    scale: ChartScale
+    from: string
+    to: string
+    stack: "process" | "model"
+    rows: Awaited<ReturnType<typeof usageCostBuckets>>
+  }
 }
 
 async function requireAdmin() {
@@ -70,10 +84,35 @@ export async function GET(request: NextRequest) {
     model: sp.get("model") || null,
     status: status === "ok" || status === "error" || status === "aborted" || status === "blocked" ? status : null,
   }
+
+  if (sp.get("chart") === "1") {
+    const scale = sp.get("scale") as ChartScale | null
+    if (!scale || !CHART_SCALES.includes(scale)) {
+      return NextResponse.json({ error: "scale (day|month|year) is required" }, { status: 400 })
+    }
+    const check = checkChartRange(scale, sp.get("from")!, sp.get("to")!)
+    if (!check.ok) return NextResponse.json({ error: check.message }, { status: 400 })
+    const stack = sp.get("stack") === "model" ? "model" : "process"
+    try {
+      const body: AdminAiUsageChartResponse = {
+        chart: {
+          scale,
+          from: sp.get("from")!,
+          to: sp.get("to")!,
+          stack,
+          rows: await usageCostBuckets(f, stack, scale),
+        },
+      }
+      return NextResponse.json(body)
+    } catch (error) {
+      console.error("[admin/ai/usage] chart error:", error)
+      return NextResponse.json({ error: "Failed to load usage chart" }, { status: 500 })
+    }
+  }
+
   try {
-    const [summary, daily, byOrg, byProcess, byModel, orgs, models, sync] = await Promise.all([
+    const [summary, byOrg, byProcess, byModel, orgs, models, sync] = await Promise.all([
       usageSummary(f),
-      usageDaily(f, sp.get("stack") === "model" ? "model" : "process"),
       usageBreakdown(f, "org"),
       usageBreakdown(f, "process"),
       usageBreakdown(f, "model"),
@@ -83,7 +122,6 @@ export async function GET(request: NextRequest) {
     ])
     const body: AdminAiUsageResponse = {
       summary,
-      daily,
       byOrg,
       byProcess,
       byModel,

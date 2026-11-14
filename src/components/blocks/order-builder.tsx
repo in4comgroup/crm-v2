@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { toast } from "sonner"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
@@ -50,6 +51,7 @@ import {
   Copy,
   Link2,
   Loader,
+  MessagesSquare,
   PackageCheck,
   Plus,
   RotateCcw,
@@ -118,6 +120,8 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
   const [currency, setCurrency] = useState("RUB")
   const [lines, setLines] = useState<DraftLine[]>([])
   const [link, setLink] = useState<OrderLinkMeta | null>(null)
+  // Topics phase 10: the order's topic (null when none / topics mode not `on`).
+  const [topic, setTopic] = useState<OrderDetail["topic"]>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   // When on, products without enough catalog stock can't be added and line
@@ -160,6 +164,7 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     setCurrency("RUB")
     setLines([])
     setLink(null)
+    setTopic(null)
     setStockOnly(true)
     setOrderDiscount(0)
     setOriginCardId(null)
@@ -184,6 +189,7 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     setDescription(o.description ?? "")
     setCurrency(o.currency)
     setLink(o.link)
+    setTopic(o.topic ?? null)
     setStockOnly(true)
     setOrderDiscount(o.discountPercent)
     setLines(
@@ -362,7 +368,9 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
         const res = await fetch("/api/orders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          // Topics phase 10: `fromCardId` → the server links the new order to
+          // the card's topic (resolved from the card row, org-checked).
+          body: JSON.stringify({ ...payload, fromCardId: originCardId }),
         })
         if (!res.ok) {
           const e = await res.json().catch(() => ({}))
@@ -509,6 +517,7 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     discountAmount,
     discountedTotal,
     link,
+    topic,
     clientOptions,
     stockOnly,
     setStockOnly,
@@ -780,6 +789,7 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
     discountAmount,
     discountedTotal,
     link,
+    topic,
     clientOptions,
     stockOnly,
   } = builder
@@ -842,6 +852,18 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
           ) : (
             <>
               {status === "awaiting_client" && <LinkMetaStrip link={link} />}
+              {mode === "edit" && topic && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-xs text-muted-foreground">Тема</span>
+                  <Link
+                    href={`/dashboard?topic=${encodeURIComponent(topic.id)}`}
+                    className="inline-flex min-w-0 items-center gap-1 hover:underline"
+                  >
+                    <MessagesSquare className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{topic.title}</span>
+                  </Link>
+                </div>
+              )}
 
               {/* Core attributes. */}
               <div className="grid gap-3 sm:grid-cols-[minmax(0,18rem)_1fr]">

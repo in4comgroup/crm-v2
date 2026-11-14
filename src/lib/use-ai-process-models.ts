@@ -5,7 +5,7 @@ import type { AiPickerModel, AiPickerResponse } from "@/app/api/ai/models/route"
 
 // Model picker data for a user-selectable AI process (admin-allowed list).
 // `process` is a process key from src/server/ai/processes.ts, e.g.
-// "chat.assistant", "cards.generation", "deals.discovery".
+// "chat.assistant".
 // Send the picked `id` to the server as the requested model; the server
 // ignores ids outside the allowed list.
 export function useAiProcessModels(process: string): {

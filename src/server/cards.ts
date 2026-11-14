@@ -8,7 +8,6 @@ import {
   cardUser,
   client,
   contact,
-  member,
   rule,
   source,
   sourceItem,
@@ -35,20 +34,19 @@ import {
   isFreemailDomain,
 } from "@/lib/email-domain"
 import { getServerSession } from "@/lib/get-session"
-import { randomUUID } from "crypto"
 
 export type CardMessage = {
   analysis: string
   recommendation: string
   // Only set on `new_order` cards: the VERBATIM client message from the
-  // source (Telegram `metadata_json.rawText`), stamped at generation time so
-  // the card's "Create order" button can prefill the New Order dialog's
-  // request field unchanged. Absent on every other category.
+  // source, stamped when the card is written (today: ORDER_REQUESTED topic
+  // cards; old Custom-rule cards carry it too) so the card's "Create order"
+  // button can prefill the New Order dialog's request field unchanged.
+  // Absent on every other category.
   orderRequest?: string
-  // Short (3-5 word) action-oriented task title summarised from the card
-  // context by the generation LLM. Used to prefill the task name when the
-  // operator clicks "Принять". Absent on cards generated before this field
-  // existed — the UI falls back to the category label.
+  // Short (3-5 word) action-oriented task title written with the card. Used
+  // to prefill the task name when the operator clicks "Принять". Absent on
+  // some old cards — the UI falls back to the category label.
   taskTitle?: string
   // Only on topic cards (card.kind = topic): the structured card text +
   // engine metadata (src/lib/topics/cards.ts). analysis / recommendation
@@ -84,6 +82,8 @@ export type CardRow = {
   // Email To + Cc, formatted for display (null for chats/files).
   sourceRecipients: string | null
   sourceCreatedAt: string | null
+  // Old Custom-rule cards only (history; Custom-rule card generation was
+  // removed in topics plan phase 12). Null on topic cards.
   ruleId: string | null
   ruleName: string | null
   clients: CardClientRef[]
@@ -228,87 +228,6 @@ async function assertCardInOrg(cardId: string, organizationId: string) {
     throw new Error("Unauthorized")
   }
   return current
-}
-
-async function assertSourceItemIfProvided(
-  sourceItemId: string | null | undefined,
-  organizationId: string,
-) {
-  if (!sourceItemId) return
-  const rows = await db
-    .select()
-    .from(sourceItem)
-    .where(eq(sourceItem.id, sourceItemId))
-    .limit(1)
-  const current = rows[0]
-  if (!current) throw new Error("Invalid source item")
-  // Items belonging to a system source have organizationId = null; cards
-  // can reference those, but per-org items must match the active org.
-  if (current.organizationId && current.organizationId !== organizationId) {
-    throw new Error("Invalid source item")
-  }
-}
-
-async function assertRuleIfProvided(
-  ruleId: string | null | undefined,
-  organizationId: string,
-) {
-  if (!ruleId) return
-  const rows = await db.select().from(rule).where(eq(rule.id, ruleId)).limit(1)
-  const current = rows[0]
-  if (!current || current.organizationId !== organizationId) {
-    throw new Error("Invalid rule")
-  }
-}
-
-async function assertClientIdsInOrg(ids: string[], organizationId: string) {
-  if (ids.length === 0) return
-  const unique = Array.from(new Set(ids))
-  const rows = await db
-    .select({ id: client.id, organizationId: client.organizationId })
-    .from(client)
-    .where(inArray(client.id, unique))
-  if (rows.length !== unique.length) throw new Error("Invalid client reference")
-  for (const r of rows) {
-    if (r.organizationId !== organizationId) {
-      throw new Error("Invalid client reference")
-    }
-  }
-}
-
-async function assertContactIdsInOrg(ids: string[], organizationId: string) {
-  if (ids.length === 0) return
-  const unique = Array.from(new Set(ids))
-  const rows = await db
-    .select({ id: contact.id, organizationId: contact.organizationId })
-    .from(contact)
-    .where(inArray(contact.id, unique))
-  if (rows.length !== unique.length) {
-    throw new Error("Invalid contact reference")
-  }
-  for (const r of rows) {
-    if (r.organizationId !== organizationId) {
-      throw new Error("Invalid contact reference")
-    }
-  }
-}
-
-async function assertUserIdsInOrg(ids: string[], organizationId: string) {
-  if (ids.length === 0) return
-  const unique = Array.from(new Set(ids))
-  // user is global — gate via member rather than a column on user.
-  const rows = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(
-      and(
-        eq(member.organizationId, organizationId),
-        inArray(member.userId, unique),
-      ),
-    )
-  if (rows.length !== unique.length) {
-    throw new Error("Invalid user reference")
-  }
 }
 
 function normaliseMessage(raw: unknown): CardMessage {
@@ -643,132 +562,6 @@ export async function getCard(cardId: string): Promise<CardRow | null> {
     ...topicCardFields(row.card, new Date()),
     createdAt: row.card.createdAt.toISOString(),
     updatedAt: row.card.updatedAt.toISOString(),
-  }
-}
-
-export async function createCard(data: {
-  priority?: CardPriority
-  category: CardCategory
-  message: CardMessage
-  sourceItemId?: string | null
-  ruleId?: string | null
-  clientIds?: string[]
-  userIds?: string[]
-  contactIds?: string[]
-}) {
-  const { activeOrgId } = await requireOrgContext()
-  if (!data.category) throw new Error("Category is required")
-
-  const message = normaliseMessage(data.message)
-  await assertSourceItemIfProvided(data.sourceItemId, activeOrgId)
-  await assertRuleIfProvided(data.ruleId, activeOrgId)
-  const clientIds = data.clientIds ?? []
-  const userIds = data.userIds ?? []
-  const contactIds = data.contactIds ?? []
-  await assertClientIdsInOrg(clientIds, activeOrgId)
-  await assertUserIdsInOrg(userIds, activeOrgId)
-  await assertContactIdsInOrg(contactIds, activeOrgId)
-
-  const id = randomUUID()
-  await db.insert(card).values({
-    id,
-    organizationId: activeOrgId,
-    priority: data.priority ?? "normal",
-    category: data.category,
-    message,
-    sourceItemId: data.sourceItemId || null,
-    ruleId: data.ruleId || null,
-  })
-  if (clientIds.length > 0) {
-    await db
-      .insert(cardClient)
-      .values(clientIds.map((clientId) => ({ cardId: id, clientId })))
-  }
-  if (userIds.length > 0) {
-    await db
-      .insert(cardUser)
-      .values(userIds.map((userId) => ({ cardId: id, userId })))
-  }
-  if (contactIds.length > 0) {
-    await db
-      .insert(cardContact)
-      .values(contactIds.map((contactId) => ({ cardId: id, contactId })))
-  }
-  return { id }
-}
-
-export async function updateCard(
-  cardId: string,
-  data: {
-    priority?: CardPriority
-    category?: CardCategory
-    message?: CardMessage
-    sourceItemId?: string | null
-    ruleId?: string | null
-    clientIds?: string[]
-    userIds?: string[]
-    contactIds?: string[]
-  },
-) {
-  const { activeOrgId } = await requireOrgContext()
-  await assertCardInOrg(cardId, activeOrgId)
-
-  if (data.sourceItemId !== undefined) {
-    await assertSourceItemIfProvided(data.sourceItemId, activeOrgId)
-  }
-  if (data.ruleId !== undefined) {
-    await assertRuleIfProvided(data.ruleId, activeOrgId)
-  }
-  if (data.clientIds !== undefined) {
-    await assertClientIdsInOrg(data.clientIds, activeOrgId)
-  }
-  if (data.userIds !== undefined) {
-    await assertUserIdsInOrg(data.userIds, activeOrgId)
-  }
-  if (data.contactIds !== undefined) {
-    await assertContactIdsInOrg(data.contactIds, activeOrgId)
-  }
-
-  await db
-    .update(card)
-    .set({
-      ...(data.priority !== undefined ? { priority: data.priority } : {}),
-      ...(data.category !== undefined ? { category: data.category } : {}),
-      ...(data.message !== undefined
-        ? { message: normaliseMessage(data.message) }
-        : {}),
-      ...(data.sourceItemId !== undefined
-        ? { sourceItemId: data.sourceItemId || null }
-        : {}),
-      ...(data.ruleId !== undefined
-        ? { ruleId: data.ruleId || null }
-        : {}),
-    })
-    .where(eq(card.id, cardId))
-
-  if (data.clientIds !== undefined) {
-    await db.delete(cardClient).where(eq(cardClient.cardId, cardId))
-    if (data.clientIds.length > 0) {
-      await db
-        .insert(cardClient)
-        .values(data.clientIds.map((clientId) => ({ cardId, clientId })))
-    }
-  }
-  if (data.userIds !== undefined) {
-    await db.delete(cardUser).where(eq(cardUser.cardId, cardId))
-    if (data.userIds.length > 0) {
-      await db
-        .insert(cardUser)
-        .values(data.userIds.map((userId) => ({ cardId, userId })))
-    }
-  }
-  if (data.contactIds !== undefined) {
-    await db.delete(cardContact).where(eq(cardContact.cardId, cardId))
-    if (data.contactIds.length > 0) {
-      await db
-        .insert(cardContact)
-        .values(data.contactIds.map((contactId) => ({ cardId, contactId })))
-    }
   }
 }
 

@@ -4,8 +4,12 @@ import { SignalsNotEnabledError } from "@/server/topics/prompt/extraction"
 import {
   addSyntheticItem,
   getGoldenItem,
+  goldenCodeOptions,
+  goldenEngineTopics,
+  goldenGroupLabels,
   GoldenSetError,
   listGoldenItems,
+  nextUnreviewedGoldenId,
   listGoldenOrgOptions,
   preAnnotate,
   sampleGoldenItems,
@@ -15,17 +19,24 @@ import {
 export {
   type GoldenListRow,
   type GoldenItemDetail,
+  type GoldenCodeOption,
+  type GoldenDirection,
 } from "@/server/topics/golden-set"
 
 // Topics golden set (plan phase 0 task 7). Platform admins only.
 //   GET ?orgOptions=1                                  → { orgs }
 //   GET ?id=                                           → { item }
-//   GET ?orgId=&status=&synthetic=real|synthetic&limit=&offset=
+//   GET ?codeOptions=1&orgId=                          → { codes }   (code picker)
+//   GET ?groupLabels=1&orgId=                          → { labels }  (topic-group autocomplete)
+//   GET ?engineTopics=<goldenId>                       → { topics }  («Взять из движка»)
+//   GET ?next=1&after=<goldenId>[&orgId=]              → { id | null } (next unreviewed)
+//   GET ?orgId=&status=&synthetic=real|synthetic&suggestions=1|0&limit=&offset=
 //                                                      → { rows, total, counts }
 //   POST { action: "sample", orgId, count, days }      → { added, candidates, byProvider }
 //   POST { action: "synthetic", orgId, text, note? }   → { id }
 //   POST { action: "preannotate", orgId, ids[≤10] }    → { results: [{ id, ok, codes?, error? }] }
-//   PUT  { id, expected?, status?, note? }             → { item }
+//   PUT  { id, expected?, status?, note? }             → { item } (an answer alone keeps the status)
+// The same editor serves reviewers on /review through /api/topics/golden.
 
 export const maxDuration = 300
 
@@ -68,12 +79,27 @@ export async function GET(request: NextRequest) {
     }
     const id = sp.get("id")
     if (id) return NextResponse.json({ item: await getGoldenItem(id) })
+    const engine = sp.get("engineTopics")
+    if (engine) {
+      const item = await getGoldenItem(engine)
+      return NextResponse.json({ topics: await goldenEngineTopics(item.organizationId, engine) })
+    }
+    if (sp.get("next")) {
+      const after = sp.get("after") || null
+      const nextOrg = sp.get("orgId") || (after ? (await getGoldenItem(after)).organizationId : null)
+      if (!nextOrg) return NextResponse.json({ error: "orgId is required" }, { status: 400 })
+      return NextResponse.json({ id: await nextUnreviewedGoldenId(nextOrg, after) })
+    }
     const orgId = sp.get("orgId")
     if (!orgId) return NextResponse.json({ error: "orgId is required" }, { status: 400 })
+    if (sp.get("codeOptions")) return NextResponse.json({ codes: await goldenCodeOptions(orgId) })
+    if (sp.get("groupLabels")) return NextResponse.json({ labels: await goldenGroupLabels(orgId) })
     const synthetic = sp.get("synthetic")
+    const suggestions = sp.get("suggestions")
     const result = await listGoldenItems(orgId, {
       status: sp.get("status") || null,
       synthetic: synthetic === "real" || synthetic === "synthetic" ? synthetic : null,
+      suggestions: suggestions === "1" ? true : suggestions === "0" ? false : null,
       limit: Number(sp.get("limit") ?? 200) || 200,
       offset: Number(sp.get("offset") ?? 0) || 0,
     })

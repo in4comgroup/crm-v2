@@ -691,6 +691,8 @@ export default function ProductsPage() {
             clientId: request.clientId,
             description: request.comment ?? "",
             items: [],
+            // Topics phase 10: the server links the order to the card's topic.
+            fromCardId: explicitCardId ?? cardPrefill?.cardId ?? null,
           }),
         })
         const oData = await oRes.json().catch(() => ({}))

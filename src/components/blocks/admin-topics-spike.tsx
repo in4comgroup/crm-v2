@@ -13,7 +13,9 @@
 // review-only codes fired, with quotes and item ids.
 // The model under test is the one assigned to «Извлечение сигналов» on
 // «Процессы ИИ»; switch it there between runs to compare models.
+// Below: «Оценка группировки по темам» (admin-topics-grouping.tsx) for the same org.
 
+import { PagedTable } from "@/components/blocks/paged-table"
 import { Fragment, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { ChevronDown, ChevronRight, Copy, Loader, Play, RefreshCcw, Save, Square } from "lucide-react"
@@ -39,6 +41,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useGoldenOrgs } from "@/components/blocks/admin-topics-golden"
+import { AdminTopicsGrouping } from "@/components/blocks/admin-topics-grouping"
 import {
   SIGNAL_BAND_LABELS_RU,
   SIGNAL_DROP_REASONS,
@@ -412,7 +415,8 @@ export function AdminTopicsSpike() {
       </div>
 
       <Card className="py-0">
-        <Table>
+        <PagedTable rows={runs}>{(pageRows) => (
+<Table>
           <TableHeader>
             <TableRow>
               <TableHead>Начат</TableHead>
@@ -434,7 +438,7 @@ export function AdminTopicsSpike() {
                 </TableCell>
               </TableRow>
             )}
-            {runs.map((r) => (
+            {pageRows.map((r) => (
               <TableRow
                 key={r.runId}
                 className={`cursor-pointer even:bg-muted/40 ${r.runId === runId ? "bg-accent" : ""}`}
@@ -477,6 +481,7 @@ export function AdminTopicsSpike() {
             ))}
           </TableBody>
         </Table>
+)}</PagedTable>
       </Card>
 
       {loadingReport && (
@@ -518,6 +523,12 @@ export function AdminTopicsSpike() {
           )}
         </div>
       )}
+
+      {/* Grouping eval (plan phase 3 exit gate): same org, no AI call. */}
+      <div className="mt-2 flex flex-col gap-2 border-t pt-4">
+        <h3 className="text-sm font-medium">Оценка группировки по темам</h3>
+        <AdminTopicsGrouping orgId={orgId} />
+      </div>
     </div>
   )
 }
@@ -572,7 +583,8 @@ function GateCard({ gate }: { gate: EvalGate }) {
       )}
       {gate.codes.length > 0 && (
         <>
-          <Table>
+          <PagedTable rows={shown}>{(pageRows) => (
+<Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Код</TableHead>
@@ -594,7 +606,7 @@ function GateCard({ gate }: { gate: EvalGate }) {
                   </TableCell>
                 </TableRow>
               )}
-              {shown.map((c) => (
+              {pageRows.map((c) => (
                 <TableRow key={c.code} className="even:bg-muted/40">
                   <TableCell className="font-mono text-xs">{c.code}</TableCell>
                   <TableCell className="text-xs">{c.labelRu}</TableCell>
@@ -616,6 +628,7 @@ function GateCard({ gate }: { gate: EvalGate }) {
               ))}
             </TableBody>
           </Table>
+)}</PagedTable>
           {gate.counts.insufficient > 0 && (
             <Button size="xs" variant="ghost" className="self-start" onClick={() => setShowAll((v) => !v)}>
               {showAll ? "Скрыть коды с малым числом данных" : `Показать коды с малым числом данных (${gate.counts.insufficient})`}
@@ -780,7 +793,8 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
         <span className="ml-2 text-muted-foreground">* — код порога качества (P6 / P8)</span>
       </div>
       <Card className="py-0">
-        <Table>
+        <PagedTable rows={r.codes}>{(pageRows) => (
+<Table>
           <TableHeader>
             <TableRow>
               <TableHead>Код</TableHead>
@@ -815,7 +829,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
                 </TableCell>
               </TableRow>
             )}
-            {r.codes.map((c) => {
+            {pageRows.map((c) => {
               const s = c.stats[bucket]
               return (
                 <TableRow key={c.code} className="even:bg-muted/40">
@@ -848,6 +862,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
             })}
           </TableBody>
         </Table>
+)}</PagedTable>
       </Card>
       <div className="text-xs text-muted-foreground">
         TP / FP / FN, точность, полнота и F1 — по кодам, которые движок оставил после обработки (низкая
@@ -876,7 +891,8 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
           </Table>
         </Card>
         <Card className="py-0">
-          <Table>
+          <PagedTable rows={r.failed}>{(pageRows) => (
+<Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Ошибки</TableHead>
@@ -892,7 +908,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
                   </TableCell>
                 </TableRow>
               )}
-              {r.failed.map((f) => (
+              {pageRows.map((f) => (
                 <TableRow key={f.goldenItemId} className="even:bg-muted/40">
                   <TableCell className="font-mono text-xs">{f.goldenItemId.slice(0, 8)}</TableCell>
                   <TableCell className="text-xs">
@@ -903,12 +919,14 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
               ))}
             </TableBody>
           </Table>
+)}</PagedTable>
         </Card>
       </div>
 
       {r.mismatches.length > 0 && (
         <Card className="py-0">
-          <Table>
+          <PagedTable rows={r.mismatches}>{(pageRows) => (
+<Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Расхождения</TableHead>
@@ -918,7 +936,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {r.mismatches.map((m) => (
+              {pageRows.map((m) => (
                 <TableRow key={m.goldenItemId} className="even:bg-muted/40">
                   <TableCell className="font-mono text-xs">
                     {m.goldenItemId.slice(0, 8)}
@@ -933,6 +951,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
               ))}
             </TableBody>
           </Table>
+)}</PagedTable>
         </Card>
       )}
     </div>
@@ -987,7 +1006,8 @@ function SampleReportView({ report: r }: { report: SampleReport }) {
       </div>
 
       <Card className="py-0">
-        <Table>
+        <PagedTable rows={s.reviewCodes}>{(pageRows) => (
+<Table>
           <TableHeader>
             <TableRow>
               <TableHead className="w-6" />
@@ -1015,7 +1035,7 @@ function SampleReportView({ report: r }: { report: SampleReport }) {
                 </TableCell>
               </TableRow>
             )}
-            {s.reviewCodes.map((c) => {
+            {pageRows.map((c) => {
               const isOpen = open.has(c.code)
               return (
                 <Fragment key={c.code}>
@@ -1065,6 +1085,7 @@ function SampleReportView({ report: r }: { report: SampleReport }) {
             })}
           </TableBody>
         </Table>
+)}</PagedTable>
       </Card>
 
       {s.liveCodes.length > 0 && (
@@ -1078,7 +1099,8 @@ function SampleReportView({ report: r }: { report: SampleReport }) {
 
       {s.failed.length > 0 && (
         <Card className="py-0">
-          <Table>
+          <PagedTable rows={s.failed}>{(pageRows) => (
+<Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Ошибки</TableHead>
@@ -1086,7 +1108,7 @@ function SampleReportView({ report: r }: { report: SampleReport }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {s.failed.map((f) => (
+              {pageRows.map((f) => (
                 <TableRow key={f.itemId} className="even:bg-muted/40">
                   <TableCell>
                     <ItemId id={f.itemId} />
@@ -1096,6 +1118,7 @@ function SampleReportView({ report: r }: { report: SampleReport }) {
               ))}
             </TableBody>
           </Table>
+)}</PagedTable>
         </Card>
       )}
     </div>

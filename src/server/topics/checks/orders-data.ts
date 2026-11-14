@@ -53,7 +53,7 @@ const isCounted = (o: OrderInput) => o.status === "confirmed" || o.status === "f
  * strings with no offset — `new Date()` would read them in the server's
  * local zone, so they are parsed as UTC here (as drizzle's column mapper does).
  */
-function toDate(v: Date | string | null | undefined): Date | null {
+export function toDate(v: Date | string | null | undefined): Date | null {
   if (!v) return null
   let d: Date
   if (v instanceof Date) d = v

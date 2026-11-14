@@ -137,7 +137,8 @@ no-op there: the rows already existed). Detail: [../specs/db-migrations/README.m
 load them on every product query. They exist only in migration `0002`.
 
 **Reference data vs tenant data:** platform reference data (source templates,
-system funnel stages) is in migration `0004`; there are no system rules today.
+system funnel stages) is in migration `0004`; there are no system rules today (the `rule` table is kept as a data record only).
+Migration `0028_cards_contract_old_columns` drops `source_item.card_analysis_scanned_at` and `source_item.deal_analysis_scanned_at`; the latest migration is `0028`.
 Tenant data (organizations, users, companies, products, org-owned stages and
 rules) is never in migrations. The team's old scripts (`scripts/`), reference
 specs (`refs/`) and catalog loader (`data_migration/`) remain git-ignored and
@@ -167,7 +168,7 @@ are not needed to build a DB.
   Telegram webhook is not registered automatically when credentials are saved.
 - Add any new production origin to `trustedOrigins` in `src/lib/auth.ts`.
 - Long-running routes set `maxDuration` (up to 300 s: parse, process, uploads,
-  cards/deals generation, teardown, admin pipeline run).
+  teardown, admin pipeline run).
 - Seed data must exist before new orgs are created: the org-creation hook
   creates default sources from `source_template` rows; with no templates the
   new org gets no sources (the error is logged, not raised).
@@ -223,7 +224,6 @@ are not needed to build a DB.
 - Companies feed sorts up to 500 rows in the browser; needs server-side sorting
   at scale (#22).
 - Debug `console.log` calls remain in LLM pipelines (#15).
-- Deal agent auto-move, deal risk and some deal "state" texts are mocks.
 - Guest order link has no rate limiting.
 - Seven API routes still access the database directly (see
   [architecture.md](./architecture.md#layering-rule)).

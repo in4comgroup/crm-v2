@@ -281,8 +281,8 @@ export function ClientDetailDrawer({
     reloadTasks(clientId)
   }, [open, clientId, reloadTasks])
 
-  // Список источников для селектора в «Материалах компании» — один раз на
-  // открытие, тот же эндпоинт, что уже использует ExploreSourcesDialog.
+  // Source list for the «Материалы компании» selector — once per open
+  // (`/api/sources/options`).
   useEffect(() => {
     if (!open) return
     fetch("/api/sources/options")

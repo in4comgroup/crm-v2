@@ -5,14 +5,27 @@
 
 import type { DigestEntry, DigestModel, DigestSection } from "./delivery-render"
 import { isRecipient, splitWithDailyLimit, type DeliveryKind } from "./delivery-routing"
-import { splitWeek, type TopicEntry } from "./topic-ui"
+import { viewerLists, type SnapshotContext } from "./list-snapshot"
+import { splitDigest, splitWeek, type TopicEntry } from "./topic-ui"
 
-export type OrgLists = { now: TopicEntry[]; digest: TopicEntry[]; week: TopicEntry[] }
+/**
+ * The org's lists (rank order, no daily limit). With `snapshot` (+ `others`
+ * = topics that may still be held in a snapshot) «Сводка» / «Неделя» are
+ * frozen per recipient exactly like the dashboard (list-snapshot.ts).
+ */
+export type OrgLists = {
+  now: TopicEntry[]
+  digest: TopicEntry[]
+  week: TopicEntry[]
+  others?: TopicEntry[]
+  snapshot?: SnapshotContext
+}
 
 /**
  * The lists ONE recipient gets: the P6 daily limit as this user sees it,
- * then only topics routed to the user (assignee / deal owner = the user, or
- * no recipient → every member). Spec 01 §8.1, 06 §7.2.
+ * «Сводка» / «Неделя» frozen at their last snapshot (when the context is
+ * given), then only topics routed to the user (assignee / deal owner = the
+ * user, or no recipient → every member). Spec 01 §8.1, 06 §7.2.
  */
 export function userLists(
   org: OrgLists,
@@ -22,6 +35,17 @@ export function userLists(
   dayOf: (iso: string | null) => string,
 ): OrgLists {
   const mine = (e: TopicEntry) => isRecipient(e, userId, memberIds)
+  if (org.snapshot) {
+    const v = viewerLists(
+      { now: org.now, digest: org.digest, week: org.week, others: org.others ?? [] },
+      org.snapshot,
+      userId,
+      memberIds,
+      limit,
+      dayOf,
+    )
+    return { now: v.now.filter(mine), digest: v.digest.filter(mine), week: v.week.filter(mine) }
+  }
   const split = splitWithDailyLimit(org.now, org.digest, userId, memberIds, limit, dayOf)
   return { now: split.now.filter(mine), digest: split.digest.filter(mine), week: org.week.filter(mine) }
 }
@@ -101,8 +125,9 @@ function model(kind: DeliveryKind, sections: DigestSection[], c: ModelContext): 
   }
 }
 
-/** Morning digest: «Сейчас» (all) + «Сводка» (N visible + «Ещё N»). */
+/** Morning digest: «Сейчас» (all) + «Сводка» = the morning snapshot (N visible + «Ещё N») + «Новое с утра». */
 export function morningModel(lists: OrgLists, c: ModelContext): DigestModel {
+  const d = splitDigest(lists.digest, c.digestVisibleItems)
   return model(
     "morning_digest",
     [
@@ -110,9 +135,14 @@ export function morningModel(lists: OrgLists, c: ModelContext): DigestModel {
       {
         title: "Сводка",
         hint: "можно разобрать в течение дня",
-        entries: lists.digest.map((e) => digestEntry(e, c.links)),
+        entries: [...d.shown, ...d.more].map((e) => digestEntry(e, c.links)),
         visible: c.digestVisibleItems,
         moreLink: c.links.tab("digest"),
+      },
+      {
+        title: "Новое с утра",
+        hint: "появилось после утреннего снимка",
+        entries: d.sinceMorning.map((e) => digestEntry(e, c.links)),
       },
     ],
     c,
@@ -135,6 +165,11 @@ export function weeklyModel(lists: OrgLists, c: ModelContext): DigestModel {
         title: "Тема затихла",
         hint: "давно нет активности",
         entries: w.dormant.map((e) => digestEntry(e, c.links, "Тема затихла")),
+      },
+      {
+        title: "Новое после обзора",
+        hint: "появилось после еженедельного снимка",
+        entries: w.since.map((e) => digestEntry(e, c.links)),
       },
     ],
     c,

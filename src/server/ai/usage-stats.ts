@@ -3,6 +3,7 @@ import "server-only"
 import { and, eq, gte, lt, ne, sql, type SQL } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { aiGateway, aiUsageEvent, organization, user } from "@/db/schema"
+import type { ChartScale } from "@/lib/ai-usage-chart"
 
 // Usage statistics for the «Использование ИИ» admin tab and the per-process
 // / per-model numbers on the other AI tabs
@@ -85,25 +86,46 @@ export async function usageSummary(f: UsageFilters): Promise<UsageMetrics> {
   return toMetrics(row as RawMetrics)
 }
 
-export type UsageDailyRow = { day: string; key: string; calls: number; cost: number }
+export type UsageCostBucketRow = { bucket: string; key: string; calls: number; cost: number }
 
-/** Cost per UTC day, stacked by process or by model. */
-export async function usageDaily(
+// date_trunc unit + key format per chart scale. Inlined as raw SQL (fixed
+// whitelist, never user text) so SELECT and GROUP BY are the same expression.
+const BUCKET_SQL: Record<ChartScale, { unit: string; format: string }> = {
+  day: { unit: "day", format: "YYYY-MM-DD" },
+  month: { unit: "month", format: "YYYY-MM" },
+  year: { unit: "year", format: "YYYY" },
+}
+
+/**
+ * Cost per UTC day / month / year (the «Использование ИИ» chart), stacked by
+ * process or by model. `created_at` is a timestamp without time zone holding
+ * UTC (defaultNow on a UTC session), so date_trunc on it buckets in UTC.
+ * Keys: `YYYY-MM-DD` / `YYYY-MM` / `YYYY` (see src/lib/ai-usage-chart.ts).
+ * Empty buckets are not returned — the chart fills them with 0.
+ */
+export async function usageCostBuckets(
   f: UsageFilters,
   stackBy: "process" | "model",
-): Promise<UsageDailyRow[]> {
+  scale: ChartScale,
+): Promise<UsageCostBucketRow[]> {
   const key =
     stackBy === "process"
       ? aiUsageEvent.processKey
       : sql<string>`coalesce(${aiUsageEvent.responseModel}, ${aiUsageEvent.requestModel})`
-  const day = sql<string>`to_char(date_trunc('day', ${aiUsageEvent.createdAt}), 'YYYY-MM-DD')`
+  const b = BUCKET_SQL[scale]
+  const bucket = sql<string>`to_char(date_trunc('${sql.raw(b.unit)}', ${aiUsageEvent.createdAt}), '${sql.raw(b.format)}')`
   const rows = await db
-    .select({ day, key, calls: METRICS.calls, cost: METRICS.cost })
+    .select({ bucket, key, calls: METRICS.calls, cost: METRICS.cost })
     .from(aiUsageEvent)
     .where(where(f))
-    .groupBy(day, key)
-    .orderBy(day)
-  return rows.map((r) => ({ day: r.day, key: String(r.key), calls: Number(r.calls), cost: Number(r.cost) }))
+    .groupBy(bucket, key)
+    .orderBy(bucket)
+  return rows.map((r) => ({
+    bucket: r.bucket,
+    key: String(r.key),
+    calls: Number(r.calls),
+    cost: Number(r.cost),
+  }))
 }
 
 export type UsageBreakdownRow = UsageMetrics & {

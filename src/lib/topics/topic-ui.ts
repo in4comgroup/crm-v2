@@ -25,7 +25,11 @@ export function isTopicTab(v: unknown): v is TopicTab {
   return typeof v === "string" && (TOPIC_TABS as readonly string[]).includes(v)
 }
 
-/** `cards.digestVisibleItems` (06 §7.2, §13): «Сводка» shows 5, the rest under «Ещё». */
+/**
+ * Default of `cards.digestVisibleItems` (06 §7.2, §13): «Сводка» shows 5,
+ * the rest under «Ещё». The live value is the delivery parameter
+ * `digestVisibleItems` (settings ladder), sent as `TopicListResponse.digestVisibleItems`.
+ */
 export const DIGEST_VISIBLE_ITEMS = 5
 
 /** Hours after the cycle start in which an entry carries «Новое» / «Обновлено». */
@@ -119,6 +123,13 @@ export type TopicEntry = {
   marker: CycleMarker | null
   /** In-app evening reminder (phase 7): «Напоминание N из max» of this cycle, last 24 h. */
   reminder: { count: number; at: string } | null
+  /**
+   * «Сводка» / «Неделя» only (frozen lists, src/lib/topics/list-snapshot.ts):
+   * "snapshot" = in the last snapshot of the list; "held" = in the snapshot
+   * but left the list after it (kept until the next snapshot); "since" =
+   * joined after it («Новое с утра» / «Новое после обзора»). Absent elsewhere.
+   */
+  snapshot?: "snapshot" | "held" | "since" | null
 }
 
 export type TopicListResponse = {
@@ -130,6 +141,8 @@ export type TopicListResponse = {
   digestSnapshotAt: string
   /** Last «Неделя» snapshot moment (weekly review), ISO. */
   weeklySnapshotAt: string
+  /** `cards.digestVisibleItems` (delivery params ladder): «Сводка» entries shown before «Ещё». */
+  digestVisibleItems: number
   now: string
 }
 
@@ -201,7 +214,21 @@ export type TopicDetailView = TopicEntry & {
   cards: TopicCardView[]
   /** Every deal card of the topic, newest first. */
   allDealCards: TopicCardView[]
+  /** Orders linked to the topic (phase 10), newest first. */
+  orders: TopicOrderView[]
 }
+
+/** An order linked to a topic (phase 10). `total` = discounted total. */
+export type TopicOrderView = {
+  id: string
+  label: string
+  status: string
+  total: number
+  currency: string
+  orderDate: string
+}
+/** «Привязать заказ»: an order of the topic's company; `otherTopicTitle` = it is on another topic now. */
+export type TopicOrderOption = TopicOrderView & { otherTopicTitle: string | null }
 
 export type TopicMergeOption = { id: string; title: string; status: string; lastActivityAt: string }
 export type TopicDealOption = { id: string; name: string; status: string; stageLabel: string | null }
@@ -223,6 +250,9 @@ export type TopicActionInput =
   | { action: "set_owner"; topicId: string; userId: string | null }
   /** Recompute attention now (after a card decision). */
   | { action: "recompute"; topicId: string }
+  /** Phase 10: link an order of the topic's company / unlink it. */
+  | { action: "link_order"; topicId: string; orderId: string }
+  | { action: "unlink_order"; topicId: string; orderId: string }
 
 export const TOPIC_ACTIONS = [
   "done",
@@ -234,6 +264,8 @@ export const TOPIC_ACTIONS = [
   "link_deal",
   "set_owner",
   "recompute",
+  "link_order",
+  "unlink_order",
 ] as const
 
 // ── Pure helpers ──────────────────────────────────────────────────────────
@@ -268,34 +300,34 @@ export function cycleMarker(
 }
 
 /**
- * «Сводка» (06 §7.2): the morning snapshot = entries whose cycle started
- * before the last snapshot moment; later D4 topics form «Новое с утра».
- * The snapshot shows `visible` entries, the rest goes under «Ещё». Order
- * inside each part is kept (the caller sorts by rank).
+ * «Сводка» (06 §7.2): the frozen morning snapshot (`snapshot` ≠ "since";
+ * `visible` entries shown, the rest under «Ещё»), then «Новое с утра»
+ * (`snapshot` = "since"). Order inside each part is kept (the server sorts).
  */
-export function splitDigest<T extends { attention: Pick<TopicEntryAttention, "cycleStartedAt"> | null }>(
+export function splitDigest<T extends { snapshot?: "snapshot" | "held" | "since" | null }>(
   entries: readonly T[],
-  snapshotAt: Date,
   visible = DIGEST_VISIBLE_ITEMS,
 ): { shown: T[]; more: T[]; sinceMorning: T[] } {
   const snap: T[] = []
   const sinceMorning: T[] = []
-  for (const e of entries) {
-    const c = e.attention?.cycleStartedAt ? new Date(e.attention.cycleStartedAt).getTime() : null
-    if (c !== null && Number.isFinite(c) && c > snapshotAt.getTime()) sinceMorning.push(e)
-    else snap.push(e)
-  }
-  return { shown: snap.slice(0, Math.max(0, visible)), more: snap.slice(Math.max(0, visible)), sinceMorning }
+  for (const e of entries) (e.snapshot === "since" ? sinceMorning : snap).push(e)
+  const n = Math.max(1, visible)
+  return { shown: snap.slice(0, n), more: snap.slice(n), sinceMorning }
 }
 
-/** «Неделя» (06 §7.2, §7.4): main list, then «Истекло», then «Тема затихла». */
-export function splitWeek<T extends { attention: Pick<TopicEntryAttention, "section"> | null }>(
+/**
+ * «Неделя» (06 §7.2, §7.4): the frozen weekly snapshot — main list, then
+ * «Истекло», then «Тема затихла» — and «Новое после обзора» (`snapshot` =
+ * "since", any section).
+ */
+export function splitWeek<T extends { attention: Pick<TopicEntryAttention, "section"> | null; snapshot?: "snapshot" | "held" | "since" | null }>(
   entries: readonly T[],
-): { main: T[]; expired: T[]; dormant: T[] } {
-  const out = { main: [] as T[], expired: [] as T[], dormant: [] as T[] }
+): { main: T[]; expired: T[]; dormant: T[]; since: T[] } {
+  const out = { main: [] as T[], expired: [] as T[], dormant: [] as T[], since: [] as T[] }
   for (const e of entries) {
     const s = e.attention?.section ?? null
-    if (s === "expired") out.expired.push(e)
+    if (e.snapshot === "since") out.since.push(e)
+    else if (s === "expired") out.expired.push(e)
     else if (s === "dormant") out.dormant.push(e)
     else out.main.push(e)
   }
@@ -426,6 +458,14 @@ export function describeTopicEvent(
       return "Стадия сделки подтверждена"
     case "stage_confirmation_rejected":
       return "Перевод стадии отклонён"
+    case "order_linked": {
+      const label = str(p.orderLabel)
+      return `К теме привязан заказ${label ? ` ${label}` : ""}${str(p.via) === "card" ? " (создан из карточки)" : ""}`
+    }
+    case "order_unlinked": {
+      const label = str(p.orderLabel)
+      return `Заказ${label ? ` ${label}` : ""} отвязан от темы${str(p.reason) ? ` — ${str(p.reason)}` : ""}`
+    }
     default:
       return e.actor === "user" ? "Действие пользователя" : "Событие системы"
   }

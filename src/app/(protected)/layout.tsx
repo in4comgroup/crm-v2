@@ -2,6 +2,7 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/blocks/app-sidebar"
 import { getServerSession } from "@/lib/get-session"
 import { getOrganizationLogo } from "@/server/organizations"
+import { canReviewGoldenSet } from "@/server/topics/golden-review"
 import { redirect } from "next/navigation"
 import { PanelProvider } from "@/lib/chat-panel-context"
 import { GlobalChatProvider } from "@/lib/global-chat-context"
@@ -19,7 +20,11 @@ export default async function DashboardLayout({
   // session — it's a large base64 data URL and would overflow the session
   // cookie (431 Request Header Fields Too Large). See src/lib/auth.ts note.
   const orgId = session.session.activeOrganizationId
-  const orgLogo = orgId ? await getOrganizationLogo(orgId) : null
+  const [orgLogo, canReviewGolden] = await Promise.all([
+    orgId ? getOrganizationLogo(orgId) : Promise.resolve(null),
+    // «Проверка эталона» in the sidebar: org owner / admin of the active org.
+    orgId ? canReviewGoldenSet() : Promise.resolve(false),
+  ])
 
   return (
     <SidebarProvider
@@ -32,7 +37,7 @@ export default async function DashboardLayout({
         { "--sidebar-width": "13rem" } as React.CSSProperties
       }
     >
-      <AppSidebar session={session} orgLogo={orgLogo} />
+      <AppSidebar session={session} orgLogo={orgLogo} canReviewGolden={canReviewGolden} />
 
       <div className="relative flex-1 flex flex-col min-w-0">
         {/* Атмосфера лендинга (сетка + свечения, globals.css) — фон всего

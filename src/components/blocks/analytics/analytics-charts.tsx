@@ -460,6 +460,7 @@ export function StackedPeriodBars({
   metricFormat = formatMoney,
   metricFormatFull = formatMoneyFull,
   height = 280,
+  periodFormat = formatPeriod,
 }: {
   /** Already remapped to `keys` — see `remapStack`. */
   data: StackPoint[]
@@ -469,6 +470,8 @@ export function StackedPeriodBars({
   metricFormat?: (n: number) => string
   metricFormatFull?: (n: number) => string
   height?: number
+  /** Axis / tooltip label of a `period` key; defaults to `formatPeriod`. */
+  periodFormat?: (period: string, long?: boolean) => string
 }) {
   // For a 100% view the shares are computed here rather than by the chart, so
   // the tooltip can show the true value alongside the normalised bar.
@@ -494,7 +497,7 @@ export function StackedPeriodBars({
           axisLine={false}
           tickMargin={8}
           tick={AXIS_TICK}
-          tickFormatter={(v: string) => formatPeriod(v)}
+          tickFormatter={(v: string) => periodFormat(v)}
         />
         <YAxis
           tickLine={false}
@@ -510,7 +513,7 @@ export function StackedPeriodBars({
           content={
             <ChartTooltipContent
               labelFormatter={(_, p) =>
-                formatPeriod(String(p?.[0]?.payload?.period ?? ""), true)
+                periodFormat(String(p?.[0]?.payload?.period ?? ""), true)
               }
               formatter={rowFormatter(
                 percent ? (n) => formatPercent(n, 1) : metricFormatFull,

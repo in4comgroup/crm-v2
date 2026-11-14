@@ -4,6 +4,8 @@
 // funnel stages) and pack templates (organizationId null, targets = stage
 // meanings S1…S5 / won / lost). Spec: 01-specification §9.2.
 
+import { TablePager } from "@/components/blocks/table-pager"
+import { useTablePaging } from "@/components/blocks/use-table-paging"
 import { useMemo, useState } from "react"
 import { Copy, Loader, Pencil, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
@@ -97,6 +99,7 @@ export function StageRulesPanel({ mode }: { mode: Mode }) {
       .slice()
       .sort((a, b) => (a.packCode ?? "").localeCompare(b.packCode ?? "") || a.sort - b.sort || a.code.localeCompare(b.code))
   }, [mode, org, registry, packFilter])
+  const paging = useTablePaging(rules)
 
   const stageName = (id: string) => {
     const s = org?.funnelStages.find((x) => x.id === id)
@@ -176,7 +179,7 @@ export function StageRulesPanel({ mode }: { mode: Mode }) {
                 </TableCell>
               </TableRow>
             ) : (
-              rules.map((r) => (
+              paging.pageRows.map((r) => (
                 <TableRow key={r.id} className={`even:bg-muted/40 ${r.enabled ? "" : "text-muted-foreground"}`}>
                   <TableCell>
                     <div className="font-mono text-xs">{r.code}</div>
@@ -220,6 +223,7 @@ export function StageRulesPanel({ mode }: { mode: Mode }) {
           </TableBody>
         </Table>
       </Card>
+      <TablePager {...paging.pagerProps} />
 
       <StageRuleDialog
         mode={mode}

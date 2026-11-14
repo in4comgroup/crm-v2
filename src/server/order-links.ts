@@ -20,6 +20,7 @@ import {
   buildOrderLinkUrl,
 } from "@/lib/order-link-token"
 import { isValidEmail, computeOrderDiscount } from "@/lib/orders-format"
+import { afterOrderStatusChange } from "@/server/topics/orders-link"
 
 // Default link lifetime (spec §10 open question → 14-day global default;
 // per-order windows can land later as a column + form field).
@@ -152,6 +153,8 @@ async function handToClient(
     )
     .returning({ id: order.id })
   if (updated.length === 0) return { ok: false, reason: "conflict" }
+  // Topics phase 10: reopen from confirmed / finalized clears ORDER_CONFIRMED.
+  if (fromStatuses.some((s) => s === "confirmed" || s === "finalized")) await afterOrderStatusChange(orderId)
 
   const { raw, expiresAt } = await mintGrant(orderId, email || null)
   return {
@@ -234,6 +237,8 @@ export async function cancelOrderAndRevoke(
     .returning({ id: order.id })
   if (updated.length === 0) return { ok: false, reason: "conflict" }
   await revokeActiveGrants(orderId)
+  // Topics phase 10: a confirmed order cancelled → ORDER_CONFIRMED cleared.
+  await afterOrderStatusChange(orderId)
   return { ok: true, status: "cancelled" }
 }
 
@@ -255,6 +260,8 @@ export async function finalizeOrder(
     )
     .returning({ id: order.id })
   if (updated.length === 0) return { ok: false, reason: "conflict" }
+  // Topics phase 10: ORDER_CONFIRMED on the order's topic (no-op when present).
+  await afterOrderStatusChange(orderId)
   return { ok: true, status: "finalized" }
 }
 
@@ -589,5 +596,8 @@ export async function guestConfirmOrder(
     .update(orderAccessLink)
     .set({ status: "used", confirmedAt: new Date() })
     .where(eq(orderAccessLink.tokenHash, hashToken(token)))
+  // Topics phase 10: the client confirmed → ORDER_CONFIRMED on the order's
+  // topic (org from the order row; never fails the guest action).
+  await afterOrderStatusChange(r.view.orderId)
   return { ok: true }
 }

@@ -141,49 +141,6 @@ export async function loadClientLastActivity(
   return out
 }
 
-// То же для сделок: max(сама сделка, её задачи, активность её компании).
-export async function loadDealLastActivity(
-  organizationId: string,
-  deals: { id: string; clientId: string | null; updatedAt: string }[],
-): Promise<Map<string, Date>> {
-  const out = new Map<string, Date>()
-  if (deals.length === 0) return out
-
-  const dealIds = deals.map((d) => d.id)
-  const [byClient, dealTasks] = await Promise.all([
-    loadClientLastActivity(
-      organizationId,
-      deals.map((d) => d.clientId).filter((id): id is string => !!id),
-    ),
-    db
-      .select({ dealId: task.dealId, at: max(task.updatedAt) })
-      .from(task)
-      .where(
-        and(
-          eq(task.organizationId, organizationId),
-          inArray(task.dealId, dealIds),
-        ),
-      )
-      .groupBy(task.dealId),
-  ])
-  const taskAt = new Map<string, Date>()
-  for (const r of dealTasks) {
-    if (r.dealId && r.at) taskAt.set(r.dealId, new Date(r.at))
-  }
-
-  for (const d of deals) {
-    let latest = new Date(d.updatedAt)
-    for (const c of [
-      d.clientId ? byClient.get(d.clientId) : undefined,
-      taskAt.get(d.id),
-    ]) {
-      if (c && c > latest) latest = c
-    }
-    out.set(d.id, latest)
-  }
-  return out
-}
-
 // Последняя дата сообщения по каждому email-участнику исходников орги →
 // компания по email контакта или по домену. Один GROUP BY по орге (не по
 // клиенту): jsonb-массивы from/to/cc/participants разворачиваются в SQL,

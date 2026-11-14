@@ -33,7 +33,6 @@ import {
   ChevronsRightLeft,
   ChevronsLeftRight,
   ChevronsUpDown,
-  ScanSearch,
   SlidersVertical,
   Tags,
 } from "lucide-react"
@@ -68,7 +67,6 @@ import {
   type PendingMove,
 } from "@/components/blocks/deal-move-dialog"
 import DealEditDialog from "@/components/forms/form-deal-edit"
-import { DiscoverDealsDialog } from "@/components/blocks/discover-deals-dialog"
 import { DealDetailDrawer } from "@/components/blocks/deal-detail-drawer"
 import { DealDecisionFeed } from "@/components/blocks/deal-decision-feed"
 import { useBoardIntel } from "@/hooks/use-board-intel"
@@ -309,18 +307,6 @@ export function DealsBoard({
     refetchBoard()
     loadRejectedOrigins()
   }
-
-  // Агент авто-применил переводы во время загрузки интела — подтягиваем свежие
-  // стадии сделок (сервер-компонент перечитает deals). Повторный фетч интела
-  // вернёт appliedMoves = 0 (гвард + resolved-set), так что цикла нет.
-  useEffect(() => {
-    if (board.appliedMoves > 0) {
-      toast(
-        `Агент перевёл сделки: ${board.appliedMoves} — помечены на карточках`,
-      )
-      router.refresh()
-    }
-  }, [board.appliedMoves, router])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -821,15 +807,6 @@ export function DealsBoard({
             </label>
             {/* Перенесены сюда со строки заголовка, чтобы освободить её для
                 глобального поиска (справа от заголовка). */}
-            <DiscoverDealsDialog
-              onDealsGenerated={router.refresh}
-              trigger={
-                <Button size="sm" variant="secondary">
-                  <ScanSearch className="h-4 w-4 mr-1" />
-                  Найти в источниках
-                </Button>
-              }
-            />
             <Button
               size="sm"
               variant={feedOpen ? "default" : "outline"}
@@ -958,9 +935,8 @@ export function DealsBoard({
                   column={column}
                   lostCards={lostByStage[column.stage.id] ?? []}
                   showLost={showLostDeals}
-                  intelById={board.intel}
                   tasksByDeal={board.tasksByDeal}
-                  intelLoaded={!boardLoading}
+                  boardLoaded={!boardLoading}
                   onUndoAgent={setUndoDeal}
                   onOpen={(d) => {
                     if (justDraggedRef.current) return
@@ -987,9 +963,8 @@ export function DealsBoard({
                 collapsed={finalCollapsed}
                 onCollapse={() => setFinalCollapsed(true)}
                 onExpand={() => setFinalCollapsed(false)}
-                intelById={board.intel}
                 tasksByDeal={board.tasksByDeal}
-                intelLoaded={!boardLoading}
+                boardLoaded={!boardLoading}
                 onUndoAgent={setUndoDeal}
                 onOpen={(d) => {
                   if (justDraggedRef.current) return

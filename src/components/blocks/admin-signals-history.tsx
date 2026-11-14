@@ -3,10 +3,10 @@
 // «История» of the signals registry: one row per taxonomy version with its
 // change rows (entity, key, before → after as a compact diff).
 
+import { DEFAULT_PAGE_SIZE, TablePager, pageCount } from "@/components/blocks/table-pager"
 import { Fragment, useEffect, useState } from "react"
 import { ChevronDown, ChevronRight, Loader } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Sheet,
   SheetContent,
@@ -27,7 +27,8 @@ import {
 type Version = SignalsHistoryResponse["versions"][number]
 type Change = Version["changes"][number]
 
-const PAGE = 50
+// The history API caps at 200 versions; load them whole and page here.
+const HISTORY_LOAD = 200
 
 function changedFields(c: Change): { field: string; before: unknown; after: unknown }[] {
   const keys = new Set([...Object.keys(c.before ?? {}), ...Object.keys(c.after ?? {})])
@@ -92,15 +93,16 @@ export function SignalsHistorySheet({
   /** Changes when the registry version changes, to refetch while open. */
   refreshKey: number
 }) {
-  const [limit, setLimit] = useState(PAGE)
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [data, setData] = useState<{ key: string; versions: Version[] | null; error: string | null } | null>(null)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
-  const reqKey = `${limit}:${refreshKey}`
+  const reqKey = String(refreshKey)
 
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    getJson<SignalsHistoryResponse>(`${SIGNALS_API}?view=history&limit=${limit}`)
+    getJson<SignalsHistoryResponse>(`${SIGNALS_API}?view=history&limit=${HISTORY_LOAD}`)
       .then((d) => !cancelled && setData({ key: reqKey, versions: d.versions, error: null }))
       .catch(
         (e) =>
@@ -110,7 +112,7 @@ export function SignalsHistorySheet({
     return () => {
       cancelled = true
     }
-  }, [open, limit, reqKey])
+  }, [open, reqKey])
 
   const versions = data?.versions ?? null
   const loading = open && data?.key !== reqKey
@@ -140,7 +142,7 @@ export function SignalsHistorySheet({
           {versions && versions.length === 0 && (
             <p className="py-6 text-center text-sm text-muted-foreground">Изменений ещё не было</p>
           )}
-          {versions?.map((v) => {
+          {versions?.slice(page * pageSize, (page + 1) * pageSize).map((v) => {
             const isOpen = expanded.has(v.version)
             return (
               <Fragment key={v.version}>
@@ -176,13 +178,18 @@ export function SignalsHistorySheet({
               </Fragment>
             )
           })}
-          {versions && versions.length >= limit && (
-            <div className="flex justify-center pt-2">
-              <Button size="sm" variant="outline" onClick={() => setLimit((l) => l + PAGE)} disabled={loading}>
-                {loading && <Loader className="h-4 w-4 animate-spin" />}
-                Показать ещё
-              </Button>
-            </div>
+          {versions && versions.length > 0 && (
+            <TablePager
+              className="pt-2"
+              page={Math.min(page, pageCount(versions.length, pageSize) - 1)}
+              pageSize={pageSize}
+              total={versions.length}
+              onPageChange={setPage}
+              onPageSizeChange={(n) => {
+                setPageSize(n)
+                setPage(0)
+              }}
+            />
           )}
         </div>
       </SheetContent>

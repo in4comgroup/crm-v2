@@ -38,7 +38,7 @@ The UI language is Russian. Code, database names and these docs are English.
 | Org member | `member.role = member` | Day-to-day work: companies, contacts, deals, orders, tasks, cards, sources processing |
 | Org admin | `member.role = admin` | Same as member in most modules (most modules treat all org roles equally) |
 | Org owner | `member.role = owner` | Also manages members/invitations, organization profile, org sources (credentials, auto-parse), discovery blocklist, own-org identity registry |
-| Platform admin | `user.role = admin` | Everything in «Настройки» (Settings): all users and orgs, source templates, all sources, source teardown, pipeline run + stats, System rules |
+| Platform admin | `user.role = admin` | Everything in «Настройки» (Settings): all users and orgs, source templates, all sources, source teardown (one «Источники» tab), pipeline run + stats |
 | Guest (client) | Holder of an order link token | Reviews, adjusts quantities and confirms one order at `/o/[token]`, no account |
 
 ## Main business flow (end to end)
@@ -49,11 +49,10 @@ flowchart LR
   B -->|LLM parse| C[Markdown + metadata_json]
   C -->|upload| D[(R2 bucket)]
   C --> E[Discovery<br/>companies, contacts, links]
-  D --> F[Cards generation<br/>rule + LLM]
-  D --> G[Deal discovery<br/>rule + LLM]
+  D --> F[Topics engine<br/>signals, topics, topic cards]
   F -->|accept| H[Task]
   F -->|accept new_order| I[Order from request]
-  G --> J[Deals kanban]
+  F -->|deal bridge| J[Deals kanban]
   E --> K[Companies / Contacts]
   I --> L[Order + guest link]
   L --> M[Analytics]
@@ -76,11 +75,12 @@ Step by step:
 4. **Discover.** On «Компании» (Companies) the operator runs discovery
    («Найти в источниках», Find in sources). It proposes new companies, contacts
    and contact-to-company links; the operator reviews and applies.
-5. **Signals.** On «Домашняя» (Home) the operator runs cards generation with a
-   Custom rule. Accepting a card creates a task (or, for a `new_order` card, an
-   order draft); rejecting needs a reason.
+5. **Signals.** The topics engine turns parsed items into topics and topic cards.
+   On «Домашняя» (Home) the operator sees them (topics mode `on`; in `off` /
+   `shadow` only the read-only history of old cards). Accepting a card creates a
+   task (or, for a `new_order` card, an order draft); rejecting needs a reason.
 6. **Deals.** On «Сделки» (Deals) deals move across the funnel by drag, by the
-   LLM deal discovery, or by the "agent" auto-move (today a mock, see
+   the topics deal bridge (deal proposals and stage confirmations, see
    [modules.md](./modules.md#deals)).
 7. **Orders.** On «Заказы» (Orders, route `/products`) the rep builds an order
    from the catalog, sends a confirmation link to the client, then finalizes it.
@@ -93,9 +93,9 @@ Step by step:
 | --- | --- | --- |
 | Sources & parsing | Connect channels, ingest items, LLM-parse to Markdown, store in R2 | `/sources` «Источники» |
 | Discovery | Find companies, contacts, links in parsed items; blocklist; own-org identity | `/clients` (dialog) |
-| Cards & rules | LLM signals from parsed items, driven by editable prompt rules | `/dashboard` «Домашняя», `/rules` «Правила» |
+| Cards | Topic cards from the topics engine; read-only history of old Custom-rule cards | `/dashboard` «Домашняя» |
 | Companies & contacts | Company and person records, web lookup and batch web enrichment | `/clients` «Компании», `/contacts` «Контакты» |
-| Deals | Kanban sales funnel, deal journal, LLM deal discovery | `/deals` «Сделки» |
+| Deals | Kanban sales funnel, deal journal, deal bridge from topics | `/deals` «Сделки» |
 | Products / catalog | Read-only product catalog with hybrid search and price-list export | `/products` tab «Каталог товаров» |
 | Orders | Order builder, per-client discount, guest confirmation link, order from request | `/products` tab «Заказы» |
 | Tasks | Task list/cards, timeline, links to clients, contacts, deals | `/tasks` «Задачи» |
@@ -103,7 +103,7 @@ Step by step:
 | Global search | Cross-entity search box in every page header | header |
 | AI chat panel | Chat over CRM data and the web, on every page | header button |
 | Notifications | Bell in the header with recent events | header |
-| Admin tools | Users, orgs, templates, sources, source teardown; AI models registry, model per AI process + model rules, AI usage statistics + markup + daily AI budget; topics engine (modes, runs, golden set, model test — in development) and the signals registry «Сигналы» | `/settings` «Настройки» |
+| Admin tools | Users, orgs, templates, sources, source teardown; AI models registry, model per AI process + model rules, AI usage statistics + markup + daily AI budget; topics engine operations «Темы» (modes, runs, CRM checks, delivery), the signals registry «Сигналы», and «Тесты и отладка» (signal review, topic debug, golden set, eval) | `/settings` «Настройки» |
 | Profile & organization | User profile, org profile, members, invitations, AI usage with markup (owners) | `/profile`, `/account` |
 
 ## Navigation (sidebar)
@@ -114,7 +114,7 @@ Top block: «Домашняя» (Home, `/dashboard`), «Компании» (Comp
 `/analytics`).
 
 Bottom block: user profile (`/profile`), organization (`/account`),
-«Источники» (Sources, `/sources`), «Правила» (Rules, `/rules`), «Настройки»
+«Источники» (Sources, `/sources`), «Настройки»
 (Settings, `/settings`, platform admins only), «Выйти» (Sign out).
 
 Routes that exist but are not in the sidebar: `/clients/[id]` (company page,
@@ -139,7 +139,7 @@ search), `/cards` and `/docs` (empty placeholder pages).
 | Own-org identity | «Своя организация» | Extra names, websites and addresses that mean "this is us, not a client". |
 | Company / client | «Компания» | A `client` row. The UI says "company"; the code says "client". |
 | Contact | «Контакт» | A person, optionally linked to one company. |
-| Rule | «Правило» | A stored LLM prompt. `System` (platform-wide) or `Custom` (per org). Custom rules drive cards and deal discovery. |
+| Rule | «Правило» | A stored LLM prompt (`rule` table). No UI edits it any more; old cards still reference it. |
 | Card | «Карточка» | One LLM-made signal: priority, category, analysis, recommendation. |
 | Deal | «Сделка» | A sales opportunity for one company, placed on a funnel stage. |
 | Funnel stage | «Этап» | A deal stage with a closure probability; system stages or org-customised ones. |

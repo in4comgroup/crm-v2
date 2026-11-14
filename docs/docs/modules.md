@@ -122,37 +122,31 @@ attribution), `org-identity-registry.ts`; pure helpers in
 
 ## Cards and rules
 
-**Purpose.** Produce short decision signals from parsed items, using an
-editable prompt rule, and convert accepted signals into tasks or orders.
+**Purpose.** Show topic cards (decision signals from the topics engine) and convert
+accepted cards into tasks or orders. Custom-rule card generation and the
+`/rules` page were removed (topics plan phase 12, 2026-11-14, every org).
 
-**Pages.** `/dashboard` «Домашняя» (Home): card grid with filters (priority,
-category, date range, period, «Отклонённые» = show rejected), «Найти в
-источниках» (opens the Explore Sources dialog: period, sources, rule, model,
-re-analyze) and a "Magic" one-click run. `/rules` «Правила»: System rules
-(platform admins edit) and Custom rules (per org). `/cards/[id]`: card detail
+**Pages.** `/dashboard` «Домашняя» (Home): in topics mode `on` = topic lists plus
+the tab «История карточек» (old Custom-rule cards, read-only); in `off` /
+`shadow` = only the read-only history of old cards, no generation. Card kinds:
+topic, `deal_proposal`, `stage_confirmation`. `/cards/[id]`: card detail
 (reached from global search). `/cards` is an empty placeholder.
 
-**Main API.** `api/cards` (GET list or `?id=`, POST, PUT with `action:
-accept|reject` or partial update, DELETE), `api/cards/generate` (GET preview
-count, POST run, max 300 s), `api/rules`.
+**Main API.** `api/cards`: GET list or `?id=`, PUT `action:
+accept|reject|deal_execute`, DELETE. No manual create, no generic update.
 
-**Server modules.** `cards.ts`, `cards-generation.ts`, `rules.ts`.
+**Server modules.** `cards.ts`; topic cards in `src/server/topics/cards/`.
 
 **Key rules.**
-- Eligible items: parsed and uploaded to R2, not yet analysed (or re-parsed
-  since). Max 50 items per run, concurrency 3. Auto-apply: a relevant result
-  inserts a card at once.
-- The LLM output is a flat object with sentinel values (Gemini structured
-  output cannot use nullable/union fields). Category names from the LLM are
-  normalised to the enum.
-- Companies and users are matched by name against the org roster; the external
-  contact is matched deterministically by sender email.
+- Removed: `api/cards/generate`, `cards-generation.ts`, `generateCards`, the AI
+  process `cards.generation`, the Explore Sources dialog, the "Magic" cards
+  button, `/rules` «Правила», `api/rules`, `rules.ts`. The `rule` table stays as
+  a data record (old cards reference it through `card.rule_id`).
 - «Принять» (Accept) opens a prefilled new-task dialog; the card is accepted
   only when the task is saved (`resultTaskId` stored). A `support` card creates
-  a «Поддержка» task. A `new_order` card shows «Создать заказ» (Create order)
-  instead and starts the order-from-request flow (`resultOrderId` stored).
-  «Отклонить» (Reject) needs a reason.
-- Which categories a rule can emit depends on the rule text, not on the code.
+  a «Поддержка» task. A topic card with `category = new_order` (ORDER_REQUESTED)
+  shows «Создать заказ» (Create order) instead and starts the order-from-request
+  flow (`resultOrderId` stored). «Отклонить» (Reject) needs a reason.
 
 ## Companies and contacts
 
@@ -197,17 +191,16 @@ server-paginated (25 per page), card/table views, contact drawer.
 **Page.** `/deals` «Сделки»: kanban board (dnd-kit). Header shows weighted
 forecast (Σ value × stage probability over active non-terminal deals). Filter
 row: «Все/Мои», text search, company combobox, «Перевёл агент» (agent-moved),
-«Не состоялись» (lost), «Найти в источниках» (deal discovery), «Лента решений»
+«Не состоялись» (lost), «Лента решений»
 (decision feed), «Новая сделка», collapse-all, «Настройки стадий» (stage
 settings). Final column «Закрытие» merges Closed (won) and Rejected (lost).
 Clicking a card opens the deal drawer (the only edit surface).
 
 **Main API.** `api/deals` (GET with many query modes, POST, PUT with `move`,
 `moveOnly`, `statusOnly`, `stageSettings` branches), `api/deals/[id]/contacts`,
-`api/deals/feed`, `api/deals/intel`, `api/deals/discover`
-(max 300 s).
+`api/deals/feed`. The board loads only `/api/deals/feed` + `/api/tasks`.
 
-**Server modules.** `deals.ts`, `deals-discovery.ts`, `deals-mock.ts`;
+**Server modules.** `deals.ts`, `deal-engine.ts`;
 helpers `src/lib/deal-board.ts`, `deal-funnel.ts`, `kanban-move.ts`.
 
 **Key rules.**
@@ -216,12 +209,13 @@ helpers `src/lib/deal-board.ts`, `deal-funnel.ts`, `kanban-move.ts`.
 - Manual order inside a column uses a fractional index (`deal.position`).
 - Stage settings: an org can rename and hide stages and add a pre-pipeline
   stage; the first save copies the system stages into org-owned rows.
-- LLM deal discovery: CREATE / UPDATE_STAGE / SKIP per item, max 50 items,
-  dry-run mode for testing rules, de-duplication by client + name.
-- **No mock agent moves any more** (removed 2026-11-13, topics plan R9). Agent
-  moves come only from LLM deal discovery, which now writes the deal journal
-  (`deal_activity`) for every stage change. Risk badges and some "state" texts
-  are still mock (`TODO(backend)`) until the topics deal bridge (phase 5).
+- Deals are created and moved by the topics deal bridge (deal proposals and
+  stage confirmations; every write is journaled in `deal_activity`). Removed in
+  phase 12: name-based LLM deal discovery (`deals-discovery.ts`, `generateDeals`,
+  `api/deals/discover`, AI process `deals.discovery`, «Найти в источниках» on
+  «Сделки»), the mock kanban "board intel" (`deals-mock.ts`, `api/deals/intel`,
+  mock badges, stale-days / stage norms «остывание», stage commitments) and
+  `topics-legacy.ts`. Old `deal.reasoning` / `deal.changes` stay as history.
 
 ## Products (catalog) and price-list export
 
@@ -346,15 +340,13 @@ Visible only to platform admins (`user.role === 'admin'`). Tabs:
 | --- | --- | --- |
 | «Пользователи» (Users) | List users, role, ban, edit memberships in any org (reconcile, last-owner guard) | `api/admin/user-organizations`; better-auth admin plugin; `admin-organizations.ts` |
 | «Организации» (Organizations) | Edit any org | `api/admin/organizations` |
-| «Шаблоны» (Templates) | CRUD of source templates | `api/admin/templates`, `templates.ts` |
-| «Источники» (Sources) | Create/edit any source, credentials, config, auto-parse | `api/admin/sources` (+ `/config`, `/credentials`), `admin-sources.ts` |
-| «Сброс источника» (Source reset) | Teardown: hard delete selected threads of a source plus the cards, companies, contacts, deals, tasks and orders that only they produced; typed confirmation; audited in `teardown_log` | `api/admin/teardown/{sources,preview,execute}`, `teardown.ts` |
-| «Модели» (Models) | Read-only AI model registry: every model of each AI gateway with prices and capabilities; filters (gateway, type, vendor, capabilities, search, available only), sortable, detail drawer (full pricing, price history, data source per field); «Синхронизировать» (Sync) button. Spec: `docs/specs/models/02-model-registry.md` | `api/admin/ai/models`, `api/admin/ai/catalog/sync`; `src/server/ai/{registry,catalog}` |
-| «Процессы ИИ» (AI processes) | The model of every place that calls AI (18 processes, grouped): primary + up to 3 fallbacks, picked only from compatible models (capabilities, vendor web-search tool), cheapest first; for the AI chat, cards and deal discovery also the list users may pick from; reset to default; warnings when a chosen model became unavailable; «≈ $ / 1 000 вызовов» and 30-day usage per process; «Правила выбора моделей» (ZDR only, no training only, allowed vendors — a save that would leave a process without a compliant model is refused). Changes apply within a minute, no deploy. Spec: `docs/specs/models/03-processes-and-model-selection.md` | `api/admin/ai/processes`; `src/server/ai/registry/assignments.ts` |
-| «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost per day stacked by process or model, breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history). Spec: `docs/specs/models/04-usage-and-cost.md` | `api/admin/ai/usage`; `src/server/ai/usage.ts`, `usage-stats.ts` |
-| «Темы» (Topics) | Topics mode per org (off / shadow / on), hourly run history + «Запустить сейчас», golden set, eval / model spike over the golden set (stored metrics, quality gate), signal review of scanned items (instances, evidence, dropped codes, facts) + «Извлечь заново» for one item. Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
+| «Источники» (Sources) | One tab, three blocks. «Шаблоны источников» (Source templates): CRUD of source templates (`api/admin/templates`, `templates.ts`). «Источники» (Sources): create/edit any source, credentials, config, auto-parse; filter by organization («Системные» = no owner org) (`api/admin/sources` (+ `/config`, `/credentials`), `admin-sources.ts`). «Сброс источника» (Source reset, bottom): teardown: hard delete selected threads of a source plus the cards, companies, contacts, deals, tasks and orders that only they produced; typed confirmation; audited in `teardown_log`. All admin tables on `/settings` use the shared pager `table-pager.tsx` (10 / 25 / 50, default 10) | `api/admin/templates`, `api/admin/sources`, `api/admin/teardown/{sources,preview,execute}`, `templates.ts`, `admin-sources.ts`, `teardown.ts` |
+| «Модели» (Models) | Read-only AI model registry: every model of each AI gateway with prices and capabilities; filters (gateway, type, vendor, capabilities, search, available only), sortable, server-paginated with the shared pager `table-pager.tsx` (10 / 25 / 50, default 10), detail drawer (full pricing, price history, data source per field); «Синхронизировать» (Sync) button. Spec: `docs/specs/models/02-model-registry.md` | `api/admin/ai/models`, `api/admin/ai/catalog/sync`; `src/server/ai/{registry,catalog}` |
+| «Процессы ИИ» (AI processes) | The model of every place that calls AI (21 processes, grouped; old `ai_usage_event` rows keep the raw key of removed processes and the usage page shows it when the label is unknown): primary + up to 3 fallbacks, picked only from compatible models (capabilities, vendor web-search tool), cheapest first; for the AI chat also the list users may pick from; reset to default; warnings when a chosen model became unavailable; «≈ $ / 1 000 вызовов» and 30-day usage per process; «Правила выбора моделей» (ZDR only, no training only, allowed vendors — a save that would leave a process without a compliant model is refused). Changes apply within a minute, no deploy. Spec: `docs/specs/models/03-processes-and-model-selection.md` | `api/admin/ai/processes`; `src/server/ai/registry/assignments.ts` |
+| «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost chart stacked by process or model with its own scale («По дням» / «По месяцам» / «По годам») and range «с … по …» (the range replaces only the page period; the other filters apply), breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history). Spec: `docs/specs/models/04-usage-and-cost.md` | `api/admin/ai/usage`; `src/server/ai/usage.ts`, `usage-stats.ts` |
+| «Темы» (Topics) | Operations of the topics engine: topics mode per org (off / shadow / on), hourly run history + «Запустить сейчас», «Проверки CRM» (CRM checks + watchdogs, preview, switches), «Рассылка» (email digests). Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
 | «Сигналы» (Signals) | Signals registry: table with filters, full code editor (all fields, validated, versioned), per-org pack activation / overrides / stage rules / risk guards (preset mechanism kept, no presets defined — one generic set for every org, R22), attributes, relations, risk types, rule templates, history, Markdown export | `api/admin/signals*`; `src/server/signals/` |
-| «Настройки» (Settings) | Placeholder ("no platform settings yet") | — |
+| «Тесты и отладка» (Tests and debugging) | Quality checks and debugging of the topics engine, apart from operations («Темы») and the registry («Сигналы»): «Сигналы сообщений» (signal review of scanned items + «Извлечь заново»), «Темы (отладка)» (topic debug + actions), «Эталонный набор» (golden set), «Оценка извлечения (eval)» (eval / model spike, stored metrics, quality gate; grouping eval). Component `admin-topics-testing.tsx` | `api/admin/topics/{signals,topics,golden,spike}` |
 
 Also admin-only: `POST /api/admin/pipeline/run`, `GET /api/admin/pipeline/stats`.
 The model catalog also refreshes daily, as phase 0 of the daily pipeline.

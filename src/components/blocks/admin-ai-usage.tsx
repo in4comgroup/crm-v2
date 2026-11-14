@@ -3,7 +3,8 @@
 // «Использование ИИ» (AI usage) tab on /settings: AI spend by day,
 // organization, process and model, from the usage ledger.
 // Spec: docs/specs/models/04-usage-and-cost.md §5, §6. Data:
-// /api/admin/ai/usage. Charts reuse the analytics chart kit (fixed series
+// /api/admin/ai/usage (page) + /api/admin/ai/usage?chart=1 (cost chart with
+// its own scale and range — src/lib/ai-usage-chart.ts). Charts reuse the analytics chart kit (fixed series
 // colors, tail folded into «Прочее»). Markup block: admin-ai-markup.tsx.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -37,7 +38,20 @@ import { ChartCard, NoData, StatTile } from "@/components/blocks/analytics/analy
 import { MAX_SERIES, OTHER_LABEL } from "@/lib/analytics-format"
 import { AdminAiMarkup } from "@/components/blocks/admin-ai-markup"
 import { AdminAiBudget } from "@/components/blocks/admin-ai-budget"
-import type { AdminAiUsageResponse } from "@/app/api/admin/ai/usage/route"
+import type {
+  AdminAiUsageChartResponse,
+  AdminAiUsageResponse,
+} from "@/app/api/admin/ai/usage/route"
+import {
+  bucketKeys,
+  bucketLabel,
+  buildStackedBuckets,
+  CHART_SCALE_LABELS,
+  CHART_SCALES,
+  checkChartRange,
+  defaultChartRange,
+  type ChartScale,
+} from "@/lib/ai-usage-chart"
 
 const ALL = "__all__"
 // The daily run is "late" after 26 h (24 h + slack for the cron window).
@@ -94,15 +108,6 @@ function periodRange(p: Period, custom: { from: string; to: string }) {
   }
 }
 
-function eachDay(from: string, to: string): string[] {
-  const out: string[] = []
-  const end = new Date(`${to}T00:00:00Z`).getTime()
-  for (let t = new Date(`${from}T00:00:00Z`).getTime(); t <= end && out.length < 400; t += 86_400_000) {
-    out.push(iso(new Date(t)))
-  }
-  return out
-}
-
 // ── component ───────────────────────────────────────────────────────────
 
 export function AdminAiUsage() {
@@ -113,6 +118,14 @@ export function AdminAiUsage() {
   const [model, setModel] = useState(ALL)
   const [status, setStatus] = useState(ALL)
   const [stack, setStack] = useState<"process" | "model">("process")
+  // Chart scale and range. `chartRange` null = the default for the scale
+  // (day → the page period, month → 12 months, year → 5 years).
+  const [scale, setScale] = useState<ChartScale>("day")
+  const [chartRange, setChartRange] = useState<{ from: string; to: string } | null>(null)
+  const [chartData, setChartData] = useState<AdminAiUsageChartResponse["chart"] | null>(null)
+  const [chartLoading, setChartLoading] = useState(true)
+  const [chartError, setChartError] = useState<string | null>(null)
+  const chartSeq = useRef(0)
   const [group, setGroup] = useState<Group>("process")
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "cost", dir: "desc" })
 
@@ -124,12 +137,14 @@ export function AdminAiUsage() {
   const seq = useRef(0)
 
   const range = periodRange(period, custom)
+  const cRange = chartRange ?? defaultChartRange(scale, range, iso(new Date()))
+  const cCheck = checkChartRange(scale, cRange.from, cRange.to)
 
   const load = useCallback(async () => {
     const id = ++seq.current
     setLoading(true)
     try {
-      const params = new URLSearchParams({ from: range.from, to: range.to, stack })
+      const params = new URLSearchParams({ from: range.from, to: range.to })
       if (org !== ALL) params.set("org", org)
       if (processKey !== ALL) params.set("process", processKey)
       if (model !== ALL) params.set("model", model)
@@ -146,11 +161,45 @@ export function AdminAiUsage() {
     } finally {
       if (id === seq.current) setLoading(false)
     }
-  }, [range.from, range.to, stack, org, processKey, model, status])
+  }, [range.from, range.to, org, processKey, model, status])
 
   useEffect(() => {
     load()
   }, [load])
+
+  // Cost chart: own request, so a change of scale / range / stacking does
+  // not reload the whole page. The other page filters apply to it too.
+  const cValid = cCheck.ok
+  const loadChart = useCallback(async () => {
+    const id = ++chartSeq.current
+    if (!cValid) {
+      setChartLoading(false)
+      return
+    }
+    setChartLoading(true)
+    try {
+      const params = new URLSearchParams({ chart: "1", scale, from: cRange.from, to: cRange.to, stack })
+      if (org !== ALL) params.set("org", org)
+      if (processKey !== ALL) params.set("process", processKey)
+      if (model !== ALL) params.set("model", model)
+      if (status !== ALL) params.set("status", status)
+      const r = await fetch(`/api/admin/ai/usage?${params}`)
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`)
+      const d = (await r.json()) as AdminAiUsageChartResponse
+      if (id !== chartSeq.current) return
+      setChartData(d.chart)
+      setChartError(null)
+    } catch (e) {
+      if (id !== chartSeq.current) return
+      setChartError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (id === chartSeq.current) setChartLoading(false)
+    }
+  }, [cValid, scale, cRange.from, cRange.to, stack, org, processKey, model, status])
+
+  useEffect(() => {
+    loadChart()
+  }, [loadChart])
 
   const processLabel = useMemo(
     () => new Map((data?.options.processes ?? []).map((p) => [p.key, p.label])),
@@ -167,31 +216,19 @@ export function AdminAiUsage() {
     [orgLabel, processLabel],
   )
 
-  // Daily stacked cost: top series by period cost, tail folded into «Прочее».
+  // Stacked cost per bucket: every bucket of the range (empty = 0), top
+  // series by range cost, tail folded into «Прочее».
   const chart = useMemo(() => {
-    if (!data) return null
-    const name = (k: string) => (stack === "process" ? (processLabel.get(k) ?? k) : k)
-    const totals = new Map<string, number>()
-    for (const r of data.daily) totals.set(name(r.key), (totals.get(name(r.key)) ?? 0) + r.cost)
-    const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k)
-    const fold = ranked.length > MAX_SERIES
-    const kept = fold ? ranked.slice(0, MAX_SERIES - 1) : ranked
-    const labels = fold ? [...kept, OTHER_LABEL] : kept
-    const keptSet = new Set(kept)
-    const byDay = new Map<string, Record<string, number>>()
-    for (const day of eachDay(range.from, range.to)) byDay.set(day, {})
-    for (const r of data.daily) {
-      const label = keptSet.has(name(r.key)) ? name(r.key) : OTHER_LABEL
-      const row = byDay.get(r.day) ?? {}
-      row[label] = (row[label] ?? 0) + r.cost
-      byDay.set(r.day, row)
-    }
-    const points = [...byDay.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([period, v]) => ({ period, ...v }))
+    if (!chartData) return null
+    const name = (k: string) => (chartData.stack === "process" ? (processLabel.get(k) ?? k) : k)
+    const { labels, points } = buildStackedBuckets(
+      bucketKeys(chartData.scale, chartData.from, chartData.to),
+      chartData.rows,
+      { name, maxSeries: MAX_SERIES, otherLabel: OTHER_LABEL },
+    )
     const series = buildSeries(labels)
     return { series, points: remapStack(points, series) }
-  }, [data, stack, processLabel, range.from, range.to])
+  }, [chartData, processLabel])
 
   const rows = useMemo(() => {
     if (!data) return []
@@ -243,7 +280,7 @@ export function AdminAiUsage() {
       const d = (await r.json().catch(() => ({}))) as { checked?: number; updated?: number }
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       toast.success(`Уточнено: ${d.updated ?? 0} из ${d.checked ?? 0}`)
-      await load()
+      await Promise.all([load(), loadChart()])
     } catch (e) {
       toast.error(`Не удалось уточнить стоимость: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -276,7 +313,7 @@ export function AdminAiUsage() {
           `Цены обновлены (моделей: ${models}, изменений цен: ${prices}). Стоимость уточнена: ${d.reconcile?.updated ?? 0} из ${d.reconcile?.checked ?? 0}`,
         )
       }
-      await load()
+      await Promise.all([load(), loadChart()])
     } catch (e) {
       toast.error(`Синхронизация не удалась: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -449,9 +486,9 @@ export function AdminAiUsage() {
         </div>
       )}
 
-      {/* Daily cost */}
+      {/* Cost chart: scale «По дням / месяцам / годам» + its own range */}
       <ChartCard
-        title="Стоимость по дням, USD"
+        title={`Стоимость ${scale === "day" ? "по дням" : scale === "month" ? "по месяцам" : "по годам"}, USD`}
         description={stack === "process" ? "По процессам" : "По моделям"}
         action={
           <Tabs value={stack} onValueChange={(v) => setStack(v as "process" | "model")}>
@@ -462,21 +499,62 @@ export function AdminAiUsage() {
           </Tabs>
         }
       >
-        {chart && chart.series.keys.length > 0 ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2 px-2 sm:px-0">
+          <Select value={scale} onValueChange={(v) => setScale(v as ChartScale)}>
+            <SelectTrigger size="sm" className="w-36" aria-label="Шкала графика">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CHART_SCALES.map((sc) => (
+                <SelectItem key={sc} value={sc}>{CHART_SCALE_LABELS[sc]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-sm text-muted-foreground">с</span>
+          <Input type="date" className="h-8 w-36" value={cRange.from} max={cRange.to}
+            onChange={(e) => e.target.value && setChartRange({ from: e.target.value, to: cRange.to })}
+            aria-label="Начало диапазона графика" />
+          <span className="text-sm text-muted-foreground">по</span>
+          <Input type="date" className="h-8 w-36" value={cRange.to} min={cRange.from}
+            onChange={(e) => e.target.value && setChartRange({ from: cRange.from, to: e.target.value })}
+            aria-label="Конец диапазона графика" />
+          {chartRange && (
+            <Button variant="ghost" size="sm" onClick={() => setChartRange(null)}>
+              По умолчанию
+            </Button>
+          )}
+          {chartLoading && <Loader className="h-4 w-4 animate-spin text-muted-foreground" />}
+        </div>
+        {!cCheck.ok ? (
+          <div className="flex h-[280px] items-center justify-center px-4 text-center text-sm text-amber-600">
+            {cCheck.message}
+          </div>
+        ) : chartError ? (
+          <div className="flex h-[280px] items-center justify-center px-4 text-center text-sm text-red-500">
+            Не удалось загрузить график: {chartError}
+          </div>
+        ) : chart && chart.series.keys.length > 0 ? (
           <StackedPeriodBars
             data={chart.points}
             keys={chart.series.keys}
             config={chart.series.config}
             metricFormat={(n) => usd(n)}
             metricFormatFull={(n) => usd(n, true)}
+            periodFormat={(p, long) => bucketLabel(p, long)}
           />
-        ) : data ? (
-          <NoData label="Нет вызовов ИИ за выбранный период" />
+        ) : chartData ? (
+          <NoData label="Нет вызовов ИИ за выбранный диапазон" />
         ) : (
           <div className="flex h-[280px] items-center justify-center">
             <Loader className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         )}
+        <p className="mt-2 px-2 text-xs text-muted-foreground sm:px-0">
+          {chartRange || scale !== "day"
+            ? "Диапазон «с … по …» заменяет для графика только период страницы; фильтры организации, процесса, модели и статуса действуют и на график."
+            : "Диапазон графика = период страницы. Измените даты «с … по …», чтобы задать свой; фильтры организации, процесса, модели и статуса действуют и на график."}{" "}
+          Дни — по UTC.
+        </p>
       </ChartCard>
 
       <AdminAiMarkup periodCost={s?.cost ?? null} />

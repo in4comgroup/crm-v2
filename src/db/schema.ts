@@ -733,7 +733,8 @@ export const deal = pgTable(
     // stage move). `changes`: a short description of what changed on a
     // stage move, based on the new source signal — empty/null for a freshly
     // created deal, and the deal's `description` is never rewritten by a move.
-    // Populated by `generateDeals`; surfaced on the deal card. No backfill.
+    // Written by the old name-based deal discovery (removed in topics plan
+    // phase 12); kept as history and still surfaced on the deal card.
     reasoning: text("reasoning"),
     changes: text("changes"),
     // Who performed the LAST funnel-stage move: 'agent' (auto-applied agent
@@ -945,7 +946,9 @@ export const card = pgTable(
     sourceItemId: text("source_item_id").references(() => sourceItem.id, {
       onDelete: "set null",
     }),
-    // Rule that fired to produce this card.
+    // Rule that fired to produce this card (old Custom-rule cards only —
+    // kept as history; the generation and the /rules page were removed in
+    // topics plan phase 12, the `rule` table stays as their record).
     ruleId: text("rule_id").references(() => rule.id, {
       onDelete: "set null",
     }),
@@ -1253,6 +1256,11 @@ export const order = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
+    // Topics plan phase 10: the topic the order belongs to (set when the
+    // order is created from a topic card «Создать заказ», or linked by a
+    // user). One topic → many orders. ORDER_CONFIRMED on the order status
+    // is written to this topic (src/server/topics/orders-link.ts).
+    topicId: text("topic_id").references((): AnyPgColumn => topic.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -1261,6 +1269,7 @@ export const order = pgTable(
   },
   (table) => [
     index("order_organizationId_idx").on(table.organizationId),
+    index("order_topic_idx").on(table.topicId).where(sql`${table.topicId} is not null`),
     index("order_userId_idx").on(table.userId),
     index("order_clientId_idx").on(table.clientId),
     index("order_status_idx").on(table.status),
@@ -1733,23 +1742,6 @@ export const sourceItem = pgTable(
     // Migrated from the two legacy stamps (client_/contact_…) via
     // scripts/migrate-discovery-scanned-at.ts.
     discoveryScannedAt: timestamp("discovery_scanned_at"),
-    // Stamped by `generateCards()` after the analysis pipeline has
-    // considered this row (whether or not it produced a card). The
-    // pipeline's default eligibility filter is
-    //   `cardAnalysisScannedAt IS NULL OR parsedAt > cardAnalysisScannedAt`
-    // so re-parses re-trigger analysis naturally. Cleared by
-    // `reparseSourceItem`. The "Re-analyze already-processed items"
-    // checkbox in <ExploreSourcesDialog> bypasses this filter for ad-hoc
-    // re-runs.
-    cardAnalysisScannedAt: timestamp("card_analysis_scanned_at"),
-    // Same shape as cardAnalysisScannedAt but for the deal-discovery
-    // pipeline (`generateDeals()`). Backfilled to `now()` on items whose
-    // `sourceCreatedAt < 2026-05-05` so the bootstrap doesn't try to
-    // process the entire historical archive — see
-    // `scripts/backfill-deal-discovery-cutoff.ts`. Independent timestamp
-    // because card analysis and deal discovery are orthogonal — running
-    // one shouldn't lock out the other.
-    dealAnalysisScannedAt: timestamp("deal_analysis_scanned_at"),
     // ── Topics engine, signal extraction (spec topics/01 §5, §11; plan
     // phase 2). Written only by `src/server/topics/signals/`. Text columns
     // validated in code (same choice as the signals registry).
@@ -3498,4 +3490,29 @@ export const topicCheckRun = pgTable(
       .on(table.organizationId, table.checkKey, table.periodKey)
       .where(sql`${table.trigger} = 'schedule' AND ${table.status} <> 'failed'`),
   ],
+)
+
+// ── Topics plan phase 8 follow-up: catalogue history for the checks
+// INTERNAL_PRICE_CHANGE / INTERNAL_PRODUCT_STATUS_UPDATE. The last seen
+// state of each product (one row per product); the daily check compares
+// the catalogue with it, emits the changes, then writes the new state.
+// No row yet = first sight (no signal, 05 §3.6 «no previous snapshot»).
+export const productWatchState = pgTable(
+  "product_watch_state",
+  {
+    productId: text("product_id")
+      .primaryKey()
+      .references(() => product.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    price: numeric("price", { precision: 14, scale: 2 }),
+    status: text("status"),
+    totalStock: integer("total_stock"),
+    // Vintage (year) as the catalogue stores it (additional_metadata), text.
+    vintage: text("vintage"),
+    firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
+    checkedAt: timestamp("checked_at").defaultNow().notNull(),
+  },
+  (table) => [index("product_watch_state_org_idx").on(table.organizationId)],
 )

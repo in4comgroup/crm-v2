@@ -31,6 +31,22 @@ export function isoWeekday(day: string): number {
   return w === 0 ? 7 : w
 }
 
+/**
+ * The weekly review day (06 §7.2 «Неделя» snapshot, weekly digest) of the
+ * ISO week that holds `day`: the configured ISO `weekday` (Friday) when it is
+ * a working day, else the LAST working day before it in the same week; null
+ * when the week has no working day up to that weekday (e.g. the New Year
+ * holiday week). One rule for the «Неделя» list, the attention engine (W1
+ * expiry, H5 dormant window, next list point) and the weekly email.
+ */
+export function weeklyReviewDay(cal: Pick<WorkCalendar, "isWorkingDay">, day: string, weekday: number): string | null {
+  const monday = addCalendarDays(day, 1 - isoWeekday(day))
+  for (let d = addCalendarDays(monday, weekday - 1); d >= monday; d = addCalendarDays(d, -1)) {
+    if (cal.isWorkingDay(d)) return d
+  }
+  return null
+}
+
 export class WorkCalendar {
   private readonly days: Map<string, CalendarDay>
   private readonly fmt: Intl.DateTimeFormat
@@ -174,7 +190,47 @@ export class WorkCalendar {
     return new Date(now.getTime() + DAY_MS)
   }
 
-  /** First moment strictly after `now` on ISO `weekday` at local `time`. */
+  /** Last moment ≤ `now` at local `time` on a working day (the last «Сводка» snapshot point). */
+  lastWorkingDayAt(now: Date, time: string): Date {
+    let d = this.localDay(now)
+    for (let guard = 0; guard < 400; guard++, d = addCalendarDays(d, -1)) {
+      if (!this.isWorkingDay(d)) continue
+      const t = this.at(d, time)
+      if (t.getTime() <= now.getTime()) return t
+    }
+    return new Date(now.getTime() - DAY_MS)
+  }
+
+  /**
+   * First weekly review moment strictly after `now`: local `time` on the
+   * weekly review day of a week (`weeklyReviewDay`: the ISO `weekday`, or the
+   * last working day before it when that day is off; a week with none is
+   * skipped).
+   */
+  nextWeeklyReviewAt(now: Date, weekday: number, time: string): Date {
+    const monday = addCalendarDays(this.localDay(now), 1 - isoWeekday(this.localDay(now)))
+    for (let k = 0; k < 10; k++) {
+      const day = weeklyReviewDay(this, addCalendarDays(monday, 7 * k), weekday)
+      if (!day) continue
+      const t = this.at(day, time)
+      if (t.getTime() > now.getTime()) return t
+    }
+    return new Date(now.getTime() + 7 * DAY_MS)
+  }
+
+  /** Last weekly review moment ≤ `now` (same rule as `nextWeeklyReviewAt`). */
+  lastWeeklyReviewAt(now: Date, weekday: number, time: string): Date {
+    const monday = addCalendarDays(this.localDay(now), 1 - isoWeekday(this.localDay(now)))
+    for (let k = 0; k < 10; k++) {
+      const day = weeklyReviewDay(this, addCalendarDays(monday, -7 * k), weekday)
+      if (!day) continue
+      const t = this.at(day, time)
+      if (t.getTime() <= now.getTime()) return t
+    }
+    return new Date(now.getTime() - 7 * DAY_MS)
+  }
+
+  /** First moment strictly after `now` on ISO `weekday` at local `time` (plain weekday; the weekly review uses `nextWeeklyReviewAt`). */
   nextWeekdayAt(now: Date, weekday: number, time: string): Date {
     let d = this.localDay(now)
     for (let guard = 0; guard < 15; guard++, d = addCalendarDays(d, 1)) {

@@ -29,10 +29,6 @@ import {
 import { formatDateTime } from "@/components/blocks/admin-ai-models"
 import { AdminTopicsChecks } from "@/components/blocks/admin-topics-checks"
 import { AdminTopicsDelivery } from "@/components/blocks/admin-topics-delivery"
-import { AdminTopicsGolden } from "@/components/blocks/admin-topics-golden"
-import { AdminTopicsSignals } from "@/components/blocks/admin-topics-signals"
-import { AdminTopicsSpike } from "@/components/blocks/admin-topics-spike"
-import { AdminTopicsTopics } from "@/components/blocks/admin-topics-topics"
 import type {
   AdminTopicsModeUpdateResponse,
   AdminTopicsOrgsResponse,
@@ -508,40 +504,6 @@ export function AdminTopics() {
         <AdminTopicsDelivery />
       </section>
 
-      {/* Shadow review of the signal extraction (plan phase 2). */}
-      <section className="flex flex-col gap-3">
-        <div>
-          <h2 className="text-base font-medium">Сигналы сообщений</h2>
-          <p className="text-sm text-muted-foreground">
-            Результат извлечения сигналов по сообщениям организации: статус, балл, коды, факты и
-            предметы. Пользователи этого не видят.
-          </p>
-        </div>
-        <AdminTopicsSignals />
-      </section>
-
-      {/* Topic engine debug (plan phase 3 task 8). */}
-      <section className="flex flex-col gap-3">
-        <div>
-          <h2 className="text-base font-medium">Темы (отладка)</h2>
-          <p className="text-sm text-muted-foreground">
-            Темы организации: контрагент, ведущий код, балл, статус, сообщения, сигналы и журнал.
-            Действия: «Готово», «Не относится», объединение, отвязка и повторный разбор сообщения.
-            Пользователи этого не видят.
-          </p>
-        </div>
-        <AdminTopicsTopics />
-      </section>
-
-      {/* Golden set and model spike (plan phase 0 tasks 7–8). */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-base font-medium">Эталонный набор</h2>
-        <AdminTopicsGolden />
-      </section>
-      <section className="flex flex-col gap-3">
-        <h2 className="text-base font-medium">Оценка извлечения (eval)</h2>
-        <AdminTopicsSpike />
-      </section>
     </div>
   )
 }

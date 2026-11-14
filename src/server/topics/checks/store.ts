@@ -126,7 +126,14 @@ export type ApplyCounts = {
 /** Short reason keys for the skipped findings (counted in `skipped_<reason>`). */
 type SkipReason = "code_inactive" | "seen_before" | "topic_closed_by_user" | "topic_missing"
 
-export type ApplyOutcome = { counts: ApplyCounts; skipped: Partial<Record<SkipReason, number>>; topicIds: string[]; errors: string[] }
+export type ApplyOutcome = {
+  counts: ApplyCounts
+  skipped: Partial<Record<SkipReason, number>>
+  topicIds: string[]
+  errors: string[]
+  /** Findings NOT written in this run (`deferred` by the cap, or failed): found again by the next run. */
+  pending: CheckFinding[]
+}
 
 function emptyCounts(found: number): ApplyCounts {
   return { found, created: 0, attached: 0, reopened: 0, refreshed: 0, cleared: 0, skipped: 0, deferred: 0, failed: 0 }
@@ -162,6 +169,7 @@ export async function applyCheckResult(
     skipped[r] = (skipped[r] ?? 0) + 1
   }
   const errors: string[] = []
+  const pending: CheckFinding[] = []
   const touched = new Set<string>()
   const byKey = new Map(existing.map((e) => [`${e.code}\u0000${e.conditionKey}`, e]))
 
@@ -191,6 +199,7 @@ export async function applyCheckResult(
     }
     if (counts.created + counts.attached >= maxNew) {
       counts.deferred++
+      pending.push(f)
       continue
     }
     try {
@@ -206,6 +215,7 @@ export async function applyCheckResult(
       }
     } catch (e) {
       counts.failed++
+      pending.push(f)
       errors.push(`${f.code} ${f.conditionKey}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
@@ -224,7 +234,7 @@ export async function applyCheckResult(
     }
   }
 
-  return { counts, skipped, topicIds: [...touched], errors }
+  return { counts, skipped, topicIds: [...touched], errors, pending }
 }
 
 type WriteResult =
@@ -257,7 +267,9 @@ async function writeFinding(sc: StoreContext, def: CheckDef, f: CheckFinding, we
     if (!loaded) return { kind: "skipped", reason: "topic_missing" }
     if (USER_CLOSED.includes(loaded.status)) return { kind: "skipped", reason: "topic_closed_by_user" }
     t = loaded
-    if (REOPEN.includes(t.status)) {
+    // A non-scoring instance (a `state` code, e.g. ORDER_CONFIRMED of phase
+    // 10) never reopens a closed topic: it only closes / adds context.
+    if (REOPEN.includes(t.status) && inst.counted) {
       events.push({ topicId: t.id, type: "reopened", sourceItemId: null, payload: { from: t.status, code: f.code, process: true } })
       t.status = "open"
       t.closedAt = null
@@ -322,7 +334,7 @@ async function writeFinding(sc: StoreContext, def: CheckDef, f: CheckFinding, we
     confidence: "high",
     subjectIndex: -1,
     counted: inst.counted,
-    notCountedReason: inst.counted ? null : "process_score_zero",
+    notCountedReason: inst.counted ? null : sc.book.get(f.code)?.kind === "state" ? "state" : "process_score_zero",
     scoreContrib: score,
     topicId: t.id,
     taxonomyVersion: sc.taxonomyVersion,

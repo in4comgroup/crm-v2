@@ -397,7 +397,8 @@ export async function listSpikeRuns(orgId: string): Promise<SpikeRunRow[]> {
         sLast: sql<string | null>`(select max(e.value->>'at') from ${sampleItems} e)`,
       })
       .from(topicsEvalRun)
-      .where(eq(topicsEvalRun.organizationId, orgId)),
+      // Grouping eval runs (kind "grouping", eval/grouping.ts) are listed apart.
+      .where(and(eq(topicsEvalRun.organizationId, orgId), ne(topicsEvalRun.kind, "grouping"))),
   ])
   const byRun = new Map(runRows.map((r) => [r.id, r]))
   const out: SpikeRunRow[] = resultRuns.map((r) => {

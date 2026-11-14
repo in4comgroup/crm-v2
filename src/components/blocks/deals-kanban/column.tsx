@@ -24,7 +24,6 @@ import {
   pluralizeDeals,
 } from "@/lib/deal-board"
 import type { DealRow } from "@/app/api/deals/route"
-import type { DealIntel } from "@/server/deals-mock"
 import type { DealTaskInfo } from "@/hooks/use-board-intel"
 import { DealKanbanCard } from "@/components/blocks/deal-kanban-card"
 import {
@@ -43,9 +42,8 @@ export function Column({
   column,
   lostCards,
   showLost,
-  intelById,
   tasksByDeal,
-  intelLoaded,
+  boardLoaded,
   onOpen,
   onUndoAgent,
   onCollapse,
@@ -58,9 +56,8 @@ export function Column({
   // состоялись» ТОЛЬКО когда showLost включён (чекбокс в фильтрах доски).
   lostCards: DealRow[]
   showLost: boolean
-  intelById: Record<string, DealIntel>
   tasksByDeal: Record<string, DealTaskInfo[]>
-  intelLoaded: boolean
+  boardLoaded: boolean
   onOpen: (deal: DealRow) => void
   // «Отменить» у бейджа «создал агент» (диалог подтверждения — на доске).
   onUndoAgent?: (deal: DealRow) => void
@@ -233,8 +230,7 @@ export function Column({
             onOpen={onOpen}
             onUndoAgent={onUndoAgent}
             tasks={tasksByDeal[d.id] ?? []}
-            intel={intelById[d.id]}
-            intelLoaded={intelLoaded}
+            boardLoaded={boardLoaded}
           />
         ))}
         {showLost && lostCards.length > 0 && (
@@ -253,8 +249,7 @@ export function Column({
                 onOpen={onOpen}
                 onUndoAgent={onUndoAgent}
                 tasks={tasksByDeal[d.id] ?? []}
-                intel={intelById[d.id]}
-                intelLoaded={intelLoaded}
+                boardLoaded={boardLoaded}
               />
             ))}
           </>

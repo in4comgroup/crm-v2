@@ -163,13 +163,6 @@ export async function reparseSourceItem(
       // Re-parsing produces fresh metadata. Clear the unified discovery
       // stamp so the next applyDiscovery() run re-considers this row.
       discoveryScannedAt: null,
-      // Same reasoning for the cards-analysis stamp — the new markdown
-      // body should get re-analyzed by the next default `generateCards()`
-      // run.
-      cardAnalysisScannedAt: null,
-      // And the deal-discovery stamp — re-parses should re-trigger deal
-      // discovery the same way they re-trigger card analysis.
-      dealAnalysisScannedAt: null,
       // Topics signal extraction must run again on the new parse.
       // `threadKey` is kept (it does not depend on the parse).
       signalStatus: null,

@@ -5,6 +5,7 @@ import {
   getTopicView,
   listDealOptions,
   listMergeOptions,
+  listOrderOptions,
   listOwnerOptions,
   listTopicClients,
   readTopicCounts,
@@ -26,8 +27,9 @@ import { TopicActionError, TopicNotFoundError } from "@/server/topics/topic-stor
 //        «Все темы» filters: &status=live|all|<status> &list=now|digest|week|none &clientId=
 // GET  ?clients=1                       → { clients }  (filter «Компания»)
 // GET  ?id=<topicId>                    → { topic: TopicDetailView }
-// GET  ?options=merge|deals&id=<topicId> / ?options=owners → { options }
+// GET  ?options=merge|deals|orders&id=<topicId> / ?options=owners → { options }
 // POST { action, topicId, … }           → { ok, topicId, deleted? } (TopicActionInput)
+//        phase 10: { action: link_order | unlink_order, topicId, orderId }
 
 export type {
   TopicCardView,
@@ -86,6 +88,7 @@ export async function GET(request: NextRequest) {
     if (options && id) {
       if (options === "merge") return NextResponse.json({ options: await listMergeOptions(ctx.orgId, id) })
       if (options === "deals") return NextResponse.json({ options: await listDealOptions(ctx.orgId, id) })
+      if (options === "orders") return NextResponse.json({ options: await listOrderOptions(ctx.orgId, id) })
       return NextResponse.json({ error: "Неизвестный список" }, { status: 400 })
     }
     if (id) {
@@ -130,6 +133,9 @@ function parseAction(body: Record<string, unknown>): TopicActionInput | string {
       return { action, topicId, dealId: nullable("dealId") }
     case "set_owner":
       return { action, topicId, userId: nullable("userId") }
+    case "link_order":
+    case "unlink_order":
+      return s("orderId") ? { action, topicId, orderId: s("orderId") } : "Не указан заказ"
   }
   return "Неизвестное действие"
 }

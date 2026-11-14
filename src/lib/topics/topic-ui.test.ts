@@ -49,43 +49,36 @@ describe("cycle marker «Новое» / «Обновлено» (06 §7.1)", () =
 })
 
 describe("«Сводка» sections (06 §7.2)", () => {
-  const snap = new Date("2026-11-14T04:30:00Z") // 07:30 MSK
-  const e = (id: number, cycle: string | null) => ({ id, attention: cycle === undefined ? null : { cycleStartedAt: cycle } })
-  it("splits the morning snapshot (5 + «Ещё») from «Новое с утра», keeping order", () => {
-    const rows = [
-      e(1, "2026-11-13T10:00:00Z"),
-      e(2, "2026-11-14T06:00:00Z"),
-      e(3, "2026-11-10T10:00:00Z"),
-      e(4, null),
-      e(5, "2026-11-12T10:00:00Z"),
-      e(6, "2026-11-11T10:00:00Z"),
-      e(7, "2026-11-14T04:30:00Z"),
-      e(8, "2026-11-14T09:00:00Z"),
-    ]
-    const r = splitDigest(rows, snap, 5)
+  const e = (id: number, snapshot?: "snapshot" | "since" | null) => ({ id, snapshot })
+  it("splits the frozen morning snapshot (N + «Ещё») from «Новое с утра», keeping order", () => {
+    const rows = [e(1, "snapshot"), e(2, "since"), e(3, "snapshot"), e(4), e(5, "snapshot"), e(6, "snapshot"), e(7, "snapshot"), e(8, "since")]
+    const r = splitDigest(rows, 5)
     expect(r.shown.map((x) => x.id)).toEqual([1, 3, 4, 5, 6])
     expect(r.more.map((x) => x.id)).toEqual([7])
     expect(r.sinceMorning.map((x) => x.id)).toEqual([2, 8])
   })
-  it("treats entries without attention as part of the snapshot", () => {
-    const r = splitDigest([{ attention: null }], snap)
-    expect(r.shown).toHaveLength(1)
-    expect(r.sinceMorning).toHaveLength(0)
+  it("uses the configured number of visible entries (min 1)", () => {
+    const rows = [e(1, "snapshot"), e(2, "snapshot"), e(3, "snapshot")]
+    expect(splitDigest(rows, 2).more.map((x) => x.id)).toEqual([3])
+    expect(splitDigest(rows, 0).shown.map((x) => x.id)).toEqual([1])
   })
 })
 
 describe("«Неделя» sections (06 §7.2, §7.4)", () => {
-  it("puts «Истекло» and «Тема затихла» after the main list", () => {
+  it("puts «Истекло» and «Тема затихла» after the main list, «Новое после обзора» apart", () => {
     const rows = [
       { id: 1, attention: { section: null } },
       { id: 2, attention: { section: "expired" as const } },
       { id: 3, attention: { section: "dormant" as const } },
       { id: 4, attention: null },
+      { id: 5, attention: { section: "expired" as const }, snapshot: "since" as const },
+      { id: 6, attention: { section: null }, snapshot: "since" as const },
     ]
     const r = splitWeek(rows)
     expect(r.main.map((x) => x.id)).toEqual([1, 4])
     expect(r.expired.map((x) => x.id)).toEqual([2])
     expect(r.dormant.map((x) => x.id)).toEqual([3])
+    expect(r.since.map((x) => x.id)).toEqual([5, 6])
   })
 })
 

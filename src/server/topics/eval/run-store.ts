@@ -10,7 +10,9 @@ import type { SampleItemResult } from "./metrics"
 //
 //   kind   = "eval"  — every run started since phase 2 (golden or sample);
 //            "spike" — a phase 0 run (results only, no row) that is resumed
-//            or saved later: its row is created lazily from the first result.
+//            or saved later: its row is created lazily from the first result;
+//            "grouping" — a grouping eval (eval/grouping.ts), NOT handled here
+//            (getEvalRunRow ignores it, listSpikeRuns leaves it out).
 //   config = EvalRunConfig (what was tested; fixed at start).
 //   metrics = EvalRunMetrics:
 //            { schema: 1,
@@ -100,7 +102,8 @@ const runColumns = {
 
 export async function getEvalRunRow(runId: string): Promise<EvalRunRow | null> {
   const [r] = await db.select(runColumns).from(topicsEvalRun).where(eq(topicsEvalRun.id, runId))
-  return r ? toRow(r) : null
+  // A grouping run (eval/grouping.ts) is not an extraction run.
+  return r && r.kind !== "grouping" ? toRow(r) : null
 }
 
 export async function createEvalRunRow(args: {

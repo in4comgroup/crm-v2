@@ -22,7 +22,10 @@ import { getPlatformSetting } from "@/server/platform-settings"
 import { getEffectiveSignals } from "@/server/signals/registry"
 import { loadAttentionParams, loadCalendarDays } from "../attention/store"
 import { getTopicsMode, listOrgTopicsModes, type TopicsMode } from "../mode"
+import { reconcileOrderTopics } from "../orders-link"
 import { ensureSystemActor } from "../system-actor"
+import { heldProductIds, priceChangeHeld } from "./crm-data"
+import { CRM_DATA_CHECKS, refreshProductWatchState } from "./crm-data-loaders"
 import { ORDER_CHECKS } from "./orders-data"
 import { applyCheckResult, countOpenProcessInstances, loadExistingInstances, loadStoreContext, type StoreContext } from "./store"
 import { duePeriodKey } from "./schedule"
@@ -31,10 +34,15 @@ import { WATCHDOG_CHECKS } from "./watchdogs-data"
 
 // Runner of topics plan phase 8 (CRM checks + watchdogs): schedule, run log
 // (`topic_check_run`), the hourly phase, the admin preview (dry run) and the
-// manual run. The pure checks live in ./orders.ts and ./watchdogs.ts, their
-// loaders in ./orders-data.ts / ./watchdogs-data.ts, the writes in ./store.ts.
+// manual run. The pure checks live in ./orders.ts, ./crm-data.ts and
+// ./watchdogs.ts, their loaders in ./orders-data.ts / ./crm-data-loaders.ts /
+// ./watchdogs-data.ts, the writes in ./store.ts (+ `refreshProductWatchState`
+// after a catalogue check).
 
-const EVALUATORS: Partial<Record<CheckKey, CheckEvaluator>> = { ...ORDER_CHECKS, ...WATCHDOG_CHECKS }
+const EVALUATORS: Partial<Record<CheckKey, CheckEvaluator>> = { ...ORDER_CHECKS, ...CRM_DATA_CHECKS, ...WATCHDOG_CHECKS }
+
+/** Catalogue checks: after the store applied one, its part of `product_watch_state` is refreshed. */
+const WATCH_STATE_PART: Partial<Record<CheckKey, "price" | "status">> = { price_change: "price", product_status: "status" }
 
 // ── Parameters + calendar ─────────────────────────────────────────────────
 
@@ -89,6 +97,18 @@ async function runOneCheck(
     for (const [k, v] of Object.entries(out.skipped)) counts[`skip_${k}`] = (counts[`skip_${k}`] ?? 0) + (v ?? 0)
     const error = out.errors.length ? out.errors.slice(0, 5).join("; ") : null
     const status = out.counts.failed > 0 && out.counts.created + out.counts.attached + out.counts.cleared === 0 ? "failed" : "ok"
+    const part = WATCH_STATE_PART[def.key]
+    if (part && status === "ok") {
+      // Findings the store did not write (deferred / failed) keep their old state → found again next run.
+      const w =
+        part === "price"
+          ? priceChangeHeld(out.pending)
+            ? null
+            : await refreshProductWatchState(sc.orgId, sc.now, { price: true })
+          : await refreshProductWatchState(sc.orgId, sc.now, { status: true, hold: heldProductIds(out.pending) })
+      if (!w) counts.watch_price_held = 1
+      for (const [k, v] of Object.entries(w ?? {})) if (v) counts[`watch_${k}`] = v
+    }
     await finish(status, counts, error)
     return { key: def.key, status, counts, error, topicIds: out.topicIds }
   } catch (e) {
@@ -120,15 +140,23 @@ export async function runDueChecks(
   orgId: string,
   opts: { runId: string; actorUserId: string; now?: Date },
 ): Promise<Record<string, number> | { skipped: string }> {
+  // Topics phase 10: orders ↔ ORDER_CONFIRMED safety net, independent of `topics.checks`.
+  const ol = await reconcileOrderTopics(orgId, { now: opts.now, actorUserId: opts.actorUserId }).catch((e) => {
+    console.error("[topics/checks] orders link reconcile failed", orgId, e)
+    return { checked: 0, written: 0, cleared: 0, failed: 1 }
+  })
+  const olCounts = { ordersLinked: ol.written, ordersLinkedCleared: ol.cleared, ordersLinkedFailed: ol.failed }
   const sw = await getOrgSetting(orgId, "topics.checks")
-  if (!sw.orders && !sw.watchdogs) return { skipped: "checks off (topics.checks)" }
+  if (!sw.orders && !sw.watchdogs) {
+    return ol.written + ol.cleared + ol.failed > 0 ? { checksOff: 1, ...olCounts } : { skipped: "checks off (topics.checks)" }
+  }
   const now = opts.now ?? new Date()
   const [params, calendar, sc] = await Promise.all([
     loadChecksParams(orgId),
     loadOrgCalendar(orgId),
     loadStoreContext(orgId, now, opts.actorUserId),
   ])
-  const totals: Record<string, number> = { checks: 0, failed: 0 }
+  const totals: Record<string, number> = { checks: 0, failed: 0, ...olCounts }
   for (const def of CHECKS) {
     if (def.group === "orders" ? !sw.orders : !sw.watchdogs) continue
     const period = duePeriodKey(def.schedule, now, calendar, params, opts.runId)

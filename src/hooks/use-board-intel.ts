@@ -1,20 +1,11 @@
 "use client"
 
-// Хук доски сделок: параллельно тянет весь «интел» борда (предложения агента,
-// ленту решений, интел по сделкам + коммитменты стадий, ближайший шаг по задачам)
+// Хук доски сделок: параллельно тянет ленту решений и задачи сделок
 // и отдаёт refetch. Все ответы деградируют мягко — при ошибке фетча сохраняем
 // предыдущие данные и никогда не бросаем.
-//
-// ВАЖНО: типы контракта импортируются как type-only — модуль deals-mock серверный
-// и не должен попадать в клиентский бандл.
 
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import type {
-  DealProposal,
-  DealIntel,
-  StageCommitments,
-} from "@/server/deals-mock"
 import type { FeedEvent } from "@/server/deals"
 import type { TaskRow } from "@/app/api/tasks/route"
 
@@ -28,26 +19,15 @@ export type DealTaskInfo = {
 }
 
 export type BoardIntelData = {
-  proposals: DealProposal[]
   feed: FeedEvent[]
-  intel: Record<string, DealIntel>
-  commitments: StageCommitments
   // Все задачи сделки (по createdAt desc) — карточка листает их шевронами.
   tasksByDeal: Record<string, DealTaskInfo[]>
-  // Always 0 now: the mock agent that auto-applied stage moves on board load
-  // (/api/deals/proposals) was removed 2026-11-13 (topics plan R9). Kept in
-  // the shape so consumers stay unchanged until the topics deal bridge.
-  appliedMoves: number
 }
 
 // Стабильная по ссылке заглушка данных — безопасна для первого рендера.
 const EMPTY: BoardIntelData = {
-  proposals: [],
   feed: [],
-  intel: {},
-  commitments: {},
   tasksByDeal: {},
-  appliedMoves: 0,
 }
 
 export function useBoardIntel(): {
@@ -65,28 +45,18 @@ export function useBoardIntel(): {
     const seq = ++latestRef.current
     setLoading(true)
     try {
-      const [feedRes, intelRes, tasksRes] = await Promise.all([
+      const [feedRes, tasksRes] = await Promise.all([
         fetch("/api/deals/feed"),
-        fetch("/api/deals/intel"),
         fetch("/api/tasks"),
       ])
-      if (
-        !feedRes.ok ||
-        !intelRes.ok ||
-        !tasksRes.ok
-      ) {
+      if (!feedRes.ok || !tasksRes.ok) {
         throw new Error("Не удалось загрузить данные доски")
       }
 
-      const [feedJson, intelJson, tasksJson] =
-        await Promise.all([
-          feedRes.json() as Promise<{ events?: FeedEvent[] }>,
-          intelRes.json() as Promise<{
-            intel?: Record<string, DealIntel>
-            commitments?: StageCommitments
-          }>,
-          tasksRes.json() as Promise<{ tasks?: TaskRow[] }>,
-        ])
+      const [feedJson, tasksJson] = await Promise.all([
+        feedRes.json() as Promise<{ events?: FeedEvent[] }>,
+        tasksRes.json() as Promise<{ tasks?: TaskRow[] }>,
+      ])
 
       // Все задачи по сделке, отсортированные по createdAt desc (самая свежая
       // первой) — карточка листает их шевронами. Любой статус, не только open.
@@ -109,12 +79,8 @@ export function useBoardIntel(): {
       if (latestRef.current !== seq) return
 
       setData({
-        proposals: [],
         feed: feedJson.events ?? [],
-        intel: intelJson.intel ?? {},
-        commitments: intelJson.commitments ?? {},
         tasksByDeal,
-        appliedMoves: 0,
       })
     } catch {
       // Мягкая деградация: сохраняем предыдущие данные, ничего не бросаем.

@@ -17,6 +17,11 @@ const PROVIDERS: SourceProvider[] = [...SOURCE_PROVIDERS]
 const TYPES: SourceType[] = ["external", "internal"]
 const STATUSES: SourceStatus[] = ["active", "inactive"]
 
+function clampInt(raw: string | null, def: number, min: number, max: number) {
+  const n = parseInt(raw ?? "", 10)
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -27,6 +32,13 @@ export async function GET(request: NextRequest) {
     }
 
     const provider = searchParams.get("provider")
+    // "system" = rows with no owner org; otherwise an org id (validated as a
+    // plain token — an unknown id simply matches no rows).
+    const rawOrg = searchParams.get("organizationId")
+    const organizationId =
+      rawOrg && (rawOrg === "system" || /^[\w-]{1,64}$/.test(rawOrg))
+        ? rawOrg
+        : null
     const result = await listAdminSources({
       provider:
         provider && PROVIDERS.includes(provider as SourceProvider)
@@ -34,8 +46,9 @@ export async function GET(request: NextRequest) {
           : null,
       searchName: searchParams.get("searchName") || undefined,
       showInactive: searchParams.get("showInactive") === "1",
-      limit: parseInt(searchParams.get("limit") || "5", 10),
-      offset: parseInt(searchParams.get("offset") || "0", 10),
+      organizationId: organizationId || null,
+      limit: clampInt(searchParams.get("limit"), 10, 1, 50),
+      offset: clampInt(searchParams.get("offset"), 0, 0, 1_000_000),
     })
     return NextResponse.json(result)
   } catch (error) {

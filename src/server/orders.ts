@@ -15,6 +15,7 @@ import { randomUUID } from "crypto"
 import { getOrderLinkMeta, type OrderLinkMeta } from "@/server/order-links"
 import { normalizeDiscountPercent } from "@/lib/client-custom-fields"
 import { computeOrderDiscount } from "@/lib/orders-format"
+import { afterOrderClientChange, getOrderTopicRef, linkOrderFromCard } from "@/server/topics/orders-link"
 
 // Lightweight shape for the orders table — only the columns the table
 // renders (date / client / total / status), plus ids for row actions.
@@ -74,6 +75,9 @@ export type OrderDetail = {
   // Most relevant guest-link grant (active else latest), or null if never
   // sent. The raw token is never included — only metadata.
   link: OrderLinkMeta | null
+  // Topics phase 10: the topic the order belongs to (only when the org's
+  // topics mode is `on`; null otherwise). Opens `/dashboard?topic=<id>`.
+  topic: { id: string; title: string; status: string } | null
 }
 
 export type OrderClientOption = {
@@ -309,7 +313,7 @@ export async function getOrder(id: string): Promise<OrderDetail | null> {
   const h = headerRows[0]
   if (!h) return null
 
-  const [itemRows, link] = await Promise.all([
+  const [itemRows, link, topicRef] = await Promise.all([
     db
       .select({
         id: orderItem.id,
@@ -326,6 +330,7 @@ export async function getOrder(id: string): Promise<OrderDetail | null> {
       .orderBy(asc(orderItem.createdAt)),
     // Order already org-verified above, so the unscoped meta lookup is safe.
     getOrderLinkMeta(id),
+    getOrderTopicRef(activeOrgId, h.order.topicId),
   ])
 
   const totalAmount = Number(h.order.totalAmount)
@@ -362,6 +367,7 @@ export async function getOrder(id: string): Promise<OrderDetail | null> {
       positionPrice: Number(r.positionPrice),
     })),
     link,
+    topic: topicRef,
   }
 }
 
@@ -371,6 +377,9 @@ export async function createOrder(data: {
   orderDate?: string | Date | null
   currency?: string | null
   items?: OrderItemInput[]
+  // Topics phase 10: the order is created from this card («Создать заказ»).
+  // The topic is resolved from the card row on the server (org-checked).
+  fromCardId?: string | null
 }) {
   const { session, activeOrgId } = await requireOrgContext()
   if (!data.clientId) throw new Error("Client is required")
@@ -419,6 +428,9 @@ export async function createOrder(data: {
     )
   }
 
+  // Topics phase 10: link to the card's topic (best effort, never fails the create).
+  if (data.fromCardId) await linkOrderFromCard(activeOrgId, session.user.id, id, data.fromCardId)
+
   return { id }
 }
 
@@ -434,7 +446,7 @@ export async function updateOrder(
     items?: OrderItemInput[]
   },
 ) {
-  const { activeOrgId } = await requireOrgContext()
+  const { session, activeOrgId } = await requireOrgContext()
   const current = await assertOrderInOrg(orderId, activeOrgId)
 
   // Content edits are allowed on a `draft` (not yet sent) and on a `confirmed`
@@ -500,6 +512,11 @@ export async function updateOrder(
       discountPercent: money(discountPercent),
     })
     .where(eq(order.id, orderId))
+
+  // Topics phase 10: a topic of another company loses the order.
+  if (current.topicId && data.clientId !== undefined && data.clientId !== current.clientId) {
+    await afterOrderClientChange(activeOrgId, session.user.id, orderId)
+  }
 }
 
 // Clients selectable when creating an order — active + initial, soft-deleted

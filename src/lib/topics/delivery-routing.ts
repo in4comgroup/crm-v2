@@ -21,11 +21,14 @@
 // I1 (deadline < 24 h) and I5 (serious deal risk) make a topic P8 → never
 // limited. Read-time only: nothing is written.
 
-import type { WorkCalendar } from "./attention-calendar"
-import { addCalendarDays, isoWeekday } from "./attention-calendar"
+import { weeklyReviewDay, type WorkCalendar } from "./attention-calendar"
 import type { AttentionParams } from "./attention-params"
 import type { TopicList } from "./attention-types"
 import type { DeliveryParams } from "./delivery-params"
+
+// The weekly review day rule lives in the calendar module (one rule for the
+// «Неделя» list, the attention engine and the weekly email).
+export { weeklyReviewDay }
 
 // ── Shapes ────────────────────────────────────────────────────────────────
 
@@ -238,19 +241,6 @@ export const DELIVERY_KIND_LABELS_RU: Record<DeliveryRowKind, string> = {
 function minutesOf(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number)
   return h * 60 + m
-}
-
-/**
- * The weekly review day of the ISO week that holds `day`: the configured
- * weekday (Friday) when it is a working day, else the last working day
- * before it in the same week; null when the week has none.
- */
-export function weeklyReviewDay(cal: WorkCalendar, day: string, weekday: number): string | null {
-  const monday = addCalendarDays(day, 1 - isoWeekday(day))
-  for (let d = addCalendarDays(monday, weekday - 1); d >= monday; d = addCalendarDays(d, -1)) {
-    if (cal.isWorkingDay(d)) return d
-  }
-  return null
 }
 
 /**

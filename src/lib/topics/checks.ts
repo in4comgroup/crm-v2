@@ -20,6 +20,10 @@ export const CHECK_KEYS = [
   "revenue_yoy",
   "revenue_stagnation",
   "reactivation_due",
+  // CRM data without orders (phase 8 follow-up, origin system_of_record).
+  "meeting_overdue",
+  "price_change",
+  "product_status",
   // Watchdogs over communication topics (origin communication).
   "offer_no_response",
   "price_no_response",
@@ -56,6 +60,9 @@ export const CHECKS: readonly CheckDef[] = [
   },
   { key: "revenue_stagnation", group: "orders", codes: ["ACCOUNT_REVENUE_STAGNATION"], schedule: "monthly", labelRu: "Стагнация выручки" },
   { key: "reactivation_due", group: "orders", codes: ["ACCOUNT_REACTIVATION_DUE"], schedule: "weekly", labelRu: "Пора возобновить контакт" },
+  { key: "meeting_overdue", group: "orders", codes: ["ACCOUNT_MEETING_OVERDUE"], schedule: "weekly", labelRu: "Давно не было встречи" },
+  { key: "price_change", group: "orders", codes: ["INTERNAL_PRICE_CHANGE"], schedule: "daily", labelRu: "Изменились наши цены" },
+  { key: "product_status", group: "orders", codes: ["INTERNAL_PRODUCT_STATUS_UPDATE"], schedule: "daily", labelRu: "Изменился статус позиции" },
   { key: "offer_no_response", group: "watchdogs", codes: ["SALES_OFFER_NO_RESPONSE"], schedule: "hourly", labelRu: "Нет ответа на КП" },
   { key: "price_no_response", group: "watchdogs", codes: ["SALES_PRICE_NO_RESPONSE"], schedule: "hourly", labelRu: "Нет реакции на цены" },
   { key: "material_no_response", group: "watchdogs", codes: ["SALES_MATERIAL_NO_RESPONSE"], schedule: "hourly", labelRu: "Нет реакции на материалы" },
@@ -85,9 +92,6 @@ export const CHECK_SCHEDULE_LABELS_RU: Record<CheckSchedule, string> = {
 
 /** Process codes that phase 8 does NOT emit, with the reason (shown on the admin block). */
 export const CHECKS_NOT_BUILT: readonly { code: string; reasonRu: string }[] = [
-  { code: "ACCOUNT_MEETING_OVERDUE", reasonRu: "Нет поля сегмента клиента (A / B / C)" },
-  { code: "INTERNAL_PRICE_CHANGE", reasonRu: "Каталог пока только для чтения: нет истории цен" },
-  { code: "INTERNAL_PRODUCT_STATUS_UPDATE", reasonRu: "Каталог пока только для чтения: нет истории статусов и остатков" },
   { code: "SIGNAL_SPEND_UP", reasonRu: "Внешние данные о расходах — этап 11" },
   { code: "SIGNAL_SPEND_DOWN", reasonRu: "Внешние данные о расходах — этап 11" },
   { code: "SIGNAL_NEW_TOP_SPENDER", reasonRu: "Внешний рейтинг — этап 11" },
@@ -135,6 +139,22 @@ export type ChecksParams = {
   // ACCOUNT_REACTIVATION_DUE
   reactivationIntervalDays: number
   formerClientMonths: number
+  // ACCOUNT_MEETING_OVERDUE — client segment derived from 12-month revenue
+  // (no stored field): A = clients making the top `segmentAPct` % of org
+  // revenue, B = the next `segmentBPct` %, C = the rest.
+  segmentAPct: number
+  segmentBPct: number
+  meetingFrequencyADays: number
+  meetingFrequencyBDays: number
+  meetingFrequencyCDays: number
+  // INTERNAL_PRICE_CHANGE / INTERNAL_PRODUCT_STATUS_UPDATE (catalogue history, `product_watch_state`)
+  priceChangeThresholdPct: number
+  /** Cooldown per SKU and event (calendar days). */
+  internalCooldownDays: number
+  /** «Clients who bought the SKU» look-back (months). */
+  buyerLookbackMonths: number
+  /** Stock-out matters only for SKUs ordered in the last N days. */
+  stockOutRecentOrderDays: number
   // Watchdogs (Q24-11)
   /** Default reply window after our sending (`cards.noResponseDefaultDays`, calendar days). */
   noResponseDefaultDays: number
@@ -166,6 +186,15 @@ export const CHECKS_DEFAULTS: ChecksParams = {
   trendCooldownDays: 90,
   reactivationIntervalDays: 180,
   formerClientMonths: 12,
+  segmentAPct: 20,
+  segmentBPct: 30,
+  meetingFrequencyADays: 30,
+  meetingFrequencyBDays: 90,
+  meetingFrequencyCDays: 180,
+  priceChangeThresholdPct: 5,
+  internalCooldownDays: 30,
+  buyerLookbackMonths: 12,
+  stockOutRecentOrderDays: 90,
   noResponseDefaultDays: 7,
   orgReplyWorkingDays: 2,
   watchdogLookbackDays: 60,
@@ -199,6 +228,15 @@ export const checksParamsOverrideSchema = z
     trendCooldownDays: days,
     reactivationIntervalDays: days,
     formerClientMonths: z.number().int().min(1).max(120),
+    segmentAPct: z.number().min(1).max(100),
+    segmentBPct: z.number().min(0).max(100),
+    meetingFrequencyADays: days,
+    meetingFrequencyBDays: days,
+    meetingFrequencyCDays: days,
+    priceChangeThresholdPct: z.number().min(0).max(100),
+    internalCooldownDays: days,
+    buyerLookbackMonths: z.number().int().min(1).max(60),
+    stockOutRecentOrderDays: days,
     noResponseDefaultDays: z.number().int().min(1).max(90),
     orgReplyWorkingDays: z.number().int().min(0).max(30),
     watchdogLookbackDays: z.number().int().min(7).max(365),

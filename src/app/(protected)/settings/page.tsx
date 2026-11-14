@@ -14,6 +14,7 @@ import { AdminAiProcesses } from "@/components/blocks/admin-ai-processes"
 import { AdminAiUsage } from "@/components/blocks/admin-ai-usage"
 import { AdminTopics } from "@/components/blocks/admin-topics"
 import { AdminSignals } from "@/components/blocks/admin-signals"
+import { AdminTopicsTesting } from "@/components/blocks/admin-topics-testing"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 
@@ -50,15 +51,13 @@ export default function SettingsPage() {
           <TabsList>
             <TabsTrigger value="users">Пользователи</TabsTrigger>
             <TabsTrigger value="organizations">Организации</TabsTrigger>
-            <TabsTrigger value="templates">Шаблоны</TabsTrigger>
             <TabsTrigger value="sources">Источники</TabsTrigger>
-            <TabsTrigger value="teardown">Сброс источника</TabsTrigger>
             <TabsTrigger value="models">Модели</TabsTrigger>
             <TabsTrigger value="ai-processes">Процессы ИИ</TabsTrigger>
             <TabsTrigger value="ai-usage">Использование ИИ</TabsTrigger>
             <TabsTrigger value="topics">Темы</TabsTrigger>
             <TabsTrigger value="signals">Сигналы</TabsTrigger>
-            <TabsTrigger value="settings">Настройки</TabsTrigger>
+            <TabsTrigger value="testing">Тесты и отладка</TabsTrigger>
           </TabsList>
 
           <TabsContent
@@ -85,37 +84,36 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent
-            value="templates"
-            forceMount
-            className="mt-4 data-[state=inactive]:hidden"
-          >
-            <Card>
-              <CardContent className="pt-6">
-                <TableAdminTemplates />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
+          {/* One «Источники» tab: templates, sources, teardown (top to bottom). */}
           <TabsContent
             value="sources"
             forceMount
-            className="mt-4 data-[state=inactive]:hidden"
+            className="mt-4 flex flex-col gap-6 data-[state=inactive]:hidden"
           >
             <Card>
               <CardContent className="pt-6">
+                <h2 className="text-lg font-medium">Шаблоны источников</h2>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Справочник шаблонов: по ним создаются источники организаций.
+                </p>
+                <TableAdminTemplates />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <h2 className="text-lg font-medium">Источники</h2>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Все источники платформы. Можно отфильтровать по организации.
+                </p>
                 <TableAdminSources />
               </CardContent>
             </Card>
-          </TabsContent>
-
-          <TabsContent
-            value="teardown"
-            forceMount
-            className="mt-4 data-[state=inactive]:hidden"
-          >
             <Card>
               <CardContent className="pt-6">
+                <h2 className="text-lg font-medium">Сброс источника</h2>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Полное удаление данных одного источника и сброс курсора синхронизации.
+                </p>
                 <AdminTeardown />
               </CardContent>
             </Card>
@@ -134,7 +132,7 @@ export default function SettingsPage() {
             <AdminAiUsage />
           </TabsContent>
 
-          {/* Topics engine: mode per org + hourly run log (not forceMount). */}
+          {/* Topics engine operations: mode per org, runs, CRM checks, delivery (not forceMount). */}
           <TabsContent value="topics" className="mt-4">
             <AdminTopics />
           </TabsContent>
@@ -144,18 +142,10 @@ export default function SettingsPage() {
             <AdminSignals />
           </TabsContent>
 
-          <TabsContent
-            value="settings"
-            forceMount
-            className="mt-4 data-[state=inactive]:hidden"
-          >
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground text-center py-8">
-                  Настроек платформы пока нет.
-                </p>
-              </CardContent>
-            </Card>
+          {/* Topics engine tests + debugging: signal review, topic debug,
+              golden set, eval (not forceMount: loads when opened). */}
+          <TabsContent value="testing" className="mt-4">
+            <AdminTopicsTesting />
           </TabsContent>
         </Tabs>
       </div>

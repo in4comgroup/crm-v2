@@ -702,21 +702,6 @@ export async function loadClientGuardFacts(
   }
 }
 
-/**
- * Old name-based discovery guard (spec §9.2, plan phase 12): the open deals
- * created by the topics engine (ids) and their clients. Used by
- * `generateDeals` (`/api/deals/discover`) when the org's topics mode is `on`.
- */
-export async function openAgentDeals(orgId: string): Promise<{ dealIds: Set<string>; clientIds: Set<string> }> {
-  const rows = await db
-    .select({ id: deal.id, clientId: deal.clientId })
-    .from(deal)
-    .where(
-      and(eq(deal.organizationId, orgId), eq(deal.createdByAgent, true), inArray(deal.status, [...OPEN_DEAL_STATUSES])),
-    )
-  return { dealIds: new Set(rows.map((r) => r.id)), clientIds: new Set(rows.map((r) => r.clientId)) }
-}
-
 // ── Provenance («Происхождение», deal drawer) ─────────────────────────────
 
 export type DealProvenanceItem = {

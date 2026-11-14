@@ -85,6 +85,10 @@ export const TOPIC_EVENT_TYPES = [
   // topic or its condition was cleared (payload { code, action: added |
   // cleared, instanceId, evidence?, reason? }).
   "process_signal",
+  // Orders link (phase 10): an order was linked to / unlinked from the topic
+  // (payload { orderId, orderLabel, status, via: card | user, reason? }).
+  "order_linked",
+  "order_unlinked",
 ] as const
 export type TopicEventType = (typeof TOPIC_EVENT_TYPES)[number]
 

@@ -5,6 +5,8 @@
 // attribute, relation, risk_type). Stage-rule templates live in
 // admin-signals-stage-rules.tsx.
 
+import { TablePager } from "@/components/blocks/table-pager"
+import { useTablePaging } from "@/components/blocks/use-table-paging"
 import { useMemo, useState } from "react"
 import { Plus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -265,6 +267,7 @@ export function AttributesPanel() {
     .filter((a) => !pack || a.packCode === pack)
     .slice()
     .sort((a, b) => a.packCode.localeCompare(b.packCode) || a.sort - b.sort || a.code.localeCompare(b.code))
+  const paging = useTablePaging(rows)
 
   const fields: FieldSpec[] = [
     { name: "code", label: "Код", type: "text", mono: true, lockedOnEdit: true },
@@ -347,7 +350,7 @@ export function AttributesPanel() {
             {rows.length === 0 ? (
               <Empty cols={8} text="Атрибутов нет" />
             ) : (
-              rows.map((a) => (
+              paging.pageRows.map((a) => (
                 <TableRow
                   key={a.code}
                   className={`cursor-pointer even:bg-muted/40 ${a.defaultOff ? "text-muted-foreground" : ""}`}
@@ -370,6 +373,7 @@ export function AttributesPanel() {
           </TableBody>
         </Table>
       </Card>
+      <TablePager {...paging.pagerProps} />
       <RecordDialog
         open={!!editing}
         onClose={() => setEditing(null)}
@@ -396,6 +400,7 @@ export function RelationsPanel() {
     .slice()
     .sort((a, b) => a.kind.localeCompare(b.kind) || a.codeA.localeCompare(b.codeA))
   const codes = codeOptions(registry, { excludeRetired: true })
+  const paging = useTablePaging(rows)
 
   const fields: FieldSpec[] = [
     {
@@ -478,7 +483,7 @@ export function RelationsPanel() {
             {rows.length === 0 ? (
               <Empty cols={6} text="Связей нет" />
             ) : (
-              rows.map((r: SignalRelationRecord) => (
+              paging.pageRows.map((r: SignalRelationRecord) => (
                 <TableRow
                   key={r.id}
                   className="cursor-pointer even:bg-muted/40"
@@ -498,6 +503,7 @@ export function RelationsPanel() {
           </TableBody>
         </Table>
       </Card>
+      <TablePager {...paging.pagerProps} />
       <RecordDialog
         open={!!editing}
         onClose={() => setEditing(null)}

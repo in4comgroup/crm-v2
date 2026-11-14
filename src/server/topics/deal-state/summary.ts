@@ -78,6 +78,8 @@ const EVENT_LABELS_RU: Record<string, string> = {
   deal_linked: "Тема привязана к сделке",
   deal_unlinked: "Тема отвязана от сделки",
   process_signal: "Проверка данных CRM",
+  order_linked: "К теме привязан заказ",
+  order_unlinked: "Заказ отвязан от темы",
 }
 const SKIP_EVENTS = ["attention_changed", "deal_decision", "relinked"]
 

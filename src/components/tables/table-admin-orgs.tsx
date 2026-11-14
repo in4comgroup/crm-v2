@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Loader, RefreshCcw } from "lucide-react"
 import AdminEditOrgDialog from "@/components/forms/form-admin-edit-org"
 import type { AdminOrg } from "@/app/api/admin/organizations/route"
+import { TablePager, DEFAULT_PAGE_SIZE, type PageSize } from "@/components/blocks/table-pager"
 
 // Russian plural picker: forms = [one, few, many] (1 / 2–4 / 0,5–20).
 function plural(n: number, forms: [string, string, string]): string {
@@ -24,14 +25,14 @@ function plural(n: number, forms: [string, string, string]): string {
   return forms[2]
 }
 
-const ITEMS_PER_PAGE = 10
 
 export function TableAdminOrgs() {
   const [orgs, setOrgs] = useState<AdminOrg[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE)
   const [searchName, setSearchName] = useState("")
 
   const fetchOrgs = useCallback(async () => {
@@ -39,8 +40,8 @@ export function TableAdminOrgs() {
     setError(null)
     try {
       const params = new URLSearchParams({
-        limit: String(ITEMS_PER_PAGE),
-        offset: String((page - 1) * ITEMS_PER_PAGE),
+        limit: String(pageSize),
+        offset: String(page * pageSize),
       })
       if (searchName) {
         params.set("searchName", searchName)
@@ -58,13 +59,12 @@ export function TableAdminOrgs() {
     } finally {
       setLoading(false)
     }
-  }, [page, searchName])
+  }, [page, pageSize, searchName])
 
   useEffect(() => {
     fetchOrgs()
   }, [fetchOrgs])
 
-  const totalPages = Math.ceil(total / ITEMS_PER_PAGE)
 
   if (error) {
     return (
@@ -82,7 +82,7 @@ export function TableAdminOrgs() {
           value={searchName}
           onChange={(e) => {
             setSearchName(e.target.value)
-            setPage(1)
+            setPage(0)
           }}
           className="max-w-48"
         />
@@ -145,27 +145,17 @@ export function TableAdminOrgs() {
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-end gap-4 mt-4">
-            <span className="text-sm text-gray-400">
-              стр. {page} из {totalPages || 1}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={page === 1}
-                onClick={() => setPage(page - 1)}
-              >
-                Назад
-              </Button>
-              <Button
-                variant="outline"
-                disabled={page >= totalPages}
-                onClick={() => setPage(page + 1)}
-              >
-                Вперёд
-              </Button>
-            </div>
-          </div>
+          <TablePager
+            className="mt-4"
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={(n) => {
+              setPageSize(n)
+              setPage(0)
+            }}
+          />
         </>
       )}
     </>

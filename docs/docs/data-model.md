@@ -72,7 +72,7 @@ Derived, not stored: order discount amount and discounted total
 | --- | --- | --- |
 | `source_template` | Platform catalogue of source kinds | `provider`, `type`, `name`, `defaultProviderConfig`, `defaultAutomatedParsingIsAllowed`, `isDefault` (auto-created for new orgs), `isVisibleToOrgs`, `status` |
 | `source` | One configured channel | `templateId` (**set null**), `provider`, `type` (`external` / `internal`), `providerConfig` (jsonb, non-secret ids such as `driveId`, `spaceId`, `mailbox`, `telegramOffset`), `credentialsRef` (AES-256-GCM ciphertext), `ownerOrganizationId`, `isSystem`, `automatedParsingIsAllowed`, `status`, `lastSyncedAt` |
-| `source_item` | One ingested unit | `sourceId`, `organizationId` (denormalised), `externalId` (unique per source), `externalType` (`source_item_kind`), `parentSourceItemId` (self FK, **cascade**), `threadExternalId`, `filename`, `mimeType`, `metadataJson` (jsonb), `sourceCreatedAt`, `parseStatus`, `parseError`, `parsedMarkdown` (until uploaded), `orgAttribution`, `r2UploadStatus`, `markdownR2Key`, `discoveryScannedAt`, `cardAnalysisScannedAt`, `dealAnalysisScannedAt` |
+| `source_item` | One ingested unit | `sourceId`, `organizationId` (denormalised), `externalId` (unique per source), `externalType` (`source_item_kind`), `parentSourceItemId` (self FK, **cascade**), `threadExternalId`, `filename`, `mimeType`, `metadataJson` (jsonb), `sourceCreatedAt`, `parseStatus`, `parseError`, `parsedMarkdown` (until uploaded), `orgAttribution`, `r2UploadStatus`, `markdownR2Key`, `discoveryScannedAt` |
 | `pipeline_run` | One daily-pipeline execution | `trigger`, `status`, per-phase counters (sync / parse / upload), `errorsJson` (bounded list) |
 
 `metadata_json` holds two things that are **merged**, never overwritten:
@@ -87,9 +87,11 @@ Re-parsing an item clears them so the item is re-analysed.
 
 ## 6. Cards, rules and notifications
 
+Custom-rule card generation was removed (topics plan phase 12). Topic cards come from the topics engine; the `rule` table and the old card columns and junctions (`category`, `message`, `accepted`, `rejectionReason`, `sourceItemId`, `ruleId`, `card_client`, `card_user`, `card_contact`) are kept: topic cards write some of them and the «История карточек» tab reads all. No UI edits rules.
+
 | Table | Purpose | Key columns / relations |
 | --- | --- | --- |
-| `rule` | Stored LLM prompt | `name`, `content`, `type` (`System` / `Custom`), `userId`, `organizationId`, `isDeleted` |
+| `rule` | Stored LLM prompt (data record; no UI or API edits it) | `name`, `content`, `type` (`System` / `Custom`), `userId`, `organizationId`, `isDeleted` |
 | `card` | LLM signal | `priority`, `category`, `message` (jsonb: `analysis`, `recommendation`, optional `taskTitle`, `orderRequest`), `accepted`, `rejectionReason`, `sourceItemId` (**set null**), `ruleId` (**set null**), `resultTaskId` / `resultOrderId` (**set null**) |
 | `card_client` | Card ↔ company | PK `(cardId, clientId)` |
 | `card_user` | Card ↔ involved org member (not the creator) | PK `(cardId, userId)` |
@@ -218,7 +220,7 @@ Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
   hides it but is never revived while the blocklist entry exists. `initial`
   marks auto-discovered rows not yet reviewed. `suspended` = archived.
 - **Other soft deletes.** Deals use `deal.status` (`cancelled` = lost,
-  `deleted` = test/mistake). Tasks use `status = closed`. Rules use `isDeleted`.
+  `deleted` = test/mistake). Tasks use `status = closed`. Rules use `isDeleted` (no UI edits them).
   Cards have no soft delete: rejection is the "dismiss" state. Sources and
   templates use `status = inactive`.
 - **Restrict FKs protect business history.** `deal.clientId`, `order.clientId`,

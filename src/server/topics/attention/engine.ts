@@ -392,10 +392,12 @@ export function computeAttentionCore(input: AttentionTopicInput, env: AttentionE
   }
 
   // H5 dormant: once in the next «Неделя» snapshot, then hidden; I-rules still apply.
+  // Snapshot points follow the weekly review day (holiday Friday → the last
+  // working day before it); the window ends at the snapshot after the first.
   if (input.status === "dormant") {
     const dormantAt = new Date(input.lastActivityAt.getTime() + p.dormantDays * DAY_MS)
-    const firstSnapshot = cal.nextWeekdayAt(new Date(dormantAt.getTime() - 1), p.weeklyReviewWeekday, p.weeklyReviewTime)
-    const windowEnd = new Date(firstSnapshot.getTime() + 7 * DAY_MS)
+    const firstSnapshot = cal.nextWeeklyReviewAt(new Date(dormantAt.getTime() - 1), p.weeklyReviewWeekday, p.weeklyReviewTime)
+    const windowEnd = cal.nextWeeklyReviewAt(firstSnapshot, p.weeklyReviewWeekday, p.weeklyReviewTime)
     const score = lead ? ts.score : 0
     const inWindow = now.getTime() < windowEnd.getTime()
     return {
@@ -508,7 +510,7 @@ export type Escalated = {
 
 function nextListPoint(profile: Level, now: Date, cal: WorkCalendar, p: AttentionParams): Date | null {
   if (profile === "D4") return cal.nextWorkingDayAt(now, p.morningDigestTime)
-  if (profile === "W1") return cal.nextWeekdayAt(now, p.weeklyReviewWeekday, p.weeklyReviewTime)
+  if (profile === "W1") return cal.nextWeeklyReviewAt(now, p.weeklyReviewWeekday, p.weeklyReviewTime)
   return null
 }
 
@@ -590,7 +592,7 @@ export function cardExpiryMoment(
   const day = cal.addWorkingDays(cal.localDay(base), p.expiryDays[prof])
   let exp = cal.at(day, cal.localMinutes(base))
   if (prof === "W1") {
-    const firstWeekly = cal.nextWeekdayAt(cycle.startedAt, p.weeklyReviewWeekday, p.weeklyReviewTime)
+    const firstWeekly = cal.nextWeeklyReviewAt(cycle.startedAt, p.weeklyReviewWeekday, p.weeklyReviewTime)
     if (firstWeekly.getTime() > exp.getTime()) exp = firstWeekly
   }
   return exp
@@ -645,7 +647,7 @@ export function place(
   } else if (list === "digest") {
     const lead = esc.escalations.some((e) => e === "I1" || e === "I2" || e === "I3")
     const dl = lead && esc.next ? minutes(esc.next.at) : MAX_MIN
-    const morning = cal.at(cal.localDay(now), p.morningDigestTime)
+    const morning = cal.lastWorkingDayAt(now, p.morningDigestTime)
     const fresh = cycle.startedAt && cycle.startedAt.getTime() > morning.getTime() ? 0 : 1
     parts = [dl, score, cls, fresh, lastAct]
     rank = dl * 1e6 + score * 1e3 + cls * 1e2 + fresh * 10
@@ -748,7 +750,7 @@ function nextCheck(
     }
   }
   add(cal.nextWorkingDayAt(now, p.morningDigestTime))
-  add(cal.nextWeekdayAt(now, p.weeklyReviewWeekday, p.weeklyReviewTime))
+  add(cal.nextWeeklyReviewAt(now, p.weeklyReviewWeekday, p.weeklyReviewTime))
   add(core.overdueReactionAt)
   add(core.snoozedUntil)
   add(core.dampenerUntil)

@@ -109,7 +109,7 @@ function signedPct(p: number): string {
   return `${r < 0 ? "−" : "+"}${Math.abs(r)} %`
 }
 
-function ruDate(cal: Pick<WorkCalendar, "localDay">, d: Date): string {
+export function ruDate(cal: Pick<WorkCalendar, "localDay">, d: Date): string {
   const [y, m, day] = cal.localDay(d).split("-")
   return `${day}.${m}.${y}`
 }
@@ -156,14 +156,14 @@ function iso(d: Date): string {
   return d.toISOString()
 }
 
-function factDate(facts: Record<string, unknown>, key: string): Date | null {
+export function factDate(facts: Record<string, unknown>, key: string): Date | null {
   const v = facts[key]
   if (typeof v !== "string" && !(v instanceof Date)) return null
   const d = new Date(v)
   return Number.isFinite(d.getTime()) ? d : null
 }
 
-function factStr(facts: Record<string, unknown>, key: string): string | null {
+export function factStr(facts: Record<string, unknown>, key: string): string | null {
   const v = facts[key]
   return typeof v === "string" ? v : null
 }
@@ -209,7 +209,7 @@ function inCooldown(
 
 // ── Result builder ────────────────────────────────────────────────────────
 
-class Acc {
+export class Acc {
   findings: CheckFinding[] = []
   clears: CheckClear[] = []
   evaluated = 0
@@ -634,9 +634,9 @@ export function checkNewFollowup(
 
 // ── Revenue windows (YoY + stagnation) ──────────────────────────────────
 
-type MonthAgg = { revenue: number; orders: number }
+export type MonthAgg = { revenue: number; orders: number }
 
-function monthTotals(counted: readonly OrderInput[], cal: Pick<WorkCalendar, "localDay">): Map<string, MonthAgg> {
+export function monthTotals(counted: readonly OrderInput[], cal: Pick<WorkCalendar, "localDay">): Map<string, MonthAgg> {
   const out = new Map<string, MonthAgg>()
   for (const o of counted) {
     const ym = cal.localDay(o.date).slice(0, 7)
@@ -648,7 +648,7 @@ function monthTotals(counted: readonly OrderInput[], cal: Pick<WorkCalendar, "lo
   return out
 }
 
-function sumMonths(totals: Map<string, MonthAgg>, fromYm: string, toYm: string): MonthAgg {
+export function sumMonths(totals: Map<string, MonthAgg>, fromYm: string, toYm: string): MonthAgg {
   const acc: MonthAgg = { revenue: 0, orders: 0 }
   for (const [ym, e] of totals) {
     if (ym >= fromYm && ym <= toYm) {

@@ -12,8 +12,9 @@
 // proposal / stage confirmation cards) with «Решить по сделке».
 // API: /api/admin/topics/topics. Users never see this.
 
+import { DEFAULT_PAGE_SIZE, TablePager } from "@/components/blocks/table-pager"
 import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { ChevronLeft, ChevronRight, FileText, Handshake, Loader, PenLine, RefreshCw, RotateCcw, Unlink } from "lucide-react"
+import { FileText, Handshake, Loader, PenLine, RefreshCw, RotateCcw, Unlink } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -161,7 +162,6 @@ function DealCardView({ c }: { c: TopicDebugDealCard }) {
 
 const ALL = "__all__"
 const LIVE = "open,dormant"
-const PAGE_SIZE = 50
 
 const MODE_LABEL: Record<string, string> = { off: "выкл.", shadow: "тень", on: "вкл." }
 const CLASS_LABEL: Record<string, string> = { risk: "риск", chance: "шанс", fyi: "к сведению" }
@@ -344,6 +344,7 @@ export function AdminTopicsTopics() {
   const [orgId, setOrgId] = useState("")
   const [status, setStatus] = useState(ALL)
   const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
   const [list, setList] = useState<AdminTopicsListResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -370,7 +371,7 @@ export function AdminTopicsTopics() {
     setLoading(true)
     setError(null)
     try {
-      const sp = new URLSearchParams({ organizationId: orgId, limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) })
+      const sp = new URLSearchParams({ organizationId: orgId, limit: String(pageSize), offset: String(page * pageSize) })
       if (status !== ALL) sp.set("status", status)
       const res = await fetch(`/api/admin/topics/topics?${sp}`)
       const data = await res.json()
@@ -381,7 +382,7 @@ export function AdminTopicsTopics() {
     } finally {
       setLoading(false)
     }
-  }, [orgId, status, page])
+  }, [orgId, status, page, pageSize])
 
   useEffect(() => {
     void load()
@@ -393,7 +394,6 @@ export function AdminTopicsTopics() {
   }
 
   const total = list?.total ?? 0
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const counts = TOPIC_STATUSES.filter((s) => list?.byStatus[s])
 
   return (
@@ -537,21 +537,17 @@ export function AdminTopicsTopics() {
         </Table>
       </Card>
 
-      {total > PAGE_SIZE && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            Всего {total} · страница {page + 1} из {pages}
-          </span>
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" className="h-8" disabled={page === 0 || loading} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button size="sm" variant="outline" className="h-8" disabled={page + 1 >= pages || loading} onClick={() => setPage((p) => p + 1)}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <TablePager
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        disabled={loading}
+        onPageChange={setPage}
+        onPageSizeChange={(n) => {
+          setPageSize(n)
+          setPage(0)
+        }}
+      />
 
       <TopicDetailDialog
         orgId={orgId}

@@ -940,10 +940,8 @@ export async function listDealActivity(
   }))
 }
 
-// Форма события для «Ленты решений» (top bar) — тот же контракт, что раньше
-// отдавал мок buildFeed (src/server/deals-mock.ts), поэтому клиентский
-// deal-decision-feed.tsx не пришлось менять. `{deal}` в тексте — плейсхолдер,
-// UI подставляет вместо него жирное имя сделки.
+// Event shape of the «Лента решений» feed (deal-decision-feed.tsx). `{deal}`
+// in the text is a placeholder the UI replaces with the deal name in bold.
 export type FeedEvent = {
   id: string
   actor: string
@@ -953,9 +951,8 @@ export type FeedEvent = {
   dealName: string | null
 }
 
-// Последние события по ВСЕЙ орге (не одной сделке) — реальный журнал вместо
-// deal.changes-сида + in-memory аппендов агента (deals-mock.ts, TODO(backend),
-// теперь устарело: каждый moveDealStage/createDeal сам пишет в deal_activity).
+// Latest events of the WHOLE org (not one deal), read from the deal_activity
+// journal (every moveDealStage / createDeal writes a row).
 // The org comes from the caller's session (never a parameter): this module
 // is "use server", so every export must check the session itself.
 export async function listRecentDealActivity(limit = 100): Promise<FeedEvent[]> {

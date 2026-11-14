@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   listCards,
   getCard,
-  createCard,
-  updateCard,
   acceptCard,
   rejectCard,
   deleteCard,
@@ -50,41 +48,6 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const {
-      priority,
-      category,
-      message,
-      sourceItemId,
-      ruleId,
-      clientIds,
-      userIds,
-      contactIds,
-    } = body
-    if (!category) {
-      return NextResponse.json(
-        { error: "category is required" },
-        { status: 400 },
-      )
-    }
-    const result = await createCard({
-      priority,
-      category,
-      message,
-      sourceItemId,
-      ruleId,
-      clientIds,
-      userIds,
-      contactIds,
-    })
-    return NextResponse.json({ success: true, id: result.id })
-  } catch (error) {
-    return errorResponse(error)
-  }
-}
-
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
@@ -95,14 +58,6 @@ export async function PUT(request: NextRequest) {
       rejectReasonCode,
       resultTaskId,
       resultOrderId,
-      priority,
-      category,
-      message,
-      sourceItemId,
-      ruleId,
-      clientIds,
-      userIds,
-      contactIds,
     } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
@@ -136,17 +91,9 @@ export async function PUT(request: NextRequest) {
       await rejectCard(id, text, { reasonCode: code })
       return NextResponse.json({ success: true })
     }
-    await updateCard(id, {
-      priority,
-      category,
-      message,
-      sourceItemId,
-      ruleId,
-      clientIds,
-      userIds,
-      contactIds,
-    })
-    return NextResponse.json({ success: true })
+    // The generic partial update (manual create / edit of old Custom-rule
+    // cards) was removed with the old card generation (topics plan phase 12).
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 })
   } catch (error) {
     return errorResponse(error)
   }

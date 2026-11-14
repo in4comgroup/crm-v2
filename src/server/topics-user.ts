@@ -21,7 +21,7 @@ import {
 import { OPEN_DEAL_STATUSES, stageDisplayLabel } from "@/lib/deal-funnel"
 import { WorkCalendar } from "@/lib/topics/attention-calendar"
 import type { AttentionParams } from "@/lib/topics/attention-params"
-import { TOPIC_LISTS, type TopicAttention, type TopicList } from "@/lib/topics/attention-types"
+import { TOPIC_LISTS, type TopicAttention } from "@/lib/topics/attention-types"
 import { isCardKind, type TopicCardEvent } from "@/lib/topics/cards"
 import {
   countEntries,
@@ -38,21 +38,24 @@ import {
   type TopicEntryAttention,
   type TopicListResponse,
   type TopicMergeOption,
+  type TopicOrderOption,
   type TopicOwnerOption,
   type TopicTab,
 } from "@/lib/topics/topic-ui"
 import { isTopicStatus, TOPIC_LIVE_STATUSES, type TopicStatus } from "@/lib/topics/types"
-import { reminderMarker, splitWithDailyLimit, type RoutableEntry } from "@/lib/topics/delivery-routing"
+import { reminderMarker } from "@/lib/topics/delivery-routing"
+import { viewerLists, type SnapshotContext } from "@/lib/topics/list-snapshot"
 import { loadDeliveryParams, orgHumanMemberIds } from "@/server/topics/delivery/store"
 import { getRegistry } from "@/server/signals/registry"
-import { placeStoredAttention } from "@/server/topics/attention/engine"
-import { loadAttentionParams, loadCalendarDays, readTopicList } from "@/server/topics/attention/store"
+import { compareRank, placeStoredAttention } from "@/server/topics/attention/engine"
+import { loadAttentionParams, loadCalendarDays, readListState, type ListState } from "@/server/topics/attention/store"
 import { proposalOf } from "@/server/topics/cards/deal-cards"
 import { effectiveCardStatus } from "@/server/topics/cards/logic"
 import { attentionOf, metaOf } from "@/server/topics/cards/store"
 import { topicCardsVisible } from "@/server/topics/cards/visibility"
 import { envelopeFromItem } from "@/server/topics/signals/item-input"
 import { humanUsersOnly } from "@/server/topics/system-actor"
+import { listTopicOrderOptions, listTopicOrders, OrderTopicLinkError, setOrderTopic } from "@/server/topics/orders-link"
 import {
   detachItemFromTopic,
   dismissTopic,
@@ -122,20 +125,12 @@ async function loadPlacer(orgId: string): Promise<Placer> {
 
 /** Last «Сводка» snapshot moment ≤ now: the morning time of the last working day (06 §7.2). */
 export function lastDigestSnapshot(cal: WorkCalendar, p: AttentionParams, now: Date): Date {
-  let probe = now
-  for (let i = 0; i < 20; i++) {
-    const day = cal.localDay(probe)
-    const at = cal.at(day, p.morningDigestTime)
-    if (cal.isWorkingDay(day) && at.getTime() <= now.getTime()) return at
-    probe = new Date(at.getTime() - 12 * 3600_000)
-  }
-  return new Date(now.getTime() - 24 * 3600_000)
+  return cal.lastWorkingDayAt(now, p.morningDigestTime)
 }
 
-/** Last «Неделя» snapshot moment ≤ now (weekly review weekday + time). */
+/** Last «Неделя» snapshot moment ≤ now: the weekly review day (holiday Friday → the last working day before it) + time. */
 export function lastWeeklySnapshot(cal: WorkCalendar, p: AttentionParams, now: Date): Date {
-  const at = cal.nextWeekdayAt(new Date(now.getTime() - 7 * 24 * 3600_000), p.weeklyReviewWeekday, p.weeklyReviewTime)
-  return at.getTime() <= now.getTime() ? at : new Date(at.getTime() - 7 * 24 * 3600_000)
+  return cal.lastWeeklyReviewAt(now, p.weeklyReviewWeekday, p.weeklyReviewTime)
 }
 
 function entryAttention(a: TopicAttention | null): TopicEntryAttention | null {
@@ -155,20 +150,75 @@ function entryAttention(a: TopicAttention | null): TopicEntryAttention | null {
     cycleStartedAt: a.cycleStartedAt,
     cycleReason: a.cycleReason,
     cardExpiresAt: a.cardExpiresAt,
+    ...((a as { limited?: boolean }).limited ? { limited: true } : {}),
   }
 }
 
 // ── P6 daily limit (phase 7, 06 §7.2; rules in src/lib/topics/delivery-routing.ts) ──
 
-type LimitContext = { memberIds: Set<string>; limit: number; dayOf: (iso: string | null) => string }
+type LimitContext = {
+  memberIds: Set<string>
+  limit: number
+  /** `cards.digestVisibleItems` (delivery params ladder). */
+  digestVisibleItems: number
+  dayOf: (iso: string | null) => string
+}
 
-async function loadLimitContext(orgId: string, placer: Placer): Promise<LimitContext> {
+async function loadLimitContext(orgId: string, cal: WorkCalendar): Promise<LimitContext> {
   const [memberIds, dp] = await Promise.all([orgHumanMemberIds(orgId), loadDeliveryParams(orgId)])
   return {
     memberIds,
     limit: dp.dailyPushLimit,
-    dayOf: (iso) => (iso ? placer.cal.localDay(new Date(iso)) : "0000-00-00"),
+    digestVisibleItems: dp.digestVisibleItems,
+    dayOf: (iso) => (iso ? cal.localDay(new Date(iso)) : "0000-00-00"),
   }
+}
+
+// ── Lists: «Сейчас» continuous, «Сводка» / «Неделя» frozen (06 §7.2) ──────
+
+/** One live topic, placed at read time — enough for routing, the limit, the freeze and the counts. */
+type LightRow = {
+  topicId: string
+  ownerUserId: string | null
+  dealOwnerUserId: string | null
+  lastActivityAt: Date
+  attention: TopicAttention | null
+}
+
+type OrgLightLists = { now: LightRow[]; digest: LightRow[]; week: LightRow[]; others: LightRow[] }
+
+/**
+ * The org's lists at `now` in rank order (06 §7.4), no daily limit; `others`
+ * = live topics placed in no list that were in the last «Сводка» or «Неделя»
+ * snapshot (they may still be held there).
+ */
+function orgLightLists(state: ListState): OrgLightLists {
+  const out: OrgLightLists = { now: [], digest: [], week: [], others: [] }
+  for (const r of state.rows) {
+    const a = r.placed
+    if (!a) continue
+    const row: LightRow = {
+      topicId: r.topicId,
+      ownerUserId: r.ownerUserId,
+      dealOwnerUserId: r.dealOwnerUserId,
+      lastActivityAt: r.lastActivityAt,
+      attention: a,
+    }
+    if (a.list === "now" || a.list === "digest" || a.list === "week") out[a.list].push(row)
+    else {
+      const f = state.snapshot.facts[r.topicId]
+      if (f && (f.digestList === "digest" || f.weekList === "week")) out.others.push(row)
+    }
+  }
+  const rank = (x: LightRow, y: LightRow) => compareRank(x.attention!, y.attention!)
+  out.now.sort(rank)
+  out.digest.sort(rank)
+  out.week.sort(rank)
+  return out
+}
+
+function viewerLightLists(state: ListState, lim: LimitContext, userId: string) {
+  return viewerLists(orgLightLists(state), state.snapshot, userId, lim.memberIds, lim.limit, lim.dayOf)
 }
 
 // ── Cards ─────────────────────────────────────────────────────────────────
@@ -349,16 +399,6 @@ async function buildEntries(
   return out
 }
 
-/** Entries of one attention list (rank order, read-time placement via `readTopicList`). */
-async function listEntries(orgId: string, list: Exclude<TopicList, "none">, now: Date): Promise<TopicEntry[]> {
-  const rows = await readTopicList(orgId, list, now)
-  return buildEntries(
-    orgId,
-    rows.map((r) => ({ topicId: r.topicId, attention: r.attention })),
-    now,
-  )
-}
-
 /** «Все темы» (06 §7.2): every topic incl. snoozed / waiting / closed, with filters. */
 async function allEntries(orgId: string, filters: TopicAllFilters, now: Date): Promise<TopicEntry[]> {
   const status = filters.status ?? "live"
@@ -425,18 +465,23 @@ export async function readTopicTab(
 ): Promise<TopicListResponse> {
   const now = opts.now ?? new Date()
   const placer = await loadPlacer(orgId)
+  const lim = await loadLimitContext(orgId, placer.cal)
   let entries: TopicEntry[]
-  if (tab === "now" || tab === "digest") {
-    // P6 daily limit as THIS user sees it: overflow «Сейчас» → «Сводка».
-    const [lim, nowE, digestE] = await Promise.all([
-      loadLimitContext(orgId, placer),
-      listEntries(orgId, "now", now),
-      listEntries(orgId, "digest", now),
-    ])
-    const split = splitWithDailyLimit(nowE, digestE, userId, lim.memberIds, lim.limit, lim.dayOf)
-    entries = tab === "now" ? split.now : split.digest
+  if (tab === "all") {
+    entries = await allEntries(orgId, opts.filters ?? {}, now)
   } else {
-    entries = tab === "all" ? await allEntries(orgId, opts.filters ?? {}, now) : await listEntries(orgId, tab, now)
+    // «Сейчас» with the P6 daily limit as THIS user sees it; «Сводка» /
+    // «Неделя» frozen at their last snapshot (src/lib/topics/list-snapshot.ts).
+    const state = await readListState(orgId, now)
+    const v = viewerLightLists(state, lim, userId)
+    const chosen: (LightRow & { snapshot?: "snapshot" | "held" | "since" })[] = v[tab]
+    const built = await buildEntries(
+      orgId,
+      chosen.map((r) => ({ topicId: r.topicId, attention: r.attention })),
+      now,
+    )
+    const membership = new Map(chosen.map((r) => [r.topicId, r.snapshot ?? null]))
+    entries = tab === "now" ? built : built.map((e) => ({ ...e, snapshot: membership.get(e.topicId) ?? null }))
   }
   let dealCards: TopicListResponse["dealCards"] = []
   if (tab === "now") {
@@ -455,77 +500,53 @@ export async function readTopicTab(
     dealCards,
     digestSnapshotAt: lastDigestSnapshot(placer.cal, placer.params, now).toISOString(),
     weeklySnapshotAt: lastWeeklySnapshot(placer.cal, placer.params, now).toISOString(),
+    digestVisibleItems: lim.digestVisibleItems,
     now: now.toISOString(),
   }
 }
 
 /**
- * Entries of the three attention lists for the whole org at `now` (rank
- * order, read-time placement, NO daily limit — the caller applies it per
- * recipient). Used by the delivery phase (plan phase 7) to build the
- * digests from exactly what the dashboard shows.
+ * The org's list entries at `now` for the delivery phase (plan phase 7):
+ * «Сейчас» / «Сводка» / «Неделя» in rank order with NO daily limit and NO
+ * freeze, plus the held candidates (`others`) and the snapshot context —
+ * `userLists` (src/lib/topics/delivery-content.ts) applies the limit and the
+ * freeze per recipient, so the emails show exactly what the dashboard shows.
  */
 export async function readOrgListEntries(
   orgId: string,
   now: Date = new Date(),
-): Promise<{ now: TopicEntry[]; digest: TopicEntry[]; week: TopicEntry[] }> {
-  const [nowE, digest, week] = await Promise.all([
-    listEntries(orgId, "now", now),
-    listEntries(orgId, "digest", now),
-    listEntries(orgId, "week", now),
-  ])
-  return { now: nowE, digest, week }
+): Promise<{ now: TopicEntry[]; digest: TopicEntry[]; week: TopicEntry[]; others: TopicEntry[]; snapshot: SnapshotContext }> {
+  const state = await readListState(orgId, now)
+  const org = orgLightLists(state)
+  const all = [...org.now, ...org.digest, ...org.week, ...org.others]
+  const built = await buildEntries(
+    orgId,
+    all.map((r) => ({ topicId: r.topicId, attention: r.attention })),
+    now,
+  )
+  const byId = new Map(built.map((e) => [e.topicId, e]))
+  const pick = (rows: LightRow[]) => rows.map((r) => byId.get(r.topicId)).filter((e): e is TopicEntry => !!e)
+  return { now: pick(org.now), digest: pick(org.digest), week: pick(org.week), others: pick(org.others), snapshot: state.snapshot }
 }
 
-/** Counts per tab (all + «Мои»). «Сейчас» counts open deal cards too; «Все темы» = live topics. */
+/** Counts per tab (all + «Мои»), same lists as `readTopicTab`. «Сейчас» counts open deal cards too; «Все темы» = live topics. */
 export async function readTopicCounts(orgId: string, userId: string, now: Date = new Date()): Promise<TopicCounts> {
-  const owned = async (list: Exclude<TopicList, "none">) => {
-    const rows = await readTopicList(orgId, list, now)
-    return rows.map((r) => ({ topicId: r.topicId, ownerUserId: r.ownerUserId, dealId: r.dealId, attention: r.attention }))
-  }
   const placer = await loadPlacer(orgId)
-  const [lim, nowRaw, digestRaw, weekRows, liveRows, dealCards] = await Promise.all([
-    loadLimitContext(orgId, placer),
-    owned("now"),
-    owned("digest"),
-    owned("week"),
-    db
-      .select({ ownerUserId: topic.ownerUserId, dealId: topic.dealId })
-      .from(topic)
-      .where(and(eq(topic.organizationId, orgId), inArray(topic.status, LIVE))),
+  const [lim, state, dealCards] = await Promise.all([
+    loadLimitContext(orgId, placer.cal),
+    readListState(orgId, now),
     openDealCards(orgId, now),
   ])
-  const dealIds = [...new Set([...nowRaw, ...digestRaw, ...weekRows, ...liveRows].map((r) => r.dealId).filter((x): x is string => !!x))]
-  const dealOwner = new Map<string, string>()
-  for (let i = 0; i < dealIds.length; i += 500) {
-    const rows = await db
-      .select({ id: deal.id, userId: deal.userId })
-      .from(deal)
-      .where(and(eq(deal.organizationId, orgId), inArray(deal.id, dealIds.slice(i, i + 500))))
-    for (const r of rows) dealOwner.set(r.id, r.userId)
-  }
-  const withOwner = (rows: { ownerUserId: string | null; dealId: string | null }[]) =>
-    rows.map((r) => ({ ownerUserId: r.ownerUserId, dealOwnerUserId: r.dealId ? (dealOwner.get(r.dealId) ?? null) : null }))
-  const routable = (rows: typeof nowRaw): RoutableEntry[] =>
-    rows.map((r) => ({
-      topicId: r.topicId,
-      ownerUserId: r.ownerUserId,
-      dealOwnerUserId: r.dealId ? (dealOwner.get(r.dealId) ?? null) : null,
-      attention: r.attention,
-    }))
-  // P6 daily limit as this user sees it (same rule as `readTopicTab`).
-  const split = splitWithDailyLimit(routable(nowRaw), routable(digestRaw), userId, lim.memberIds, lim.limit, lim.dayOf)
-  const nowRows = split.now
-  const digestRows = split.digest
+  const v = viewerLightLists(state, lim, userId)
   const owners = await topicOwners(orgId, [...new Set(dealCards.map((c) => c.topicId))])
   const dealCardOwners = dealCards.map((c) => owners.get(c.topicId) ?? { ownerUserId: null, dealOwnerUserId: null })
-  const nowCount = countEntries(nowRows, userId)
+  const nowCount = countEntries(v.now, userId)
   const dealCount = countEntries(dealCardOwners, userId)
   return {
     now: { all: nowCount.all + dealCount.all, mine: nowCount.mine + dealCount.mine },
-    digest: countEntries(digestRows, userId),
-    week: countEntries(withOwner(weekRows), userId),
-    all: countEntries(withOwner(liveRows), userId),
+    digest: countEntries(v.digest, userId),
+    week: countEntries(v.week, userId),
+    all: countEntries(state.rows, userId),
   }
 }
 
@@ -559,7 +580,7 @@ export async function getTopicView(orgId: string, topicId: string, now: Date = n
   const [head] = await headQuery().where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId)))
   if (!head) return null
   const t = head.t
-  const [placer, labels, cardsMap, items, instances, events, dealRow] = await Promise.all([
+  const [placer, labels, cardsMap, items, instances, events, dealRow, orders] = await Promise.all([
     loadPlacer(orgId),
     codeLabels(),
     loadCards(orgId, [topicId]),
@@ -605,6 +626,7 @@ export async function getTopicView(orgId: string, topicId: string, now: Date = n
           .leftJoin(dealFunnelStage, eq(dealFunnelStage.id, deal.funnelStageId))
           .where(and(eq(deal.organizationId, orgId), eq(deal.id, t.dealId)))
       : Promise.resolve([]),
+    listTopicOrders(orgId, topicId),
   ])
   const cards = cardsMap.get(topicId) ?? []
   const attention = placer.place(t.attention, now)
@@ -665,7 +687,14 @@ export async function getTopicView(orgId: string, topicId: string, now: Date = n
     })),
     cards: cards.filter((c) => c.kind === "topic").map((c) => cardView(c, now)),
     allDealCards: cards.filter((c) => c.kind !== "topic").map((c) => cardView(c, now)),
+    orders,
   }
+}
+
+/** «Привязать заказ» (phase 10): orders of the topic's company not yet on this topic. */
+export async function listOrderOptions(orgId: string, topicId: string): Promise<TopicOrderOption[]> {
+  await topicHead(orgId, topicId)
+  return listTopicOrderOptions(orgId, topicId)
 }
 
 // ── Drawer pickers ────────────────────────────────────────────────────────
@@ -818,5 +847,27 @@ export async function runTopicAction(
       await topicHead(orgId, input.topicId)
       await refreshTopicAttention(orgId, input.topicId)
       return { topicId: input.topicId }
+    case "link_order":
+    case "unlink_order": {
+      const h = await topicHead(orgId, input.topicId)
+      try {
+        if (input.action === "link_order") {
+          if (h.status === "merged") throw new TopicsUserError("Тема объединена с другой")
+          const options = await listTopicOrderOptions(orgId, input.topicId)
+          if (!options.some((o) => o.id === input.orderId)) {
+            throw new TopicsUserError("Привязать можно только заказ компании этой темы")
+          }
+          await setOrderTopic(orgId, userId, input.orderId, input.topicId, { via: "user" })
+        } else {
+          const linked = await listTopicOrders(orgId, input.topicId)
+          if (!linked.some((o) => o.id === input.orderId)) throw new TopicsUserError("Заказ не привязан к этой теме")
+          await setOrderTopic(orgId, userId, input.orderId, null, { via: "user" })
+        }
+      } catch (e) {
+        if (e instanceof OrderTopicLinkError) throw new TopicsUserError(e.message)
+        throw e
+      }
+      return { topicId: input.topicId }
+    }
   }
 }

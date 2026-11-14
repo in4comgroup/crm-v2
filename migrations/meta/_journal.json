@@ -190,6 +190,20 @@
       "when": 1794669379247,
       "tag": "0026_topics_phase8_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794671484130,
+      "tag": "0027_topics_orders_link_catalogue_watch",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794671889996,
+      "tag": "0028_cards_contract_old_columns",
+      "breakpoints": true
     }
   ]
 }

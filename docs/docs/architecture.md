@@ -144,7 +144,7 @@ Vercel Cron (03:00 UTC, vercel.ts)
 - The cron expression is duplicated in `vercel.ts` and
   `src/server/orchestration/config.ts`; keep them equal.
 
-Other LLM batch jobs (cards generation, deal discovery, discovery, batch web
+Other LLM batch jobs (discovery of companies and contacts, batch web
 enrichment) are **not** scheduled. They run when a user clicks a button, with
 caps (for example 50 items, concurrency 3) sized for one serverless request.
 
@@ -154,7 +154,7 @@ caps (for example 50 items, concurrency 3) sized for one serverless request.
 | --- | --- | --- |
 | Neon Postgres | Main database | `src/db/drizzle.ts` (adds `Connection: close` to every request for resilience) |
 | Object storage — Cloudflare R2 today (provider-neutral layer, spec `docs/specs/s3-r2/`) | Parsed Markdown (`org_<orgId>/source_<sourceId>/item_<itemId>.md`), avatars (`avatars/user_<id>`) | `src/server/storage`, `src/server/upload-source-item.ts` |
-| Vercel AI Gateway | All LLM calls (parsing, cards, deals, discovery, chat, analytics assistant, web lookup) | Only through `src/server/ai/runtime.ts` (process key → model from `/settings` «Процессы ИИ» or the code default in `src/server/ai/processes.ts`); Vercel specifics in `src/server/ai/gateways/vercel-ai-gateway/`. ESLint enforces the boundary |
+| Vercel AI Gateway | All LLM calls (parsing, topics and cards, deals, discovery, chat, analytics assistant, web lookup) | Only through `src/server/ai/runtime.ts` (process key → model from `/settings` «Процессы ИИ» or the code default in `src/server/ai/processes.ts`); Vercel specifics in `src/server/ai/gateways/vercel-ai-gateway/`. ESLint enforces the boundary |
 | Nylas | Email source (read) and system email (send) | `src/lib/nylas.ts`, `src/server/sync/nylas.ts`, `src/lib/email.ts` |
 | IMAP servers | Email source without Nylas | `src/lib/imap.ts`, `src/server/sync/imap.ts`, `src/server/parsers/imap.ts` |
 | Google Chat / Drive APIs | Chat and Drive sources (service account, optional domain-wide delegation) | `src/lib/google-*.ts`, `src/server/sync/{gchat,gdrive}.ts` |

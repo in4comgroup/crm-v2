@@ -604,6 +604,15 @@ export function TopicEntryCard({
             </Badge>
           )}
           {closed && <Badge variant="secondary">{topicStatusRu(entry.status)}</Badge>}
+          {entry.snapshot === "held" && (
+            <Badge
+              variant="outline"
+              className="font-normal text-muted-foreground"
+              title="Тема была в снимке списка и ушла из него после снимка. Она видна здесь до следующего снимка."
+            >
+              Ушла из списка после снимка
+            </Badge>
+          )}
           {entry.status === "open" && entry.subState !== "none" && (
             <Badge variant="outline" className="font-normal">
               {TOPIC_SUB_STATE_LABELS_RU[entry.subState as TopicSubState] ?? entry.subState}

@@ -6,23 +6,13 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
   AlertTriangle,
-  Clock,
-  Send,
-  Mail,
   Sparkles,
-  Repeat,
-  Lock,
   ChevronLeft,
   ChevronRight,
   Trophy,
@@ -30,33 +20,11 @@ import {
   PauseCircle,
   Bot,
   Undo2,
-  type LucideIcon,
 } from "lucide-react"
 import type { DealRow } from "@/app/api/deals/route"
-import type { DealIntel, IntelBadge } from "@/server/deals-mock"
 import type { DealTaskInfo } from "@/hooks/use-board-intel"
 import { formatAmount } from "@/lib/deal-board"
 import { formatPauseUntil, isOpenDealStatus } from "@/lib/deal-funnel"
-
-// Мок-бейджи (из /api/deals/intel) несут имя lucide-иконки в kebab-case.
-const BADGE_ICON: Record<string, LucideIcon> = {
-  send: Send,
-  mail: Mail,
-  sparkles: Sparkles,
-  repeat: Repeat,
-  lock: Lock,
-}
-
-// Бейджи в ОБЕИХ темах — три оттенка палитры (по .mtag лендинга):
-// голубой = происхождение (TG/письмо), красный warn = внимание (остывание),
-// фиолетовый = действия агента. Никаких sky/amber вне палитры.
-const BADGE_CLASS: Record<IntelBadge["kind"], string> = {
-  source:
-    "bg-[#669BBC]/20 text-[#2F5D77] dark:bg-[#669BBC]/25 dark:text-[#9FC4DC]",
-  ai: "bg-violet-500/15 text-violet-600 dark:text-violet-300",
-  auto: "bg-violet-500/15 text-violet-600 dark:text-violet-300",
-  lock: "bg-muted text-muted-foreground",
-}
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
@@ -181,8 +149,7 @@ export function DealKanbanCard({
   deal,
   onOpen,
   tasks = [],
-  intel,
-  intelLoaded = false,
+  boardLoaded = false,
   onUndoAgent,
 }: {
   deal: DealRow
@@ -192,11 +159,9 @@ export function DealKanbanCard({
   onUndoAgent?: (deal: DealRow) => void
   // Все задачи сделки (по createdAt desc). Карточка листает их шевронами.
   tasks?: DealTaskInfo[]
-  // Мок-интел по сделке (остывание/бейджи). undefined до загрузки.
-  intel?: DealIntel
-  // Загружены ли данные доски (next-step/intel). До загрузки НЕ показываем
-  // инвариант — иначе ложная «красная» вспышка на первом рендере.
-  intelLoaded?: boolean
+  // Загружены ли данные доски (задачи). До загрузки НЕ показываем
+  // «Задач нет» — иначе ложная «красная» вспышка на первом рендере.
+  boardLoaded?: boolean
 }) {
   // Индекс листаемой задачи (0 = самая свежая). Клампится к длине списка.
   const [taskIdx, setTaskIdx] = useState(0)
@@ -225,22 +190,9 @@ export function DealKanbanCard({
   // активные — отменённые/удалённые несут свои бейджи «Отменена»/«Удалена».
   const isWon = isActive && deal.funnelStageName === "Closed"
   const isLost = isActive && deal.funnelStageName === "Rejected"
-  const isTerminal = isWon || isLost
 
-  // Инсайты «остывание»/«риск» на закрытых карточках не показываем — сделка
-  // уже завершена, тревожные бейджи там бессмысленны.
-  // На паузе напоминания остановлены (§9.2) — «остывание» тоже не показываем.
-  const isStale =
-    Boolean(intel?.isStale) && !isTerminal && deal.status !== "paused"
-  // На карточке НЕ показываем: бейдж происхождения (kind==='source', UX №9 —
-  // он в подробностях) и мок-бейдж «авто-задача по правилу» (kind==='auto') —
-  // он противоречил реальному блоку задач («Задач нет» рядом с «авто-задача»).
-  const badges = (intel?.badges ?? []).filter(
-    (b) => b.kind !== "source" && b.kind !== "auto",
-  )
-  // Метка «перевёл агент»: последний перевод стадии сделал агент (авто-
-  // применённое предложение или LLM-discovery) и человек его ещё не
-  // пересматривал. Причина перевода (changes) — в поповере бейджа.
+  // Метка «перевёл агент»: последний перевод стадии сделал агент (движок
+  // тем) и человек его ещё не пересматривал. Причина перевода (changes) — в поповере бейджа.
   const movedByAgent = deal.lastMovedBy === "agent"
   // «Есть риски» (topics phase 5a, spec §9.4): ≥ 1 активный риск сделки.
   // `riskSummary` = самый критичный риск (батч-запрос вместе с доской).
@@ -249,8 +201,6 @@ export function DealKanbanCard({
   const atRisk = Boolean(risk)
   const isPaused = deal.status === "paused"
   const hasBadgeRow =
-    badges.length > 0 ||
-    isStale ||
     movedByAgent ||
     atRisk ||
     isPaused ||
@@ -351,8 +301,8 @@ export function DealKanbanCard({
 
       {/* «Текущее состояние» (topics phase 5a, spec §9.3): сохранённый текст
           движка, до 3 строк (полный текст + источники — в дровере). Пока его
-          нет — как раньше: последнее изменение (changes) или reasoning
-          старого discovery (орги с темами off / shadow). Плашка с чётким
+          нет — последнее изменение (changes) или reasoning: исторические
+          данные удалённого старого discovery. Плашка с чётким
           фоном+рамкой (полупрозрачная карточка «съедала» muted/50). */}
       {deal.stateText ? (
         <div
@@ -426,7 +376,7 @@ export function DealKanbanCard({
             </div>
           </div>
         ) : (
-          intelLoaded && (
+          boardLoaded && (
             <div className="text-xs font-medium text-amber-600 dark:text-amber-400">
               Задач нет
             </div>
@@ -438,19 +388,6 @@ export function DealKanbanCard({
         <div className="flex flex-col items-start gap-1">
           <DealPausedBadge deal={deal} />
           <DealCreatedByAgentBadge deal={deal} onUndo={onUndoAgent} />
-          {badges.map((b, i) => {
-            const Icon = BADGE_ICON[b.icon]
-            return (
-              <Badge
-                key={i}
-                variant="secondary"
-                className={`gap-1 ${BADGE_CLASS[b.kind]}`}
-              >
-                {Icon && <Icon className="h-3 w-3" />}
-                {b.text}
-              </Badge>
-            )
-          })}
           {risk && (
             // Наведение — тултип: только САМЫЙ критичный риск (§9.4):
             // название + объяснение «в чём риск / на чём основана оценка».
@@ -477,48 +414,6 @@ export function DealKanbanCard({
                 {risk.explanationRu && <div>{risk.explanationRu}</div>}
               </TooltipContent>
             </Tooltip>
-          )}
-          {isStale && intel && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  onPointerDown={stop}
-                  onClick={stop}
-                  aria-label="Сделка остывает"
-                >
-                  <Badge
-                    variant="secondary"
-                    className="gap-1 cursor-pointer bg-[#C1121F]/10 text-[#A31018] dark:bg-[#C1121F]/15 dark:text-[#FF8F96]"
-                  >
-                    <Clock className="h-3 w-3" />
-                    {intel.staleDays} дн без активности
-                  </Badge>
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                className="w-72 text-sm space-y-2"
-                onClick={stop}
-              >
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Сделка остывает
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Без активности</span>
-                  <span className="font-medium">{intel.staleDays} дн</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Норма стадии</span>
-                  <span>{intel.norm} дн</span>
-                </div>
-                {/* TODO(backend): здесь агент должен подготавливать черновик
-                    follow-up в канал последнего контакта. */}
-                <div className="text-xs text-muted-foreground pt-1 border-t">
-                  Агент подготовил черновик follow-up в канал последнего контакта.
-                </div>
-              </PopoverContent>
-            </Popover>
           )}
           {movedByAgent && (
             // Наведение (не клик) — тот же паттерн, что у бейджа «есть риски»:

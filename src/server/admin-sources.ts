@@ -9,6 +9,7 @@ import {
   desc,
   eq,
   ilike,
+  isNull,
 } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
 import { encryptCredentials } from "@/lib/credentials-crypto"
@@ -40,6 +41,8 @@ export type AdminSourceListFilters = {
   provider?: SourceProvider | null
   searchName?: string
   showInactive?: boolean
+  /** Owner organisation id, or "system" for rows with no owner org. */
+  organizationId?: string | null
   limit?: number
   offset?: number
 }
@@ -73,6 +76,11 @@ export async function listAdminSources(filters: AdminSourceListFilters) {
   if (filters.provider) conds.push(eq(source.provider, filters.provider))
   if (filters.searchName?.trim()) {
     conds.push(ilike(source.name, `%${filters.searchName.trim()}%`))
+  }
+  if (filters.organizationId === "system") {
+    conds.push(isNull(source.ownerOrganizationId))
+  } else if (filters.organizationId) {
+    conds.push(eq(source.ownerOrganizationId, filters.organizationId))
   }
   if (!filters.showInactive) {
     conds.push(eq(source.status, "active"))

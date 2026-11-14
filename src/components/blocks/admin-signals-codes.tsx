@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { DEFAULT_PAGE_SIZE, TablePager, pageCount } from "@/components/blocks/table-pager"
 import { MultiCheckSelect } from "@/components/blocks/admin-ai-models"
 import {
   CLASS_LABELS_RU,
@@ -217,6 +218,11 @@ export function CodesTable({
   )
   const withOrg = !!org
   const cols = withOrg ? 13 : 8
+  const [pageRaw, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
+  // Clamp: a filter change can shrink the list below the current page.
+  const page = Math.min(pageRaw, pageCount(rows.length, pageSize) - 1)
+  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize)
 
   return (
     <div className="space-y-2">
@@ -255,7 +261,7 @@ export function CodesTable({
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((c) => {
+              pageRows.map((c) => {
                 const eff = effMap.get(c.code)
                 return (
                   <TableRow
@@ -317,6 +323,16 @@ export function CodesTable({
           </TableBody>
         </Table>
       </Card>
+      <TablePager
+        page={page}
+        pageSize={pageSize}
+        total={rows.length}
+        onPageChange={setPage}
+        onPageSizeChange={(n) => {
+          setPageSize(n)
+          setPage(0)
+        }}
+      />
     </div>
   )
 }

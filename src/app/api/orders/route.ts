@@ -71,12 +71,13 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/orders  — create. Always creates a draft. Required: clientId.
-// Optional: description, orderDate, currency, items[]. Sending to the client
+// Optional: description, orderDate, currency, items[], fromCardId (topics
+// phase 10: link the order to that card's topic). Sending to the client
 // (→ awaiting_client) is a separate transition (`POST /api/orders/[id]/link`).
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { clientId, description, orderDate, currency, items } = body
+    const { clientId, description, orderDate, currency, items, fromCardId } = body
     if (!clientId) {
       return NextResponse.json(
         { error: "clientId is required" },
@@ -89,6 +90,7 @@ export async function POST(request: NextRequest) {
       orderDate,
       currency,
       items,
+      fromCardId: typeof fromCardId === "string" && fromCardId ? fromCardId : null,
     })
     return NextResponse.json({ success: true, id: result.id })
   } catch (error) {

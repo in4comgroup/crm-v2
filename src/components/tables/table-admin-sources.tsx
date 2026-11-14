@@ -25,9 +25,12 @@ import FormAdminEditSource from "@/components/forms/form-admin-edit-source"
 import type { AdminSource } from "@/app/api/admin/sources/route"
 import { PROVIDER_LIST, getProvider } from "@/lib/sources/providers"
 import type { SourceProvider } from "@/db/schema"
+import { TablePager, DEFAULT_PAGE_SIZE, type PageSize } from "@/components/blocks/table-pager"
 
-const ITEMS_PER_PAGE = 10
 const ALL_PROVIDERS = "__all__"
+const ALL_ORGS = "__all__"
+// Sentinel for system rows (no owner organisation); matches the API.
+const SYSTEM_ORG = "system"
 
 // Russian plural picker: forms = [one, few, many] (1 / 2–4 / 0,5–20).
 function plural(n: number, forms: [string, string, string]): string {
@@ -68,21 +71,32 @@ export function TableAdminSources() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE)
   const [searchName, setSearchName] = useState("")
   const [provider, setProvider] = useState<string>(ALL_PROVIDERS)
   const [showInactive, setShowInactive] = useState(false)
+  const [orgFilter, setOrgFilter] = useState<string>(ALL_ORGS)
+  const [orgOptions, setOrgOptions] = useState<{ id: string; name: string }[]>([])
+
+  useEffect(() => {
+    fetch("/api/admin/sources?orgOptions=1")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setOrgOptions(d?.organizations ?? []))
+      .catch(() => setOrgOptions([]))
+  }, [])
 
   const fetchSources = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const params = new URLSearchParams({
-        limit: String(ITEMS_PER_PAGE),
-        offset: String((page - 1) * ITEMS_PER_PAGE),
+        limit: String(pageSize),
+        offset: String(page * pageSize),
       })
       if (searchName) params.set("searchName", searchName)
       if (provider !== ALL_PROVIDERS) params.set("provider", provider)
+      if (orgFilter !== ALL_ORGS) params.set("organizationId", orgFilter)
       if (showInactive) params.set("showInactive", "1")
 
       const res = await fetch(`/api/admin/sources?${params}`)
@@ -95,13 +109,12 @@ export function TableAdminSources() {
     } finally {
       setLoading(false)
     }
-  }, [page, searchName, provider, showInactive])
+  }, [page, pageSize, searchName, provider, orgFilter, showInactive])
 
   useEffect(() => {
     fetchSources()
   }, [fetchSources])
 
-  const totalPages = Math.ceil(total / ITEMS_PER_PAGE)
 
   if (error) {
     return (
@@ -119,7 +132,7 @@ export function TableAdminSources() {
           value={searchName}
           onChange={(e) => {
             setSearchName(e.target.value)
-            setPage(1)
+            setPage(0)
           }}
           className="max-w-48"
         />
@@ -127,7 +140,7 @@ export function TableAdminSources() {
           value={provider}
           onValueChange={(v) => {
             setProvider(v)
-            setPage(1)
+            setPage(0)
           }}
         >
           <SelectTrigger className="w-44">
@@ -142,12 +155,32 @@ export function TableAdminSources() {
             ))}
           </SelectContent>
         </Select>
+        <Select
+          value={orgFilter}
+          onValueChange={(v) => {
+            setOrgFilter(v)
+            setPage(0)
+          }}
+        >
+          <SelectTrigger className="w-52">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_ORGS}>Все организации</SelectItem>
+            <SelectItem value={SYSTEM_ORG}>Системные</SelectItem>
+            {orgOptions.map((o) => (
+              <SelectItem key={o.id} value={o.id}>
+                {o.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
           <Checkbox
             checked={showInactive}
             onCheckedChange={(v) => {
               setShowInactive(v === true)
-              setPage(1)
+              setPage(0)
             }}
           />
           Показывать неактивные
@@ -257,27 +290,17 @@ export function TableAdminSources() {
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-end gap-4 mt-4">
-            <span className="text-sm text-gray-400">
-              стр. {page} из {totalPages || 1}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={page === 1}
-                onClick={() => setPage(page - 1)}
-              >
-                Назад
-              </Button>
-              <Button
-                variant="outline"
-                disabled={page >= totalPages}
-                onClick={() => setPage(page + 1)}
-              >
-                Вперёд
-              </Button>
-            </div>
-          </div>
+          <TablePager
+            className="mt-4"
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={(n) => {
+              setPageSize(n)
+              setPage(0)
+            }}
+          />
         </>
       )}
     </>

@@ -27,6 +27,7 @@ import AdminBanUserDialog from "@/components/forms/form-admin-ban-user"
 import AdminSetOrgRoleDialog from "@/components/forms/form-admin-set-org-role"
 import AdminEditUserOrgsDialog from "@/components/forms/form-admin-edit-user-orgs"
 import type { UserOrgInfo } from "@/app/api/admin/user-organizations/route"
+import { TablePager, DEFAULT_PAGE_SIZE, type PageSize } from "@/components/blocks/table-pager"
 
 // Russian plural picker: forms = [one, few, many] (1 / 2–4 / 0,5–20).
 function plural(n: number, forms: [string, string, string]): string {
@@ -49,7 +50,6 @@ type AdminUser = {
   updatedAt: string | Date
 }
 
-const ITEMS_PER_PAGE = 10
 
 export function TableAdminUsers() {
   const [users, setUsers] = useState<AdminUser[]>([])
@@ -58,7 +58,8 @@ export function TableAdminUsers() {
   const [userOrgDetails, setUserOrgDetails] = useState<Record<string, UserOrgInfo[]>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE)
 
   // Filters
   const [searchName, setSearchName] = useState("")
@@ -82,8 +83,8 @@ export function TableAdminUsers() {
         filterValue?: string
         filterOperator?: "eq" | "ne"
       } = {
-        limit: ITEMS_PER_PAGE,
-        offset: (page - 1) * ITEMS_PER_PAGE,
+        limit: pageSize,
+        offset: page * pageSize,
         sortBy: "createdAt",
         sortDirection: "desc",
       }
@@ -127,7 +128,7 @@ export function TableAdminUsers() {
     } finally {
       setLoading(false)
     }
-  }, [page, searchName, searchEmail, filterRole])
+  }, [page, pageSize, searchName, searchEmail, filterRole])
 
   const fetchOrgMap = useCallback(async () => {
     try {
@@ -155,7 +156,6 @@ export function TableAdminUsers() {
     fetchOrgMap()
   }
 
-  const totalPages = Math.ceil(total / ITEMS_PER_PAGE)
 
   if (error) {
     return (
@@ -174,7 +174,7 @@ export function TableAdminUsers() {
           onChange={(e) => {
             setSearchName(e.target.value)
             setSearchEmail("")
-            setPage(1)
+            setPage(0)
           }}
           className="max-w-48"
         />
@@ -184,7 +184,7 @@ export function TableAdminUsers() {
           onChange={(e) => {
             setSearchEmail(e.target.value)
             setSearchName("")
-            setPage(1)
+            setPage(0)
           }}
           className="max-w-48"
         />
@@ -193,7 +193,7 @@ export function TableAdminUsers() {
           value={searchOrg}
           onChange={(e) => {
             setSearchOrg(e.target.value)
-            setPage(1)
+            setPage(0)
           }}
           className="max-w-48"
         />
@@ -201,7 +201,7 @@ export function TableAdminUsers() {
           value={filterRole}
           onValueChange={(val) => {
             setFilterRole(val)
-            setPage(1)
+            setPage(0)
           }}
         >
           <SelectTrigger className="w-36">
@@ -327,27 +327,17 @@ export function TableAdminUsers() {
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-end gap-4 mt-4">
-            <span className="text-sm text-gray-400">
-              стр. {page} из {totalPages || 1}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={page === 1}
-                onClick={() => setPage(page - 1)}
-              >
-                Назад
-              </Button>
-              <Button
-                variant="outline"
-                disabled={page >= totalPages}
-                onClick={() => setPage(page + 1)}
-              >
-                Вперёд
-              </Button>
-            </div>
-          </div>
+          <TablePager
+            className="mt-4"
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={(n) => {
+              setPageSize(n)
+              setPage(0)
+            }}
+          />
         </>
       )}
     </>

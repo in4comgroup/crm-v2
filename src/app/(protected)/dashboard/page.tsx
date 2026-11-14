@@ -2,7 +2,6 @@
 
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { useCallback, useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -15,7 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import { X, ScanSearch } from "lucide-react"
+import { X } from "lucide-react"
 import type { CardRow } from "@/app/api/cards/route"
 import {
   CardsFeedSection,
@@ -25,9 +24,6 @@ import {
   PRIORITY_LABEL,
   CATEGORY_LABEL,
 } from "@/components/blocks/cards-feed-section"
-import { ExploreSourcesDialog } from "@/components/blocks/explore-sources-dialog"
-import { MagicCardsButton } from "@/components/blocks/magic-cards-button"
-import { NewOrderDialog } from "@/components/blocks/order-request-wizard"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { TopicListsSection } from "@/components/blocks/topic-lists-section"
 
@@ -44,9 +40,10 @@ function todayIso(): string {
 type PeriodPreset = "day" | "week" | "all"
 
 export default function DashboardPage() {
-  const router = useRouter()
   // Topics UI (phase 6, spec topics/01 §14): only when the org's topics mode
-  // is `on`. null = not known yet. In `off` / `shadow` the page is unchanged.
+  // is `on`. null = not known yet. In `off` / `shadow` the page shows only
+  // the read-only history of old cards: Custom-rule card generation was
+  // removed for every org in plan phase 12.
   const [topicsOn, setTopicsOn] = useState<boolean | null>(null)
   const [view, setView] = useState<"topics" | "history">("topics")
   useEffect(() => {
@@ -99,18 +96,6 @@ export default function DashboardPage() {
     }
   }
 
-  // "Создать заказ" on a new_order card opens this dialog right here instead
-  // of navigating to /products first — the dialog itself (client + pasted
-  // text) is a self-contained component (loads its own client options),
-  // unlike the actual order-assembly builder below it, which lives entirely
-  // in /products's page state (catalog table, useOrderBuilder) and isn't
-  // portable here. So: client+text step happens on the dashboard, the parse
-  // (POST /api/order-requests, done inside NewOrderDialog's own onAssemble
-  // path) runs from here too, and only THEN do we navigate — straight into
-  // the already-parsed assembly wizard via ?assembleRequest=, skipping the
-  // old flow's redundant second dialog on /products.
-  const [orderDialogCard, setOrderDialogCard] = useState<CardRow | null>(null)
-
   const clearFilters = () => {
     setPriority(ALL)
     setCategory(ALL)
@@ -149,9 +134,9 @@ export default function DashboardPage() {
     }
   }, [load])
 
-  // Mode `on`: old Custom-rule cards are read-only history; engine cards
-  // live in the topic lists.
-  const historyCards = topicsOn ? cards.filter((c) => c.kind === null) : cards
+  // Old Custom-rule cards (kind null) are read-only history in every mode;
+  // engine cards live in the topic lists (mode `on`).
+  const historyCards = cards.filter((c) => c.kind === null)
   const showHistory = topicsOn === true && view === "history"
 
   if (topicsOn === null) {
@@ -184,9 +169,8 @@ export default function DashboardPage() {
           <PageHeaderActions />
         </div>
 
-        {/* Селекты приоритета/категории + датапикеры + сегментед периода +
-            чекбокс отклонённых — прижаты влево; «Найти в источниках»/Magic —
-            прижаты вправо (по образцу /clients). */}
+        {/* Filters of the read-only card history: priority / category,
+            dates, period presets, rejected cards. */}
         {(!topicsOn || showHistory) && (
         <div className="flex items-center gap-3 flex-wrap rounded-xl border bg-card p-3">
           <Select value={priority} onValueChange={setPriority}>
@@ -274,20 +258,6 @@ export default function DashboardPage() {
             </Label>
           </div>
 
-          {!topicsOn && (
-          <div className="ml-auto flex items-center gap-2">
-            <ExploreSourcesDialog
-              onCardsGenerated={load}
-              trigger={
-                <Button size="sm" variant="outline">
-                  <ScanSearch className="h-4 w-4 mr-1" />
-                  Найти в источниках
-                </Button>
-              }
-            />
-            <MagicCardsButton onCardsGenerated={load} />
-          </div>
-          )}
         </div>
         )}
       </div>
@@ -300,12 +270,11 @@ export default function DashboardPage() {
         ) : (
         <CardsFeedSection
           cards={historyCards}
-          readOnly={topicsOn === true}
+          readOnly
           loading={loading}
           loadError={loadError}
           onRetry={() => void load()}
           onChanged={load}
-          onCreateOrder={setOrderDialogCard}
           priority={priority}
           category={category}
           from={from}
@@ -315,35 +284,6 @@ export default function DashboardPage() {
         />
         )}
       </div>
-
-      <NewOrderDialog
-        open={!!orderDialogCard}
-        onOpenChange={(o) => {
-          if (!o) setOrderDialogCard(null)
-        }}
-        onManual={() => {
-          // No catalog here to build manually against — same fallback the
-          // card's own Link used before this dialog moved to the dashboard.
-          if (orderDialogCard) {
-            router.push(`/products?orderFromCard=${orderDialogCard.id}`)
-          }
-          setOrderDialogCard(null)
-        }}
-        onAssemble={(requestId) => {
-          // The request is already parsed at this point (NewOrderDialog's own
-          // submit() did that before calling onAssemble) — hand off straight
-          // into the assembly wizard instead of re-showing this same dialog
-          // on /products.
-          if (orderDialogCard) {
-            router.push(
-              `/products?assembleRequest=${requestId}&cardId=${orderDialogCard.id}`,
-            )
-          }
-          setOrderDialogCard(null)
-        }}
-        initialClientId={orderDialogCard?.clients?.[0]?.id ?? null}
-        initialRawText={orderDialogCard?.message?.orderRequest ?? ""}
-      />
     </div>
   )
 }

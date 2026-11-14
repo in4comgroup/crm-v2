@@ -19,8 +19,8 @@ import { getProvider } from "@/lib/sources/providers"
 import { FormAdminEditTemplate } from "@/components/forms/form-admin-edit-template"
 import type { TemplateRow } from "@/server/templates"
 import type { SourceProvider } from "@/db/schema"
+import { TablePager, DEFAULT_PAGE_SIZE, type PageSize } from "@/components/blocks/table-pager"
 
-const ITEMS_PER_PAGE = 10
 
 // Russian plural picker: forms = [one, few, many] (1 / 2–4 / 0,5–20).
 function plural(n: number, forms: [string, string, string]): string {
@@ -66,7 +66,8 @@ export function TableAdminTemplates() {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [showInactive, setShowInactive] = useState(false)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE)
 
   const fetchRows = useCallback(async () => {
     setLoading(true)
@@ -95,16 +96,12 @@ export function TableAdminTemplates() {
         r.name.toLowerCase().includes(search.trim().toLowerCase()),
       )
     : rows
-  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE))
-  const pageRows = filtered.slice(
-    (page - 1) * ITEMS_PER_PAGE,
-    page * ITEMS_PER_PAGE,
-  )
+  const pageRows = filtered.slice(page * pageSize, (page + 1) * pageSize)
 
-  // Reset to page 1 whenever filters change.
+  // Reset to the first page whenever filters change.
   useEffect(() => {
-    setPage(1)
-  }, [search, showInactive])
+    setPage(0)
+  }, [search, showInactive, pageSize])
 
   if (error) {
     return <div className="text-sm text-destructive py-6">{error}</div>
@@ -214,27 +211,17 @@ export function TableAdminTemplates() {
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-end gap-4 mt-4">
-            <span className="text-sm text-gray-400">
-              стр. {page} из {totalPages}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={page === 1}
-                onClick={() => setPage(page - 1)}
-              >
-                Назад
-              </Button>
-              <Button
-                variant="outline"
-                disabled={page >= totalPages}
-                onClick={() => setPage(page + 1)}
-              >
-                Вперёд
-              </Button>
-            </div>
-          </div>
+          <TablePager
+            className="mt-4"
+            page={page}
+            pageSize={pageSize}
+            total={filtered.length}
+            onPageChange={setPage}
+            onPageSizeChange={(n) => {
+              setPageSize(n)
+              setPage(0)
+            }}
+          />
         </>
       )}
 

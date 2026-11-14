@@ -609,3 +609,59 @@ describe("next check and rank", () => {
     expect((urgent.rankKey ?? "") < (strong.rankKey ?? "")).toBe(true)
   })
 })
+
+describe("weekly review on a holiday Friday (06 §5.2 H5, §7.3 W1, one rule with the weekly email)", () => {
+  // Seeded 2026 / 2027 exceptions (migrations/0020): 31.12.2026 + 01.01.2027 off,
+  // 04–08.01.2027 the whole week off → reviews Wed 30.12.2026, then Fri 15.01.2027.
+  const NY = new WorkCalendar(
+    [
+      { day: "2026-12-31", isWorking: false, isShort: false },
+      { day: "2027-01-01", isWorking: false, isShort: false },
+      { day: "2027-01-04", isWorking: false, isShort: false },
+      { day: "2027-01-05", isWorking: false, isShort: false },
+      { day: "2027-01-06", isWorking: false, isShort: false },
+      { day: "2027-01-07", isWorking: false, isShort: false },
+      { day: "2027-01-08", isWorking: false, isShort: false },
+    ],
+    { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" },
+  )
+
+  it("H5: a dormant topic is shown until the review AFTER its first one (Wed 30.12 → Fri 15.01)", () => {
+    const pr = ai("SALES_PRICE_REQUEST", "2026-12-07 10:00") // dormant from 28.12
+    const dormant = topic({ status: "dormant", instances: [pr] })
+    const a1 = step(dormant, "2026-12-29 10:00", null, { calendar: NY })
+    expect(a1.list).toBe("week")
+    expect(a1.section).toBe("dormant")
+    // The plain-Friday rule ended the window on 08.01 12:00; the review rule keeps it to 15.01 12:00.
+    const a2 = step(dormant, "2027-01-12 10:00", a1, { calendar: NY })
+    expect(a2.list).toBe("week")
+    expect(a2.section).toBe("dormant")
+    const a3 = step(dormant, "2027-01-15 13:00", a2, { calendar: NY })
+    expect(a3.list).toBe("none")
+    expect(a3.hiddenReason).toBe("dormant")
+  })
+
+  it("W1 expiry is not before the first weekly review — the working day before a holiday Friday", () => {
+    const p = mergeAttentionParams({ expiryDays: { W1: 1 } })
+    const cal = new WorkCalendar([{ day: "2026-12-18", isWorking: false, isShort: false }], {
+      timeZone: "Europe/Moscow",
+      workStart: "08:00",
+      workEnd: "18:00",
+    })
+    const t = topic({ instances: [ai("DOCS_REQUEST", "2026-12-14 10:00")] })
+    const a = computeAttention(t, env("2026-12-14 10:00", { calendar: cal, params: p }))
+    expect(a.list).toBe("week")
+    // 1 working day → 15.12 10:00; the first review is Thu 17.12 12:00 (Fri 18.12 off), not Fri 18.12.
+    expect(a.cardExpiresAt).toBe(msk("2026-12-17 12:00").toISOString())
+  })
+
+  it("W1 next list point (I2) is the review day: a Thursday-noon deadline is after Wednesday's review", () => {
+    const t = topic({
+      instances: [ai("DOCS_REQUEST", "2026-12-28 10:00")],
+      items: [itm("2026-12-28 10:00", "inbound", [["2027-01-15T11:00", "us"]])],
+    })
+    const a = computeAttention(t, env("2026-12-30 13:00", { calendar: NY }))
+    // Next review = 15.01 12:00; the deadline 15.01 11:00 is before it + 3 h → I2 up one level.
+    expect(a.escalations).toContain("I2")
+  })
+})

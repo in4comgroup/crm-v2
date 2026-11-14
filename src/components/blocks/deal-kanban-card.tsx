@@ -35,7 +35,6 @@ import {
 import type { DealRow } from "@/app/api/deals/route"
 import type { DealIntel, IntelBadge } from "@/server/deals-mock"
 import type { DealTaskInfo } from "@/hooks/use-board-intel"
-import { mockAtRisk, mockRiskReason } from "@/lib/deal-mocks"
 import { formatAmount } from "@/lib/deal-board"
 import { formatPauseUntil, isOpenDealStatus } from "@/lib/deal-funnel"
 
@@ -243,9 +242,11 @@ export function DealKanbanCard({
   // применённое предложение или LLM-discovery) и человек его ещё не
   // пересматривал. Причина перевода (changes) — в поповере бейджа.
   const movedByAgent = deal.lastMovedBy === "agent"
-  // Инсайт «риск проигрыша» (UX №12, мок). isStale («долго висит») уже есть.
-  // На закрытых карточках риск не показываем (см. isStale выше).
-  const atRisk = isActive && !isTerminal && mockAtRisk(deal.id)
+  // «Есть риски» (topics phase 5a, spec §9.4): ≥ 1 активный риск сделки.
+  // `riskSummary` = самый критичный риск (батч-запрос вместе с доской).
+  // Удалённые сделки бейдж не показывают.
+  const risk = deal.status !== "deleted" ? (deal.riskSummary?.top ?? null) : null
+  const atRisk = Boolean(risk)
   const isPaused = deal.status === "paused"
   const hasBadgeRow =
     badges.length > 0 ||
@@ -348,16 +349,25 @@ export function DealKanbanCard({
 
       <DealMetaLine deal={deal} />
 
-      {/* Последнее изменение (UX №10) — целиком, в отдельной плашке с чётким
-          фоном+рамкой (полупрозрачная карточка «съедала» muted/50), без иконки.
-          Фолбэк на reasoning, если changes пуст (перевод без комментария
-          затирает changes на null) — карточка не должна пустеть, пока есть
-          хоть какое-то состояние сделки (тот же reasoning || changes, что и
-          в дровере). */}
-      {isActive && (deal.changes || deal.reasoning) && (
-        <div className="rounded-md border border-border bg-muted p-2 text-xs text-foreground/80">
-          {deal.changes ?? deal.reasoning}
+      {/* «Текущее состояние» (topics phase 5a, spec §9.3): сохранённый текст
+          движка, до 3 строк (полный текст + источники — в дровере). Пока его
+          нет — как раньше: последнее изменение (changes) или reasoning
+          старого discovery (орги с темами off / shadow). Плашка с чётким
+          фоном+рамкой (полупрозрачная карточка «съедала» muted/50). */}
+      {deal.stateText ? (
+        <div
+          className="rounded-md border border-border bg-muted p-2 text-xs text-foreground/80 line-clamp-3"
+          title={deal.stateText}
+        >
+          {deal.stateText}
         </div>
+      ) : (
+        isActive &&
+        (deal.changes || deal.reasoning) && (
+          <div className="rounded-md border border-border bg-muted p-2 text-xs text-foreground/80">
+            {deal.changes ?? deal.reasoning}
+          </div>
+        )
       )}
 
       {/* Задачи: заголовок СНАРУЖИ плашки. Одна задача → «Задача»; несколько →
@@ -441,8 +451,9 @@ export function DealKanbanCard({
               </Badge>
             )
           })}
-          {atRisk && (
-            // Наведение на бейдж — тултип с объяснением, почему риск (мок).
+          {risk && (
+            // Наведение — тултип: только САМЫЙ критичный риск (§9.4):
+            // название + объяснение «в чём риск / на чём основана оценка».
             <Tooltip>
               <TooltipTrigger asChild>
                 <span
@@ -457,12 +468,13 @@ export function DealKanbanCard({
                     className="gap-1 bg-[#C1121F]/10 text-[#A31018] dark:bg-[#C1121F]/15 dark:text-[#FF8F96]"
                   >
                     <AlertTriangle className="h-3 w-3" />
-                    есть риски
+                    Есть риски
                   </Badge>
                 </span>
               </TooltipTrigger>
-              <TooltipContent align="start" className="max-w-xs text-xs">
-                {mockRiskReason(deal.id)}
+              <TooltipContent align="start" className="max-w-xs text-xs space-y-1">
+                <div className="font-semibold">{risk.labelRu}</div>
+                {risk.explanationRu && <div>{risk.explanationRu}</div>}
               </TooltipContent>
             </Tooltip>
           )}

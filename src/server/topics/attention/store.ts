@@ -3,7 +3,7 @@ import "server-only"
 import { randomUUID } from "node:crypto"
 import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { deal, sourceItem, topic, topicEvent, workCalendarDay } from "@/db/schema"
+import { deal, dealRisk, signalInstance, sourceItem, topic, topicEvent, workCalendarDay } from "@/db/schema"
 import type { SignalItemFacts } from "@/lib/signals/extraction-types"
 import type { DisplayProfile as RegistryDisplayProfile } from "@/lib/signals/types"
 import type { TopicAttention, TopicList } from "@/lib/topics/attention-types"
@@ -47,7 +47,7 @@ export type AttentionContext = {
   params: AttentionParams
   calendar: WorkCalendar
   paramsHash: string
-  /** Active deal risks per topic (phase 5a; empty until then). */
+  /** Active deal risks whose trigger instance is on the topic (phase 5a, I5). */
   dealRisks: (topicId: string) => AttentionDealRisk[]
 }
 
@@ -65,23 +65,60 @@ export async function loadCalendarDays(): Promise<CalendarDay[]> {
   return rows
 }
 
-/** Parameters through the settings ladder: org → platform → code defaults (06 §13). */
+/**
+ * Parameters through the settings ladder: org → platform → code defaults (06
+ * §13). `riskImmediateMinSeverity` (I5) comes from the deal setting
+ * `deals.riskImmediateMinSeverity` (org → platform, default 7, phase 5a).
+ */
 export async function loadAttentionParams(orgId: string): Promise<AttentionParams> {
-  const [platform, org] = await Promise.all([
+  const [platform, org, riskOrg, riskPlatform] = await Promise.all([
     getPlatformSetting("attention.params"),
     getOrgSetting(orgId, "attention.params"),
+    getOrgSetting(orgId, "deals.riskImmediateMinSeverity"),
+    getPlatformSetting("deals.riskImmediateMinSeverity"),
   ])
-  return mergeAttentionParams(platform, org)
+  return { ...mergeAttentionParams(platform, org), riskImmediateMinSeverity: riskOrg ?? riskPlatform }
+}
+
+/**
+ * Active deal risks of the org by the topic of their trigger instances (I5,
+ * phase 5a). The engine keeps only risks whose trigger instance is on the
+ * topic; a risk on a client-scope topic escalates that topic too.
+ */
+async function loadActiveDealRisks(orgId: string): Promise<Map<string, AttentionDealRisk[]>> {
+  const risks = await db
+    .select({ severity: dealRisk.severity, triggerInstanceIds: dealRisk.triggerInstanceIds })
+    .from(dealRisk)
+    .where(and(eq(dealRisk.organizationId, orgId), eq(dealRisk.status, "active")))
+  const out = new Map<string, AttentionDealRisk[]>()
+  const instIds = [...new Set(risks.flatMap((r) => r.triggerInstanceIds))]
+  if (instIds.length === 0) return out
+  const insts = await db
+    .select({ id: signalInstance.id, topicId: signalInstance.topicId })
+    .from(signalInstance)
+    .where(and(eq(signalInstance.organizationId, orgId), inArray(signalInstance.id, instIds)))
+  const topicOf = new Map(insts.map((i) => [i.id, i.topicId]))
+  for (const r of risks) {
+    for (const id of r.triggerInstanceIds) {
+      const t = topicOf.get(id)
+      if (!t) continue
+      const list = out.get(t) ?? []
+      list.push({ triggerInstanceId: id, severity: r.severity, active: true })
+      out.set(t, list)
+    }
+  }
+  return out
 }
 
 export async function loadAttentionContext(orgId: string, now: Date = new Date()): Promise<AttentionContext> {
-  const [book, effective, registry, relationOf, params, days] = await Promise.all([
+  const [book, effective, registry, relationOf, params, days, risksByTopic] = await Promise.all([
     loadCodeBook(orgId),
     getEffectiveSignals(orgId),
     getRegistry(),
     loadRelationLookup(orgId, now),
     loadAttentionParams(orgId),
     loadCalendarDays(),
+    loadActiveDealRisks(orgId),
   ])
   const calendar = new WorkCalendar(days, { timeZone: params.timeZone, workStart: params.workStart, workEnd: params.workEnd })
   return {
@@ -95,7 +132,7 @@ export async function loadAttentionContext(orgId: string, now: Date = new Date()
     params,
     calendar,
     paramsHash: attentionParamsHash(params, registry.version, calendar.seededYears().join(",")),
-    dealRisks: () => [],
+    dealRisks: (topicId) => risksByTopic.get(topicId) ?? [],
   }
 }
 

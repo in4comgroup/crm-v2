@@ -8,6 +8,8 @@ import {
   dealFunnelStage,
   dealType,
   signalCategory,
+  source,
+  sourceItem,
   client,
   contact,
   user,
@@ -33,6 +35,11 @@ import {
   type DealTypeRow,
 } from "@/server/deal-types"
 import { getActiveOrgRole } from "@/server/sources"
+import type {
+  DealRiskSummary,
+  DealRiskView,
+  DealStateView,
+} from "@/lib/topics/deal-state"
 import {
   listDealProvenance,
   pauseDeal,
@@ -40,6 +47,17 @@ import {
   undoAgentDeal,
   type DealProvenanceView,
 } from "@/server/deal-engine"
+import { getTopicsMode } from "@/server/topics/mode"
+import {
+  getDealState,
+  markDealStateDirty,
+  requestDealStateRefresh,
+} from "@/server/deal-state"
+import {
+  clearDealRiskByUser,
+  listActiveRiskSummaries,
+  listDealRisks,
+} from "@/server/deal-risks"
 
 export type DealContactSummary = { id: string; name: string }
 
@@ -80,6 +98,15 @@ export type DealRow = {
   outcomeReason: string | null
   // Badge «создал агент»: created by the topics engine.
   createdByAgent: boolean
+  // ── Topics plan phase 5a (spec topics/01 §9.3 / §9.4) ──
+  // «Текущее состояние»: stored engine text (null = none yet → the UI shows
+  // the old `changes` / `reasoning`), its source items and update time.
+  stateText: string | null
+  stateSourceItemIds: string[]
+  stateUpdatedAt: string | null
+  // Badge «Есть риски»: active count + the MOST critical active risk
+  // (`top`); null = no active risk. One batched query for the whole board.
+  riskSummary: DealRiskSummary | null
   userId: string
   userName: string | null
   organizationId: string
@@ -362,7 +389,14 @@ type DealRowSelect = {
   dealTypeLabel: string | null
 }
 
-function toDealRow(r: DealRowSelect, contacts: DealContactSummary[]): DealRow {
+function toDealRow(
+  r: DealRowSelect,
+  contacts: DealContactSummary[],
+  riskSummary: DealRiskSummary | null = null,
+  // Engine output (state text, risks) is shown only in topics mode `on`
+  // (shadow = users see nothing from the engine, spec topics/01 §12).
+  engineVisible = true,
+): DealRow {
   return {
     id: r.deal.id,
     name: r.deal.name,
@@ -391,6 +425,10 @@ function toDealRow(r: DealRowSelect, contacts: DealContactSummary[]): DealRow {
     pauseReason: r.deal.pauseReason,
     outcomeReason: r.deal.outcomeReason,
     createdByAgent: r.deal.createdByAgent,
+    stateText: engineVisible ? r.deal.stateText : null,
+    stateSourceItemIds: engineVisible ? (r.deal.stateSourceItemIds ?? []) : [],
+    stateUpdatedAt: engineVisible && r.deal.stateUpdatedAt ? r.deal.stateUpdatedAt.toISOString() : null,
+    riskSummary,
     userId: r.deal.userId,
     userName: r.userName,
     organizationId: r.deal.organizationId,
@@ -448,7 +486,26 @@ export async function listDeals(
     }
   }
 
-  return rows.map((r) => toDealRow(r, contactsByDeal.get(r.deal.id) ?? []))
+  // Badge «Есть риски»: ONE batched query for all deals (no N+1).
+  const engineVisible = (await getTopicsMode(activeOrgId)) === "on"
+  const risks = engineVisible ? await loadRiskSummaries(activeOrgId, dealIds) : new Map<string, DealRiskSummary>()
+
+  return rows.map((r) =>
+    toDealRow(r, contactsByDeal.get(r.deal.id) ?? [], risks.get(r.deal.id) ?? null, engineVisible),
+  )
+}
+
+async function loadRiskSummaries(
+  organizationId: string,
+  dealIds: string[],
+): Promise<Map<string, DealRiskSummary>> {
+  if (dealIds.length === 0) return new Map()
+  const summaries = await listActiveRiskSummaries(organizationId, dealIds)
+  const byDeal = new Map<string, DealRiskSummary>()
+  for (const s of summaries) {
+    if (s.activeCount > 0 && s.top) byDeal.set(s.dealId, s)
+  }
+  return byDeal
 }
 
 export async function getDeal(dealId: string): Promise<DealRow | null> {
@@ -474,7 +531,9 @@ export async function getDeal(dealId: string): Promise<DealRow | null> {
     .where(eq(dealContact.dealId, dealId))
     .orderBy(contact.name)
 
-  return toDealRow(r, contactRows)
+  const engineVisible = (await getTopicsMode(activeOrgId)) === "on"
+  const risks = engineVisible ? await loadRiskSummaries(activeOrgId, [dealId]) : new Map<string, DealRiskSummary>()
+  return toDealRow(r, contactRows, risks.get(dealId) ?? null, engineVisible)
 }
 
 export async function createDeal(data: {
@@ -633,6 +692,19 @@ export async function updateDeal(
       )
     }
   }
+
+  // R16: amount / contacts / type / client / stage / status changed → the
+  // state text is out of date. Name / description edits alone do not count.
+  const changed: string[] = []
+  if ("value" in patch && patch.value !== current.value) changed.push("сумма")
+  if ("dealTypeId" in patch && patch.dealTypeId !== current.dealTypeId) changed.push("тип")
+  if ("clientId" in patch && patch.clientId !== current.clientId) changed.push("клиент")
+  if ("funnelStageId" in patch && patch.funnelStageId !== current.funnelStageId) changed.push("стадия")
+  if ("status" in patch || resume) changed.push("статус")
+  if (data.contactIds !== undefined) changed.push("контакты")
+  if (changed.length > 0) {
+    await markStateDirtySafe(activeOrgId, dealId, `Изменено вручную: ${changed.join(", ")}`)
+  }
 }
 
 // Status-only shortcut (mirrors tasks' `updateTaskStatus`). Used by the
@@ -643,12 +715,13 @@ export async function setDealStatus(dealId: string, status: DealStatus) {
   if (status === current.status) return
   if (current.status === "paused" && status === "active") {
     await resumeDeal(activeOrgId, dealId, { kind: "user", userId: session.user.id })
-    return
+  } else {
+    await db
+      .update(deal)
+      .set(statusPatch(current.status, status))
+      .where(eq(deal.id, dealId))
   }
-  await db
-    .update(deal)
-    .set(statusPatch(current.status, status))
-    .where(eq(deal.id, dealId))
+  await markStateDirtySafe(activeOrgId, dealId, "Изменено вручную: статус")
 }
 
 // Status change through the edit form / the quick shortcut. `paused` needs a
@@ -739,6 +812,9 @@ export async function moveDealStage(
     note: historyTrimmed || null,
     reasoning: opts?.reasoning ?? null,
   })
+  if (fromStageId !== funnelStageId) {
+    await markStateDirtySafe(activeOrgId, dealId, "Перевод по стадии")
+  }
 }
 
 export type DealContactWithRole = {
@@ -778,6 +854,7 @@ export async function addDealContact(dealId: string, contactId: string) {
     .insert(dealContact)
     .values({ dealId, contactId })
     .onConflictDoNothing()
+  await markStateDirtySafe(activeOrgId, dealId, "Изменено вручную: контакты")
 }
 
 export async function setDealContactRole(
@@ -799,6 +876,7 @@ export async function setDealContactRole(
         eq(dealContact.contactId, contactId),
       ),
     )
+  await markStateDirtySafe(activeOrgId, dealId, "Изменено вручную: роль контакта")
 }
 
 export async function removeDealContact(dealId: string, contactId: string) {
@@ -812,6 +890,7 @@ export async function removeDealContact(dealId: string, contactId: string) {
         eq(dealContact.contactId, contactId),
       ),
     )
+  await markStateDirtySafe(activeOrgId, dealId, "Изменено вручную: контакты")
 }
 
 export type DealActivityRow = {
@@ -980,7 +1059,7 @@ export async function moveDeal(
   data: { funnelStageId: string; position: string },
 ) {
   const { activeOrgId } = await requireOrgContext()
-  await assertDealInOrg(dealId, activeOrgId)
+  const current = await assertDealInOrg(dealId, activeOrgId)
   await assertFunnelStageAccessible(data.funnelStageId, activeOrgId)
   if (typeof data.position !== "string" || data.position.length === 0) {
     throw new Error("Invalid position")
@@ -995,6 +1074,10 @@ export async function moveDeal(
       lastMovedBy: "user",
     })
     .where(eq(deal.id, dealId))
+  // A same-stage reorder is not new deal information.
+  if (current.funnelStageId !== data.funnelStageId) {
+    await markStateDirtySafe(activeOrgId, dealId, "Перевод по стадии")
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,6 +1300,7 @@ export async function pauseDealForUser(
     { kind: "user", userId: session.user.id },
     { until, reason },
   )
+  await markStateDirtySafe(activeOrgId, dealId, "Изменено вручную: пауза")
 }
 
 /** «Снять с паузы» → status `active` (no-op when the deal is not paused). */
@@ -1224,6 +1308,7 @@ export async function resumeDealForUser(dealId: string): Promise<void> {
   const { session, activeOrgId } = await requireOrgContext()
   await assertDealInOrg(dealId, activeOrgId)
   await resumeDeal(activeOrgId, dealId, { kind: "user", userId: session.user.id })
+  await markStateDirtySafe(activeOrgId, dealId, "Изменено вручную: снята пауза")
 }
 
 /** «Отменить» at the «создал агент» badge: status `deleted`, reason kept. */
@@ -1286,5 +1371,194 @@ export async function getDealProvenance(
       stageRows.map((r) => [r.id, stageDisplayLabel(r.name, r.displayName)]),
     ),
     leadCodeLabels: Object.fromEntries(codeRows.map((r) => [r.code, r.labelRu])),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// «Текущее состояние» + «Риски» (topics plan phase 5a, spec topics/01 §9.3 /
+// §9.4 / §14). Session-bound wrappers over the org-explicit engine
+// (src/server/deal-state.ts, src/server/deal-risks.ts). The UI reads the
+// stored text — no LLM call on page open.
+// ---------------------------------------------------------------------------
+
+/** One source item for «Источники» (opens /api/sources/items/[id]/markdown). */
+export type DealSourceRef = {
+  id: string
+  title: string | null
+  provider: string | null
+  date: string | null
+}
+
+/** Source items of the caller's org only (foreign ids are dropped). */
+async function loadSourceRefs(
+  organizationId: string,
+  ids: Iterable<string>,
+): Promise<Record<string, DealSourceRef>> {
+  const unique = [...new Set(ids)].filter(Boolean)
+  if (unique.length === 0) return {}
+  const rows = await db
+    .select({
+      id: sourceItem.id,
+      provider: source.provider,
+      title: sql<string | null>`coalesce(nullif(${sourceItem.metadataJson}->>'subject', ''), nullif(${sourceItem.filename}, ''))`,
+      date: sql<Date | null>`coalesce(${sourceItem.sourceCreatedAt}, ${sourceItem.fetchedAt})`.mapWith(
+        sourceItem.fetchedAt,
+      ),
+    })
+    .from(sourceItem)
+    .innerJoin(source, eq(sourceItem.sourceId, source.id))
+    .where(
+      and(
+        inArray(sourceItem.id, unique),
+        eq(sourceItem.organizationId, organizationId),
+      ),
+    )
+  return Object.fromEntries(
+    rows.map((r) => [
+      r.id,
+      {
+        id: r.id,
+        title: r.title,
+        provider: r.provider,
+        date: r.date ? new Date(r.date).toISOString() : null,
+      },
+    ]),
+  )
+}
+
+/** Drawer «Текущее состояние»: stored text + versions + their source items. */
+export type DealStateResult = DealStateView & {
+  sources: Record<string, DealSourceRef>
+  /** «Обновить» works only while the topics engine runs for the org. */
+  canRefresh: boolean
+}
+
+/** Drawer «Риски»: active (most critical first) and cleared (newest first). */
+export type DealRisksResult = {
+  active: DealRiskView[]
+  cleared: DealRiskView[]
+  sources: Record<string, DealSourceRef>
+}
+
+export async function getDealStateForUser(dealId: string): Promise<DealStateResult> {
+  const { activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  const [state, mode] = await Promise.all([
+    getDealState(activeOrgId, dealId),
+    getTopicsMode(activeOrgId),
+  ])
+  // Shadow / off: users see nothing from the engine (spec topics/01 §12).
+  if (mode !== "on") {
+    return {
+      ...state,
+      text: null,
+      sourceItemIds: [],
+      updatedAt: null,
+      dirtyAt: null,
+      pending: false,
+      versions: [],
+      sources: {},
+      canRefresh: false,
+    }
+  }
+  return withStateSources(activeOrgId, state, true)
+}
+
+async function withStateSources(
+  organizationId: string,
+  state: DealStateView,
+  canRefresh: boolean,
+): Promise<DealStateResult> {
+  const ids = [
+    ...state.sourceItemIds,
+    ...state.versions.flatMap((v) => v.sourceItemIds),
+  ]
+  return {
+    ...state,
+    sources: await loadSourceRefs(organizationId, ids),
+    canRefresh,
+  }
+}
+
+/**
+ * «Обновить»: re-evaluates the deal's risks and runs `deals.state_summary`
+ * NOW (one LLM call at most; the engine's `requestDealStateRefresh`). Only
+ * while users see the engine output (topics mode `on`).
+ */
+export async function requestDealStateRefreshForUser(dealId: string): Promise<{
+  decision: string
+  state: DealStateResult
+}> {
+  const { session, activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  if ((await getTopicsMode(activeOrgId)) !== "on") {
+    throw new Error("Анализ тем не включён для организации — состояние сделки не обновляется")
+  }
+  const { result, state } = await requestDealStateRefresh(
+    activeOrgId,
+    dealId,
+    session.user.id,
+  )
+  return {
+    decision: result.decision,
+    state: await withStateSources(activeOrgId, state, true),
+  }
+}
+
+export async function listDealRisksForUser(dealId: string): Promise<DealRisksResult> {
+  const { activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  // Shadow / off: users see nothing from the engine (spec topics/01 §12).
+  if ((await getTopicsMode(activeOrgId)) !== "on") return { active: [], cleared: [], sources: {} }
+  const risks = await listDealRisks(activeOrgId, dealId)
+  const sources: Record<string, DealSourceRef> = {}
+  for (const r of risks) {
+    for (const s of r.sources) {
+      sources[s.sourceItemId] = {
+        id: s.sourceItemId,
+        title: s.subject,
+        provider: s.provider,
+        date: s.date,
+      }
+    }
+  }
+  // Explanation items the risk's own `sources` may not cover.
+  const missing = risks
+    .flatMap((r) => [...r.sourceItemIds, ...r.explanationSourceItemIds])
+    .filter((id) => !sources[id])
+  Object.assign(sources, await loadSourceRefs(activeOrgId, missing))
+  return {
+    active: risks.filter((r) => r.status === "active"),
+    cleared: risks.filter((r) => r.status !== "active"),
+    sources,
+  }
+}
+
+/** «Риск снят»: reason required; journaled by the engine. `cleared: false`
+ * = the risk was already cleared. */
+export async function clearDealRiskForUser(
+  dealId: string,
+  riskId: string,
+  reason: string,
+): Promise<{ cleared: boolean }> {
+  const { session, activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  const trimmed = reason?.trim()
+  if (!trimmed) throw new Error("Укажите, почему риск снят")
+  if (!riskId) throw new Error("Не указан риск")
+  return clearDealRiskByUser(activeOrgId, dealId, riskId, session.user.id, trimmed)
+}
+
+// R16: a manual deal edit is new deal information → the state run picks the
+// deal up after the debounce. Never fails the edit itself.
+async function markStateDirtySafe(
+  organizationId: string,
+  dealId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await markDealStateDirty(organizationId, dealId, reason)
+  } catch (error) {
+    console.error("[deals] markDealStateDirty failed", { dealId, reason, error })
   }
 }

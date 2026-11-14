@@ -55,13 +55,11 @@ import {
   Sparkles,
   Plus,
   Link2,
-  AlertTriangle,
   Save,
   PauseCircle,
   PlayCircle,
 } from "lucide-react"
 import type { TaskStatus, DealStatus } from "@/db/schema"
-import { mockAtRisk, mockRiskReason } from "@/lib/deal-mocks"
 import { toast } from "sonner"
 import {
   TASK_STATUS_LABELS,
@@ -87,6 +85,10 @@ import { DealContactsRoles } from "@/components/blocks/deal-contacts-roles"
 import { DealProvenanceTab } from "@/components/blocks/deal-provenance-tab"
 import { DealPauseDialog } from "@/components/blocks/deal-lifecycle-dialogs"
 import { DealCreatedByAgentBadge } from "@/components/blocks/deal-kanban-card"
+import {
+  DealRisksBlock,
+  DealStateBlock,
+} from "@/components/blocks/deal-state-risks"
 import { formatPauseUntil, isOpenDealStatus } from "@/lib/deal-funnel"
 
 // Тот же список, что раньше был в модалке-редакторе (form-deal-edit.tsx) —
@@ -809,33 +811,11 @@ export function DealDetailDrawer({
               </div>
             </div>
 
-          {/* Состояние сделки (UX №13): суть происходящего и что важно сейчас —
-              чтобы быстро вспомнить контекст без чтения всей истории. Пока
-              собирается из reasoning/changes (МОК summary); реальный текст
-              генерирует LLM. TODO(backend): summary состояния сделки от LLM. */}
-          {(deal.reasoning || deal.changes) && (
-            <div className="mt-3 rounded-lg border bg-violet-500/5 p-3 text-sm space-y-2">
-            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-300">
-              <Sparkles className="h-3.5 w-3.5" />
-              Состояние сделки
-            </div>
-            {deal.reasoning && (
-              <div className="max-w-[32rem] whitespace-pre-wrap">
-                {deal.reasoning}
-              </div>
-            )}
-            {deal.changes && (
-              <div>
-                <div className="text-xs text-muted-foreground">
-                  Последнее изменение
-                </div>
-                <div className="max-w-[32rem] whitespace-pre-wrap">
-                  {deal.changes}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+          {/* «Текущее состояние» (topics phase 5a, spec §9.3): сохранённый
+              текст движка + «Источники» + «Обновить» + история версий. Пока
+              нового текста нет — старый блок «Состояние сделки» из
+              reasoning / changes (орги с темами off / shadow). */}
+          <DealStateBlock deal={deal} active={open} onChanged={onChanged} />
 
         {/* Этап — вынесен из формы и из-под кнопки «Сохранить»: применяется
             СРАЗУ по выбору (не ждёт «Сохранить»), но не PUT-ом в обход
@@ -869,18 +849,10 @@ export function DealDetailDrawer({
           </Select>
         </div>
 
-        {/* Риск проигрыша (мок-инсайт) — отдельная плашка с причиной, как
-            «Состояние сделки». TODO(backend): реальный сигнал риска. */}
-        {isActive && mockAtRisk(deal.id) && (
-          <div className="mt-3 rounded-lg border border-[#C1121F]/20 bg-[#C1121F]/5 p-3 text-sm space-y-1">
-            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[#A31018] dark:text-[#FF8F96]">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Есть риски
-            </div>
-            <div className="max-w-[32rem]">{mockRiskReason(deal.id)}</div>
-          </div>
-        )}
-
+        {/* «Риски» (topics phase 5a, spec §9.4): активные риски (серьёзность,
+            объяснение, источники, «Риск снят» с обязательной причиной) и
+            снятые (кто / почему / когда). */}
+        <DealRisksBlock deal={deal} active={open} onChanged={onChanged} />
 
         </TabsContent>
 

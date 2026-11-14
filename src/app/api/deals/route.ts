@@ -20,8 +20,15 @@ import {
   pauseDealForUser,
   resumeDealForUser,
   undoAgentCreatedDeal,
+  getDealStateForUser,
+  requestDealStateRefreshForUser,
+  listDealRisksForUser,
+  clearDealRiskForUser,
 } from "@/server/deals"
 import { DealEngineError } from "@/server/deal-engine"
+import { DealRiskError } from "@/server/deal-risks"
+import { DealStateError } from "@/server/deal-state"
+import { AiBudgetExceededError } from "@/server/ai/budget"
 import {
   DealTypeForbiddenError,
   DealTypeValidationError,
@@ -39,7 +46,21 @@ export {
   type FunnelStageSetting,
   type DealTypeOption,
   type DealProvenanceResult,
+  type DealSourceRef,
+  type DealStateResult,
+  type DealRisksResult,
 } from "@/server/deals"
+
+// «Обновить» (action refreshState) runs one `deals.state_summary` LLM call.
+export const maxDuration = 60
+
+// Server guards throw short English messages; the UI shows `error` in a toast.
+const RU_ERRORS: Record<string, string> = {
+  Unauthorized: "Нет доступа к сделке",
+  "No active organization": "Не выбрана организация",
+  "Deal not found": "Сделка не найдена",
+  "Unknown error": "Неизвестная ошибка",
+}
 
 function errorResponse(error: unknown) {
   if (error instanceof DealTypeForbiddenError) {
@@ -53,6 +74,18 @@ function errorResponse(error: unknown) {
       error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 400
     return NextResponse.json({ error: error.message }, { status })
   }
+  if (error instanceof AiBudgetExceededError) {
+    return NextResponse.json(
+      { error: "Дневной бюджет ИИ исчерпан — попробуйте обновить состояние завтра" },
+      { status: 409 },
+    )
+  }
+  if (error instanceof DealRiskError || error instanceof DealStateError) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: error.code === "not_found" ? 404 : 400 },
+    )
+  }
   const message = error instanceof Error ? error.message : "Unknown error"
   const status =
     message === "Unauthorized" || message === "No active organization"
@@ -60,7 +93,7 @@ function errorResponse(error: unknown) {
       : message === "Deal not found"
         ? 404
         : 400
-  return NextResponse.json({ error: message }, { status })
+  return NextResponse.json({ error: RU_ERRORS[message] ?? message }, { status })
 }
 
 export async function GET(request: NextRequest) {
@@ -94,6 +127,18 @@ export async function GET(request: NextRequest) {
     if (provenanceFor) {
       const provenance = await getDealProvenance(provenanceFor)
       return NextResponse.json({ provenance })
+    }
+    // Drawer «Текущее состояние» (phase 5a): stored text + version history.
+    const stateFor = url.searchParams.get("stateFor")
+    if (stateFor) {
+      const state = await getDealStateForUser(stateFor)
+      return NextResponse.json({ state })
+    }
+    // Drawer «Риски» (phase 5a): active + cleared risks with sources.
+    const risksFor = url.searchParams.get("risksFor")
+    if (risksFor) {
+      const risks = await listDealRisksForUser(risksFor)
+      return NextResponse.json({ risks })
     }
     const activityFor = url.searchParams.get("activityFor")
     if (activityFor) {
@@ -245,6 +290,23 @@ export async function PUT(request: NextRequest) {
         await resumeDealForUser(id)
         return NextResponse.json({ success: true })
       }
+      // Phase 5a: «Обновить» (queue a state run) and «Риск снят» (reason
+      // required).
+      if (body.action === "refreshState") {
+        const { decision, state } = await requestDealStateRefreshForUser(id)
+        return NextResponse.json({ success: true, decision, state })
+      }
+      if (body.action === "clearRisk") {
+        if (typeof body.riskId !== "string" || !body.riskId) {
+          return NextResponse.json({ error: "Не указан риск" }, { status: 400 })
+        }
+        const { cleared } = await clearDealRiskForUser(
+          id,
+          body.riskId,
+          typeof body.reason === "string" ? body.reason : "",
+        )
+        return NextResponse.json({ success: true, cleared })
+      }
       if (body.action === "undoAgent") {
         await undoAgentCreatedDeal(
           id,
@@ -252,7 +314,7 @@ export async function PUT(request: NextRequest) {
         )
         return NextResponse.json({ success: true })
       }
-      return NextResponse.json({ error: "Unknown action" }, { status: 400 })
+      return NextResponse.json({ error: "Неизвестное действие" }, { status: 400 })
     }
     // Кросс-стадийный перевод через диалог: ставит funnelStageId + заметку-
     // основание (наш путь). `position` (append в целевую колонку) может

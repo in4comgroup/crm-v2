@@ -155,6 +155,13 @@
       "when": 1794653662487,
       "tag": "0021_topics_phase5_deal_bridge",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794655274787,
+      "tag": "0022_topics_phase5a_deal_state_risks",
+      "breakpoints": true
     }
   ]
 }

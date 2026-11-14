@@ -10,6 +10,7 @@ import {
   dealActivity,
   dealContact,
   dealFunnelStage,
+  dealRisk,
   dealType,
   member,
   order,
@@ -230,6 +231,32 @@ function activityRow(
 type BatchOps = Parameters<typeof db.batch>[0]
 const asBatch = (ops: unknown[]) => ops as unknown as BatchOps
 
+// Phase 5a hooks (spec §9.3 R16, §9.4): every deal write here marks the deal
+// state dirty (`state_dirty_at`, the «dealState» phase re-runs the text after
+// the debounce); an outcome / undo clears the deal's active risks (journaled
+// by the deal activity row of the same batch) and marks their topics due for
+// the attention engine (I5 ends).
+const DIRTY = () => ({ stateDirtyAt: new Date() })
+
+function clearRisksOnOutcomeOps(orgId: string, dealId: string, reason: string): unknown[] {
+  const now = new Date()
+  return [
+    db
+      .update(topic)
+      .set({ nextAttentionCheckAt: now })
+      .where(
+        and(
+          eq(topic.organizationId, orgId),
+          sql`${topic.id} in (select ${dealRisk.topicId} from ${dealRisk} where ${dealRisk.dealId} = ${dealId} and ${dealRisk.status} = 'active' and ${dealRisk.topicId} is not null)`,
+        ),
+      ),
+    db
+      .update(dealRisk)
+      .set({ status: "cleared", clearedAt: now, clearedBy: "outcome", clearedReason: reason.slice(0, 1000) })
+      .where(and(eq(dealRisk.organizationId, orgId), eq(dealRisk.dealId, dealId), eq(dealRisk.status, "active"))),
+  ]
+}
+
 /**
  * Owner of an agent-created deal (spec §9.2 says «actor = system agent
  * user»; the owner must be a person). Rule, first that applies:
@@ -346,6 +373,7 @@ export async function createAgentDeal(
       dealTypeId: input.dealTypeId,
       createdByAgent: input.createdByAgent,
       lastMovedBy: actor.kind,
+      ...DIRTY(),
       userId: owner,
       organizationId: orgId,
     }),
@@ -387,6 +415,10 @@ export async function linkTopicToDeal(
         .update(topic)
         .set({ dealId, nextAttentionCheckAt: new Date() })
         .where(and(eq(topic.id, topicId), eq(topic.organizationId, orgId))),
+      db
+        .update(deal)
+        .set({ ...DIRTY(), updatedAt: sql`${deal.updatedAt}` })
+        .where(and(eq(deal.id, dealId), eq(deal.organizationId, orgId))),
       db.insert(dealActivity).values(
         activityRow(dealId, actor, d.funnelStageId, d.funnelStageId, {
           ...prov,
@@ -432,6 +464,7 @@ export async function moveDealForward(
           funnelStageId: to.id,
           lastMovedBy: actor.kind,
           changes: prov.note?.trim() || null,
+          ...DIRTY(),
           ...(position ? { position } : {}),
         })
         .where(and(eq(deal.id, dealId), eq(deal.organizationId, orgId))),
@@ -466,8 +499,9 @@ export async function setDealOutcome(
       asBatch([
         db
           .update(deal)
-          .set({ status: "cancelled", outcomeReason: reason, pausedUntil: null, pauseReason: null })
+          .set({ status: "cancelled", outcomeReason: reason, pausedUntil: null, pauseReason: null, ...DIRTY() })
           .where(and(eq(deal.id, dealId), eq(deal.organizationId, orgId))),
+        ...clearRisksOnOutcomeOps(orgId, dealId, "Итог сделки: отказались мы"),
         db.insert(dealActivity).values(
           activityRow(dealId, actor, d.funnelStageId, d.funnelStageId, {
             ...opts,
@@ -494,9 +528,11 @@ export async function setDealOutcome(
           pauseReason: null,
           lastMovedBy: actor.kind,
           changes: opts.note?.trim() || null,
+          ...DIRTY(),
           ...(position ? { position } : {}),
         })
         .where(and(eq(deal.id, dealId), eq(deal.organizationId, orgId))),
+      ...clearRisksOnOutcomeOps(orgId, dealId, outcome === "won" ? "Итог сделки: выиграна" : "Итог сделки: проиграна"),
       db.insert(dealActivity).values(
         activityRow(dealId, actor, d.funnelStageId, target.id, {
           ...opts,
@@ -525,7 +561,7 @@ export async function pauseDeal(
     asBatch([
       db
         .update(deal)
-        .set({ status: "paused", pausedUntil: until, pauseReason: reason })
+        .set({ status: "paused", pausedUntil: until, pauseReason: reason, ...DIRTY() })
         .where(and(eq(deal.id, dealId), eq(deal.organizationId, orgId))),
       db.insert(dealActivity).values(
         activityRow(dealId, actor, d.funnelStageId, d.funnelStageId, {
@@ -551,7 +587,7 @@ export async function resumeDeal(
     asBatch([
       db
         .update(deal)
-        .set({ status: "active", pausedUntil: null, pauseReason: null })
+        .set({ status: "active", pausedUntil: null, pauseReason: null, ...DIRTY() })
         .where(and(eq(deal.id, dealId), eq(deal.organizationId, orgId))),
       db.insert(dealActivity).values(
         activityRow(dealId, actor, d.funnelStageId, d.funnelStageId, { ...opts, note: opts.note ?? "Пауза снята" }),
@@ -584,6 +620,7 @@ export async function undoAgentDeal(
     .from(topic)
     .where(and(eq(topic.organizationId, orgId), eq(topic.dealId, dealId)))
   const ops: unknown[] = [
+    ...clearRisksOnOutcomeOps(orgId, dealId, "Сделка агента отменена"),
     db
       .update(deal)
       .set({ status: "deleted", outcomeReason: why ? `Отменено: ${why}` : "Отменено пользователем" })

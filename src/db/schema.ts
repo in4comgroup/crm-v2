@@ -777,6 +777,15 @@ export const deal = pgTable(
     outcomeReason: text("outcome_reason"),
     // Badge «создал агент»: created by the topics engine (system actor).
     createdByAgent: boolean("created_by_agent").notNull().default(false),
+    // ── Topics plan phase 5a (spec topics/01 §9.3): «Текущее состояние» —
+    // stored text (≤ 3 sentences / 50 words), read by the board and drawer;
+    // every version in `deal_state_version`. `state_dirty_at` = new deal
+    // information arrived (R16 triggers); the deal-state phase picks dirty
+    // deals after the debounce (`deals.stateDebounceMinutes`, 10).
+    stateText: text("state_text"),
+    stateSourceItemIds: text("state_source_item_ids").array(),
+    stateUpdatedAt: timestamp("state_updated_at"),
+    stateDirtyAt: timestamp("state_dirty_at"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -799,6 +808,7 @@ export const deal = pgTable(
     index("deal_stage_position_idx").on(table.funnelStageId, table.position),
     // Auto-create dedupe (org + client + type + open status, spec §9.2).
     index("deal_org_client_type_idx").on(table.organizationId, table.clientId, table.dealTypeId),
+    index("deal_org_state_dirty_idx").on(table.organizationId, table.stateDirtyAt),
   ],
 )
 
@@ -3301,4 +3311,79 @@ export const workCalendarDay = pgTable(
     note: text("note"),
   },
   (table) => [primaryKey({ columns: [table.region, table.day] })],
+)
+
+// Append-only history of «Текущее состояние» (spec topics/01 §9.3, phase 5a).
+// decision: UPDATE (new text) | NOOP (run, text kept) | FIXED (fixed text:
+// no data / won / lost) | REJECTED (server checks refused the model text) |
+// USER (manual edit). actor: agent | user.
+export const dealStateVersion = pgTable(
+  "deal_state_version",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    dealId: text("deal_id")
+      .notNull()
+      .references(() => deal.id, { onDelete: "cascade" }),
+    decision: text("decision").notNull(),
+    text: text("text"),
+    reason: text("reason"),
+    sourceItemIds: text("source_item_ids").array().notNull().default(sql`'{}'::text[]`),
+    topicIds: text("topic_ids").array().notNull().default(sql`'{}'::text[]`),
+    actor: text("actor").notNull().default("agent"),
+    actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "set null" }),
+    model: text("model"),
+    aiUsageEventId: text("ai_usage_event_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("deal_state_version_deal_idx").on(table.dealId, table.createdAt)],
+)
+
+// Deal risks (spec topics/01 §9.4, phase 5a): one row per activation of a
+// `deal_risk_type` on a deal. status: active | cleared. cleared_by: signal |
+// outcome | user | state_summary. At most one ACTIVE row per deal and type.
+export const dealRisk = pgTable(
+  "deal_risk",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    dealId: text("deal_id")
+      .notNull()
+      .references(() => deal.id, { onDelete: "cascade" }),
+    riskType: text("risk_type")
+      .notNull()
+      .references(() => dealRiskType.code),
+    status: text("status").notNull().default("active"),
+    severity: integer("severity").notNull(),
+    occurrences: integer("occurrences").notNull().default(1),
+    // Topic that holds the newest trigger instance (its card is forced to UPDATE, R17).
+    topicId: text("topic_id").references((): AnyPgColumn => topic.id, { onDelete: "set null" }),
+    triggerInstanceIds: text("trigger_instance_ids").array().notNull().default(sql`'{}'::text[]`),
+    sourceItemIds: text("source_item_ids").array().notNull().default(sql`'{}'::text[]`),
+    // «В чём риск / на чём основана оценка» from deals.state_summary, else null
+    // (the UI falls back to deal_risk_type.description_ru, R17).
+    explanationRu: text("explanation_ru"),
+    explanationSourceItemIds: text("explanation_source_item_ids").array().notNull().default(sql`'{}'::text[]`),
+    detectedAt: timestamp("detected_at").defaultNow().notNull(),
+    clearedAt: timestamp("cleared_at"),
+    clearedBy: text("cleared_by"),
+    clearedReason: text("cleared_reason"),
+    clearedByUserId: text("cleared_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    clearInstanceId: text("clear_instance_id"),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("deal_risk_deal_idx").on(table.dealId, table.status),
+    index("deal_risk_org_status_idx").on(table.organizationId, table.status),
+    uniqueIndex("deal_risk_active_uq")
+      .on(table.dealId, table.riskType)
+      .where(sql`${table.status} = 'active'`),
+  ],
 )

@@ -53,6 +53,13 @@ import {
 } from "@/lib/topics/types"
 import { TOPIC_LIST_LABELS_RU, type TopicList } from "@/lib/topics/attention-types"
 import {
+  DEAL_RISK_CLEARED_BY_LABELS_RU,
+  DEAL_STATE_DECISION_LABELS_RU,
+  type DealRiskView,
+  type DealStateDecision,
+  type DealStateView,
+} from "@/lib/topics/deal-state"
+import {
   CARD_EVENT_GROUP_LABELS_RU,
   CARD_REJECT_REASON_LABELS_RU,
   CARD_STATUS_LABELS_RU,
@@ -604,7 +611,7 @@ function TopicDetailDialog({
   }, [orgId, topicId])
 
   const act = async (
-    action: "done" | "dismiss" | "merge" | "detachItem" | "resolveItem" | "rewriteCard" | "runDeals",
+    action: "done" | "dismiss" | "merge" | "detachItem" | "resolveItem" | "rewriteCard" | "runDeals" | "refreshDealState",
     extra: { targetTopicId?: string; sourceItemId?: string } = {},
   ) => {
     if (!topicId) return
@@ -618,7 +625,7 @@ function TopicDetailDialog({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
-      const { detail: next, outcome, card, deals } = data as AdminTopicActionResponse
+      const { detail: next, outcome, card, deals, dealState } = data as AdminTopicActionResponse
       if (outcome) toast.success(topicOutcomeText(outcome))
       else if (card) toast.success(CARD_OUTCOME_LABEL[card.outcome] ?? card.outcome)
       else if (deals)
@@ -630,6 +637,12 @@ function TopicDetailDialog({
             : deals.instances === 0
               ? "Новых сигналов для сделки нет"
               : `Решено сигналов: ${deals.instances}${deals.dryRun ? " (тень: сделки не менялись)" : ""}`,
+        )
+      else if (dealState)
+        toast.success(
+          `Состояние: ${DEAL_STATE_DECISION_LABELS_RU[dealState.decision as DealStateDecision] ?? dealState.decision}${
+            dealState.reasons?.length ? ` — ${dealState.reasons.join("; ")}` : ""
+          }`,
         )
       else toast.success("Готово")
       onChanged()
@@ -875,6 +888,15 @@ function TopicDetailDialog({
                 ) : (
                   <div className="text-xs text-muted-foreground">Тема не привязана к сделке.</div>
                 )}
+                {detail.deal && (
+                  <DealStateDebug
+                    state={detail.dealState}
+                    risks={detail.dealRisks}
+                    busy={busy === "refreshDealState:"}
+                    disabled={busy !== null}
+                    onRefresh={() => void act("refreshDealState")}
+                  />
+                )}
                 {detail.dealCards.length > 0 && (
                   <div className="flex flex-col gap-1">
                     <div className="text-xs text-muted-foreground">Карточки сделки ({detail.dealCards.length})</div>
@@ -1061,5 +1083,105 @@ function TopicDetailDialog({
         markdownUrl={(id) => `/api/admin/topics/topics?${new URLSearchParams({ organizationId: orgId, markdownItemId: id })}`}
       />
     </>
+  )
+}
+
+// Phase 5a: «Текущее состояние» + risks of the topic's deal (debug view).
+function DealStateDebug({
+  state,
+  risks,
+  busy,
+  disabled,
+  onRefresh,
+}: {
+  state: DealStateView | null
+  risks: DealRiskView[]
+  busy: boolean
+  disabled: boolean
+  onRefresh: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border p-3">
+      <div className="flex items-center gap-2">
+        <div className="font-medium">Текущее состояние</div>
+        {state?.pending && <Badge variant="outline">ждёт обновления</Badge>}
+        <Button size="sm" variant="outline" className="ml-auto" disabled={disabled} onClick={onRefresh}>
+          {busy ? <Loader className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Обновить состояние
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        «Обновить состояние» пересчитывает риски сделки и вызывает «deals.state_summary» один раз (ИИ), в любом режиме организации.
+      </p>
+      {state?.text ? (
+        <div>
+          <div>{state.text}</div>
+          <div className="text-xs text-muted-foreground">
+            {fmtDate(state.updatedAt)}
+            {state.sourceItemIds.length > 0 && <> · источники: {state.sourceItemIds.join(", ")}</>}
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs text-muted-foreground">Текста ещё нет.</div>
+      )}
+      {state && state.versions.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-xs text-muted-foreground">Версии (последние {state.versions.length})</div>
+          {state.versions.map((v) => (
+            <div key={v.id} className="rounded border px-2 py-1 text-xs">
+              <span className="font-medium">{DEAL_STATE_DECISION_LABELS_RU[v.decision] ?? v.decision}</span>
+              <span className="text-muted-foreground">
+                {" "}
+                · {fmtDate(v.createdAt)} · {v.actor === "user" ? "пользователь" : "агент"}
+                {v.actorName ? ` (${v.actorName})` : ""}
+                {v.model ? ` · ${v.model}` : ""}
+              </span>
+              {v.text && <div>{v.text}</div>}
+              {v.reason && <div className="text-muted-foreground">Причина: {v.reason}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="text-xs text-muted-foreground">Риски ({risks.length})</div>
+      {risks.length === 0 ? (
+        <div className="text-xs text-muted-foreground">Рисков нет.</div>
+      ) : (
+        risks.map((r) => (
+          <div key={r.id} className="rounded border px-2 py-1 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={r.status === "active" ? "destructive" : "secondary"}>
+                {r.status === "active" ? "активен" : "снят"}
+              </Badge>
+              <span className="font-medium">{r.labelRu}</span>
+              <span className="font-mono text-muted-foreground">{r.riskType}</span>
+              <span className="text-muted-foreground">
+                важность {r.severity} · повторов {r.occurrences} · с {fmtDate(r.detectedAt)}
+              </span>
+            </div>
+            <div>
+              {r.explanationRu}
+              {!r.explanationFromAgent && <span className="text-muted-foreground"> (типовой текст)</span>}
+            </div>
+            {r.triggers.length > 0 && (
+              <ul className="list-disc pl-5 text-muted-foreground">
+                {r.triggers.map((x) => (
+                  <li key={x.instanceId}>
+                    <span className="font-mono">{x.code}</span>: «{x.evidence}»
+                  </li>
+                ))}
+              </ul>
+            )}
+            {r.status === "cleared" && (
+              <div className="text-muted-foreground">
+                Снят {fmtDate(r.clearedAt)}
+                {r.clearedBy ? ` · ${DEAL_RISK_CLEARED_BY_LABELS_RU[r.clearedBy]}` : ""}
+                {r.clearedByUserName ? ` (${r.clearedByUserName})` : ""}
+                {r.clearedReason ? ` — ${r.clearedReason}` : ""}
+              </div>
+            )}
+          </div>
+        ))
+      )}
+    </div>
   )
 }

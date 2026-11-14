@@ -41,6 +41,13 @@ export const ORG_SETTINGS = {
     default: null as "low" | "medium" | "high" | null,
   },
   "deals.proposalMinScore": { schema: z.number().int().min(0).max(20).nullable(), default: null as number | null },
+  // Deal state + risks (topics phase 5a, spec 01 §9.3 / §9.4); null = platform.
+  "deals.stateDebounceMinutes": { schema: z.number().int().min(0).max(1440).nullable(), default: null as number | null },
+  "deals.riskImmediateMinSeverity": { schema: z.number().int().min(0).max(10).nullable(), default: null as number | null },
+  // Risk PAYMENT_TERMS_ABOVE_POLICY (`terms_above_policy`): the org's payment
+  // policy. null here AND on the platform = unknown → the condition is false.
+  "deals.maxDeferralDays": { schema: z.number().int().min(0).max(3650).nullable(), default: null as number | null },
+  "deals.maxCreditLimitRub": { schema: z.number().min(0).nullable(), default: null as number | null },
 } as const
 
 export type OrgSettingKey = keyof typeof ORG_SETTINGS

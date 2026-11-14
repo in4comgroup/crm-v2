@@ -20,6 +20,7 @@ import {
 } from "@/db/schema"
 import { stageDisplayLabel } from "@/lib/deal-funnel"
 import type { DealCardProposal } from "@/lib/topics/cards"
+import type { DealRiskView, DealStateView } from "@/lib/topics/deal-state"
 import { DEAL_REASON_LABELS_RU } from "./deals/rules"
 import { proposalOf } from "./cards/deal-cards"
 import type { TopicAttention } from "@/lib/topics/attention-types"
@@ -217,6 +218,9 @@ export type TopicDebugDetail = {
   deal: TopicDebugDeal | null
   dealDecisions: TopicDebugDealDecision[]
   dealCards: TopicDebugDealCard[]
+  /** Phase 5a: «Текущее состояние» (text + last versions) and the risks of the linked deal. */
+  dealState: DealStateView | null
+  dealRisks: DealRiskView[]
 }
 
 export type ItemTopicLink = { topicId: string; title: string; status: string; role: string; band: string; score: number }
@@ -407,7 +411,15 @@ export async function getTopicDebugDetail(orgId: string, topicId: string): Promi
   ])
   const now = new Date()
   const t = head.t
-  const { linkedDeal, dealDecisions, dealCards } = await loadDealDebug(orgId, topicId, t.dealId, events, labels)
+  const [{ linkedDeal, dealDecisions, dealCards }, dealState, dealRisks] = await Promise.all([
+    loadDealDebug(orgId, topicId, t.dealId, events, labels),
+    t.dealId
+      ? import("@/server/deal-state").then((m) => m.getDealState(orgId, t.dealId!)).catch(() => null)
+      : Promise.resolve(null),
+    t.dealId
+      ? import("@/server/deal-risks").then((m) => m.listDealRisks(orgId, t.dealId!))
+      : Promise.resolve([] as DealRiskView[]),
+  ])
   return {
     topic: {
       ...toRow(head, labels),
@@ -462,6 +474,8 @@ export async function getTopicDebugDetail(orgId: string, topicId: string): Promi
     deal: linkedDeal,
     dealDecisions,
     dealCards,
+    dealState: dealState ? { ...dealState, versions: dealState.versions.slice(0, 5) } : null,
+    dealRisks,
   }
 }
 

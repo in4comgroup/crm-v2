@@ -50,6 +50,14 @@ export const PLATFORM_SETTINGS = {
     default: "high" as "low" | "medium" | "high",
   },
   "deals.proposalMinScore": { schema: z.number().int().min(0).max(20), default: 5 },
+  // Deal state + risks (topics phase 5a, spec 01 §9.3 / §9.4, 06 §6 I5).
+  // Debounce of the «Текущее состояние» run per deal (R16).
+  "deals.stateDebounceMinutes": { schema: z.number().int().min(0).max(1440), default: 10 },
+  // A deal risk with severity ≥ this raises its trigger topic to «Сейчас» (I5, R17).
+  "deals.riskImmediateMinSeverity": { schema: z.number().int().min(0).max(10), default: 7 },
+  // Payment policy for the risk PAYMENT_TERMS_ABOVE_POLICY (null = not set → no risk).
+  "deals.maxDeferralDays": { schema: z.number().int().min(0).max(3650).nullable(), default: null as number | null },
+  "deals.maxCreditLimitRub": { schema: z.number().min(0).nullable(), default: null as number | null },
 } as const
 
 export type PlatformSettingKey = keyof typeof PLATFORM_SETTINGS

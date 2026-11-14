@@ -1,6 +1,6 @@
 # Topics — development plan (final)
 
-Status: **final, 2026-11-13. Progress: phases 0–5 built (not deployed); phase 5a next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
+Status: **final, 2026-11-13. Progress: phases 0–5a built (not deployed); phase 6 next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
 Spec: [01-specification.md](01-specification.md) · Decisions: [02-open-questions.md](02-open-questions.md) (§ F = R1–R24) · Registry: [05-signals-registry.md](05-signals-registry.md) · Attention: [06-attention-engine.md](06-attention-engine.md)
 
 The plan of 2026-11-10 assumed another copy of the product (Yandex models, own PostgreSQL, K8s CronJob, `llm_usage`). It is replaced by this document. Its business content (phases, scope, gates) is kept.
@@ -33,13 +33,13 @@ The plan of 2026-11-10 assumed another copy of the product (Yandex models, own P
 | Deal discovery | Process `deals.discovery` (name match); since phase 0 it journals every stage move (`deal_activity`) | Replaced in phase 5, removed in phase 12 |
 | Mock agent | Removed in phase 0 (R9) | — |
 | Orchestration | Daily cron `0 3 * * *` → `runDailyPipeline` (model catalog sync + cost check, sync → parse → upload), `pipeline_run`; **hourly** cron `0 * * * *` → `runTopicsPipeline` (phase «signals» built in phase 2; the others are stubs), `topics_run` | Phases 3–5a fill the stubs |
-| DB process | Drizzle migrations `0000`–`0021` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027, `0021` deal bridge), reference data in migrations | Next topics migration: **0022** |
+| DB process | Drizzle migrations `0000`–`0022` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027, `0021` deal bridge, `0022` deal state + risks), reference data in migrations | Next topics migration: **0023** |
 | Topics foundations (phase 0) | `org_setting` (`topics.enabled`, budget override), system actor «Агент», «Темы» tab (modes, runs, golden set, model spike) | Used by every later phase |
 | Signals registry (phase 1) | DB registry (one generic pack; 158 codes after `0017`: 144 `active`, 8 `parked`, 6 `gated`, no retired codes; attributes, relations, 9 risk types, rule templates), `getEffectiveSignals(orgId)`, «Сигналы» tab with the full editor, Markdown export (preset mechanism kept, no presets defined — R22) | Extraction prompt reads it |
 | Signal extraction (phase 2) | `src/server/topics/signals/` (gates, extraction, post-processing, storage, hourly runner, manual action), `signal_instance`, `source_item_subject`, `source_item.signal_*`, `analysis_exclusion` (owner UI on Sources), `src/lib/ru-mail/`, eval runner with stored metrics, signal review on «Темы» | Input of topic resolution (phase 3): counted instances + subjects per item |
 | Access | Sign-in gate `src/proxy.ts`; routes check the session; `"use server"` modules are session-bound | Engine code is `server-only` and takes `organizationId` explicitly |
 
-Missing today: deal state / risks (phase 5a), the user UI (lists «Сейчас / Сводка / Неделя», topic drawer — phase 6). (Thread keys, topics, the hourly intake, attention, the production calendar, topic cards, deal types and the deal bridge are built — phases 3–5.)
+Missing today: the user UI (lists «Сейчас / Сводка / Неделя», topic drawer, company / contact «Темы» tabs — phase 6). (Thread keys, topics, the hourly intake, attention, the production calendar, topic cards, deal types, the deal bridge, deal state and risks are built — phases 3–5a.)
 
 ## Overview
 
@@ -51,8 +51,8 @@ Missing today: deal state / risks (phase 5a), the user UI (lists «Сейчас 
 | 3 | Topic engine | 3 | `thread_key`, topics, resolver + `topics.topic_match`, lifecycle, journal, teardown / reparse, debug page | No (shadow) | ✅ built |
 | 4 | Attention and cards | 2 | Attention engine (06, A1–A8), production calendar, card per topic with kinds, `topics.card_writer` | No (shadow) | ✅ built |
 | 5 | Deal bridge | 2 | Deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение» | No (shadow) | ✅ built |
-| 5a | Deal state and risks | 1.5 | `deals.state_summary`, risk engine, «Есть риски» | No (shadow) | next |
-| 6 | UI and pilot | 2 | «Сейчас / Сводка / Неделя», topic drawer, company / deal tabs, «Создать заказ» on order topics, IN4COM switch-on | **Yes (IN4COM)** |  |
+| 5a | Deal state and risks | 1.5 | `deals.state_summary`, risk engine, «Есть риски» | No (shadow) | ✅ built |
+| 6 | UI and pilot | 2 | «Сейчас / Сводка / Неделя», topic drawer, company / deal tabs, «Создать заказ» on order topics, IN4COM switch-on | **Yes (IN4COM)** | next |
 | **MVP** | | **≈ 17.5** | | |  |
 | 7 | Delivery | 2 | Email digest, Telegram to staff, P6 evening reminders and daily limit | Yes |  |
 | 8 | System-of-record signals and watchdogs | 2.5 | Order-rhythm topics for IN4COM, then no-response / countdown / contract expiry | Yes |  |
@@ -260,6 +260,20 @@ Exit: every auto-created deal and move has a topic and an evidence quote; IN4COM
 
 ## Phase 5a — Deal state and risks (1.5 weeks)
 
+**Status 2026-11-14 — built, not deployed.** Migration `0022_topics_phase5a_deal_state_risks` (`deal.state_text`, `state_source_item_ids`, `state_updated_at`, `state_dirty_at`; tables `deal_state_version`, `deal_risk` — one active row per deal and risk type). `pnpm test`: 292 tests + 1 todo.
+
+| Task | State |
+|---|---|
+| 1 Migration | Done (`0022`) |
+| 2 Deal state | Done: `deals.state_summary` (`src/server/topics/deal-state/summary.ts`, `state-text.ts` pure): input = deal, stage, status, amount, linked topics (lead code, facts, events), last ≤ 8 items, active risks, previous text; output UPDATE / NOOP + text + sources + risk explanations + risk-clear proposals. Server checks: ≤ 3 sentences / 50 words, stop list, not only the stage name, sources from the input only, UPDATE cites ≥ 1 item → else REJECTED (old text kept). Fixed texts without LLM: no linked topic («Недостаточно информации о текущем состоянии сделки»), won, lost, withdrawn. Every run = one `deal_state_version` (model + AI usage event). Triggers (R16) mark `state_dirty_at`: new item on a deal topic (any role), engine moves / outcomes / pauses, risks, manual edits on /deals; debounce `deals.stateDebounceMinutes` (10); «Обновить» runs at once |
+| 3 Risk engine | Done: `risk-engine.ts` (pure, unit-tested) for the 9 generic types — triggers on the deal's topics or the type's scope (deal / client / org + SKU), inbound counted instances of active codes only, stage guards (`deal_risk_stage_guard`; none = all stages), min occurrences, the named conditions (postponements without a new date, contact lost without handover, other overdue invoices, renewal window, listing / supply types, SKU out of stock, terms above policy — off until `deals.maxDeferralDays` / `deals.maxCreditLimitRub` are set, repeated complaints). Clearing: clear codes, condition check, deal outcome, «Риск снят» (reason required), a model proposal with a cited item. New risk → deal journal + topic event, deal state dirty, R17 forced card update, I5: severity ≥ `deals.riskImmediateMinSeverity` (7) raises the topic to «Сейчас». Risks never move stages or amounts |
+| UI | Kanban card: «Текущее состояние» (3 lines) and badge «Есть риски» with the most critical risk in the tooltip (one batched query); drawer: «Текущее состояние» + «Источники» + «Обновить» + version history, «Риски» (active with evidence and «Риск снят», cleared with who / why / when). **Visible only in topics mode `on`** (shadow = users see nothing); the old `reasoning` / `changes` text shows otherwise. Debug page «Темы (отладка)» → «Сделка» shows state and risks for every mode |
+| 4 Eval | Open: human review of ≥ 30 deal states and all active risks (needs real `on` / shadow data) |
+
+Live check (IN4COM, mode `off`, 2 AI calls): state text of the agent deal «maslov.agency — запрос коммерческих условий» — «Клиент вернул договор с правками и запросил выжимку из договора с Яндексом по пункту 5.7. Также ожидают заполненное приложение №1 с коммерческими условиями. Наш следующий шаг — предоставить запрошенные документы.» (UPDATE, 1 source; kept). Risk tests on the real deal input: 1 postponement → no risk, 2 → «Решение откладывается» active, agreed date → cleared. Store test with a temporary risk (severity 7): journal, topic event, dirty deal, forced card update, topic raised to P8 by I5, user clear → back to P6; cleaned up (no `deal_risk` rows left).
+
+**Open:** exit gate (≥ 80 % of states answer «Где мы? Чего ждём? Что мешает? Что дальше?», no invented facts, risk precision ≥ 0.8). To review: «same decision» of postponements is approximated by the deal's topics + a 24 h gap; the «replaces someone» cue of CONTACT_NEW_DECISION_MAKER is a RU / EN pattern; the «no prepayment» part of `terms_above_policy` has no fact yet; the topic card shows a new risk only through the forced update («Что изменилось»).
+
 1. Migration: deal state text + versions + sources; risk tables (if not in phase 1) and active risks.
 2. **`deals.state_summary`:** runs on any new deal information (R16, debounced 10 min), UPDATE / NOOP, ≤ 3 sentences / 50 words, cited sources from the input only, fixed texts for «Недостаточно информации», won, lost.
 3. Risk engine (pure functions): activation by trigger codes, occurrence counts, stage guards, clearing; parked codes never trigger; the 9 generic risk types (R22) confirmed in the IN4COM review.
@@ -289,17 +303,17 @@ Exit (go-live sign-off): Q23 targets met for 2 consecutive weeks.
 
 Out of this plan (separate tasks): functional roles and rights (Q33); Telegram group chats, voice notes and files (Q11, Q32).
 
-## Next steps (2026-11-14, after phase 5)
+## Next steps (2026-11-14, after phase 5a)
 
-Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0021` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
+Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0022` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
 
-Current state: phases 0–5 built, not deployed. Hourly run per org in `shadow` / `on`: intake → signals → topics → attention → cards → deals (dry run in `shadow`); deal state is a stub. IN4COM: `base` pack on, 23 stage rules, 5 deal types, topics mode `off`; test data from the live checks (topics, 2 hidden topic cards, test client «maslov.agency», 1 agent deal).
+Current state: phases 0–5a built, not deployed. The whole hourly engine runs per org in `shadow` / `on`: intake → signals → topics → attention → cards → deals (dry run in `shadow`) → deal state + risks. Users see engine output only in mode `on`, and only on the existing surfaces (dashboard card feed, deal board / drawer); the topic lists UI is phase 6. IN4COM: `base` pack on, 23 stage rules, 5 deal types, topics mode `off`; test data from the live checks (topics, 2 hidden topic cards, test client «maslov.agency», 1 agent deal with a state text).
 
 | # | Step | Who | Blocks |
 |---|---|---|---|
-| 1 | Review and commit phases 0–5 (incl. migrations `0016`–`0021`) | Product owner | — |
-| 2 | IN4COM reviewers: golden set, signal texts, eval; shadow review of topics, cards and deal decisions in «Темы (отладка)» | IN4COM + platform admin | Exit gates of phases 2–5 |
-| 3 | **Phase 5a — deal state and risks** (`deals.state_summary`, risk engine, «Есть риски», I5 escalation, R17 card update) | Development | Can start now |
+| 1 | Review and commit phases 0–5a (incl. migrations `0016`–`0022`) | Product owner | — |
+| 2 | IN4COM reviewers: golden set, signal texts, eval; shadow review of topics, cards, deal decisions, states and risks in «Темы (отладка)» | IN4COM + platform admin | Exit gates of phases 2–5a |
+| 3 | **Phase 6 — UI and pilot** («Сейчас / Сводка / Неделя», topic drawer, company / contact «Темы» tabs, «Создать заказ» on order topics, IN4COM switch-on) | Development | Can start now |
 
 Note: 15 of the codes made `active` by R23 are process codes (watchdogs, CRM-data trends). Nothing emits them until phase 8.
 

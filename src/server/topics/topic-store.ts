@@ -555,6 +555,17 @@ export async function persistItemResolution(args: {
   }
   const events = eventRows(orgId, res.events, { actor: "agent", userId: args.actorUserId })
   if (events.length) ops.push(db.insert(topicEvent).values(events))
+  // Phase 5a (R16): a new item on a topic of a deal (any role, incl. context)
+  // = new deal information → the deal state text is due after the debounce.
+  const dealIds = [...new Set(touched.map((t) => t.dealId).filter((x): x is string => !!x))]
+  if (dealIds.length) {
+    ops.push(
+      db
+        .update(deal)
+        .set({ stateDirtyAt: new Date(), updatedAt: sql`${deal.updatedAt}` })
+        .where(and(eq(deal.organizationId, orgId), inArray(deal.id, dealIds))),
+    )
+  }
   ops.push(itemStatusOp(orgId, item.itemId, res.status, res.reason))
   await db.batch(asBatch(ops))
   for (const t of touched) {
@@ -593,7 +604,18 @@ async function saveTopic(
   extra: unknown[] = [],
 ) {
   const rows = eventRows(orgId, events, actor)
-  await db.batch(asBatch([topicUpsertOp(orgId, t), ...extra, ...(rows.length ? [db.insert(topicEvent).values(rows)] : [])]))
+  // Phase 5a (R16): a user action / detach on a deal topic changes the deal's information.
+  const dirty = t.dealId
+    ? [
+        db
+          .update(deal)
+          .set({ stateDirtyAt: new Date(), updatedAt: sql`${deal.updatedAt}` })
+          .where(and(eq(deal.organizationId, orgId), eq(deal.id, t.dealId))),
+      ]
+    : []
+  await db.batch(
+    asBatch([topicUpsertOp(orgId, t), ...extra, ...(rows.length ? [db.insert(topicEvent).values(rows)] : []), ...dirty]),
+  )
 }
 
 // ── Timers + re-link (deterministic steps of the phase) ───────────────────

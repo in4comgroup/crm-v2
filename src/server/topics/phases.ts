@@ -15,9 +15,8 @@ import type { TopicsMode } from "./mode"
 // `{ skipped: "<reason>" }`. Throwing is allowed — the pipeline catches it
 // per phase, records the error and goes on with the next phase.
 //
-// Phases intake, signals, topics, attention, cards and deals (plan phases 2–5) are built; dealState (5a) is a stub. A stub takes no
-// arguments yet — give it `(ctx: TopicsPhaseContext)` when it is built. The TODO(phase N) tags
-// point at docs/specs/topics/03-development-plan.md.
+// All phases are built: intake, signals, topics, attention, cards, deals
+// (plan phases 2–5) and dealState (5a). Plan: docs/specs/topics/03-development-plan.md.
 
 export type TopicsPhaseName =
   | "intake"
@@ -43,8 +42,6 @@ export type TopicsPhase = {
   name: TopicsPhaseName
   run: (ctx: TopicsPhaseContext) => Promise<TopicsPhaseResult>
 }
-
-const NOT_BUILT = { skipped: "not built yet" } as const
 
 // Intake (built 2026-11-14): sync → parse → upload for the org — src/server/topics/intake.ts.
 async function runIntake(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
@@ -89,10 +86,11 @@ async function runDeals(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
   return runDealsPhase(ctx)
 }
 
-// TODO(phase 5a): deal state — debounced state text + risks per touched deal
-// (AI process `deals.state_summary`).
-async function runDealState(): Promise<TopicsPhaseResult> {
-  return NOT_BUILT
+// Phase 5a: deal risks + «Текущее состояние» — src/server/topics/deal-state/phase.ts
+// (risk engine, AI process `deals.state_summary`, debounced per deal).
+async function runDealState(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runDealStatePhase } = await import("@/server/topics/deal-state/phase")
+  return runDealStatePhase(ctx)
 }
 
 /** Phases in execution order. */

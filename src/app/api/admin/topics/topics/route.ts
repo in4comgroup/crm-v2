@@ -12,6 +12,7 @@ import { runTopicResolutionForItem, type ResolveItemOutcome } from "@/server/top
 import { AiBudgetExceededError } from "@/server/ai/budget"
 import { rewriteTopicCard, TopicCardError, type TopicCardResult } from "@/server/topics/cards/phase"
 import { runDealsForTopic, type TopicDealsRunResult } from "@/server/topics/deals/phase"
+import { DealStateError, requestDealStateRefresh, type DealStateRunResult } from "@/server/deal-state"
 import {
   detachItemFromTopic,
   dismissTopic,
@@ -52,12 +53,16 @@ export type {
 //       action runDeals («Решить по сделке», phase 5): the deal bridge for
 //       this topic now (undecided instances; real writes only in mode `on`,
 //       else a dry run) → `deals: TopicDealsRunResult`.
+//       action refreshDealState (phase 5a, «Обновить состояние»): risks of the
+//       topic's deal re-evaluated + `deals.state_summary` now (any org mode,
+//       ≤ 1 AI call) → `dealState: DealStateRunResult`; 400 when the topic
+//       has no deal.
 //       400 TopicActionError / TopicCardError / bad input, 404
 //       TopicNotFoundError, 409 AI budget exceeded.
 
 export const maxDuration = 60
 
-const ACTIONS = ["done", "dismiss", "merge", "detachItem", "resolveItem", "rewriteCard", "runDeals"] as const
+const ACTIONS = ["done", "dismiss", "merge", "detachItem", "resolveItem", "rewriteCard", "runDeals", "refreshDealState"] as const
 type Action = (typeof ACTIONS)[number]
 
 export type AdminTopicsListResponse = TopicDebugList
@@ -67,6 +72,7 @@ export type AdminTopicActionResponse = {
   outcome?: ResolveItemOutcome
   card?: TopicCardResult
   deals?: TopicDealsRunResult
+  dealState?: DealStateRunResult
 }
 
 async function requireAdmin() {
@@ -135,6 +141,7 @@ export async function POST(request: NextRequest) {
     let outcome: ResolveItemOutcome | undefined
     let cardResult: TopicCardResult | undefined
     let dealsResult: TopicDealsRunResult | undefined
+    let dealStateResult: DealStateRunResult | undefined
     switch (action) {
       case "done":
         await markTopicDone(orgId, topicId, userId, note)
@@ -166,6 +173,13 @@ export async function POST(request: NextRequest) {
       case "runDeals":
         dealsResult = await runDealsForTopic(orgId, topicId)
         break
+      case "refreshDealState": {
+        const before = await getTopicDebugDetail(orgId, topicId)
+        const dealId = before?.topic.dealId
+        if (!dealId) return NextResponse.json({ error: "Тема не привязана к сделке" }, { status: 400 })
+        dealStateResult = (await requestDealStateRefresh(orgId, dealId, userId)).result
+        break
+      }
     }
     const detail = topicId ? await getTopicDebugDetail(orgId, topicId) : null
     const res: AdminTopicActionResponse = {
@@ -173,6 +187,7 @@ export async function POST(request: NextRequest) {
       ...(outcome ? { outcome } : {}),
       ...(cardResult ? { card: cardResult } : {}),
       ...(dealsResult ? { deals: dealsResult } : {}),
+      ...(dealStateResult ? { dealState: dealStateResult } : {}),
     }
     return NextResponse.json(res)
   } catch (error) {
@@ -181,6 +196,9 @@ export async function POST(request: NextRequest) {
     }
     if (error instanceof AiBudgetExceededError) {
       return NextResponse.json({ error: "Дневной бюджет ИИ организации исчерпан" }, { status: 409 })
+    }
+    if (error instanceof DealStateError) {
+      return NextResponse.json({ error: error.message }, { status: error.code === "not_found" ? 404 : 400 })
     }
     if (error instanceof TopicActionError || error instanceof TopicCardError) {
       return NextResponse.json({ error: error.message }, { status: 400 })

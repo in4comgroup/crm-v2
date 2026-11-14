@@ -44,7 +44,7 @@ export function relevanceWindowDays(info: CodeInfo | undefined): number | null {
   }
 }
 
-export type InstanceInactiveReason = "not_counted" | "closed" | "stale" | "dismissed_by_user"
+export type InstanceInactiveReason = "not_counted" | "closed" | "stale" | "dismissed_by_user" | "condition_cleared"
 
 export type InstanceActivity = {
   id: string
@@ -61,7 +61,9 @@ function isoDay(d: Date): string {
 }
 
 /**
- * Activity of every instance of one topic (06 §4.2 B1–B4; B5 = phase 8).
+ * Activity of every instance of one topic (06 §4.2 B1–B5). B5 (phase 8): a
+ * process instance whose condition is no longer true (`clearedAt` set by the
+ * check) stops scoring.
  * B2: a closing instance on the SAME topic, at the same time or later, whose
  * code lists this code in `closes_codes` (spec §7.3).
  */
@@ -77,6 +79,7 @@ export function instanceActivity(
     const info = book.get(i.code)
     const base = { id: i.id, closedBy: null as string | null, score: i.scoreContrib }
     if (!i.counted || i.scoreContrib <= 0) return { ...base, active: false, reason: "not_counted" }
+    if (i.clearedAt) return { ...base, active: false, reason: "condition_cleared" }
     const closer = closers.find(
       (c) =>
         c.id !== i.id &&
@@ -116,6 +119,9 @@ export type TopicScore = {
   activeCount: number
   /** Some instance was closed by a closing code on the topic (B2). */
   anyClosed: boolean
+  /** Some process instance's condition was cleared (B5) — the newest one. */
+  lastClearedCode: string | null
+  lastClearedAt: Date | null
   lastClosingCode: string | null
   lastClosingAt: Date | null
 }
@@ -161,6 +167,12 @@ export function computeTopicScore(
     const c = instances.find((i) => i.id === a.closedBy)
     if (c && (!lastClosing || c.itemDate > lastClosing.itemDate)) lastClosing = c
   }
+  let lastCleared: TopicInstance | null = null
+  for (let k = 0; k < instances.length; k++) {
+    const c = instances[k]
+    if (act[k].reason !== "condition_cleared" || !c.clearedAt) continue
+    if (!lastCleared || c.clearedAt > (lastCleared.clearedAt as Date)) lastCleared = c
+  }
   const score = lead ? Math.max(0, lead.score) : 0
   return {
     score,
@@ -172,6 +184,8 @@ export function computeTopicScore(
     anyClosed: closedActs.length > 0,
     lastClosingCode: lastClosing?.code ?? null,
     lastClosingAt: lastClosing?.itemDate ?? null,
+    lastClearedCode: lastCleared?.code ?? null,
+    lastClearedAt: lastCleared?.clearedAt ?? null,
   }
 }
 
@@ -217,19 +231,28 @@ export function deriveClientRelation(
   now: Date,
 ): ClientRelation {
   if (args.companyKind === "supplier") return "supplier"
-  const dates = [...args.orderDates].sort((a, b) => a.getTime() - b.getTime())
-  if (dates.length > 0) {
-    let rhythm: number
-    if (dates.length >= 3) {
-      rhythm = (dates[dates.length - 1].getTime() - dates[0].getTime()) / (dates.length - 1) / DAY_MS
-    } else if (dates.length === 2) {
-      rhythm = (dates[1].getTime() - dates[0].getTime()) / DAY_MS
-    } else rhythm = 365
-    rhythm = Math.max(rhythm, RHYTHM_FLOOR_DAYS)
-    const pause = (now.getTime() - dates[dates.length - 1].getTime()) / DAY_MS
+  if (args.orderDates.length > 0) {
+    const rhythm = orderRhythmDays(args.orderDates, RHYTHM_FLOOR_DAYS)
+    const last = Math.max(...args.orderDates.map((d) => d.getTime()))
+    const pause = (now.getTime() - last) / DAY_MS
     return pause <= rhythm ? "active" : "dormant"
   }
   return args.hasWonDeal ? "active" : "prospect"
+}
+
+/**
+ * Order rhythm of a client in days (ACCOUNT_DORMANT rule, v204): ≥ 3 orders
+ * → the average gap (span / (n − 1)); 2 orders → that one gap; 1 order (or
+ * none) → 365 days; never shorter than `floorDays`. Order of `dates` does not
+ * matter. Shared with the phase 8 order checks (`checks/orders.ts`).
+ */
+export function orderRhythmDays(dates: readonly Date[], floorDays: number): number {
+  const sorted = dates.map((d) => d.getTime()).sort((a, b) => a - b)
+  let rhythm: number
+  if (sorted.length >= 3) rhythm = (sorted[sorted.length - 1] - sorted[0]) / (sorted.length - 1) / DAY_MS
+  else if (sorted.length === 2) rhythm = (sorted[1] - sorted[0]) / DAY_MS
+  else rhythm = 365
+  return Math.max(rhythm, floorDays)
 }
 
 // ── Recompute one topic (after attach / detach / merge) ───────────────────
@@ -257,9 +280,14 @@ export function recomputeTopic(
   }
   topic.references = refs
   topic.products = [...products]
+  // Process instances (phase 8, no source item) count as activity too: a
+  // watchdog that reopens an old topic must not be expired by the timers.
+  const procDates = topic.instances.filter((i) => i.itemId === null).map((i) => i.itemDate.getTime())
   if (topic.items.length) {
     topic.firstSeenAt = new Date(Math.min(...topic.items.map((l) => l.date.getTime())))
-    topic.lastActivityAt = new Date(Math.max(...topic.items.map((l) => l.date.getTime())))
+  }
+  if (topic.items.length || procDates.length) {
+    topic.lastActivityAt = new Date(Math.max(...topic.items.map((l) => l.date.getTime()), ...procDates))
   }
 
   const s = computeTopicScore(topic.instances, book, now, relationOf(topic.clientId))
@@ -278,6 +306,18 @@ export function recomputeTopic(
       type: "resolved",
       sourceItemId: opts.sourceItemId ?? null,
       payload: { code: s.lastClosingCode },
+    })
+  } else if ((topic.status === "open" || topic.status === "dormant") && s.lastClearedCode && s.activeCount === 0) {
+    // Phase 8 (B5): the last active instance was a process instance whose
+    // condition is no longer true (a new order, a client reply, …).
+    topic.status = "resolved"
+    topic.closedAt = s.lastClearedAt ?? now
+    topic.closedReason = `condition_cleared:${s.lastClearedCode}`
+    events.push({
+      topicId: topic.id,
+      type: "resolved",
+      sourceItemId: opts.sourceItemId ?? null,
+      payload: { code: s.lastClearedCode, conditionCleared: true },
     })
   }
   topic.subState = topic.status === "open" ? computeSubState(topic, book) : "none"

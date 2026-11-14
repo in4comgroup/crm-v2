@@ -15,13 +15,15 @@ import type { TopicsMode } from "./mode"
 // `{ skipped: "<reason>" }`. Throwing is allowed — the pipeline catches it
 // per phase, records the error and goes on with the next phase.
 //
-// All phases are built: intake, signals, topics, attention, cards, deals
-// (plan phases 2–5), dealState (5a) and delivery (7, email; Telegram open). Plan: docs/specs/topics/03-development-plan.md.
+// All phases are built: intake, signals, topics, checks (8), attention,
+// cards, deals (plan phases 2–5), dealState (5a) and delivery (7, email;
+// Telegram open). Plan: docs/specs/topics/03-development-plan.md.
 
 export type TopicsPhaseName =
   | "intake"
   | "signals"
   | "topics"
+  | "checks"
   | "attention"
   | "cards"
   | "deals"
@@ -65,6 +67,15 @@ async function runTopics(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
   return runTopicsPhase(ctx)
 }
 
+// Phase 8: CRM checks + watchdogs — src/server/topics/checks/phase.ts
+// (deterministic process codes: order data, no-response watchdogs; org
+// switch `topics.checks`, default off). Before «attention» so new / cleared
+// process topics are placed in the same run.
+async function runChecks(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runChecksPhase } = await import("@/server/topics/checks/phase")
+  return runChecksPhase(ctx)
+}
+
 // Phase 4: attention lists — src/server/topics/attention/phase.ts
 // (deterministic, 06-attention-engine.md; contract src/lib/topics/attention-types.ts).
 async function runAttention(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
@@ -106,6 +117,7 @@ export const TOPICS_PHASES: readonly TopicsPhase[] = [
   { name: "intake", run: runIntake },
   { name: "signals", run: runSignals },
   { name: "topics", run: runTopics },
+  { name: "checks", run: runChecks },
   { name: "attention", run: runAttention },
   { name: "cards", run: runCards },
   { name: "deals", run: runDeals },

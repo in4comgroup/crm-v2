@@ -7,6 +7,7 @@ import { db } from "@/db/drizzle"
 import { orgSetting, orgSettingLog, user } from "@/db/schema"
 import { attentionParamsOverrideSchema, type AttentionParamsOverride } from "@/lib/topics/attention-params"
 import { deliveryParamsOverrideSchema, type DeliveryParamsOverride } from "@/lib/topics/delivery-params"
+import { checksParamsOverrideSchema, checksSwitchSchema, type ChecksParamsOverride, type ChecksSwitch, CHECKS_SWITCH_DEFAULT } from "@/lib/topics/checks"
 
 // Per-organization settings (table `org_setting`), the per-org twin of
 // src/server/platform-settings.ts. Every key is declared here with a zod
@@ -42,6 +43,15 @@ export const ORG_SETTINGS = {
   "delivery.params": {
     schema: deliveryParamsOverrideSchema.nullable(),
     default: null as DeliveryParamsOverride | null,
+  },
+  // CRM checks + watchdogs (topics phase 8): org switch per group. Default
+  // both off — no process topic is written for an org until a platform
+  // admin switches it on («Темы» → «Проверки CRM»; preview first).
+  "topics.checks": { schema: checksSwitchSchema, default: CHECKS_SWITCH_DEFAULT as ChecksSwitch },
+  // Per-org override of the check parameters (null = platform_setting).
+  "checks.params": {
+    schema: checksParamsOverrideSchema.nullable(),
+    default: null as ChecksParamsOverride | null,
   },
   // Deal bridge (topics phase 5, spec 01 §9.2, 06 §13): per-org overrides of
   // the platform values (null = platform_setting, then the code default).

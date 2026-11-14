@@ -1408,3 +1408,13 @@ Seventh tab on `/analytics`. Ask a question in Russian, get a short written take
 Charts reuse `buildSeries` (synthetic CSS-safe series keys) and the validated palette; forms follow the same rules as the tabs (donut ≤6 slices, one hue for ranked bars, stacked for composition).
 
 **Not yet wired into the dashboard chat.** The same tool could be registered there alongside `searchEverything` + `searchWeb` (the dashboard chat is now one universal engine with no toggles — see `src/lib/AGENTS.md` § "AI Chat"); it was staged second on purpose — the general agent must not reach for `searchEverything` when it should aggregate.
+
+## Topics CRM checks (phase 8) — admin block «Проверки CRM»
+
+Deterministic checks (order data + watchdogs over communication topics) write process signal instances; spec in `docs/specs/topics/`, contract `src/lib/topics/checks.ts`, engine `src/server/topics/checks/`.
+
+- **Route** `api/admin/topics/checks` (platform admin only; 401 / 403): `GET` → `{ orgs }`; `GET ?organizationId=` → `{ view }`; `PUT { organizationId, switch: { orders, watchdogs } }` → `{ view }`; `POST { organizationId, action: "preview" | "run", checks?: CheckKey[] }` → `{ previews }` / `{ outcomes }` (`ChecksRunError` → 409). Zod-validated; `maxDuration = 300`.
+- **Block** `src/components/blocks/admin-topics-checks.tsx`, mounted on `/settings` → «Темы» (`admin-topics.tsx`; phase `checks` = «Проверки CRM» in the run log). Org picker, two switches, table of checks (last run, open instances), read-only parameters, «Не построено», last 20 runs.
+- **Switch** = `org_setting` `topics.checks` = `{ orders, watchdogs }`, default both OFF: while off the scheduled phase writes nothing for that group.
+- **«Проверить без записи»** = dry run (no write; shows rows, «уже есть», clears, skip reasons). **«Запустить сейчас»** WRITES (needs topics mode `shadow` or `on`, else 409); confirmed in a dialog.
+- **Display**: the user drawer (`topic-drawer.tsx`) marks process signals with a badge «Данные CRM» (origin `system_of_record`) or «Сторож» (origin `communication`, process key `check.*`); a cleared signal (`clearedAt`) is muted with «Условие снято: <reason>»; a topic with no messages shows «Тема создана проверкой данных CRM». The debug view («Темы (отладка)») lists origin, process key, condition key and the cleared state per instance.

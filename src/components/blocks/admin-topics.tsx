@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { formatDateTime } from "@/components/blocks/admin-ai-models"
+import { AdminTopicsChecks } from "@/components/blocks/admin-topics-checks"
 import { AdminTopicsDelivery } from "@/components/blocks/admin-topics-delivery"
 import { AdminTopicsGolden } from "@/components/blocks/admin-topics-golden"
 import { AdminTopicsSignals } from "@/components/blocks/admin-topics-signals"
@@ -62,6 +63,7 @@ const PHASE_LABEL: Record<string, string> = {
   intake: "Загрузка и разбор",
   signals: "Сигналы",
   topics: "Темы",
+  checks: "Проверки CRM",
   attention: "Внимание",
   cards: "Карточки",
   deals: "Сделки",
@@ -69,7 +71,7 @@ const PHASE_LABEL: Record<string, string> = {
   delivery: "Рассылка",
 }
 
-const PHASE_ORDER = ["intake", "signals", "topics", "attention", "cards", "deals", "dealState", "delivery"]
+const PHASE_ORDER = ["intake", "signals", "topics", "checks", "attention", "cards", "deals", "dealState", "delivery"]
 
 const TRIGGER_LABEL: Record<string, string> = { cron: "По расписанию", manual: "Вручную" }
 
@@ -481,6 +483,17 @@ export function AdminTopics() {
             </TableBody>
           </Table>
         </Card>
+      </section>
+
+      {/* CRM checks + watchdogs (plan phase 8). */}
+      <section className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-base font-medium">Проверки CRM</h2>
+          <p className="text-sm text-muted-foreground">
+            Темы из данных о заказах и сторожа по переписке. Проверки не вызывают ИИ.
+          </p>
+        </div>
+        <AdminTopicsChecks />
       </section>
 
       {/* Delivery: email digests + evening reminders (plan phase 7). */}

@@ -6,10 +6,11 @@ import {
   deriveClientRelation,
   inReopenWindow,
   instanceActivity,
+  recomputeTopic,
   relevanceWindowDays,
   timerTransition,
 } from "./lifecycle"
-import type { TopicInstance, TopicItemLink } from "./model"
+import type { TopicInstance, TopicItemLink, TopicSnapshot } from "./model"
 import { makeBook } from "./test-fixtures"
 
 const book = makeBook()
@@ -171,5 +172,75 @@ describe("sub-state and timers (spec §7.1)", () => {
     expect(inReopenWindow({ status: "resolved", closedAt }, new Date("2026-11-10T00:00:00Z"))).toBe(true)
     expect(inReopenWindow({ status: "done", closedAt }, new Date("2026-11-20T00:00:00Z"))).toBe(false)
     expect(inReopenWindow({ status: "expired", closedAt }, new Date("2026-11-02T00:00:00Z"))).toBe(false)
+  })
+})
+
+describe("06 §4.2 B5 — process instances (phase 8)", () => {
+  function procTopic(instances: TopicInstance[]): TopicSnapshot {
+    return {
+      id: "t-proc",
+      status: "open",
+      subState: "none",
+      clientId: "c1",
+      contactId: null,
+      counterpartyRaw: "Альфа",
+      counterpartyKey: "",
+      dealId: null,
+      title: "Альфа — Клиент перестал покупать",
+      matter: "Клиент перестал покупать",
+      family: "account",
+      leadCode: null,
+      class: null,
+      score: 0,
+      band: "none",
+      references: [],
+      products: [],
+      firstSeenAt: new Date("2026-11-01T04:00:00Z"),
+      lastActivityAt: new Date("2026-11-01T04:00:00Z"),
+      closedAt: null,
+      closedReason: null,
+      relatedTopicId: null,
+      mergedIntoTopicId: null,
+      taxonomyVersion: 1,
+      instances,
+      items: [],
+    }
+  }
+  const proc = (p: Partial<TopicInstance> = {}) =>
+    ti("WATCH_CODE", "2026-11-10T04:00:00Z", { itemId: null, conditionKey: "client:c1:last_order:o1", ...p })
+
+  it("a watchdog instance stays active while not cleared (no relevance window)", () => {
+    const old = ti("WATCH_CODE", "2026-06-01T04:00:00Z", { itemId: null })
+    expect(instanceActivity([old], book, NOW)[0]).toMatchObject({ active: true })
+  })
+
+  it("a cleared instance stops scoring (condition_cleared)", () => {
+    const act = instanceActivity([proc({ clearedAt: new Date("2026-11-12T04:00:00Z") })], book, NOW)
+    expect(act[0]).toMatchObject({ active: false, reason: "condition_cleared" })
+  })
+
+  it("process instances move last activity; the topic scores the weight", () => {
+    const t = procTopic([proc()])
+    recomputeTopic(t, book, NOW, () => "active")
+    expect(t.lastActivityAt.toISOString()).toBe("2026-11-10T04:00:00.000Z")
+    expect(t.score).toBe(5)
+    expect(t.leadCode).toBe("WATCH_CODE")
+    expect(t.status).toBe("open")
+  })
+
+  it("the topic resolves when its last process instance is cleared", () => {
+    const t = procTopic([proc({ clearedAt: new Date("2026-11-13T04:00:00Z") })])
+    const ev = recomputeTopic(t, book, NOW, () => "active")
+    expect(t.status).toBe("resolved")
+    expect(t.closedReason).toBe("condition_cleared:WATCH_CODE")
+    expect(t.score).toBe(0)
+    expect(ev).toEqual([expect.objectContaining({ type: "resolved", payload: { code: "WATCH_CODE", conditionCleared: true } })])
+  })
+
+  it("another active instance keeps the topic open", () => {
+    const t = procTopic([proc({ clearedAt: new Date("2026-11-13T04:00:00Z") }), ti("INVOICE_OVERDUE", "2026-11-12T09:00:00Z")])
+    recomputeTopic(t, book, NOW, () => "active")
+    expect(t.status).toBe("open")
+    expect(t.leadCode).toBe("INVOICE_OVERDUE")
   })
 })

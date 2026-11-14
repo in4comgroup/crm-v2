@@ -339,6 +339,8 @@ export async function hydrateTopics(rows: TopicRow[]): Promise<TopicSnapshot[]> 
         subjectIndex: signalInstance.subjectIndex,
         evidence: signalInstance.evidence,
         createdAt: signalInstance.createdAt,
+        clearedAt: signalInstance.clearedAt,
+        conditionKey: signalInstance.conditionKey,
         itemDate: sql<Date | null>`coalesce(${sourceItem.sourceCreatedAt}, ${sourceItem.createdAt})`.mapWith(sourceItem.createdAt),
         signalFacts: sourceItem.signalFacts,
       })
@@ -380,6 +382,8 @@ export async function hydrateTopics(rows: TopicRow[]): Promise<TopicSnapshot[]> 
         .filter((d) => d.subjectIndex === i.subjectIndex || d.subjectIndex === -1 || i.subjectIndex === -1)
         .map((d) => d.date),
       evidence: i.evidence,
+      clearedAt: i.clearedAt,
+      conditionKey: i.conditionKey,
     })
   }
   return rows.map((r) => byId.get(r.id)!)

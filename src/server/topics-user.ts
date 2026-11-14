@@ -649,6 +649,10 @@ export async function getTopicView(orgId: string, topicId: string, now: Date = n
       notCountedReason: i.notCountedReason,
       evidence: i.evidence,
       createdAt: i.createdAt.toISOString(),
+      origin: i.origin,
+      processKey: i.processKey,
+      clearedAt: iso(i.clearedAt),
+      clearedReason: i.clearedReason,
     })),
     events: events.map(({ e, userName }) => ({
       id: e.id,

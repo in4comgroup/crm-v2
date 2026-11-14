@@ -7,6 +7,7 @@ import { db } from "@/db/drizzle"
 import { platformSetting, platformSettingLog, user } from "@/db/schema"
 import { attentionParamsOverrideSchema, type AttentionParamsOverride } from "@/lib/topics/attention-params"
 import { deliveryParamsOverrideSchema, type DeliveryParamsOverride } from "@/lib/topics/delivery-params"
+import { checksParamsOverrideSchema, type ChecksParamsOverride } from "@/lib/topics/checks"
 
 // Platform-wide settings (table `platform_setting`). Every key is declared
 // here with a zod schema and a default; a missing row means the default.
@@ -48,6 +49,13 @@ export const PLATFORM_SETTINGS = {
   "delivery.params": {
     schema: deliveryParamsOverrideSchema.nullable(),
     default: null as DeliveryParamsOverride | null,
+  },
+  // CRM checks + watchdogs (topics phase 8): a PARTIAL override of the code
+  // defaults in src/lib/topics/checks.ts (null = defaults). Per-org
+  // override: org_setting `checks.params`.
+  "checks.params": {
+    schema: checksParamsOverrideSchema.nullable(),
+    default: null as ChecksParamsOverride | null,
   },
   // Deal bridge (topics phase 5, spec 01 §9.2, Q27). Per-org override:
   // org_setting with the same key (null there = this value).

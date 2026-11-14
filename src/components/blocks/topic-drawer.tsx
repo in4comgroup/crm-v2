@@ -392,18 +392,33 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
                 ) : (
                   <ul className="space-y-2">
                     {t.signals.map((s) => (
-                      <li key={s.id} className={cn("rounded-md border p-2 text-sm", !s.counted && "opacity-70")}>
+                      <li key={s.id} className={cn("rounded-md border p-2 text-sm", (!s.counted || s.clearedAt) && "opacity-70")}>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium">{s.labelRu ?? s.code}</span>
                           <span className="text-xs text-muted-foreground">
                             уверенность {CONFIDENCE_LABEL[s.confidence] ?? s.confidence} · {formatDateTimeRu(s.createdAt)}
                           </span>
-                          {!s.counted && (
+                          {s.origin === "system_of_record" && (
+                            <Badge variant="secondary" className="font-normal text-xs">
+                              Данные CRM
+                            </Badge>
+                          )}
+                          {s.origin === "communication" && s.processKey?.startsWith("check.") && (
+                            <Badge variant="secondary" className="font-normal text-xs">
+                              Сторож
+                            </Badge>
+                          )}
+                          {!s.counted && !s.clearedAt && (
                             <Badge variant="outline" className="font-normal text-xs">
                               не учитывается
                             </Badge>
                           )}
                         </div>
+                        {s.clearedAt && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Условие снято{s.clearedReason ? `: ${s.clearedReason}` : ""}
+                          </p>
+                        )}
                         {s.evidence && <p className="mt-1 italic text-muted-foreground">«{s.evidence}»</p>}
                       </li>
                     ))}
@@ -417,6 +432,9 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
                   <TabsTrigger value="events">Журнал ({t.events.length})</TabsTrigger>
                 </TabsList>
                 <TabsContent value="items" className="pt-2">
+                  {t.items.length === 0 && (
+                    <p className="text-sm text-muted-foreground">Тема создана проверкой данных CRM.</p>
+                  )}
                   <ul className="space-y-2">
                     {t.items.map((i) => (
                       <li key={`${i.sourceItemId}:${i.subjectIndex}`} className="rounded-md border p-2 text-sm">

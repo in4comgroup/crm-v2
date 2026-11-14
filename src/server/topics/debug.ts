@@ -136,6 +136,11 @@ export type TopicDebugInstance = {
   scoreContrib: number
   evidence: string
   createdAt: string
+  origin: string
+  processKey: string | null
+  conditionKey: string | null
+  clearedAt: string | null
+  clearedReason: string | null
 }
 
 export type TopicDebugEvent = {
@@ -459,6 +464,11 @@ export async function getTopicDebugDetail(orgId: string, topicId: string): Promi
       scoreContrib: i.scoreContrib,
       evidence: i.evidence,
       createdAt: i.createdAt.toISOString(),
+      origin: i.origin,
+      processKey: i.processKey,
+      conditionKey: i.conditionKey,
+      clearedAt: i.clearedAt ? i.clearedAt.toISOString() : null,
+      clearedReason: i.clearedReason,
     })),
     events: events.map(({ e, userName }) => ({
       id: e.id,

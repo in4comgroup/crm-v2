@@ -3030,9 +3030,25 @@ export const signalInstance = pgTable(
       onDelete: "set null",
     }),
     taxonomyVersion: integer("taxonomy_version").notNull(),
+    // ── Process codes (topics phase 8: CRM checks + watchdogs, 06 §4.2 B5).
+    // Dedupe key of the condition the process found, e.g.
+    // `client:<id>:last_order:<orderId>`; null for parser instances.
+    conditionKey: text("condition_key"),
+    // Data of the check (numbers, dates, order / product ids) for the card
+    // writer, the drawer and the next check. Shape per code (src/lib/topics/checks.ts).
+    facts: jsonb("facts"),
+    // Last time the process found the condition still true.
+    checkedAt: timestamp("checked_at"),
+    // B5: the condition is no longer true → the instance stops scoring.
+    clearedAt: timestamp("cleared_at"),
+    // Russian reason («Новый заказ № 1250 от 03.12.2026»).
+    clearedReason: text("cleared_reason"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
+    uniqueIndex("signal_instance_condition_uq")
+      .on(table.organizationId, table.code, table.conditionKey)
+      .where(sql`${table.conditionKey} is not null`),
     index("signal_instance_item_idx").on(table.sourceItemId),
     index("signal_instance_org_code_idx").on(table.organizationId, table.code, table.createdAt),
     index("signal_instance_topic_idx")
@@ -3449,4 +3465,37 @@ export const topicDeliveryPref = pgTable(
       .notNull(),
   },
   (table) => [primaryKey({ columns: [table.userId, table.organizationId] })],
+)
+
+// ── Topics plan phase 8: CRM checks + watchdogs (spec topics/01 §5.6,
+// 05 §3.6, 06 §4.2 B5). One row per run of one check for one org.
+// check_key: see CHECK_KEYS in src/lib/topics/checks.ts. period_key: the
+// schedule period (`2026-11-14` daily, `2026-W46` weekly, `2026-11`
+// monthly, `run:<runId>` for checks of every hourly run). trigger: schedule
+// | manual | preview. status: running | ok | failed | skipped. Value lists
+// are text validated in code.
+export const topicCheckRun = pgTable(
+  "topic_check_run",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    checkKey: text("check_key").notNull(),
+    periodKey: text("period_key").notNull(),
+    trigger: text("trigger").notNull(),
+    status: text("status").notNull(),
+    // { evaluated, found, created, refreshed, cleared, skipped, ... }
+    counts: jsonb("counts").$type<Record<string, number>>().notNull().default({}),
+    error: text("error"),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    index("topic_check_run_org_check_idx").on(table.organizationId, table.checkKey, table.startedAt),
+    // A scheduled check runs once per period (re-runs inside the period are no-ops).
+    uniqueIndex("topic_check_run_schedule_uq")
+      .on(table.organizationId, table.checkKey, table.periodKey)
+      .where(sql`${table.trigger} = 'schedule' AND ${table.status} <> 'failed'`),
+  ],
 )

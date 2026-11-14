@@ -1,6 +1,6 @@
 # Topics — development plan (final)
 
-Status: **final, 2026-11-13. Progress: phases 0–6 built (not deployed); IN4COM is `on` since 2026-11-14 (R25, pilot); phase 7 (delivery: email part) built 2026-11-14, Telegram open.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
+Status: **final, 2026-11-13. Progress: phases 0–6 built (not deployed); IN4COM is `on` since 2026-11-14 (R25, pilot); phase 7 (delivery: email part) built 2026-11-14, Telegram open; phase 8 (CRM checks + watchdogs) built 2026-11-14, switch off.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
 Spec: [01-specification.md](01-specification.md) · Decisions: [02-open-questions.md](02-open-questions.md) (§ F = R1–R25) · Registry: [05-signals-registry.md](05-signals-registry.md) · Attention: [06-attention-engine.md](06-attention-engine.md)
 
 The plan of 2026-11-10 assumed another copy of the product (Yandex models, own PostgreSQL, K8s CronJob, `llm_usage`). It is replaced by this document. Its business content (phases, scope, gates) is kept.
@@ -33,13 +33,13 @@ The plan of 2026-11-10 assumed another copy of the product (Yandex models, own P
 | Deal discovery | Process `deals.discovery` (name match); since phase 0 it journals every stage move (`deal_activity`) | Replaced in phase 5, removed in phase 12 |
 | Mock agent | Removed in phase 0 (R9) | — |
 | Orchestration | Daily cron `0 3 * * *` → `runDailyPipeline` (model catalog sync + cost check, sync → parse → upload), `pipeline_run`; **hourly** cron `0 * * * *` → `runTopicsPipeline` (phase «signals» built in phase 2; the others are stubs), `topics_run` | Phases 3–5a fill the stubs |
-| DB process | Drizzle migrations `0000`–`0025` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027, `0021` deal bridge, `0022` deal state + risks, `0023` R22 follow-up: vertical guard removed from a rule template, `0024`–`0025` delivery), reference data in migrations | Next topics migration: **0026** |
+| DB process | Drizzle migrations `0000`–`0026` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027, `0021` deal bridge, `0022` deal state + risks, `0023` R22 follow-up: vertical guard removed from a rule template, `0024`–`0025` delivery, `0026` CRM checks), reference data in migrations | Next topics migration: **0027** |
 | Topics foundations (phase 0) | `org_setting` (`topics.enabled`, budget override), system actor «Агент», «Темы» tab (modes, runs, golden set, model spike) | Used by every later phase |
 | Signals registry (phase 1) | DB registry (one generic pack; 158 codes after `0017`: 144 `active`, 8 `parked`, 6 `gated`, no retired codes; attributes, relations, 9 risk types, rule templates), `getEffectiveSignals(orgId)`, «Сигналы» tab with the full editor, Markdown export (preset mechanism kept, no presets defined — R22) | Extraction prompt reads it |
 | Signal extraction (phase 2) | `src/server/topics/signals/` (gates, extraction, post-processing, storage, hourly runner, manual action), `signal_instance`, `source_item_subject`, `source_item.signal_*`, `analysis_exclusion` (owner UI on Sources), `src/lib/ru-mail/`, eval runner with stored metrics, signal review on «Темы» | Input of topic resolution (phase 3): counted instances + subjects per item |
 | Access | Sign-in gate `src/proxy.ts`; routes check the session; `"use server"` modules are session-bound | Engine code is `server-only` and takes `organizationId` explicitly |
 
-Missing today: delivery (email digest, Telegram to staff, evening reminders — phase 7), system-of-record signals and watchdogs (phase 8). (Everything of the MVP — phases 0–6 — is built.)
+Missing today: Telegram to staff (phase 7), the offer countdown and 7 process codes without data (phase 8), phases 9–12. (Phases 0–8 are built, apart from these.)
 
 ## Overview
 
@@ -54,8 +54,8 @@ Missing today: delivery (email digest, Telegram to staff, evening reminders — 
 | 5a | Deal state and risks | 1.5 | `deals.state_summary`, risk engine, «Есть риски» | No (shadow) | ✅ built |
 | 6 | UI and pilot | 2 | «Сейчас / Сводка / Неделя», topic drawer, company / deal tabs, «Создать заказ» on order topics, IN4COM switch-on | **Yes (IN4COM)** | ✅ built (switch-on pending) |
 | **MVP** | | **≈ 17.5** | | |  |
-| 7 | Delivery | 2 | Email digest, Telegram to staff, P6 evening reminders and daily limit | Yes |  |
-| 8 | System-of-record signals and watchdogs | 2.5 | Order-rhythm topics for IN4COM, then no-response / countdown / contract expiry | Yes |  |
+| 7 | Delivery | 2 | Email digest, Telegram to staff, P6 evening reminders and daily limit | Yes | ✅ email built (Telegram open) |
+| 8 | System-of-record signals and watchdogs | 2.5 | Order-rhythm topics for IN4COM, then no-response / countdown / contract expiry | Yes | ✅ built (switch off; countdown open) |
 | 9 | Agency codes (second pilot) | 2 | 05d codes added to the one pack by migration, agency funnel and 26 risks, area 0, win estimate | Yes |  |
 | 10 | Orders link | 1 | `ORDER_CONFIRMED` from order status, topic ↔ order link both ways | Yes |  |
 | 11 | External market signals | 2 | `topics.external_search` (gateway web search) → external signal instances | Yes |  |
@@ -311,6 +311,9 @@ Exit (go-live sign-off): Q23 targets met for 2 consecutive weeks.
 
 - **7 Delivery (2 w):** daily email digest per user; Telegram to staff (bind via the org bot, ≤ 2 per card per 7 days); P6 evening reminders and daily limit (Q24-5). **Status 2026-11-14 — email part built, not deployed** (`src/server/topics/delivery/`, migrations `0024`, `0025`): morning / weekly digests, evening reminders (≤ 3 per cycle, in-app marker), P6 daily limit (read-time, per recipient), routing (assignee → deal owner → every member), user settings on /account, admin block «Рассылка» (org switch `topics.delivery.email`, default off; preview; test send to the admin). 06 §16 test 12 implemented. **Open:** the Telegram channel (stub `DeliveryChannel`; bind via the org bot, `telegramMaxPerCard7d`).
 - **8 System-of-record and watchdogs (2.5 w):** IN4COM order data first (dormant by order rhythm, product stopped, YoY); then offer no-response (7 days), countdowns, contract expiry; "confirmed" rules for absence codes (Q24-11).
+  **Status 2026-11-14 — built, not deployed; org switch off** (`src/server/topics/checks/`, migration `0026_topics_phase8_checks`, contract `src/lib/topics/checks.ts`). 13 checks → 14 process codes: order data (ACCOUNT_DORMANT, ACCOUNT_PRODUCT_STOPPED, ACCOUNT_PRODUCT_NEW, ACCOUNT_NEW_FOLLOWUP, ACCOUNT_REVENUE_DECLINE_YOY / GROWTH_YOY, ACCOUNT_REVENUE_STAGNATION, ACCOUNT_REACTIVATION_DUE) and watchdogs (SALES_OFFER / PRICE / MATERIAL_NO_RESPONSE, SALES_ORDER_CONFIRMATION_OPEN, DELIVERY_REPORT_OPEN, CONTRACT_NOT_RENEWED). Process signal instances (no source item, `condition_key`, `facts`, evidence = the data fact in Russian); B5 «condition cleared» in the lifecycle (the topic resolves with `condition_cleared:<CODE>`); hourly phase «checks» between «topics» and «attention»; schedule daily / weekly / monthly at 07:00 org time, watchdogs every run; log `topic_check_run`; org switch `topics.checks` { orders, watchdogs } (default off); parameters `checks.params`; admin block «Проверки CRM» (preview without writes, run now, switches, log); drawer badges «Данные CRM» / «Сторож», «Условие снято». Tests: 39 order + 43 watchdog + schedule + B5 lifecycle tests.
+  Dry run on IN4COM (2026-11-14): `account_dormant` 14 clients (order data ends 31.07.2026, pause 105 days > rhythm 90 days), all other checks 0 (orders only in 2026 → no YoY / stagnation; no offer-sent signals yet → no watchdog). Live write test (rows removed after): 2 dormant topics «<Компания> — Клиент перестал покупать» in «Сводка» (score 5, D4), refresh without new topics, card written by `topics.card_writer` without a source item, clear → topic resolved, watchdog on an expired topic → reopened in «Сейчас» (score 7) → clear → resolved, manual run logged.
+  **Open:** offer countdown 10 / 5 / 1 (needs an `offerValidUntil` fact in the extraction prompt + eval); not built for lack of data: ACCOUNT_MEETING_OVERDUE (client segment), INTERNAL_PRICE_CHANGE / INTERNAL_PRODUCT_STATUS_UPDATE (catalogue history), SIGNAL_SPEND_* / NEW_TOP_SPENDER / TRACKING_GAP (external data, phase 11); product stopped ignores «open supplier delay»; reactivation ignores «client declined our last offer».
 - **9 Agency pack (2 w):** seed 05d by migration; agency funnel without go / no-go; area 0; 26 risks; `deal.win_estimate*`; golden set; Telegram group chats and voice notes shipped before (separate tasks).
 - **10 Orders link (1 w):** `ORDER_CONFIRMED` from order status; topic ↔ order link both ways.
 - **11 External signals (2 w):** `topics.external_search` (gateway web search; today Google models only) + `topics.external_extraction`; watch list; trend cooldown.
@@ -320,7 +323,7 @@ Out of this plan (separate tasks): functional roles and rights (Q33); Telegram g
 
 ## Next steps (2026-11-14, pilot started)
 
-Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0025` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
+Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0026` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
 
 Current state: the MVP (phases 0–6) is built, not deployed. **IN4COM is `on` (R25)**: its users see the topic lists, cards, topic drawer, «Темы» tabs, agent deals, deal state and risks; the old card / discovery logic is off for IN4COM. New mail reaches topics only when the hourly run runs: on the deployed app (Vercel Pro cron) or with «Запустить сейчас» on «Темы».
 
@@ -330,8 +333,9 @@ Current state: the MVP (phases 0–6) is built, not deployed. **IN4COM is `on` (
 | 2 | Pilot feedback: IN4COM users act on the cards (accept / reject with reason, «Готово», deals «Создать» / «Не сделка»); weekly tuning loop for 4 weeks (reject reasons + missed items → «Сигналы» edits → eval) | IN4COM + platform admin | Go-live sign-off (Q23 targets 2 weeks in a row) |
 | 3 | Golden set + eval (codes and topic groups) to measure the gates | IN4COM reviewers + platform admin | Exit gates of phases 2–5a |
 | 4 | **Phase 7 — delivery**: email part built (digests, evening reminders, P6 daily limit); first real send by the product owner (checklist in `src/app/AGENTS.md` § "Topics delivery (phase 7)"); Telegram channel open | Product owner / development | Telegram bot setup |
+| 5 | **Phase 8 — CRM checks**: review the dry run with the IN4COM sales lead («Темы» → «Проверки CRM» → «Проверить без записи»: today 14 dormant clients, because the order data ends 31.07.2026); import current orders first, then switch on «Проверки по заказам» / «Сторожа по переписке» | Product owner + IN4COM | Current order data |
 
-Note: 15 of the codes made `active` by R23 are process codes (watchdogs, CRM-data trends). Nothing emits them until phase 8.
+Note: phase 8 emits 14 of the 21 active process codes. The other 7 need data that does not exist yet (`CHECKS_NOT_BUILT` in `src/lib/topics/checks.ts`).
 
 ## Risks
 

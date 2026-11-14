@@ -167,6 +167,12 @@ export type TopicSignalView = {
   notCountedReason: string | null
   evidence: string
   createdAt: string
+  /** communication | system_of_record | external (phase 8: process signals). */
+  origin: string
+  processKey: string | null
+  /** B5: the condition of a process signal is no longer true. */
+  clearedAt: string | null
+  clearedReason: string | null
 }
 
 export type TopicEventView = {
@@ -356,7 +362,7 @@ export function describeTopicEvent(
   const codeLabel = code ? (labelOf(code) ?? str(p.labelRu) ?? code) : null
   switch (e.type) {
     case "created":
-      return "Тема создана"
+      return codeLabel && p.process ? `Тема создана проверкой: ${codeLabel}` : "Тема создана"
     case "item_attached":
       return `Добавлено сообщение${str(p.role) === "closing" ? " (закрывает вопрос)" : ""}`
     case "item_detached": {
@@ -364,9 +370,15 @@ export function describeTopicEvent(
       return `Сообщение отвязано от темы${why ? ` (${why})` : ""}`
     }
     case "reopened":
-      return "Тема открыта снова: пришло новое сообщение"
+      return codeLabel && p.process ? `Тема открыта снова: ${codeLabel}` : "Тема открыта снова: пришло новое сообщение"
     case "resolved":
+      if (codeLabel && p.conditionCleared) return `Тема решена: условие «${codeLabel}» больше не выполняется`
       return codeLabel ? `Тема решена: ${codeLabel}` : "Тема решена"
+    case "process_signal": {
+      const what = codeLabel ?? "сигнал проверки"
+      if (str(p.action) === "cleared") return `Условие снято: ${what}${str(p.reason) ? ` — ${str(p.reason)}` : ""}`
+      return `Проверка данных: ${what}${str(p.evidence) ? ` — ${str(p.evidence)}` : ""}`
+    }
     case "dormant":
       return "Тема затихла: долго нет активности"
     case "expired":

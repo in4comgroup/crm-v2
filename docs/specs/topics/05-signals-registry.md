@@ -171,7 +171,7 @@ AND (code not in a block parked for this pack, e.g. agency: H, J)
 
 There are **no presets** now. The preset «Пилот дистрибуции (IN4COM)» (`distribution-pilot`) is removed (R22); the preset mechanism stays in the code for later use.
 
-An org gets signals by switching the `base` pack on in «Сигналы». No org overrides are needed: every code whose **own** stage is `active` acts: 144 codes, of which 123 go into the live extraction prompt (the other 21 are process codes). Codes with stage `parked` (8) / `gated` (6) stay out. Since R23 (`0017`) no code is `onHold` and no retired code exists. IN4COM on the dev DB: `base` on, all its earlier org overrides deleted.
+An org gets signals by switching the `base` pack on in «Сигналы». No org overrides are needed: every code whose **own** stage is `active` acts: 144 codes, of which 123 go into the live extraction prompt (the other 21 are process codes; phase 8 emits 14 of them, `CHECKS_NOT_BUILT` lists the rest). Codes with stage `parked` (8) / `gated` (6) stay out. Since R23 (`0017`) no code is `onHold` and no retired code exists. IN4COM on the dev DB: `base` on, all its earlier org overrides deleted.
 
 | Pack | State | Notes |
 |---|---|---|

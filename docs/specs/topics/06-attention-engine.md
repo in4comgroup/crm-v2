@@ -94,7 +94,7 @@ An instance is **active** when all of these are true:
 | B2 | No later `state` / S1 instance on the **same topic** lists its code in `closes_codes` | `closed` (+ closing instance id) |
 | B3 | Age ≤ relevance window of the code, **or** the instance has an open deadline in the future | `stale` |
 | B4 | Not marked by a user «Не относится» (unlink / dismiss of this signal) | `dismissed_by_user` |
-| B5 | For `watchdog` / `trend` codes: the trigger condition is still true at the last check | `condition_cleared` |
+| B5 | For process instances (`watchdog` / `trend` / `derived` and the other codes a check emits): the trigger condition is still true at the last check (built in phase 8: the check sets `signal_instance.cleared_at`; a topic with no other active instance resolves with `condition_cleared:<CODE>`) | `condition_cleared` |
 
 **Relevance window [new values]** — field `relevance_days` on the code; default by kind and effort:
 

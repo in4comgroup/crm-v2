@@ -88,6 +88,10 @@ export type TopicInstance = {
   /** ISO dates (YYYY-MM-DD) of deadlines of the instance's subject. */
   deadlines: string[]
   evidence?: string
+  /** Process instances (phase 8): condition no longer true (06 §4.2 B5). */
+  clearedAt?: Date | null
+  /** Process instances (phase 8): dedupe key of the condition; null / absent for parser instances. */
+  conditionKey?: string | null
 }
 
 export type TopicItemLink = {

@@ -81,6 +81,10 @@ export const TOPIC_EVENT_TYPES = [
   "owner_changed",
   "deal_linked",
   "deal_unlinked",
+  // CRM checks + watchdogs (phase 8): a process instance was added to the
+  // topic or its condition was cleared (payload { code, action: added |
+  // cleared, instanceId, evidence?, reason? }).
+  "process_signal",
 ] as const
 export type TopicEventType = (typeof TOPIC_EVENT_TYPES)[number]
 

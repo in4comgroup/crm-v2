@@ -77,6 +77,7 @@ const EVENT_LABELS_RU: Record<string, string> = {
   owner_changed: "Сменён ответственный",
   deal_linked: "Тема привязана к сделке",
   deal_unlinked: "Тема отвязана от сделки",
+  process_signal: "Проверка данных CRM",
 }
 const SKIP_EVENTS = ["attention_changed", "deal_decision", "relinked"]
 

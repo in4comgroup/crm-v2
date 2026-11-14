@@ -1,6 +1,6 @@
 # Topics — signals automation: go-live runbook
 
-Status: **draft, 2026-11-14.** Covers the whole MVP (phases 0–6) and the email part of delivery (phase 7): foundations, signals registry, signal extraction, hourly intake, topic engine, attention, topic cards, deal bridge, deal state and risks, user UI, email digests and evening reminders. Extend it with Telegram delivery (phase 7, later) and system-of-record signals (phase 8).
+Status: **draft, 2026-11-14.** Covers the whole MVP (phases 0–6), the email part of delivery (phase 7) and the CRM checks + watchdogs (phase 8): foundations, signals registry, signal extraction, hourly intake, topic engine, CRM checks, attention, topic cards, deal bridge, deal state and risks, user UI, email digests and evening reminders. Extend it with Telegram delivery (phase 7, later).
 
 Purpose: one step-by-step list of what to switch on / off and what to check, so the whole signals flow works in a **new environment** (the first production deployment). Today there is only one environment and one DB (the DB in `.env`, a test DB). Some parts cannot be tested there (§3), so they must be checked at the switch-on.
 
@@ -22,6 +22,7 @@ Related: spec [01-specification.md](01-specification.md) (§5 extraction, §13 o
 | 4d | Post-processing: drops (unknown code, evidence not in the author's own text, inbound-only / internal-only, date gates), outranks / merges, score and band | `postprocess.ts` | — |
 | 4e | Store: `signal_instance`, `source_item_subject`, `source_item.signal_*` (status `done` / `skipped` / `deferred` / `failed`) | `extract-item.ts` | — |
 | 5 | **Topics phase**: items with `signal_status = done`, same window, oldest first, one at a time, 200 / org / run → counterparty → hard reference key → candidates → AI matcher `topics.topic_match` → attach / new topic; closing, reopen, dormant / expired sweep; re-link of unresolved topics | `src/server/topics/resolve-phase.ts`, `resolver.ts`, `topic-store.ts` | Same hourly run, after «signals» |
+| 5a | **Checks phase** (phase 8, after «topics»): order-data checks (ACCOUNT_DORMANT, PRODUCT_STOPPED / NEW, NEW_FOLLOWUP, REVENUE YoY / STAGNATION, REACTIVATION_DUE; daily / weekly Monday / monthly day 3 at 07:00 org time) and watchdogs over communication topics (no reply to an offer / prices / materials after the agreed date or 7 days, open order confirmation, open report, contract not renewed; every run) → process signals (no source item, `condition_key`, evidence = the data fact) → new topic «<Компания> — …» or the watchdog on the offer topic (reopened); a condition no longer true clears the signal (B5) and resolves the topic; ≤ 30 new per check per run; log `topic_check_run` | `src/server/topics/checks/` | **Writes only for the groups switched on in `topics.checks` (orders / watchdogs, default both off).** No AI cost |
 | 6 | **Attention phase**: due topics (`next_attention_check_at ≤ now`, new, changed params) → profile, list («Сейчас / Сводка / Неделя»), escalations, cycle, card expiry (working days from `work_calendar_day`) | `src/server/topics/attention/` | Same hourly run, after «topics»; also right after every topic change |
 | 7 | **Cards phase**: one open topic card per placed topic; AI `topics.card_writer` only on first placement / new cycle (≤ 40 / org / run); close / expire with the topic | `src/server/topics/cards/` | Same hourly run, after «attention». Cards are **hidden from users unless the org mode is `on`** |
 | 8 | **Deals phase**: new signals of the last 30 days on topics (50 topics / run) → the org's stage rules → auto-create (score ≥ 7, high confidence, client resolved, no open deal of client + type) / `deal_proposal` card / forward move / `stage_confirmation` card / outcome / pause; every change journaled with topic, item, rule, evidence | `src/server/topics/deals/`, `src/server/deal-engine.ts` | Same hourly run, after «cards». **In `shadow`: dry run** — decisions and hidden cards are stored, deals are not changed. Without org stage rules the phase skips the org |
@@ -40,7 +41,7 @@ Related: spec [01-specification.md](01-specification.md) (§5 extraction, §13 o
 | `DATABASE_URL`, storage vars (`R2_*`), `CREDENTIALS_ENCRYPTION_KEY` | Vercel env | — | DB; markdown in storage (signals read it there after upload); source credentials |
 | `NEXT_PUBLIC_APP_URL` | Vercel env (build time) | public HTTPS origin | Telegram webhook registration on credential save |
 | Crons | `vercel.ts` (and `ORCHESTRATION_CONFIG`) | daily `0 3 * * *`, topics `0 * * * *` | The two schedules |
-| Migrations | `pnpm db:migrate` on the target DB **before** the deploy | `0000`–`0017` | Tables + registry seed (`0012`–`0014`, `0016`, `0017`) |
+| Migrations | `pnpm db:migrate` on the target DB **before** the deploy | `0000`–`0026` | Tables + registry seed (`0012`–`0014`, `0016`, `0017`) |
 | Source automation | Sources → «Управление источниками организации» (owner) or `/settings` (admin): `automated_parsing_is_allowed` | Вкл (default) / Выкл | Off = the daily run does not sync / parse / upload this source → no signals from it |
 | Model per process | `/settings` → «Процессы ИИ» → «Извлечение сигналов» (`topics.signal_extraction`) | default `google/gemini-2.5-flash` | Quality, cost, latency |
 | Daily AI budget | `/settings` → «Использование ИИ» → «Дневной бюджет ИИ» | platform default 5 USD / day; org override | When reached, background AI stops for the org (parse too); items wait as `deferred` |
@@ -49,6 +50,7 @@ Related: spec [01-specification.md](01-specification.md) (§5 extraction, §13 o
 | Exclusions | Sources → «Исключения из анализа» (org owner) | list | Addresses / domains / chats never stored, parsed or sent to AI |
 | Discovery blocklist | `/clients` blocklist (owner) | list | Gate 3: skips external authors on the list |
 | Own-org identity | `/account` org profile + `api/org-identity` registry (owner) | names, sites, addresses | Parse-time attribution: inbound / outbound direction of every item |
+| **CRM checks** | `/settings` → «Темы» → «Проверки CRM» → org | org_setting `topics.checks` = { orders, watchdogs }, default both **off** | On = the hourly run writes process topics of that group (users see them in mode `on`). «Проверить без записи» = dry run; «Запустить сейчас» writes at once |
 | **Topics mode** | `/settings` → «Темы» → «Режим тем по организациям» | `off` (default) / `shadow` («Тень») / `on` («Включено») | `off`: org is not processed. `shadow`: engine runs and stores, users see nothing. `on`: same as shadow until phase 6 builds the UI. **Switching from `off` sets the 7-day history start** |
 
 ## 3. What the test environment cannot prove
@@ -86,6 +88,8 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | T11a | «Темы (отладка)» on «Темы»: phase «topics» in «Запуски» has `failed = 0`; open 10 topics | One business question per topic (§2.1); reminders joined to their request; two invoices = two topics; counterparty linked to the right client / contact; titles «Компания — вопрос» |
 | T14 | Email env set (`EMAIL_PROVIDER` + Nylas `NYLAS_API_KEY` / `NYLAS_API_URI` / `NYLAS_GRANT_ID` with a send scope, or Resend `RESEND_API_KEY` + `RESEND_FROM` on a verified domain) and `NEXT_PUBLIC_APP_URL` = the public HTTPS origin; /settings → «Темы» → «Рассылка» → org → «Показать письмо» for each kind → «Отправить мне тестовое письмо» | Test mail arrives; links open the app; log row «Тестовое письмо» |
 | T15 | Switch on «Рассылка тем по почте» for the org (B9) | Next run inside a window (07:30–11:30, Fri 12:00–16:00, 17:00–21:00 org time) logs `sent` rows; members can turn kinds off on /account → «Уведомления» |
+| T16 | «Темы» → «Проверки CRM» → org → «Проверить без записи» (all checks) | Numbers per check look right against the order data (e.g. dormant clients really stopped buying; no flood from stale imports); `skip_*` reasons make sense |
+| T17 | Switch on «Проверки по заказам» and / or «Сторожа по переписке» (B10) | Next hourly run logs `topic_check_run` rows (`ok`); new topics «<Компания> — Клиент перестал покупать» etc. appear in «Все темы» with the badge «Данные CRM»; a new order clears ACCOUNT_DORMANT the next day |
 | T13 | After B7 (`on`): log in as an org member; open the dashboard | Tabs «Темы» / «История карточек»; «Сейчас» shows the open topic cards with actions; «Принять» makes a task; «Отклонить» asks for a reason code; «Создать заказ» opens the order dialog; the company page has «Темы»; «Найти в источниках» / Magic buttons are gone |
 | T12 | «Использование ИИ»: filter process «Извлечение сигналов» | Cost per item and per day as expected (§6 M3); no budget block for the org |
 
@@ -101,6 +105,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | B6 | **Budget** agreed: daily AI USD per org from the measured cost (M3) × expected volume | Product owner | Org override set on «Дневной бюджет ИИ» if 5 USD is not enough |
 | B7 | **Switch to `on`** («Темы» → org → «Включено») after the shadow review: users get the dashboard tabs «Сейчас / Сводка / Неделя / Все темы», the topic drawer, «Темы» tabs, agent deals, deal state and risks; the old Custom-rule cards (incl. «Telegram orders», R7) and the name-based deal discovery stop for the org | Product owner | Shadow review (B4) accepted |
 | B9 | **Email digests on** for the org after the test mail (T14) is accepted | Product owner | Members informed that digests start |
+| B10 | **CRM checks on** for the org after the dry run (T16) is reviewed with the sales lead: order data complete and current (orders imported up to today), thresholds agreed (`checks.params`: rhythm floor 90 d, best year ≥ 300 000 ₽, reply window 7 d, …) | Product owner + org sales lead | Members told what «Данные CRM» / «Сторож» topics mean |
 | B8 | **Tuning loop** for 4 weeks after `on`: weekly read of reject reasons and missed items → registry edits in «Сигналы» → eval | IN4COM reviewers + platform admin | Go-live sign-off: Q23 targets for 2 consecutive weeks |
 
 ## 6. Monitoring after the switch-on
@@ -140,6 +145,7 @@ GROUP BY 1 ORDER BY 2 DESC;
 | One noisy sender / chat | «Исключения из анализа» | Not stored / not analysed from now on; already parsed items need a re-parse to drop (O4) |
 | Bad code text | Edit the code in «Сигналы» (new version), or set its stage to `onHold` | Next items use the new text; stored signals are not re-scored (re-run «Извлечь заново» per item if needed) |
 | Wrong agent deals | Org setting `deals.autoCreateEnabled = false` (proposals only), or set the org back to `shadow` (deals: dry run) | No new automatic deals; existing ones can be undone with «Отменить» |
+| Too many / wrong check topics | «Темы» → «Проверки CRM» → switch the group off (stops new ones at the next run); wrong topics: «Не относится» in the drawer; tune `checks.params` (platform / org setting) | Existing topics stay; a dismissed topic is never reopened by a watchdog |
 | Too many / wrong emails | «Рассылка» → switch «Рассылка тем по почте» off (stops at once); a member turns kinds off on /account → «Уведомления» | No further digests; the log keeps the history |
 | Whole engine | Remove the topics cron from `vercel.ts` and redeploy | No hourly run for any org |
 
@@ -155,7 +161,7 @@ GROUP BY 1 ORDER BY 2 DESC;
 |---|---|---|---|
 | O1 | ~~Mail / Google Chat / Drive synced and parsed only once a day~~ | — | **Done 2026-11-14:** phase «intake» (sync → parse → upload per org) runs first in the hourly topics run. Watch the run duration: the whole hourly run is one workflow step (parse ≤ 50 + signals ≤ 200 items per org) |
 | O2 | The «Обработать» button on Sources runs parse → upload only (spec §13 says it should also run signals) | Manual processing does not give signals until the next hourly run | The separate admin action «Извлечь сигналы» exists; join them when the topics UI is built |
-| O3 | 15 active process codes (watchdogs, CRM trends) have no process yet | They never fire until phase 8 | None now |
+| O3 | ~~15 active process codes have no process~~ | — | **Phase 8 (2026-11-14):** 14 process codes emitted by checks; 7 not built (no data: client segment, catalogue history, external data — `CHECKS_NOT_BUILT`); offer countdown 10 / 5 / 1 needs an `offerValidUntil` fact in the extraction prompt |
 | O4 | Removing an exclusion does not bring items back; adding one does not remove parsed items | Manual re-parse needed | Accept for MVP |
 | O5 | Attachments (child items) are not read by extraction | Signals only from the message body | Revisit with real data |
 | O6 | Prompt is 123 codes / ≈ 123k characters | Cost and latency per item | Measure in B3; two-pass mode (block classifier) exists in the spike if needed |

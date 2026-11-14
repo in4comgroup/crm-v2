@@ -1027,7 +1027,19 @@ function TopicDetailDialog({
                             <TableCell className="align-top">
                               <div className="font-mono text-xs">{i.code}</div>
                               {i.labelRu && <div className="text-xs text-muted-foreground">{i.labelRu}</div>}
-                              <div className="font-mono text-[10px] text-muted-foreground">{i.sourceItemId}</div>
+                              <div className="font-mono text-[10px] text-muted-foreground">{i.sourceItemId ?? "без сообщения"}</div>
+                              {(i.origin !== "communication" || i.processKey) && (
+                                <div className="font-mono text-[10px] text-muted-foreground">
+                                  {i.origin}
+                                  {i.processKey ? ` · ${i.processKey}` : ""}
+                                  {i.conditionKey ? ` · ${i.conditionKey}` : ""}
+                                </div>
+                              )}
+                              {i.clearedAt && (
+                                <div className="text-[10px] text-amber-600">
+                                  условие снято{i.clearedReason ? `: ${i.clearedReason}` : ""}
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell className="max-w-md whitespace-normal align-top text-xs italic">«{i.evidence}»</TableCell>
                             <TableCell className="align-top text-xs">{CONFIDENCE_LABEL[i.confidence] ?? i.confidence}</TableCell>

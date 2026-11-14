@@ -162,6 +162,13 @@
       "when": 1794655274787,
       "tag": "0022_topics_phase5a_deal_state_risks",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794657633302,
+      "tag": "0023_signals_rule_guard_cleanup",
+      "breakpoints": true
     }
   ]
 }

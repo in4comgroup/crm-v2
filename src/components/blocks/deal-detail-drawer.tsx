@@ -83,6 +83,10 @@ import { CURRENCY_SYMBOL } from "@/lib/deal-board"
 import { DealInitiatorPopover } from "@/components/blocks/deal-initiator-popover"
 import { DealContactsRoles } from "@/components/blocks/deal-contacts-roles"
 import { DealProvenanceTab } from "@/components/blocks/deal-provenance-tab"
+import {
+  RelatedTopicsList,
+  useRelatedTopics,
+} from "@/components/blocks/related-topics"
 import { DealPauseDialog } from "@/components/blocks/deal-lifecycle-dialogs"
 import { DealCreatedByAgentBadge } from "@/components/blocks/deal-kanban-card"
 import {
@@ -213,6 +217,9 @@ export function DealDetailDrawer({
   const [dealTypes, setDealTypes] = useState<DealTypeOption[]>([])
 
   const dealId = deal?.id
+  // «Темы» (spec topics/01 §14): topics linked to this deal; the tab is
+  // shown only when the org's topics mode is `on`.
+  const relatedTopics = useRelatedTopics(dealId ? { dealId } : null, open)
   // Загрузка задач сделки, вынесена для повторного вызова после создания
   // задачи прямо из drawer (кнопка «Новая задача» во вкладке Задачи).
   const reloadTasks = useCallback((id: string) => {
@@ -563,6 +570,16 @@ export function DealDetailDrawer({
                 <TabsTrigger value="contacts" className="flex-none">
                   Контакты
                 </TabsTrigger>
+                {relatedTopics.visible && (
+                  <TabsTrigger value="topics" className="flex-none">
+                    Темы
+                    {(relatedTopics.result?.open.length ?? 0) > 0 && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">
+                        {relatedTopics.result?.open.length}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                )}
                 <TabsTrigger value="origin" className="flex-none">
                   Происхождение
                 </TabsTrigger>
@@ -1052,6 +1069,22 @@ export function DealDetailDrawer({
               flex+overflow-y-auto над ним не клипал контент вкладки «Задачи»
               и она просвечивала сквозь блок снизу. Перенесено в обычный таб,
               чтобы не зависеть от независимого от скролла позиционирования. */}
+          {relatedTopics.visible && (
+            <TabsContent value="topics" className="py-4 text-sm">
+              <RelatedTopicsList
+                result={relatedTopics.result}
+                loading={relatedTopics.loading}
+                onChanged={() => {
+                  relatedTopics.reload()
+                  // A topic action can change the deal (stage, state) too.
+                  onChanged()
+                }}
+                showCounterparty
+                showDeal={false}
+              />
+            </TabsContent>
+          )}
+
           <TabsContent value="origin" className="py-4 text-sm">
             <DealProvenanceTab deal={deal} active={open && tab === "origin"} />
           </TabsContent>

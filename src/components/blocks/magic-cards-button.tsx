@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useLegacyLogicEnabled } from "@/lib/use-legacy-logic"
 import { Button } from "@/components/ui/button"
 import { Loader, Wand2 } from "lucide-react"
 import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
@@ -40,6 +41,9 @@ export function MagicCardsButton({
 }: {
   onCardsGenerated: () => void
 }) {
+  // Topics mode `on`: the engine makes cards — hide the old button
+  // (spec topics/01 §9.1, §9.2). The server refuses the call anyway.
+  const legacyEnabled = useLegacyLogicEnabled("cards")
   const [running, setRunning] = useState(false)
   const tip = useAnchorTooltip()
 
@@ -119,6 +123,8 @@ export function MagicCardsButton({
 
   // Кнопка-иконка без подписи, как Magic на «Компаниях» — название в
   // подсказке (AnchorTooltip).
+  if (legacyEnabled !== true) return null
+
   return (
     <>
       <Button

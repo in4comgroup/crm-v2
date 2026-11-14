@@ -71,6 +71,12 @@ const EVENT_LABELS_RU: Record<string, string> = {
   merged_from: "Объединена с другой темой",
   deal_context: "Событие по сделке",
   deal_risk: "Риск по сделке",
+  deal_undone: "Сделка агента отменена",
+  snoozed: "Тема отложена",
+  unsnoozed: "Тема возвращена",
+  owner_changed: "Сменён ответственный",
+  deal_linked: "Тема привязана к сделке",
+  deal_unlinked: "Тема отвязана от сделки",
 }
 const SKIP_EVENTS = ["attention_changed", "deal_decision", "relinked"]
 

@@ -19,6 +19,11 @@ import {
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
 import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getServerSession } from "@/lib/get-session"
+import {
+  assertLegacyLogicAllowed,
+  legacyLogicStatus,
+  type LegacyLogicStatus,
+} from "@/server/topics-legacy"
 import { getTextObject } from "@/server/storage"
 import { aiGenerateText } from "@/server/ai/runtime"
 import { loadOwnOrgIdentity, type OwnOrgIdentity } from "@/server/org-identity"
@@ -269,6 +274,15 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
+/**
+ * Whether the active org may run the old card generation (topics mode off /
+ * shadow). The UI hides its buttons when `enabled` is false.
+ */
+export async function cardGenerationStatus(): Promise<LegacyLogicStatus> {
+  const { activeOrgId } = await requireOrgContext()
+  return legacyLogicStatus(activeOrgId, "cards")
+}
+
 export async function previewCardGenerationCandidates(input: {
   from: string | null
   to: string | null
@@ -276,6 +290,7 @@ export async function previewCardGenerationCandidates(input: {
   includeAlreadyAnalyzed?: boolean
 }): Promise<{ count: number; cap: number }> {
   const { activeOrgId } = await requireOrgContext()
+  await assertLegacyLogicAllowed(activeOrgId, "cards")
   const conditions = [
     eq(sourceItem.organizationId, activeOrgId),
     eq(sourceItem.parseStatus, "complete"),
@@ -315,6 +330,8 @@ export async function generateCards(
   input: GenerateCardsInput,
 ): Promise<GenerateCardsResult> {
   const { session, activeOrgId } = await requireOrgContext()
+  // Topics mode `on`: the engine owns cards (spec topics/01 §9.1, §9.2).
+  await assertLegacyLogicAllowed(activeOrgId, "cards")
 
   // 1. Resolve + scope the rule.
   const ruleRows = await db

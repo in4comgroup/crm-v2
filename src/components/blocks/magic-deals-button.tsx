@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useLegacyLogicEnabled } from "@/lib/use-legacy-logic"
 import { Button } from "@/components/ui/button"
 import { Loader, Wand2 } from "lucide-react"
 import { toast } from "sonner"
@@ -31,6 +32,9 @@ export function MagicDealsButton({
 }: {
   onDealsGenerated: () => void
 }) {
+  // Topics mode `on`: the engine makes deals — hide the old button
+  // (spec topics/01 §9.1, §9.2). The server refuses the call anyway.
+  const legacyEnabled = useLegacyLogicEnabled("deals")
   const [running, setRunning] = useState(false)
 
   const handleClick = async () => {
@@ -101,6 +105,8 @@ export function MagicDealsButton({
       setRunning(false)
     }
   }
+
+  if (legacyEnabled !== true) return null
 
   return (
     <Button size="sm" onClick={handleClick} disabled={running}>

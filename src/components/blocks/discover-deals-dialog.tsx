@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useLegacyLogicEnabled } from "@/lib/use-legacy-logic"
 import {
   Dialog,
   DialogContent,
@@ -71,6 +72,9 @@ export function DiscoverDealsDialog({
   trigger: React.ReactNode
   onDealsGenerated: () => void
 }) {
+  // Topics mode `on`: the engine makes deals — hide the old button
+  // (spec topics/01 §9.1, §9.2). The server refuses the call anyway.
+  const legacyEnabled = useLegacyLogicEnabled("deals")
   const [open, setOpen] = useState(false)
 
   const [period, setPeriod] = useState<Period>("last_week")
@@ -279,6 +283,8 @@ export function DiscoverDealsDialog({
       setRunning(false)
     }
   }
+
+  if (legacyEnabled !== true) return null
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

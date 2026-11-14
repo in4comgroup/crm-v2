@@ -27,6 +27,11 @@ import {
 } from "drizzle-orm"
 import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { getServerSession } from "@/lib/get-session"
+import {
+  assertLegacyLogicAllowed,
+  legacyLogicStatus,
+  type LegacyLogicStatus,
+} from "@/server/topics-legacy"
 import { getTextObject } from "@/server/storage"
 import { aiGenerateText } from "@/server/ai/runtime"
 import { openAgentDeals } from "@/server/deal-engine"
@@ -164,6 +169,15 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
+/**
+ * Whether the active org may run the old deal discovery (topics mode off /
+ * shadow). The UI hides its buttons when `enabled` is false.
+ */
+export async function dealDiscoveryStatus(): Promise<LegacyLogicStatus> {
+  const { activeOrgId } = await requireOrgContext()
+  return legacyLogicStatus(activeOrgId, "deals")
+}
+
 export async function previewDealDiscoveryCandidates(input: {
   from: string | null
   to: string | null
@@ -171,6 +185,7 @@ export async function previewDealDiscoveryCandidates(input: {
   includeAlreadyAnalyzed?: boolean
 }): Promise<{ count: number; cap: number }> {
   const { activeOrgId } = await requireOrgContext()
+  await assertLegacyLogicAllowed(activeOrgId, "deals")
   const conditions = [
     eq(sourceItem.organizationId, activeOrgId),
     eq(sourceItem.parseStatus, "complete"),
@@ -210,6 +225,8 @@ export async function generateDeals(
   input: GenerateDealsInput,
 ): Promise<GenerateDealsResult> {
   const { session, activeOrgId } = await requireOrgContext()
+  // Topics mode `on`: the engine owns deals (spec topics/01 §9.1, §9.2).
+  await assertLegacyLogicAllowed(activeOrgId, "deals")
 
   // 1. Resolve + scope the rule.
   const ruleRows = await db
@@ -370,10 +387,11 @@ export async function generateDeals(
     existingDealRows.map((d) => dealDedupKey(d.clientId, d.name)),
   )
 
-  // Topics deal bridge (spec topics/01 §9.2): while the org's topics mode is
-  // `on`, the engine owns its deals. This old name-based discovery stays
-  // (until plan phase 12) but never creates a deal for a client that has an
-  // open agent deal, and never moves an agent deal — counted as duplicates.
+  // Topics deal bridge (spec topics/01 §9.2): in topics mode `on` this old
+  // discovery is refused up front (assertLegacyLogicAllowed above). This
+  // second check only covers a mode switch to `on` during a long run: it
+  // never creates a deal for a client that has an open agent deal, and never
+  // moves an agent deal — counted as duplicates.
   const agentOwned =
     (await getTopicsMode(activeOrgId)) === "on"
       ? await openAgentDeals(activeOrgId)

@@ -73,6 +73,7 @@ export function CardsFeedSection({
   to,
   includeRejected,
   onClearFilters,
+  readOnly = false,
 }: {
   cards: CardRow[]
   loading: boolean
@@ -92,6 +93,8 @@ export function CardsFeedSection({
   to: string
   includeRejected: boolean
   onClearFilters: () => void
+  // Read-only history of old cards (topics mode `on`): no accept / reject.
+  readOnly?: boolean
 }) {
   const filtered = useMemo(() => {
     const fromTs = from ? new Date(from).getTime() : null
@@ -146,9 +149,10 @@ export function CardsFeedSection({
           card={c}
           onChanged={onChanged}
           onCreateOrder={onCreateOrder}
+          readOnly={readOnly}
         />
       )),
-    [visible, onChanged, onCreateOrder],
+    [visible, onChanged, onCreateOrder, readOnly],
   )
 
   // The default date range is "Все время" (both empty); any deviation

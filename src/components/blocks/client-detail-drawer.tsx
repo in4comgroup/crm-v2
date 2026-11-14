@@ -55,6 +55,10 @@ import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
 import { BlacklistEntityButton } from "@/components/blocks/client-blocklist-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
+import {
+  RelatedTopicsList,
+  useRelatedTopics,
+} from "@/components/blocks/related-topics"
 import type { TaskStatus, EntityStatus, FunnelPhase } from "@/db/schema"
 import type { ClientRow } from "@/app/api/clients/route"
 import type { TaskRow } from "@/app/api/tasks/route"
@@ -253,6 +257,11 @@ export function ClientDetailDrawer({
   const [nameFieldFocused, setNameFieldFocused] = useState(false)
 
   const clientId = client?.id
+  // «Темы» (spec topics/01 §14): shown only when the org's topics mode is `on`.
+  const relatedTopics = useRelatedTopics(
+    clientId ? { clientId } : null,
+    open,
+  )
   const showTypeField = orgHasStructuredClientType(client?.organizationId)
 
   const reloadTasks = useCallback((id: string) => {
@@ -482,7 +491,7 @@ export function ClientDetailDrawer({
               </div>
               <TabsList
                 variant="line"
-                className="mt-1 w-full justify-start gap-4"
+                className="mt-1 w-full justify-start gap-4 overflow-x-auto scrollbar-none"
               >
                 <TabsTrigger value="info" className="flex-none">
                   Общая информация
@@ -506,6 +515,16 @@ export function ClientDetailDrawer({
                 <TabsTrigger value="content" className="flex-none">
                   Материалы
                 </TabsTrigger>
+                {relatedTopics.visible && (
+                  <TabsTrigger value="topics" className="flex-none">
+                    Темы
+                    {(relatedTopics.result?.open.length ?? 0) > 0 && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">
+                        {relatedTopics.result?.open.length}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                )}
               </TabsList>
             </div>
 
@@ -980,6 +999,16 @@ export function ClientDetailDrawer({
             <TabsContent value="content" className="py-4 text-sm">
               <ClientContentTable clientId={client.id} sources={sources} />
             </TabsContent>
+
+            {relatedTopics.visible && (
+              <TabsContent value="topics" className="py-4 text-sm">
+                <RelatedTopicsList
+                  result={relatedTopics.result}
+                  loading={relatedTopics.loading}
+                  onChanged={relatedTopics.reload}
+                />
+              </TabsContent>
+            )}
             </div>
             </Tabs>
           </form>

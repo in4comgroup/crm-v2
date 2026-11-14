@@ -187,7 +187,7 @@ const STAGE_EFFECTS = new Set(["create_deal", "move_stage", "outcome_won", "outc
 
 /**
  * `guards.clientGuard` is free text in the templates (e.g.
- * «client_type = HoReCa», «client_is_new only (draft…)»). Known forms are
+ * «client_type = Розница», «client_is_new only (draft…)»). Known forms are
  * checked; anything else is `unknown` → a person decides (proposal).
  */
 export function evalClientGuard(text: string | undefined, facts: ClientFacts | null): "pass" | "fail" | "unknown" {

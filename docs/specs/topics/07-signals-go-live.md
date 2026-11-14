@@ -1,6 +1,6 @@
 # Topics — signals automation: go-live runbook
 
-Status: **draft, 2026-11-14.** Covers what is built: phases 0–5a (foundations, signals registry, signal extraction, hourly intake, topic engine, attention, topic cards, deal bridge, deal state and risks). Extend it when phase 6 adds the user UI.
+Status: **draft, 2026-11-14.** Covers the whole MVP (phases 0–6): foundations, signals registry, signal extraction, hourly intake, topic engine, attention, topic cards, deal bridge, deal state and risks, user UI. Extend it with delivery (phase 7) and system-of-record signals (phase 8).
 
 Purpose: one step-by-step list of what to switch on / off and what to check, so the whole signals flow works in a **new environment** (the first production deployment). Today there is only one environment and one DB (the DB in `.env`, a test DB). Some parts cannot be tested there (§3), so they must be checked at the switch-on.
 
@@ -83,6 +83,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | T11 | «Сигналы сообщений» on «Темы»: open 10 items with signals and 10 skipped items | Evidence quotes are real text of the author; skip reasons make sense (automated, out-of-office, blocklist …) |
 | T11b | «Темы (отладка)»: open 10 topics in «Сейчас» / «Сводка» | The «Внимание» section explains the list in plain Russian; card text follows §9.1 (headline «Компания — действие, цель», ≤ 3 steps, roles not names, no invented dates); no topic card is visible on the dashboard while the org is `shadow` |
 | T11a | «Темы (отладка)» on «Темы»: phase «topics» in «Запуски» has `failed = 0`; open 10 topics | One business question per topic (§2.1); reminders joined to their request; two invoices = two topics; counterparty linked to the right client / contact; titles «Компания — вопрос» |
+| T13 | After B7 (`on`): log in as an org member; open the dashboard | Tabs «Темы» / «История карточек»; «Сейчас» shows the open topic cards with actions; «Принять» makes a task; «Отклонить» asks for a reason code; «Создать заказ» opens the order dialog; the company page has «Темы»; «Найти в источниках» / Magic buttons are gone |
 | T12 | «Использование ИИ»: filter process «Извлечение сигналов» | Cost per item and per day as expected (§6 M3); no budget block for the org |
 
 ## 5. Business go-live steps
@@ -95,7 +96,8 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | B4 | **Shadow review**: 1–2 weeks of `shadow` on real traffic; reviewers read «Сигналы сообщений» and «Темы (отладка)» daily: missed situations, false signals, wrong skips, topics merged or split wrongly (fix with «Объединить с…» / «Отвязать сообщение» and note the case) | IN4COM reviewers | Agreed list of fixes done (texts, exclusions, blocklist, own-org identity); topic grouping precision ≥ 0.9 / recall ≥ 0.8 on the golden set |
 | B5 | **Noise sources** decided by the owner: newsletters, service mailboxes, private chats → «Исключения из анализа»; irrelevant companies → blocklist; own names / domains → own-org identity | IN4COM owner | Lists filled before T9 |
 | B6 | **Budget** agreed: daily AI USD per org from the measured cost (M3) × expected volume | Product owner | Org override set on «Дневной бюджет ИИ» if 5 USD is not enough |
-| B7 | **Switch to `on`**: only when the UI of phase 6 exists; until then `shadow` and `on` behave the same | Product owner | — |
+| B7 | **Switch to `on`** («Темы» → org → «Включено») after the shadow review: users get the dashboard tabs «Сейчас / Сводка / Неделя / Все темы», the topic drawer, «Темы» tabs, agent deals, deal state and risks; the old Custom-rule cards (incl. «Telegram orders», R7) and the name-based deal discovery stop for the org | Product owner | Shadow review (B4) accepted |
+| B8 | **Tuning loop** for 4 weeks after `on`: weekly read of reject reasons and missed items → registry edits in «Сигналы» → eval | IN4COM reviewers + platform admin | Go-live sign-off: Q23 targets for 2 consecutive weeks |
 
 ## 6. Monitoring after the switch-on
 

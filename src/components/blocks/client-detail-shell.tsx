@@ -34,6 +34,10 @@ import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
 import { AccountSummary } from "@/components/blocks/client-card"
+import {
+  RelatedTopicsList,
+  useRelatedTopics,
+} from "@/components/blocks/related-topics"
 import type { ClientDetail } from "@/server/client-content"
 import type { ClientRow, ClientRevenueSummary } from "@/app/api/clients/route"
 import type { DealRow } from "@/app/api/deals/route"
@@ -87,6 +91,9 @@ export function ClientDetailShell({
 }) {
   const router = useRouter()
   const refresh = () => router.refresh()
+  // «Темы» (spec topics/01 §14): open + recent topics of the company; the
+  // block is shown only when the org's topics mode is `on`.
+  const relatedTopics = useRelatedTopics({ clientId: detail.id })
 
   // ClientEditDialog expects the existing list-shape (ClientRow with
   // ClientContactPreview[]). Build the slimmer row from the detail so
@@ -362,6 +369,32 @@ export function ClientDetailShell({
           )}
         </CardContent>
       </Card>
+
+      {relatedTopics.visible && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Темы
+              {(relatedTopics.result?.open.length ?? 0) > 0 && (
+                <span className="ml-1.5 text-sm font-normal text-muted-foreground">
+                  открытых: {relatedTopics.result?.open.length}
+                </span>
+              )}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Открытые темы и темы, закрытые за последние{" "}
+              {relatedTopics.result?.recentDays ?? 60} дней. Клик открывает тему.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <RelatedTopicsList
+              result={relatedTopics.result}
+              loading={relatedTopics.loading}
+              onChanged={relatedTopics.reload}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Client Content table */}
       <Card>

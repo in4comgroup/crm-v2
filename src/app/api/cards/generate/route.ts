@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
+import { LegacyLogicOffError } from "@/server/topics-legacy"
 import {
+  cardGenerationStatus,
   generateCards,
   previewCardGenerationCandidates,
   type GenerateCardsInput,
@@ -10,6 +12,14 @@ import {
 export const maxDuration = 300
 
 function errorResponse(error: unknown) {
+  // Topics mode `on` (spec topics/01 §9.1, §9.2): the old logic is refused
+  // with a Russian message; `code` lets the UI tell it from other errors.
+  if (error instanceof LegacyLogicOffError) {
+    return NextResponse.json(
+      { error: error.message, code: "topics_engine_on" },
+      { status: 409 },
+    )
+  }
   const message = error instanceof Error ? error.message : "Unknown error"
   const status =
     message === "Unauthorized" || message === "No active organization"
@@ -23,6 +33,11 @@ function errorResponse(error: unknown) {
 export async function GET(request: NextRequest) {
   try {
     const url = new URL(request.url)
+    // `?status=1` → `{ enabled, message }`: may the org use this old path
+    // (topics mode off / shadow)? The UI hides the button when not.
+    if (url.searchParams.get("status") === "1") {
+      return NextResponse.json(await cardGenerationStatus())
+    }
     const sourceIdsRaw = url.searchParams.get("sourceIds")
     const sourceIds = sourceIdsRaw
       ? sourceIdsRaw.split(",").filter(Boolean)

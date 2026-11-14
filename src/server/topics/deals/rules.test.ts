@@ -318,9 +318,9 @@ describe("evaluateTopicDeals — move / outcome / context", () => {
 describe("evalClientGuard", () => {
   it("handles the template forms", () => {
     expect(evalClientGuard(undefined, null)).toBe("pass")
-    expect(evalClientGuard("client_type = HoReCa", { isNew: false, type: "horeca" })).toBe("pass")
-    expect(evalClientGuard("client_type = HoReCa", { isNew: false, type: "Сеть" })).toBe("fail")
-    expect(evalClientGuard("client_type = HoReCa", { isNew: false, type: null })).toBe("fail")
+    expect(evalClientGuard("client_type = Розница", { isNew: false, type: "розница" })).toBe("pass")
+    expect(evalClientGuard("client_type = Розница", { isNew: false, type: "Сеть" })).toBe("fail")
+    expect(evalClientGuard("client_type = Розница", { isNew: false, type: null })).toBe("fail")
     expect(evalClientGuard("client_is_new only", { isNew: true, type: null })).toBe("pass")
     expect(evalClientGuard("something else", { isNew: true, type: null })).toBe("unknown")
     expect(evalClientGuard("client_is_new", null)).toBe("unknown")

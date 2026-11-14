@@ -28,6 +28,8 @@ import {
 import { ExploreSourcesDialog } from "@/components/blocks/explore-sources-dialog"
 import { MagicCardsButton } from "@/components/blocks/magic-cards-button"
 import { NewOrderDialog } from "@/components/blocks/order-request-wizard"
+import { PageLoader } from "@/components/blocks/page-loader"
+import { TopicListsSection } from "@/components/blocks/topic-lists-section"
 
 function isoDateNDaysAgo(days: number): string {
   const d = new Date()
@@ -43,6 +45,24 @@ type PeriodPreset = "day" | "week" | "all"
 
 export default function DashboardPage() {
   const router = useRouter()
+  // Topics UI (phase 6, spec topics/01 §14): only when the org's topics mode
+  // is `on`. null = not known yet. In `off` / `shadow` the page is unchanged.
+  const [topicsOn, setTopicsOn] = useState<boolean | null>(null)
+  const [view, setView] = useState<"topics" | "history">("topics")
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/topics?state=1")
+      .then((r) => (r.ok ? r.json() : { visible: false }))
+      .then((d) => {
+        if (!cancelled) setTopicsOn(d.visible === true)
+      })
+      .catch(() => {
+        if (!cancelled) setTopicsOn(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [cards, setCards] = useState<CardRow[]>([])
   const [loading, setLoading] = useState(true)
   // Отличаем «реально пусто» от «запрос не выполнился» (сеть/БД) — иначе
@@ -129,17 +149,45 @@ export default function DashboardPage() {
     }
   }, [load])
 
+  // Mode `on`: old Custom-rule cards are read-only history; engine cards
+  // live in the topic lists.
+  const historyCards = topicsOn ? cards.filter((c) => c.kind === null) : cards
+  const showHistory = topicsOn === true && view === "history"
+
+  if (topicsOn === null) {
+    return (
+      <div className="flex flex-col h-[calc(100vh-1rem)]">
+        <div className="flex items-center justify-between gap-4 p-4 pb-0">
+          <h1 className="text-xl font-medium">Домашняя</h1>
+          <PageHeaderActions />
+        </div>
+        <PageLoader />
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col h-[calc(100vh-1rem)]">
       <div className="flex flex-col gap-4 p-4 pb-0 shrink-0">
         <div className="flex items-center justify-between gap-4">
-          <h1 className="text-xl font-medium">Домашняя</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-xl font-medium">Домашняя</h1>
+            {topicsOn && (
+              <Tabs value={view} onValueChange={(v) => setView(v as "topics" | "history")}>
+                <TabsList>
+                  <TabsTrigger value="topics">Темы</TabsTrigger>
+                  <TabsTrigger value="history">История карточек</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
+          </div>
           <PageHeaderActions />
         </div>
 
         {/* Селекты приоритета/категории + датапикеры + сегментед периода +
             чекбокс отклонённых — прижаты влево; «Найти в источниках»/Magic —
             прижаты вправо (по образцу /clients). */}
+        {(!topicsOn || showHistory) && (
         <div className="flex items-center gap-3 flex-wrap rounded-xl border bg-card p-3">
           <Select value={priority} onValueChange={setPriority}>
             <SelectTrigger size="sm" className="w-fit">
@@ -226,6 +274,7 @@ export default function DashboardPage() {
             </Label>
           </div>
 
+          {!topicsOn && (
           <div className="ml-auto flex items-center gap-2">
             <ExploreSourcesDialog
               onCardsGenerated={load}
@@ -238,14 +287,20 @@ export default function DashboardPage() {
             />
             <MagicCardsButton onCardsGenerated={load} />
           </div>
+          )}
         </div>
+        )}
       </div>
 
       {/* Без внешнего Card-контейнера — как на Компаниях/Задачах/Контактах,
           заголовок страницы достаточен. */}
       <div className="flex-1 min-h-0 p-4 pt-4">
+        {topicsOn && !showHistory ? (
+          <TopicListsSection />
+        ) : (
         <CardsFeedSection
-          cards={cards}
+          cards={historyCards}
+          readOnly={topicsOn === true}
           loading={loading}
           loadError={loadError}
           onRetry={() => void load()}
@@ -258,6 +313,7 @@ export default function DashboardPage() {
           includeRejected={includeRejected}
           onClearFilters={clearFilters}
         />
+        )}
       </div>
 
       <NewOrderDialog

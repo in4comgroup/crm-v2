@@ -70,6 +70,17 @@ export const TOPIC_EVENT_TYPES = [
   "relinked",
   // Attention engine (phase 4): the list changed (payload { from, to, reason }).
   "attention_changed",
+  // Deal bridge (phase 5) / deal state + risks (phase 5a).
+  "deal_decision",
+  "deal_context",
+  "deal_undone",
+  "deal_risk",
+  // User actions of the topics UI (phase 6).
+  "snoozed",
+  "unsnoozed",
+  "owner_changed",
+  "deal_linked",
+  "deal_unlinked",
 ] as const
 export type TopicEventType = (typeof TOPIC_EVENT_TYPES)[number]
 

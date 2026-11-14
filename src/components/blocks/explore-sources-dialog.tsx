@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useLegacyLogicEnabled } from "@/lib/use-legacy-logic"
 import {
   Dialog,
   DialogContent,
@@ -76,6 +77,9 @@ export function ExploreSourcesDialog({
   trigger: React.ReactNode
   onCardsGenerated: () => void
 }) {
+  // Topics mode `on`: the engine makes cards — hide the old button
+  // (spec topics/01 §9.1, §9.2). The server refuses the call anyway.
+  const legacyEnabled = useLegacyLogicEnabled("cards")
   const [open, setOpen] = useState(false)
 
   const [period, setPeriod] = useState<Period>("last_day")
@@ -265,6 +269,8 @@ export function ExploreSourcesDialog({
       setRunning(false)
     }
   }
+
+  if (legacyEnabled !== true) return null
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

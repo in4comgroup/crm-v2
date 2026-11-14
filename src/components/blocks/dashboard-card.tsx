@@ -230,6 +230,7 @@ export function DashboardCard({
   card,
   onChanged,
   onCreateOrder,
+  readOnly = false,
 }: {
   card: CardRow
   onChanged: () => void
@@ -239,6 +240,9 @@ export function DashboardCard({
   // navigation when omitted, so this component still works if ever reused
   // somewhere without that wiring.
   onCreateOrder?: (card: CardRow) => void
+  // Read-only history (topics mode `on`, spec topics/01 §14: old Custom-rule
+  // cards stay visible as history, without actions).
+  readOnly?: boolean
 }) {
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState("")
@@ -677,7 +681,7 @@ export function DashboardCard({
             свободное место пополам и между ними появляется незапланированный
             зазор вместо того, чтобы плотно прилипать к низу карточки. */}
         <div className="mt-auto flex flex-col gap-2 pt-2">
-            {!resolved && (
+            {!resolved && !readOnly && (
             <div className="flex gap-2">
             {/* new_order cards swap "Принять" for "Создать заказ" in the
                 exact same slot — the one recommendation on a new_order card

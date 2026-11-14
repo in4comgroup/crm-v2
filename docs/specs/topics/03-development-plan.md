@@ -1,7 +1,7 @@
 # Topics — development plan (final)
 
-Status: **final, 2026-11-13. Progress: phases 0–5a built (not deployed); phase 6 next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
-Spec: [01-specification.md](01-specification.md) · Decisions: [02-open-questions.md](02-open-questions.md) (§ F = R1–R24) · Registry: [05-signals-registry.md](05-signals-registry.md) · Attention: [06-attention-engine.md](06-attention-engine.md)
+Status: **final, 2026-11-13. Progress: phases 0–6 built (not deployed); IN4COM is `on` since 2026-11-14 (R25, pilot); phase 7 next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
+Spec: [01-specification.md](01-specification.md) · Decisions: [02-open-questions.md](02-open-questions.md) (§ F = R1–R25) · Registry: [05-signals-registry.md](05-signals-registry.md) · Attention: [06-attention-engine.md](06-attention-engine.md)
 
 The plan of 2026-11-10 assumed another copy of the product (Yandex models, own PostgreSQL, K8s CronJob, `llm_usage`). It is replaced by this document. Its business content (phases, scope, gates) is kept.
 
@@ -33,13 +33,13 @@ The plan of 2026-11-10 assumed another copy of the product (Yandex models, own P
 | Deal discovery | Process `deals.discovery` (name match); since phase 0 it journals every stage move (`deal_activity`) | Replaced in phase 5, removed in phase 12 |
 | Mock agent | Removed in phase 0 (R9) | — |
 | Orchestration | Daily cron `0 3 * * *` → `runDailyPipeline` (model catalog sync + cost check, sync → parse → upload), `pipeline_run`; **hourly** cron `0 * * * *` → `runTopicsPipeline` (phase «signals» built in phase 2; the others are stubs), `topics_run` | Phases 3–5a fill the stubs |
-| DB process | Drizzle migrations `0000`–`0022` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027, `0021` deal bridge, `0022` deal state + risks), reference data in migrations | Next topics migration: **0023** |
+| DB process | Drizzle migrations `0000`–`0023` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics, `0019` attention + cards, `0020` production calendar 2026–2027, `0021` deal bridge, `0022` deal state + risks, `0023` R22 follow-up: vertical guard removed from a rule template), reference data in migrations | Next topics migration: **0024** |
 | Topics foundations (phase 0) | `org_setting` (`topics.enabled`, budget override), system actor «Агент», «Темы» tab (modes, runs, golden set, model spike) | Used by every later phase |
 | Signals registry (phase 1) | DB registry (one generic pack; 158 codes after `0017`: 144 `active`, 8 `parked`, 6 `gated`, no retired codes; attributes, relations, 9 risk types, rule templates), `getEffectiveSignals(orgId)`, «Сигналы» tab with the full editor, Markdown export (preset mechanism kept, no presets defined — R22) | Extraction prompt reads it |
 | Signal extraction (phase 2) | `src/server/topics/signals/` (gates, extraction, post-processing, storage, hourly runner, manual action), `signal_instance`, `source_item_subject`, `source_item.signal_*`, `analysis_exclusion` (owner UI on Sources), `src/lib/ru-mail/`, eval runner with stored metrics, signal review on «Темы» | Input of topic resolution (phase 3): counted instances + subjects per item |
 | Access | Sign-in gate `src/proxy.ts`; routes check the session; `"use server"` modules are session-bound | Engine code is `server-only` and takes `organizationId` explicitly |
 
-Missing today: the user UI (lists «Сейчас / Сводка / Неделя», topic drawer, company / contact «Темы» tabs — phase 6). (Thread keys, topics, the hourly intake, attention, the production calendar, topic cards, deal types, the deal bridge, deal state and risks are built — phases 3–5a.)
+Missing today: delivery (email digest, Telegram to staff, evening reminders — phase 7), system-of-record signals and watchdogs (phase 8). (Everything of the MVP — phases 0–6 — is built.)
 
 ## Overview
 
@@ -52,7 +52,7 @@ Missing today: the user UI (lists «Сейчас / Сводка / Неделя»
 | 4 | Attention and cards | 2 | Attention engine (06, A1–A8), production calendar, card per topic with kinds, `topics.card_writer` | No (shadow) | ✅ built |
 | 5 | Deal bridge | 2 | Deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение» | No (shadow) | ✅ built |
 | 5a | Deal state and risks | 1.5 | `deals.state_summary`, risk engine, «Есть риски» | No (shadow) | ✅ built |
-| 6 | UI and pilot | 2 | «Сейчас / Сводка / Неделя», topic drawer, company / deal tabs, «Создать заказ» on order topics, IN4COM switch-on | **Yes (IN4COM)** | next |
+| 6 | UI and pilot | 2 | «Сейчас / Сводка / Неделя», topic drawer, company / deal tabs, «Создать заказ» on order topics, IN4COM switch-on | **Yes (IN4COM)** | ✅ built (switch-on pending) |
 | **MVP** | | **≈ 17.5** | | |  |
 | 7 | Delivery | 2 | Email digest, Telegram to staff, P6 evening reminders and daily limit | Yes |  |
 | 8 | System-of-record signals and watchdogs | 2.5 | Order-rhythm topics for IN4COM, then no-response / countdown / contract expiry | Yes |  |
@@ -283,6 +283,21 @@ Exit: ≥ 80 % of states pass «Где мы? Чего ждём? Что меша�
 
 ## Phase 6 — UI and pilot (2 weeks)
 
+**Status 2026-11-14 — built, not deployed; IN4COM switched to `on` on 2026-11-14 11:04 UTC (R25: straight to `on`, the pilot users give feedback).** No schema change; `0023_signals_rule_guard_cleanup` (custom) removes the last vertical remnant found in this phase: the template guard `client_type = HoReCa` of the `LISTING_OPPORTUNITY` stage rule (the IN4COM copy was fixed in the DB as tenant data). `pnpm test`: 302 tests + 1 todo.
+
+| Task | State |
+|---|---|
+| 1 Dashboard | Done (mode `on` only; `off` / `shadow` unchanged): page tabs «Темы» / «История карточек» (old Custom-rule cards, read-only); topic tabs «Сейчас» (+ block «Решения по сделкам») / «Сводка» (07:30 snapshot, 5 + «Ещё», «Новое с утра») / «Неделя» («Истекло», «Тема затихла») / «Все темы» (filters status, list, company); counts; «Мои» (assignee or deal owner = me); rank from the stored attention; topic card with headline, «Почему сейчас», «Что изменилось», ≤ 3 steps, deadline, deal, assignee, «Новое» / «Обновлено», «Почему в этом списке» on hover. Code: `src/components/blocks/topic-lists-section.tsx`, `topic-card.tsx`, `src/server/topics-user.ts`, `api/topics` |
+| 2 Topic drawer | Done: `TopicDrawer` (`src/components/blocks/topic-drawer.tsx`): links, status, explanation, card + actions (Принять → задача, Отклонить, Готово, Отложить до… / Вернуть, «Создать заказ»), deal cards (Создать / Не сделка, Подтвердить / Отклонить), signals with quotes, timeline (messages + journal in Russian); Объединить с…, Привязать / Отвязать сделку, «Ответственный», «Не относится», Отвязать сообщение. Every action recomputes attention |
+| 3 «Темы» tabs | Done (mode `on` only): company drawer + company page, contact drawer, deal drawer (next to «Происхождение»); open + closed in the last 60 days; a row opens the topic drawer. Deal board state text / «Есть риски» / risk list were built in phase 5a |
+| 4 Orders (R7) | Done: «Создать заказ» on `ORDER_REQUESTED` topic cards (existing `new_order` handoff). In mode `on` the old Custom-rule card generation (incl. the «Telegram orders» rule) and the name-based deal discovery are refused (409, «Карточки создаёт движок тем…», «Сделки создаёт и ведёт движок тем…») and their buttons are hidden (`src/server/topics-legacy.ts`); `off` / `shadow` orgs keep them |
+| 5 Switch-on | **Done 2026-11-14** (R25): IN4COM `on`. First manual run right after (9 s, no new items in the 7-day window, 0 AI calls): users see 2 topic cards in «Сейчас» (maslov.agency — contract edits, commercial terms), 1 agent deal with its state text; the old Custom-rule cards (incl. «Telegram orders») and the deal discovery are off for IN4COM |
+| 6 Tuning loop | Process (4 weeks after switch-on): reject reasons + missed items → registry edits in «Сигналы» → new version → eval |
+
+Live check (IN4COM, mode `off`; server functions called directly, the `on` gate mocked or bypassed in scratch tests, nothing left in `on`): «Сейчас» 2 topics («Мои» 1), «Все темы» 3; detail with Russian signal labels and journal; snooze / «Вернуть», reassign, link / unlink deal (wrong-company deal refused); related topics for «maslov.agency» (2 open) and its agent deal (1); old generation / discovery refused in `on`, allowed in `off` / `shadow`. All test changes reverted.
+
+**Open:** not checked live (needs mode `on` or a running UI): card decisions through `PUT /api/cards` (accept / reject / `deal_execute`, «Создать заказ») and «Объединить с…». «Сводка» / «Неделя» do not freeze at the snapshot time (they split at it); `cards.digestVisibleItems` is a constant (5). The old-logic buttons appear a moment after page load in `off` / `shadow` orgs. Exit (go-live sign-off): Q23 targets met for 2 consecutive weeks after the switch-on.
+
 1. Dashboard: «Сейчас» / «Сводка» / «Неделя» + «Все темы»; same for all members, filter «Мои» (deal owner / topic assignee); compact cards + «Ещё».
 2. Topic drawer: signals with evidence, timeline, actions (accept → task, reject, done, snooze, merge, detach item, link to deal).
 3. «Темы» tab on the company page / drawer and the deal drawer; deal board: state text, «Есть риски» badge, risk list.
@@ -303,17 +318,18 @@ Exit (go-live sign-off): Q23 targets met for 2 consecutive weeks.
 
 Out of this plan (separate tasks): functional roles and rights (Q33); Telegram group chats, voice notes and files (Q11, Q32).
 
-## Next steps (2026-11-14, after phase 5a)
+## Next steps (2026-11-14, pilot started)
 
-Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0022` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
+Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0023` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
 
-Current state: phases 0–5a built, not deployed. The whole hourly engine runs per org in `shadow` / `on`: intake → signals → topics → attention → cards → deals (dry run in `shadow`) → deal state + risks. Users see engine output only in mode `on`, and only on the existing surfaces (dashboard card feed, deal board / drawer); the topic lists UI is phase 6. IN4COM: `base` pack on, 23 stage rules, 5 deal types, topics mode `off`; test data from the live checks (topics, 2 hidden topic cards, test client «maslov.agency», 1 agent deal with a state text).
+Current state: the MVP (phases 0–6) is built, not deployed. **IN4COM is `on` (R25)**: its users see the topic lists, cards, topic drawer, «Темы» tabs, agent deals, deal state and risks; the old card / discovery logic is off for IN4COM. New mail reaches topics only when the hourly run runs: on the deployed app (Vercel Pro cron) or with «Запустить сейчас» on «Темы».
 
 | # | Step | Who | Blocks |
 |---|---|---|---|
-| 1 | Review and commit phases 0–5a (incl. migrations `0016`–`0022`) | Product owner | — |
-| 2 | IN4COM reviewers: golden set, signal texts, eval; shadow review of topics, cards, deal decisions, states and risks in «Темы (отладка)» | IN4COM + platform admin | Exit gates of phases 2–5a |
-| 3 | **Phase 6 — UI and pilot** («Сейчас / Сводка / Неделя», topic drawer, company / contact «Темы» tabs, «Создать заказ» on order topics, IN4COM switch-on) | Development | Can start now |
+| 1 | Review and commit phases 0–6 (incl. migrations `0016`–`0023`); deploy with the Vercel Pro plan so the hourly run works for the pilot | Product owner | Live data for the pilot |
+| 2 | Pilot feedback: IN4COM users act on the cards (accept / reject with reason, «Готово», deals «Создать» / «Не сделка»); weekly tuning loop for 4 weeks (reject reasons + missed items → «Сигналы» edits → eval) | IN4COM + platform admin | Go-live sign-off (Q23 targets 2 weeks in a row) |
+| 3 | Golden set + eval (codes and topic groups) to measure the gates | IN4COM reviewers + platform admin | Exit gates of phases 2–5a |
+| 4 | **Phase 7 — delivery** (email digest, Telegram to staff, evening reminders, P6 daily limit) — or phase 8 (system-of-record signals, watchdogs) first | Development | Can start now |
 
 Note: 15 of the codes made `active` by R23 are process codes (watchdogs, CRM-data trends). Nothing emits them until phase 8.
 

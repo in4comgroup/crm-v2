@@ -973,6 +973,147 @@ export async function detachSourceItemFromTopics(
   return { detached: ids.length, deleted }
 }
 
+// ── User actions of the topics UI (phase 6) ───────────────────────────────
+
+function userEvent(orgId: string, topicId: string, userId: string, type: string, payload: Record<string, unknown>) {
+  return db.insert(topicEvent).values({
+    id: randomUUID(),
+    organizationId: orgId,
+    topicId,
+    type,
+    actor: "user",
+    userId,
+    sourceItemId: null,
+    payload,
+  })
+}
+
+/**
+ * «Отложить до…» (06 §5.2 H2): hide a live topic until `until`; a new
+ * material fact ends the snooze early (engine). `until` null = «Снять
+ * откладывание» (the topic returns at once, new cycle `snooze_end`).
+ * Journaled (`snoozed` / `unsnoozed`); attention is recomputed.
+ */
+export async function snoozeTopic(orgId: string, topicId: string, userId: string, until: Date | null): Promise<void> {
+  const t = await requireTopic(orgId, topicId)
+  if (!LIVE.includes(t.status)) throw new TopicActionError("Отложить можно только открытую тему")
+  const now = new Date()
+  if (until && until.getTime() <= now.getTime()) throw new TopicActionError("Дата должна быть в будущем")
+  await db.batch(
+    asBatch([
+      db
+        .update(topic)
+        .set({ snoozedUntil: until, snoozedAt: until ? now : null, nextAttentionCheckAt: now })
+        .where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId))),
+      userEvent(orgId, topicId, userId, until ? "snoozed" : "unsnoozed", until ? { until: until.toISOString() } : {}),
+    ]),
+  )
+  await refreshAttention(orgId, [topicId])
+}
+
+/**
+ * «Ответственный» (spec §8.1): set the topic's assignee (the «Мои» filter).
+ * `ownerUserId` null = no assignee; the recompute then falls back to the
+ * linked deal's owner. The caller checks that the user is an org member.
+ */
+export async function setTopicOwner(
+  orgId: string,
+  topicId: string,
+  ownerUserId: string | null,
+  actorUserId: string,
+  names: { fromName?: string | null; toName?: string | null } = {},
+): Promise<void> {
+  const [row] = await db
+    .select({ id: topic.id, ownerUserId: topic.ownerUserId })
+    .from(topic)
+    .where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId)))
+  if (!row) throw new TopicNotFoundError(topicId)
+  if (row.ownerUserId === ownerUserId) return
+  await db.batch(
+    asBatch([
+      db
+        .update(topic)
+        .set({ ownerUserId })
+        .where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId))),
+      userEvent(orgId, topicId, actorUserId, "owner_changed", {
+        from: row.ownerUserId,
+        to: ownerUserId,
+        fromName: names.fromName ?? null,
+        toName: names.toName ?? null,
+      }),
+    ]),
+  )
+  await refreshAttention(orgId, [topicId])
+}
+
+/**
+ * «Привязать к сделке» (spec §14): link the topic to a deal of the org
+ * (`dealId` null = unlink). Linking goes through the deal engine
+ * (`linkTopicToDeal`: deal activity + deal state dirty); both ways add a
+ * topic journal line (`deal_linked` / `deal_unlinked`) and recompute
+ * attention at once. The attention store persists the default assignee
+ * (= the deal owner); when the topic's assignee is still the OLD deal's
+ * owner it is cleared, so the recompute takes the new deal's owner (or
+ * none). The caller checks the deal belongs to the topic's client.
+ */
+export async function setTopicDeal(
+  orgId: string,
+  topicId: string,
+  dealId: string | null,
+  userId: string,
+): Promise<void> {
+  const [row] = await db
+    .select({ id: topic.id, dealId: topic.dealId, status: topic.status, ownerUserId: topic.ownerUserId })
+    .from(topic)
+    .where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId)))
+  if (!row) throw new TopicNotFoundError(topicId)
+  if (row.status === "merged") throw new TopicActionError("Тема объединена с другой")
+  if (row.dealId === dealId) return
+  const dealIds = [row.dealId, dealId].filter((x): x is string => !!x)
+  const deals = await db
+    .select({ id: deal.id, name: deal.name, userId: deal.userId })
+    .from(deal)
+    .where(and(eq(deal.organizationId, orgId), inArray(deal.id, dealIds)))
+  const names = new Map(deals.map((d) => [d.id, d.name]))
+  const oldOwner = row.dealId ? (deals.find((d) => d.id === row.dealId)?.userId ?? null) : null
+  const clearOwner = !!oldOwner && row.ownerUserId === oldOwner
+  if (dealId) {
+    if (!names.has(dealId)) throw new TopicActionError("Сделка не найдена")
+    // Lazy import: the deal engine is a large module; keep this one light.
+    const { linkTopicToDeal } = await import("@/server/deal-engine")
+    if (clearOwner) {
+      await db.update(topic).set({ ownerUserId: null }).where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId)))
+    }
+    await linkTopicToDeal(orgId, topicId, dealId, { kind: "user", userId }, { topicId, note: "Тема привязана к сделке вручную" })
+    await userEvent(orgId, topicId, userId, "deal_linked", {
+      dealId,
+      dealName: names.get(dealId) ?? null,
+      fromDealId: row.dealId,
+    })
+  } else {
+    const old = row.dealId!
+    await db.batch(
+      asBatch([
+        db
+          .update(topic)
+          .set({ dealId: null, nextAttentionCheckAt: new Date(), ...(clearOwner ? { ownerUserId: null } : {}) })
+          .where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId))),
+        db
+          .update(deal)
+          .set({ stateDirtyAt: new Date(), updatedAt: sql`${deal.updatedAt}` })
+          .where(and(eq(deal.organizationId, orgId), eq(deal.id, old))),
+        userEvent(orgId, topicId, userId, "deal_unlinked", { dealId: old, dealName: names.get(old) ?? null }),
+      ]),
+    )
+  }
+  await refreshAttention(orgId, [topicId])
+}
+
+/** Recompute attention of one topic now (UI refresh after a card decision). */
+export async function refreshTopicAttention(orgId: string, topicId: string): Promise<void> {
+  await refreshAttention(orgId, [topicId])
+}
+
 // ── Reads (for the later debug page / API) ────────────────────────────────
 
 export type TopicListRow = TopicRow & { itemCount: number }

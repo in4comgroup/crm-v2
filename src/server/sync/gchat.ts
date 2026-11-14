@@ -23,6 +23,7 @@ import {
   loadAnalysisExclusions,
 } from "@/server/analysis-exclusions"
 import { matchAnalysisExclusion } from "@/lib/analysis-exclusion-match"
+import { gchatThreadKey } from "@/lib/thread-key"
 
 export async function syncGoogleChatMessages(
   sourceId: string,
@@ -112,6 +113,7 @@ export async function syncGoogleChatMessages(
       externalId: msg.name,
       externalType: "chat_message",
       threadExternalId: msg.thread?.name?.split("/").pop() ?? null,
+      threadKey: gchatThreadKey(config.spaceId, msg.thread?.name),
       sourceCreatedAt: createdAt,
       metadataJson: {
         // Space of the message — read by the analysis-exclusion probe.

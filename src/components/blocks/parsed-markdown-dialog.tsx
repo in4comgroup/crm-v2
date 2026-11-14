@@ -24,11 +24,14 @@ export function ParsedMarkdownDialog({
   title,
   open,
   onOpenChange,
+  markdownUrl,
 }: {
   itemId: string | null
   title: string
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Override of the fetch URL (default /api/sources/items/[id]/markdown, active org only). Must return { markdown } or { error }. */
+  markdownUrl?: (itemId: string) => string
 }) {
   const [markdown, setMarkdown] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -40,7 +43,7 @@ export function ParsedMarkdownDialog({
   useEffect(() => {
     if (!open || !itemId) return
     let cancelled = false
-    fetch(`/api/sources/items/${itemId}/markdown`)
+    fetch(markdownUrl ? markdownUrl(itemId) : `/api/sources/items/${itemId}/markdown`)
       .then(async (res) => {
         if (cancelled) return
         const data = await res.json()
@@ -58,6 +61,7 @@ export function ParsedMarkdownDialog({
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markdownUrl is a render-time helper; itemId drives the fetch
   }, [open, itemId])
 
   // Reset displayed content whenever the dialog is closed so the next

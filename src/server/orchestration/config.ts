@@ -43,6 +43,14 @@ export const ORCHESTRATION_CONFIG = {
     maxItemsPerOrgPerRun: 200,
     concurrency: 3,
 
+    // Phase «intake» (sync → parse → upload per org, runbook 07 O1): caps
+    // per org per hourly run. Parse costs AI money and time (the whole run
+    // is one workflow step), so it is capped lower than the daily run.
+    maxParsePerOrgPerRun: 50,
+    maxUploadPerOrgPerRun: 200,
+    // Missing thread keys filled per org per run (older items; no AI).
+    maxThreadKeyBackfillPerOrgPerRun: 500,
+
     // Cap on failure entries kept in topics_run.errors_json (same idea
     // as `maxErrorsPerRun`; a "+N more truncated" marker follows).
     maxErrorsPerRun: 200,

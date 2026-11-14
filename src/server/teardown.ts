@@ -32,6 +32,14 @@ import { companyMatchKey, personMatchKey } from "@/lib/translit-ru"
 import { isAutomatedEmail } from "@/lib/is-automated-email"
 import { getServerSession } from "@/lib/get-session"
 import { deleteObjects } from "@/server/storage"
+import {
+  deleteTopicsForTeardown,
+  loadTopicLinksForSource,
+  planTopicTeardown,
+  recomputeTopicsAfterTeardown,
+  unlinkTopicsFromEntities,
+  type TopicTeardownLink,
+} from "@/server/topics/integration"
 
 export class TeardownError extends Error {
   constructor(
@@ -152,6 +160,9 @@ type Resolved = {
   r2KeyByItem: Map<string, string>
   clients: EntityProducers[]
   contacts: EntityProducers[]
+  // Every link of every topic that has an item of this source (topics engine,
+  // phase 3) — links in other sources included, they decide delete vs change.
+  topicLinks: TopicTeardownLink[]
 }
 
 // Pick a human title for a thread root from its metadata.
@@ -378,6 +389,9 @@ async function resolve(sourceId: string): Promise<Resolved> {
     (b.date ?? "").localeCompare(a.date ?? ""),
   )
 
+  // 9. Topics (one query; see src/server/topics/integration.ts).
+  const topicLinks = await loadTopicLinksForSource(orgId, sourceId)
+
   return {
     source: { id: src.id, name: src.name, organizationId: orgId },
     threads,
@@ -385,6 +399,7 @@ async function resolve(sourceId: string): Promise<Resolved> {
     r2KeyByItem,
     clients,
     contacts,
+    topicLinks,
   }
 }
 
@@ -448,6 +463,24 @@ export type TeardownEntity = {
   producingThreadIds: string[]
 }
 
+// A topic (topics engine) that has an item in a thread. The client computes
+// the outcome for the current selection, same rule as the server:
+//   touched  = threadIds ∩ selected ≠ ∅
+//   deleted  = touched AND evidenceInOtherSources === 0 AND
+//              evidenceThreadIds ⊆ selected   (no non-context item is left)
+//   changed  = touched AND NOT deleted         (recomputed, items detached)
+export type TeardownTopic = {
+  id: string
+  title: string
+  status: string
+  // Threads of THIS source with any item of the topic.
+  threadIds: string[]
+  // Threads of THIS source with a non-context (evidence) item of the topic.
+  evidenceThreadIds: string[]
+  // Non-context items of the topic in OTHER sources (> 0 → never deleted).
+  evidenceInOtherSources: number
+}
+
 export type TeardownThread = {
   id: string
   title: string
@@ -456,6 +489,7 @@ export type TeardownThread = {
   cardCount: number
   clients: TeardownEntity[]
   contacts: TeardownEntity[]
+  topics: TeardownTopic[]
 }
 
 export type TeardownPreview = {
@@ -507,6 +541,7 @@ export async function previewSourceTeardown(
 ): Promise<TeardownPreview> {
   await requireAdmin()
   const r = await resolve(sourceId)
+  const topics = teardownTopics(r)
 
   const threads: TeardownThread[] = r.threads.map((t) => {
     const clients = r.clients
@@ -529,10 +564,45 @@ export async function previewSourceTeardown(
       cardCount: t.cardIds.length,
       clients,
       contacts,
+      topics: topics.filter((tp) => tp.threadIds.includes(t.id)),
     }
   })
 
   return { source: r.source, threads }
+}
+
+// Topic view of the preview (one entry per topic; threads filter it).
+function teardownTopics(r: Resolved): TeardownTopic[] {
+  const threadOfItem = new Map<string, string>()
+  for (const t of r.threads) for (const id of t.itemIds) threadOfItem.set(id, t.id)
+  const byTopic = new Map<string, TeardownTopic & { _t: Set<string>; _e: Set<string> }>()
+  for (const l of r.topicLinks) {
+    let tp = byTopic.get(l.topicId)
+    if (!tp) {
+      tp = {
+        id: l.topicId,
+        title: l.title,
+        status: l.status,
+        threadIds: [],
+        evidenceThreadIds: [],
+        evidenceInOtherSources: 0,
+        _t: new Set(),
+        _e: new Set(),
+      }
+      byTopic.set(l.topicId, tp)
+    }
+    const threadId = threadOfItem.get(l.sourceItemId)
+    const evidence = l.role !== "context"
+    if (threadId) {
+      tp._t.add(threadId)
+      if (evidence) tp._e.add(threadId)
+    } else if (evidence) {
+      tp.evidenceInOtherSources++
+    }
+  }
+  return [...byTopic.values()]
+    .filter((tp) => tp._t.size > 0)
+    .map(({ _t, _e, ...tp }) => ({ ...tp, threadIds: [..._t], evidenceThreadIds: [..._e] }))
 }
 
 export type TeardownResult = {
@@ -545,6 +615,9 @@ export type TeardownResult = {
   deals: number
   tasks: number
   orders: number
+  // Topics engine: topics deleted (no evidence item left) / recomputed.
+  topicsDeleted: number
+  topicsChanged: number
   // Matched but KEPT because a producing item lies outside the selection.
   sharedSkipped: number
   cursorReset: boolean
@@ -674,6 +747,27 @@ export async function executeSourceTeardown(input: {
   }
   if (selectedCardIds.length > 0)
     await db.delete(card).where(inArray(card.id, selectedCardIds)) // cascades card_* junctions
+
+  // Topics (spec topics/01 §11): delete the topics whose every non-context
+  // item is in the selection (links / events cascade); the rest are
+  // recomputed after the items are gone (below). Kept topics of the clients /
+  // contacts deleted next lose the link with a journal entry (the FK would
+  // null it silently).
+  const orgId = r.source.organizationId
+  const topicPlan = planTopicTeardown(r.topicLinks, selectedItemIds)
+  const removedByTopic = new Map<string, string[]>()
+  for (const l of r.topicLinks) {
+    if (!selectedItemIds.has(l.sourceItemId)) continue
+    const list = removedByTopic.get(l.topicId) ?? []
+    list.push(l.sourceItemId)
+    removedByTopic.set(l.topicId, list)
+  }
+  let topicsDeleted = await deleteTopicsForTeardown(orgId, topicPlan)
+  await unlinkTopicsFromEntities(
+    orgId,
+    { clientIds: finalClientIds, contactIds: finalContactIds },
+    { reason: "teardown", actorUserId: userId },
+  )
   if (finalContactIds.length > 0)
     await db.delete(contact).where(inArray(contact.id, finalContactIds))
   if (finalClientIds.length > 0)
@@ -681,6 +775,9 @@ export async function executeSourceTeardown(input: {
   // Source items: delete the selected threads' items (children cascade via
   // parent_source_item_id; deleting by id is explicit and selection-scoped).
   await db.delete(sourceItem).where(inArray(sourceItem.id, [...selectedItemIds]))
+
+  const recomputed = await recomputeTopicsAfterTeardown(orgId, topicPlan, removedByTopic, userId)
+  topicsDeleted += recomputed.deleted
 
   // Reset the sync cursor ONLY on a full-source reset (every thread selected),
   // so a re-sync re-fetches from scratch. A partial (surgical) delete leaves the
@@ -703,6 +800,8 @@ export async function executeSourceTeardown(input: {
     deals: dealIds.length,
     tasks: taskIds.length,
     orders: orderCount,
+    topicsDeleted,
+    topicsChanged: recomputed.changed,
     sharedSkipped,
     cursorReset: fullReset,
   }

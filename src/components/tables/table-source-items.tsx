@@ -38,6 +38,7 @@ import {
   SIGNAL_SKIP_REASONS,
 } from "@/lib/signals/extraction-types"
 import type { AdminSignalsExtractResponse } from "@/app/api/admin/topics/signals/route"
+import { topicOutcomeText } from "@/lib/topics/outcome-text"
 
 // ── Types matching the GET /api/sources/items response ───────────────
 
@@ -386,7 +387,8 @@ export function TableSourceItems({
     }
   }
 
-  // Topics signal extraction of one root item (platform admin). The route
+  // «Извлечь сигналы и темы» of one root item (platform admin): signal
+  // extraction, then topic resolution when the item is `done`. The route
   // uses the session's active org; the result shows in a toast only.
   async function runExtractSignals(rowId: string) {
     setActionInFlight((m) => ({ ...m, [rowId]: "signals" }))
@@ -398,7 +400,7 @@ export function TableSourceItems({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Ошибка извлечения сигналов")
-      const { result, item } = data as AdminSignalsExtractResponse
+      const { result, item, topics } = data as AdminSignalsExtractResponse
       const statusLabel: Record<string, string> = {
         done: "Готово",
         skipped: "Пропущено",
@@ -421,8 +423,14 @@ export function TableSourceItems({
       ]
         .filter(Boolean)
         .join(" · ")
-      if (result.status === "failed") toast.error(text)
-      else toast.success(text)
+      const topicText = topics
+        ? topics.outcome
+          ? topicOutcomeText(topics.outcome, topics.links)
+          : `Темы: ошибка — ${topics.error}`
+        : null
+      const opts = topicText ? { description: topicText } : undefined
+      if (result.status === "failed" || topics?.error || topics?.outcome?.status === "failed") toast.error(text, opts)
+      else toast.success(text, opts)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Неизвестная ошибка")
     } finally {
@@ -848,8 +856,8 @@ function RowActions({
           className="h-7 w-7 p-0"
           disabled={disabled || inFlight === "signals"}
           onClick={onExtractSignals}
-          title="Извлечь сигналы (только для администратора платформы)"
-          aria-label="Извлечь сигналы"
+          title="Извлечь сигналы и темы (только для администратора платформы)"
+          aria-label="Извлечь сигналы и темы"
         >
           {inFlight === "signals" ? (
             <Loader className="h-3.5 w-3.5 animate-spin" />

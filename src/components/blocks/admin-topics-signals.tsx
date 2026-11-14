@@ -4,7 +4,8 @@
 // topics/01 §5, §13) — platform admin only, on the «Темы» tab of /settings.
 // Org select → stats line → filters → scanned items; a row expands to show
 // instances, dropped codes, facts, subjects, direction, forward info, model
-// and tokens. «Извлечь заново» / «Извлечь» run ONE item now (manual action,
+// and tokens. «Извлечь заново» / «Извлечь» run ONE item now (signals, then
+// topic resolution when the item is `done`; manual action,
 // ignores the org's topics mode). API: /api/admin/topics/signals.
 
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react"
@@ -47,6 +48,7 @@ import type {
   AdminSignalsStatsResponse,
   SignalStats,
 } from "@/app/api/admin/topics/signals/route"
+import { topicOutcomeText } from "@/lib/topics/outcome-text"
 
 const ALL = "__all__"
 const PAGE_SIZE = 50
@@ -450,7 +452,7 @@ export function AdminTopicsSignals() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
-      const { result, item } = data as AdminSignalsExtractResponse
+      const { result, item, topics } = data as AdminSignalsExtractResponse
       const codes = item?.instances.filter((i) => i.counted).map((i) => i.code) ?? []
       const parts = [
         STATUS_LABEL[result.status],
@@ -458,8 +460,15 @@ export function AdminTopicsSignals() {
         codes.length ? `коды: ${codes.join(", ")}` : null,
         result.status !== "done" ? signalReasonLabel(result.reason) : null,
       ].filter(Boolean)
-      if (result.status === "failed") toast.error(parts.join(" · "))
-      else toast.success(parts.join(" · "))
+      const topicText = topics
+        ? topics.outcome
+          ? topicOutcomeText(topics.outcome, topics.links)
+          : `Темы: ошибка — ${topics.error}`
+        : null
+      const opts = topicText ? { description: topicText } : undefined
+      const text = parts.join(" · ")
+      if (result.status === "failed" || topics?.error || topics?.outcome?.status === "failed") toast.error(text, opts)
+      else toast.success(text, opts)
       if (item) {
         setRows((prev) => {
           if (!prev) return [item]

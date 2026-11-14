@@ -5,6 +5,7 @@ import { contact, client, user, type EntityStatus } from "@/db/schema"
 import { and, asc, eq, desc, ilike, inArray, isNull, or } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
+import { onEntityStatusChanged } from "@/server/topics/integration"
 
 export type ContactRow = {
   id: string
@@ -295,7 +296,7 @@ export async function updateContact(
     status?: EntityStatus
   },
 ) {
-  const { activeOrgId } = await requireOrgContext()
+  const { session, activeOrgId } = await requireOrgContext()
   await assertContactInOrg(contactId, activeOrgId)
 
   if (data.name !== undefined && !data.name.trim()) {
@@ -330,4 +331,7 @@ export async function updateContact(
       ...(data.status !== undefined ? { status: data.status } : {}),
     })
     .where(eq(contact.id, contactId))
+
+  // Topics engine: a deleted / blocked contact leaves its topics.
+  await onEntityStatusChanged(activeOrgId, { contactIds: [contactId] }, data.status, session.user.id)
 }

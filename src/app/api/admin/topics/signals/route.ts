@@ -13,6 +13,9 @@ import {
   listSignalReviewItems,
   type SignalStats,
 } from "@/server/topics/signals/review"
+import { listItemTopics, type ItemTopicLink } from "@/server/topics/debug"
+import { runTopicResolutionForItem, type ResolveItemOutcome } from "@/server/topics/resolve-phase"
+import { detachSourceItemFromTopics } from "@/server/topics/topic-store"
 
 export type { SignalStats } from "@/server/topics/signals/review"
 
@@ -20,9 +23,13 @@ export type { SignalStats } from "@/server/topics/signals/review"
 // topics/01 §13). Platform admins only.
 //   GET ?orgId=&status=&band=&code=&limit=&offset=  → { rows, total }
 //   GET ?orgId=&stats=1                             → { stats }
-//   POST { orgId?, itemId }                         → { result, item }
-//        manual extraction of one item (runs regardless of the org's topics
-//        mode). orgId defaults to the session's active org (Sources page).
+//   POST { orgId?, itemId }                         → { result, item, topics }
+//        manual «Извлечь сигналы и темы» of one item (runs regardless of the
+//        org's topics mode): the item is first taken off its topics (old
+//        instances are replaced), signals are extracted, and when the item
+//        is `done` topic resolution runs too (plan phase 3 task 7).
+//        `topics` = { outcome, links } or { error } (signals stay stored).
+//        orgId defaults to the session's active org (Sources page).
 //        400 + Russian message when the org has no active signal code,
 //        404 when the item is not in the org.
 
@@ -30,7 +37,15 @@ export const maxDuration = 60
 
 export type AdminSignalsListResponse = { rows: SignalReviewItem[]; total: number }
 export type AdminSignalsStatsResponse = { stats: SignalStats }
-export type AdminSignalsExtractResponse = { result: ExtractItemResult; item: SignalReviewItem | null }
+export type AdminSignalsTopicsResult =
+  | { outcome: ResolveItemOutcome; links: ItemTopicLink[]; error?: undefined }
+  | { error: string; outcome?: undefined; links?: undefined }
+export type AdminSignalsExtractResponse = {
+  result: ExtractItemResult
+  item: SignalReviewItem | null
+  /** null = topic resolution did not run (signal status is not `done`). */
+  topics: AdminSignalsTopicsResult | null
+}
 
 async function requireAdmin() {
   const session = await getServerSession()
@@ -40,7 +55,7 @@ async function requireAdmin() {
   if (session.user.role !== "admin") {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) }
   }
-  return { activeOrgId: session.session.activeOrganizationId ?? null }
+  return { activeOrgId: session.session.activeOrganizationId ?? null, userId: session.user.id }
 }
 
 export async function GET(request: NextRequest) {
@@ -77,8 +92,25 @@ export async function POST(request: NextRequest) {
   if (!itemId) return NextResponse.json({ error: "Укажите ID сообщения" }, { status: 400 })
   if (!orgId) return NextResponse.json({ error: "Не выбрана организация" }, { status: 400 })
   try {
+    // Old instances go away on re-extraction: take the item off its topics
+    // first, so those topics are recomputed (or deleted) without them.
+    await detachSourceItemFromTopics(orgId, itemId, { actorUserId: auth.userId, reason: "reextract" })
     const result = await runSignalExtractionForItem(orgId, itemId)
-    const res: AdminSignalsExtractResponse = { result, item: await getSignalReviewItem(orgId, itemId) }
+    let topics: AdminSignalsTopicsResult | null = null
+    if (result.status === "done") {
+      try {
+        const outcome = await runTopicResolutionForItem(orgId, itemId, { actorUserId: auth.userId })
+        topics = { outcome, links: await listItemTopics(orgId, itemId) }
+      } catch (e) {
+        console.error("[admin/topics/signals] topic resolution failed:", e)
+        topics = { error: e instanceof Error ? e.message : String(e) }
+      }
+    }
+    const res: AdminSignalsExtractResponse = {
+      result,
+      item: await getSignalReviewItem(orgId, itemId),
+      topics,
+    }
     return NextResponse.json(res)
   } catch (error) {
     if (error instanceof SignalsNotEnabledError) {

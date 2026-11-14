@@ -4,6 +4,7 @@ import { getServerSession } from "@/lib/get-session"
 import {
   findActiveOrgSourceByProvider,
   findSourceItemIdByExternalId,
+  fillSourceItemThreadKey,
   insertSourceItem,
   listChatMessageItems,
 } from "@/server/source-uploads"
@@ -31,6 +32,7 @@ import {
   exclusionReason,
   matchAnalysisExclusion,
 } from "@/lib/analysis-exclusion-match"
+import { normalizeWhatsAppChatName, whatsappThreadKey } from "@/lib/thread-key"
 
 // WhatsApp video parsing dominates wall-clock — match the per-item
 // Parse route's ceiling so a 50 MB MP4 still fits comfortably.
@@ -113,6 +115,14 @@ export async function POST(request: NextRequest) {
     return name.toLowerCase() === "_chat.txt"
   })
   const chatFile = chatFileIndex >= 0 ? files[chatFileIndex] : null
+  // Archive chat = the picked folder name (first segment of `_chat.txt`'s
+  // relative path, e.g. «WhatsApp Chat - Ромашка»). Part of the thread key
+  // `wa:<archive chat>:<groupKey>` (spec topics/01 §6.1); null when the file
+  // came without a folder.
+  const chatPathSegments =
+    chatFileIndex >= 0 ? (paths[chatFileIndex] || "").split("/").filter(Boolean) : []
+  const archiveChat =
+    chatPathSegments.length > 1 ? normalizeWhatsAppChatName(chatPathSegments[0]) : null
 
   // ── Pass 2: parse `_chat.txt` if present, build the group rows
   let groups: WhatsAppGroup[] = []
@@ -208,6 +218,10 @@ export async function POST(request: NextRequest) {
     if (existingId) {
       rowId = existingId
       inserted = false
+      await fillSourceItemThreadKey(
+        existingId,
+        whatsappThreadKey(archiveChat, group.groupKey),
+      )
     } else {
       rowId = randomUUID()
       inserted = true
@@ -221,6 +235,7 @@ export async function POST(request: NextRequest) {
           provider: "whatsapp",
           format: chatFormat,
           groupKey: group.groupKey,
+          archiveChat,
           startTimestamp: group.startTimestamp.toISOString(),
           endTimestamp: group.endTimestamp.toISOString(),
           authors: group.authors,
@@ -238,6 +253,8 @@ export async function POST(request: NextRequest) {
         mimeType: null,
         sizeBytes: transcript.length,
         sourceCreatedAt: group.startTimestamp,
+        // One group = one chat window.
+        threadKey: whatsappThreadKey(archiveChat, group.groupKey),
         fetchedAt: now,
         parseStatus: "pending",
       })

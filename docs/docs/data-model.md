@@ -133,10 +133,20 @@ in `src/lib/signals/extraction-types.ts`):
 | Table / columns | Purpose | Key columns |
 | --- | --- | --- |
 | `source_item` (new nullable columns) | Result of signal extraction per root item | `signal_status` (done / skipped / deferred / failed), `signal_reason`, `signal_score`, `signal_band`, `signal_facts` (jsonb: facts, direction, attributes, dropped codes, model), `signal_scanned_at`, `signal_attempts`, `signal_taxonomy_version`; `thread_key` (filled from phase 3) |
-| `signal_instance` | One code found once, with evidence | `code`, `origin` (communication / system_of_record / external), `source_item_id` (**cascade**), `evidence`, `confidence`, `subject_index`, `counted`, `not_counted_reason`, `score_contrib`, `topic_id` (phase 3), `taxonomy_version` |
-| `source_item_subject` | (counterparty × matter) pairs of an item | `source_item_id` (**cascade**), `subject_index`, `counterparty`, `on_behalf_of`, `matter`, `references` (jsonb), `products`, `client_id` / `contact_id` (**set null**, phase 3) |
+| `signal_instance` | One code found once, with evidence | `code`, `origin` (communication / system_of_record / external), `source_item_id` (**cascade**), `evidence`, `confidence`, `subject_index`, `counted`, `not_counted_reason`, `score_contrib`, `topic_id` (FK → `topic`, **set null**; set by topic resolution), `taxonomy_version` |
+| `source_item_subject` | (counterparty × matter) pairs of an item | `source_item_id` (**cascade**), `subject_index`, `counterparty`, `on_behalf_of`, `matter`, `references` (jsonb), `products`, `client_id` / `contact_id` (**set null**; written by topic resolution) |
 | `analysis_exclusion` | «Исключения из анализа»: org owner deny-list of addresses, domains, chats | `kind` (email / domain / chat), `value`, `normalized_value` (unique per org + kind) |
 | `topics_eval_run` | Stored metrics of one eval run over the golden set | `kind` (spike / eval), `config`, `metrics` (jsonb), `finished_at` |
+
+Topics phase 3 (topic engine, migration `0018_topics_phase3`; text value lists
+validated in `src/lib/topics/types.ts`; written only by `src/server/topics/`):
+
+| Table / columns | Purpose | Key columns |
+| --- | --- | --- |
+| `topic` | One business question with ONE counterparty (spec §2, §7) | `client_id` / `contact_id` (**set null**; either may be null, R14), `counterparty_raw`, `deal_id` (**set null**), `title` (display only, never matched), `matter`, `family`, `status` (open / dormant / resolved / done / dismissed / merged / expired / archived), `sub_state` (waiting_on_us / waiting_on_them / none), `lead_code`, `class`, `score`, `band`, `references` (jsonb, normalised keys), `products`, `first_seen_at`, `last_activity_at`, `closed_at`, `closed_reason`, `related_topic_id` / `merged_into_topic_id` (self, **set null**), `snoozed_until`, `taxonomy_version` |
+| `topic_item` | Item (subject) on a topic | `topic_id` (**cascade**), `source_item_id` (**cascade**), `subject_index` (-1 = whole item), `role` (origin / update / closing / context); unique topic + item + subject |
+| `topic_event` | Append-only topic journal | `topic_id` (**cascade**), `type` (created, item_attached, item_detached, reopened, resolved, dormant, expired, archived, done, dismissed, merged_into, merged_from, relinked), `actor` (agent / user), `user_id`, `source_item_id` (**set null**), `payload` (jsonb: role, codes, how it was matched) |
+| `source_item` (new columns) | Topic-resolution progress per root item | `topic_status` (done / log_only / ignored / deferred / failed), `topic_reason`, `topic_scanned_at`, `topic_attempts` |
 
 ## 8. Admin and audit
 

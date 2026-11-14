@@ -1680,6 +1680,17 @@ export const sourceItem = pgTable(
     // Failed attempts in a row (the runner gives up after a few).
     signalAttempts: integer("signal_attempts").notNull().default(0),
     signalTaxonomyVersion: integer("signal_taxonomy_version"),
+    // ── Topics engine, topic resolution (spec topics/01 §6; plan phase 3).
+    // Written only by `src/server/topics/`. Text validated in code
+    // (src/lib/topics/types.ts): done | log_only | ignored | deferred | failed.
+    // null = never considered. Reset by `detachSourceItemFromTopics`.
+    topicStatus: text("topic_status"),
+    // Why: log_only (closing code with no topic), ignored (no counted signal
+    // and nothing to attach to), the error of a failed attempt.
+    topicReason: text("topic_reason"),
+    topicScannedAt: timestamp("topic_scanned_at"),
+    // Failed attempts in a row (the phase gives up after a few).
+    topicAttempts: integer("topic_attempts").notNull().default(0),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -1723,6 +1734,10 @@ export const sourceItem = pgTable(
     index("source_item_org_thread_key_idx")
       .on(table.organizationId, table.threadKey)
       .where(sql`${table.threadKey} is not null`),
+    index("source_item_org_topic_scanned_idx").on(
+      table.organizationId,
+      table.topicScannedAt,
+    ),
   ],
 )
 
@@ -2921,7 +2936,9 @@ export const signalInstance = pgTable(
     // Effective weight at extraction time (0 when not counted).
     scoreContrib: integer("score_contrib").notNull().default(0),
     // Topic it was attached to — set by topic resolution (phase 3).
-    topicId: text("topic_id"),
+    topicId: text("topic_id").references((): AnyPgColumn => topic.id, {
+      onDelete: "set null",
+    }),
     taxonomyVersion: integer("taxonomy_version").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -2964,6 +2981,128 @@ export const sourceItemSubject = pgTable(
     uniqueIndex("source_item_subject_item_idx_uidx").on(table.sourceItemId, table.subjectIndex),
     index("source_item_subject_org_idx").on(table.organizationId),
   ],
+)
+
+// ─── Topics engine: topics (spec topics/01 §2, §6, §7, §11; plan phase 3) ──
+//
+// Value lists (status, sub_state, role, event type, actor) are text validated
+// in code (src/lib/topics/types.ts), like the signals tables. Written only by
+// `src/server/topics/`. Attention / card / display-profile / owner fields come
+// in phase 4.
+
+// One business question between the org and ONE counterparty (a client and /
+// or a contact, R14). Matching never uses `title` — only ids, references and
+// the matcher (spec §6.3).
+export const topic = pgTable(
+  "topic",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    clientId: text("client_id").references(() => client.id, { onDelete: "set null" }),
+    contactId: text("contact_id").references(() => contact.id, { onDelete: "set null" }),
+    // Counterparty as the model wrote it (kept for unresolved topics and re-link).
+    counterpartyRaw: text("counterparty_raw").notNull().default(""),
+    dealId: text("deal_id").references(() => deal.id, { onDelete: "set null" }),
+    title: text("title").notNull(),
+    // Russian, nominative case (from the subject of the first item).
+    matter: text("matter").notNull().default(""),
+    // Matter family (signal_category.family of the lead / first code).
+    family: text("family"),
+    // open | dormant | resolved | done | dismissed | merged | expired | archived
+    status: text("status").notNull().default("open"),
+    // waiting_on_us | waiting_on_them | none (only meaningful while open)
+    subState: text("sub_state").notNull().default("none"),
+    leadCode: text("lead_code"),
+    class: text("class"), // risk | chance | fyi
+    score: integer("score").notNull().default(0),
+    band: text("band").notNull().default("none"),
+    // Union of the subjects' references, normalised: [{ kind, value, key }]
+    references: jsonb("references")
+      .$type<{ kind: string; value: string; key: string }[]>()
+      .notNull()
+      .default([]),
+    products: text("products").array().notNull().default(sql`'{}'::text[]`),
+    firstSeenAt: timestamp("first_seen_at").notNull(),
+    lastActivityAt: timestamp("last_activity_at").notNull(),
+    closedAt: timestamp("closed_at"),
+    // closed_by:<CODE> | user_done | user_dismissed | merged
+    closedReason: text("closed_reason"),
+    relatedTopicId: text("related_topic_id").references((): AnyPgColumn => topic.id, {
+      onDelete: "set null",
+    }),
+    mergedIntoTopicId: text("merged_into_topic_id").references((): AnyPgColumn => topic.id, {
+      onDelete: "set null",
+    }),
+    snoozedUntil: timestamp("snoozed_until"),
+    taxonomyVersion: integer("taxonomy_version"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("topic_org_status_idx").on(table.organizationId, table.status),
+    index("topic_org_client_idx").on(table.organizationId, table.clientId),
+    index("topic_org_contact_idx").on(table.organizationId, table.contactId),
+    index("topic_org_last_activity_idx").on(table.organizationId, table.lastActivityAt),
+  ],
+)
+
+// Source item (subject) ↔ topic. role: origin | update | closing | context.
+export const topicItem = pgTable(
+  "topic_item",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topic.id, { onDelete: "cascade" }),
+    sourceItemId: text("source_item_id")
+      .notNull()
+      .references(() => sourceItem.id, { onDelete: "cascade" }),
+    // Index into the item's subjects (-1 = the whole item, e.g. context).
+    subjectIndex: integer("subject_index").notNull().default(-1),
+    role: text("role").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("topic_item_topic_item_subject_uidx").on(
+      table.topicId,
+      table.sourceItemId,
+      table.subjectIndex,
+    ),
+    index("topic_item_topic_idx").on(table.topicId),
+    index("topic_item_source_item_idx").on(table.sourceItemId),
+  ],
+)
+
+// Append-only journal of a topic (created, item attached, closed, reopened,
+// timers, user actions, merge, re-link). actor: agent | user.
+export const topicEvent = pgTable(
+  "topic_event",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topic.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    actor: text("actor").notNull().default("agent"),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    sourceItemId: text("source_item_id").references(() => sourceItem.id, {
+      onDelete: "set null",
+    }),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("topic_event_topic_idx").on(table.topicId, table.createdAt)],
 )
 
 // «Исключения из анализа» (spec §5.2 gate 3a; Q31, R18): addresses, domains

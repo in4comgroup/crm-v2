@@ -23,7 +23,7 @@ export async function POST(
 
   try {
     await assertSourceItemInScope(id, activeOrgId)
-    await reparseSourceItem(id)
+    await reparseSourceItem(id, { actorUserId: session.user.id })
     return NextResponse.json({ ok: true })
   } catch (error) {
     if (error instanceof SourceItemScopeError) {

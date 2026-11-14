@@ -3,7 +3,8 @@ import "server-only"
 import type { PipelineRunTrigger } from "@/db/schema"
 import type { TopicsMode } from "./mode"
 
-// Ordered phases of the hourly topics pipeline (spec 01 §13: signals →
+// Ordered phases of the hourly topics pipeline (spec 01 §13: intake (sync →
+// parse → upload of the org's sources, runbook 07 O1) → signals →
 // topic resolution → attention → cards → deal bridge → deal state).
 // Every phase is org-explicit (gets `organizationId` in the context, never
 // reads a session) and must be idempotent + resumable (spec §13: progress
@@ -14,11 +15,12 @@ import type { TopicsMode } from "./mode"
 // `{ skipped: "<reason>" }`. Throwing is allowed — the pipeline catches it
 // per phase, records the error and goes on with the next phase.
 //
-// Phase «signals» is built (plan phase 2); the others are stubs. A stub takes no
+// Phases «signals» (plan phase 2) and «topics» (plan phase 3) are built; the others are stubs. A stub takes no
 // arguments yet — give it `(ctx: TopicsPhaseContext)` when it is built. The TODO(phase N) tags
 // point at docs/specs/topics/03-development-plan.md.
 
 export type TopicsPhaseName =
+  | "intake"
   | "signals"
   | "topics"
   | "attention"
@@ -44,6 +46,12 @@ export type TopicsPhase = {
 
 const NOT_BUILT = { skipped: "not built yet" } as const
 
+// Intake (built 2026-11-14): sync → parse → upload for the org — src/server/topics/intake.ts.
+async function runIntake(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runIntakePhase } = await import("@/server/topics/intake")
+  return runIntakePhase(ctx)
+}
+
 // Phase 2 (built): signal extraction — src/server/topics/signals/runner.ts.
 // Imported lazily: the runner imports this module's types.
 async function runSignals(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
@@ -51,10 +59,12 @@ async function runSignals(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
   return runSignalsPhase(ctx)
 }
 
-// TODO(phase 3): topic resolution — match new signals to open topics or
-// open new ones (AI process `topics.topic_match`); stamps `topic_scanned_at`.
-async function runTopics(): Promise<TopicsPhaseResult> {
-  return NOT_BUILT
+// Phase 3 (built): topic resolution — src/server/topics/resolve-phase.ts
+// (match new signals to topics or open new ones via `topics.topic_match`,
+// lifecycle timers, re-link); stamps `topic_scanned_at`.
+async function runTopics(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runTopicsPhase } = await import("@/server/topics/resolve-phase")
+  return runTopicsPhase(ctx)
 }
 
 // TODO(phase 4): attention lists — recompute who must act on which topic
@@ -83,6 +93,7 @@ async function runDealState(): Promise<TopicsPhaseResult> {
 
 /** Phases in execution order. */
 export const TOPICS_PHASES: readonly TopicsPhase[] = [
+  { name: "intake", run: runIntake },
   { name: "signals", run: runSignals },
   { name: "topics", run: runTopics },
   { name: "attention", run: runAttention },

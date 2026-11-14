@@ -58,6 +58,10 @@ export type UpsertSourceItemInput = {
   // Provider-side timestamp (Nylas date / Chat createTime / Drive
   // modifiedTime). This is the cursor field for incremental sync.
   sourceCreatedAt?: Date | null
+  // Normalised thread key (spec topics/01 §6.1, `src/lib/thread-key.ts`).
+  // Written on insert; on a re-sync it only fills a row whose key is still
+  // null (an existing key is never changed).
+  threadKey?: string | null
 }
 
 export type UpsertResult = {
@@ -90,6 +94,7 @@ export async function upsertSourceItem(
       mimeType: input.mimeType ?? null,
       sizeBytes: input.sizeBytes ?? null,
       sourceCreatedAt: input.sourceCreatedAt ?? null,
+      threadKey: input.threadKey ?? null,
       fetchedAt: now,
     })
     .onConflictDoUpdate({
@@ -109,6 +114,7 @@ export async function upsertSourceItem(
         mimeType: input.mimeType ?? null,
         sizeBytes: input.sizeBytes ?? null,
         sourceCreatedAt: input.sourceCreatedAt ?? null,
+        threadKey: sql`coalesce(${sourceItem.threadKey}, ${input.threadKey ?? null}::text)`,
         fetchedAt: now,
       },
     })

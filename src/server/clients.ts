@@ -33,6 +33,7 @@ import { Output, stepCountIs } from "ai"
 import { z } from "zod"
 import { getServerSession } from "@/lib/get-session"
 import { aiGenerateText } from "@/server/ai/runtime"
+import { onEntityStatusChanged } from "@/server/topics/integration"
 import { randomUUID } from "crypto"
 import { request as httpsRequest } from "node:https"
 import { request as httpRequest } from "node:http"
@@ -498,7 +499,7 @@ export async function updateClient(
     currency?: string
   },
 ) {
-  const { activeOrgId } = await requireOrgContext()
+  const { session, activeOrgId } = await requireOrgContext()
   await assertClientInOrg(clientId, activeOrgId)
 
   if (data.name !== undefined && !data.name.trim()) {
@@ -547,6 +548,10 @@ export async function updateClient(
         : {}),
     })
     .where(eq(client.id, clientId))
+
+  // Topics engine: a deleted / blocked client leaves its topics (they become
+  // unresolved and are re-linked when the client comes back).
+  await onEntityStatusChanged(activeOrgId, { clientIds: [clientId] }, data.status, session.user.id)
 }
 
 // ── Web lookup (grounded web search + structured extract) ────────────

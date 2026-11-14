@@ -1,6 +1,6 @@
 # Topics — signals automation: go-live runbook
 
-Status: **draft, 2026-11-14.** Covers what is built: phases 0–2 (foundations, signals registry, signal extraction). Extend it when phases 3–6 add topics, cards and deal automation.
+Status: **draft, 2026-11-14.** Covers what is built: phases 0–3 (foundations, signals registry, signal extraction, hourly intake, topic engine). Extend it when phases 4–6 add attention, cards and deal automation.
 
 Purpose: one step-by-step list of what to switch on / off and what to check, so the whole signals flow works in a **new environment** (the first production deployment). Today there is only one environment and one DB (the DB in `.env`, a test DB). Some parts cannot be tested there (§3), so they must be checked at the switch-on.
 
@@ -12,18 +12,19 @@ Related: spec [01-specification.md](01-specification.md) (§5 extraction, §13 o
 
 | # | Step | Code | Trigger and timing |
 |---|---|---|---|
-| 1 | **Sync**: new messages from the source become `source_item` rows. Excluded addresses / chats are not stored (R18) | `src/server/sync/*`, `src/server/ingest/telegram.ts` | Mail (Nylas, IMAP), Google Chat, Drive: **daily run at 03:00 UTC** (`/api/cron/daily`), or the «Синхронизировать» button. Telegram: the webhook, at once |
-| 2 | **Parse**: markdown, junk skip, own-org attribution, exclusion guard (`parse_status`) | `parseSourceItem` | Daily run (max 200 items per run), the «Обработать» buttons. Telegram: at once, after the webhook |
-| 3 | **Upload**: markdown to object storage; the DB copy is cleared | `uploadSourceItem` | Daily run (max 500 per run), «Обработать» |
-| 4 | **Signals phase** of the hourly topics run, for each org in `shadow` / `on` | `runTopicsPipeline` → `runSignalsPhase` | **Every hour at :00 UTC** (`/api/cron/topics`), or «Запустить сейчас» on «Темы» |
+| 1 | **Sync**: new messages from the source become `source_item` rows. Excluded addresses / chats are not stored (R18) | `src/server/sync/*`, `src/server/ingest/telegram.ts` | Mail (Nylas, IMAP), Google Chat, Drive: **every hour** for orgs in `shadow` / `on` (phase «intake» of the topics run), daily at 03:00 UTC for all orgs (`/api/cron/daily`), or the «Синхронизировать» button. Telegram: the webhook, at once |
+| 2 | **Parse**: markdown, junk skip, own-org attribution, exclusion guard (`parse_status`) | `parseSourceItem` | Hourly «intake» (items of the signal window only, max 50 per org per run), daily run (max 200 per run), the «Обработать» buttons. Telegram: at once, after the webhook |
+| 3 | **Upload**: markdown to object storage; the DB copy is cleared | `uploadSourceItem` | Hourly «intake» (max 200 per org), daily run (max 500 per run), «Обработать» |
+| 4 | **Signals phase** (after «intake») of the hourly topics run, for each org in `shadow` / `on` | `runTopicsPipeline` → `runSignalsPhase` | **Every hour at :00 UTC** (`/api/cron/topics`), or «Запустить сейчас» on «Темы» |
 | 4a | Eligible items: root items, `parse_status = complete`, created at most 7 days before the org's current switch-on, not scanned yet (or `deferred`, or `failed` with fewer than 3 attempts). Oldest first, max 200 per org per run, 3 in parallel | `runner.ts` | — |
 | 4b | Gates without AI cost: exclusions → blocklist → bounce → out-of-office → calendar reply → automated sender (the last 4 for mail only) | `gates.ts` | — |
 | 4c | AI call `topics.signal_extraction` with all the org's active codes (123 codes, ≈ 123k characters) | `extract-item.ts`, `prompt/extraction.ts` | Stops for the org when the daily AI budget is reached; the item stays `deferred` |
 | 4d | Post-processing: drops (unknown code, evidence not in the author's own text, inbound-only / internal-only, date gates), outranks / merges, score and band | `postprocess.ts` | — |
 | 4e | Store: `signal_instance`, `source_item_subject`, `source_item.signal_*` (status `done` / `skipped` / `deferred` / `failed`) | `extract-item.ts` | — |
-| 5 | Topics, attention, cards, deals, deal state | `phases.ts` | **Not built** (stubs, phases 3–5a). Users see nothing from the engine yet, also in mode `on` |
+| 5 | **Topics phase**: items with `signal_status = done`, same window, oldest first, one at a time, 200 / org / run → counterparty → hard reference key → candidates → AI matcher `topics.topic_match` → attach / new topic; closing, reopen, dormant / expired sweep; re-link of unresolved topics | `src/server/topics/resolve-phase.ts`, `resolver.ts`, `topic-store.ts` | Same hourly run, after «signals» |
+| 6 | Attention, cards, deals, deal state | `phases.ts` | **Not built** (stubs, phases 4–5a). Users see nothing from the engine yet, also in mode `on` |
 
-**Latency today:** a Telegram message gets signals in ≤ 1 hour. A mail / Google Chat / Drive message gets signals only after the next daily run parses it, so up to ≈ 25 hours. See open point O1 (§9).
+**Latency:** every message of an org in `shadow` / `on` gets signals in ≤ 1 hour (sync, parse and signals run in the same hourly run). The «intake» phase is skipped while a daily pipeline run is in progress (no double parse); the next hour catches up. Code: `src/server/topics/intake.ts`.
 
 ## 2. Switches
 
@@ -70,11 +71,12 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | T4 | «Модели»: «Синхронизировать» the catalog. «Процессы ИИ»: check the model of «Извлечение сигналов» and of the parse processes | The model is available and compatible (no warning on the process row) |
 | T5 | «Сигналы» → pick the org → packs: `base` on; no overrides; copy the rule templates when phase 5 needs them. Wait ≥ 1 minute (cache) | Code list: «активно для организации: 144»; registry version shown; «Экспорт в Markdown» opens |
 | T6 | Sources: every source connected (credentials «Configured ✓»), automation «Вкл»; Telegram: save the credentials once so the webhook registers | «Синхронизировать» returns new items; a test Telegram message appears in Sources within seconds |
-| T7 | Wait for the first daily run (03:00 UTC) or press «Синхронизировать и обработать» per source | Sources: new items with status «complete»; `pipeline_run` row `success` |
+| T7 | Press «Синхронизировать и обработать» per source once (the hourly «intake» takes over after T9; the daily run covers orgs in `off`) | Sources: new items with status «complete» |
 | T8 | Exclusions, blocklist and own-org identity filled by the owner (B5) **before** switching on | Sources → «Исключения из анализа» shows the list; a test item from an excluded address is not stored |
-| T9 | «Темы» → set the org to **`shadow`**. Then «Запустить сейчас» once (do not wait for :00) | «Запуски»: a row with status `success`, the org listed, phase «signals» with `eligible > 0`, `done + skipped > 0`, `failed = 0` |
+| T9 | «Темы» → set the org to **`shadow`**. Then «Запустить сейчас» once (do not wait for :00) | «Запуски»: a row with status `success`, the org listed; phase «Загрузка и разбор» with `syncFailed = 0`; phase «signals» with `eligible > 0`, `done + skipped > 0`, `failed = 0` |
 | T10 | Wait for 2–3 hourly runs | «Запуски» shows one row per hour; `eligible` goes down to the new-item rate; no row stays `running` > 120 min |
 | T11 | «Сигналы сообщений» on «Темы»: open 10 items with signals and 10 skipped items | Evidence quotes are real text of the author; skip reasons make sense (automated, out-of-office, blocklist …) |
+| T11a | «Темы (отладка)» on «Темы»: phase «topics» in «Запуски» has `failed = 0`; open 10 topics | One business question per topic (§2.1); reminders joined to their request; two invoices = two topics; counterparty linked to the right client / contact; titles «Компания — вопрос» |
 | T12 | «Использование ИИ»: filter process «Извлечение сигналов» | Cost per item and per day as expected (§6 M3); no budget block for the org |
 
 ## 5. Business go-live steps
@@ -84,7 +86,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | B1 | **Golden set**: ≈ 200 real items + synthetic items for rare codes on «Темы» → «Эталонный набор»; LLM pre-annotation, then human correction of the expected codes | IN4COM reviewers + platform admin | Every item reviewed (`reviewed`) |
 | B2 | **Signal text review**: the RU labels, definitions, cues and examples of the 144 active codes («Экспорт в Markdown» from «Сигналы» as the review copy) | IN4COM reviewers | Corrections entered in «Сигналы» (each save = a new registry version) |
 | B3 | **Eval** on «Оценка извлечения (eval)» with the chosen model | Platform admin | Gate passed: precision ≥ 0.85 on P6 / P8 codes, recall ≥ 0.7 (codes with < 5 occurrences = «мало данных»); cost per item recorded |
-| B4 | **Shadow review**: 1–2 weeks of `shadow` on real traffic; reviewers read «Сигналы сообщений» daily: missed situations, false signals, wrong skips | IN4COM reviewers | Agreed list of fixes done (texts, exclusions, blocklist, own-org identity) |
+| B4 | **Shadow review**: 1–2 weeks of `shadow` on real traffic; reviewers read «Сигналы сообщений» and «Темы (отладка)» daily: missed situations, false signals, wrong skips, topics merged or split wrongly (fix with «Объединить с…» / «Отвязать сообщение» and note the case) | IN4COM reviewers | Agreed list of fixes done (texts, exclusions, blocklist, own-org identity); topic grouping precision ≥ 0.9 / recall ≥ 0.8 on the golden set |
 | B5 | **Noise sources** decided by the owner: newsletters, service mailboxes, private chats → «Исключения из анализа»; irrelevant companies → blocklist; own names / domains → own-org identity | IN4COM owner | Lists filled before T9 |
 | B6 | **Budget** agreed: daily AI USD per org from the measured cost (M3) × expected volume | Product owner | Org override set on «Дневной бюджет ИИ» if 5 USD is not enough |
 | B7 | **Switch to `on`**: only when the UI of phase 6 exists; until then `shadow` and `on` behave the same | Product owner | — |
@@ -94,6 +96,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | # | Check | Where | Normal |
 |---|---|---|---|
 | M1 | Hourly runs | «Темы» → «Запуски» | One `success` row per hour; per-org phase «signals» without errors |
+| M1a | Topics | «Темы (отладка)» counts per status | New topics per day in line with the counted signals; few `context`-only attaches; no growth of unresolved counterparties |
 | M2 | Item status mix | «Темы» → «Сигналы сообщений» (stats) | Most items `done` or `skipped`; `failed` near 0; `deferred` only on budget days |
 | M3 | Cost | «Использование ИИ» (process «Извлечение сигналов») | ≈ 1–3 cents per item with the 123-code prompt (re-measure in B3) |
 | M4 | Budget hits | «Использование ИИ» → «Дневной бюджет ИИ»; usage events `blocked` | Rare; when frequent → raise the budget or narrow sources (B5) |
@@ -133,7 +136,7 @@ GROUP BY 1 ORDER BY 2 DESC;
 
 | # | Point | Impact | Proposal |
 |---|---|---|---|
-| O1 | **Mail / Google Chat / Drive are synced and parsed only once a day** (03:00 UTC). The hourly run reads only parsed items | Signals for mail arrive up to ≈ 25 h late | Add «sync + parse» for orgs in `shadow` / `on` to the hourly run (before the signals phase), or run the daily pipeline hourly. Decision needed before go-live |
+| O1 | ~~Mail / Google Chat / Drive synced and parsed only once a day~~ | — | **Done 2026-11-14:** phase «intake» (sync → parse → upload per org) runs first in the hourly topics run. Watch the run duration: the whole hourly run is one workflow step (parse ≤ 50 + signals ≤ 200 items per org) |
 | O2 | The «Обработать» button on Sources runs parse → upload only (spec §13 says it should also run signals) | Manual processing does not give signals until the next hourly run | The separate admin action «Извлечь сигналы» exists; join them when the topics UI is built |
 | O3 | 15 active process codes (watchdogs, CRM trends) have no process yet | They never fire until phase 8 | None now |
 | O4 | Removing an exclusion does not bring items back; adding one does not remove parsed items | Manual re-parse needed | Accept for MVP |

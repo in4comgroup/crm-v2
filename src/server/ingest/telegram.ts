@@ -11,10 +11,10 @@
 import "server-only"
 
 import { timingSafeEqual } from "node:crypto"
-import { eq } from "drizzle-orm"
+import { and, count, desc, eq, isNull, lte, ne } from "drizzle-orm"
 import type { Message, MessageOrigin, Update } from "grammy/types"
 import { db } from "@/db/drizzle"
-import { source } from "@/db/schema"
+import { source, sourceItem } from "@/db/schema"
 import { getTelegramCredentials } from "@/server/providers/credentials"
 import { upsertSourceItem } from "@/server/source-items"
 import { parseSourceItem } from "@/server/parse-source-item"
@@ -32,6 +32,7 @@ import {
   telegramAppOrigin,
   telegramWebhookUrl,
 } from "@/lib/telegram"
+import { decideTelegramWindow, parseTelegramThreadKey } from "@/lib/thread-key"
 
 // Resolved per-request context for a telegram webhook delivery. Loaded
 // strictly by `grant`-style path id — never trusts anything in the update
@@ -257,6 +258,73 @@ function extractTelegramAudio(
   return null
 }
 
+// Thread key `tg:<chat_id>:<window>` (spec topics/01 §6.1). The window is
+// decided against the latest earlier message of the same chat (same org —
+// or the same source when the source has no org — provider telegram, root
+// rows): same window unless the gap is > 1 h or that window already holds
+// 100 messages. A new window takes this message's id as its stable id.
+// Best effort: a lookup failure never blocks ingestion (the key stays null
+// and the backfill fills it later).
+export async function resolveTelegramThreadKey(
+  scope: { sourceId: string; organizationId: string | null },
+  chatId: number,
+  messageId: number,
+  at: Date,
+  externalId: string,
+): Promise<string | null> {
+  try {
+    const prevRows = await db
+      .select({
+        threadKey: sourceItem.threadKey,
+        at: sourceItem.sourceCreatedAt,
+      })
+      .from(sourceItem)
+      .innerJoin(source, eq(source.id, sourceItem.sourceId))
+      .where(
+        and(
+          scope.organizationId
+            ? eq(sourceItem.organizationId, scope.organizationId)
+            : eq(sourceItem.sourceId, scope.sourceId),
+          eq(source.provider, "telegram"),
+          isNull(sourceItem.parentSourceItemId),
+          eq(sourceItem.threadExternalId, String(chatId)),
+          ne(sourceItem.externalId, externalId),
+          lte(sourceItem.sourceCreatedAt, at),
+        ),
+      )
+      .orderBy(desc(sourceItem.sourceCreatedAt), desc(sourceItem.createdAt))
+      .limit(1)
+    const prev = prevRows[0]
+    const prevWindow =
+      prev && prev.at ? parseTelegramThreadKey(prev.threadKey) : null
+    let windowSize = 0
+    if (prev && prev.at && prevWindow && prev.threadKey) {
+      const sizeRows = await db
+        .select({ n: count() })
+        .from(sourceItem)
+        .where(
+          and(
+            scope.organizationId
+              ? eq(sourceItem.organizationId, scope.organizationId)
+              : eq(sourceItem.sourceId, scope.sourceId),
+            eq(sourceItem.threadKey, prev.threadKey),
+          ),
+        )
+      windowSize = Number(sizeRows[0]?.n ?? 0)
+    }
+    const decision = decideTelegramWindow(
+      prev && prev.at
+        ? { at: prev.at, windowId: prevWindow?.windowId ?? null, windowSize }
+        : null,
+      { at, messageId },
+    )
+    return `tg:${chatId}:${decision.windowId}`
+  } catch (err) {
+    console.warn(`[telegram] thread key lookup failed for ${externalId}:`, err)
+    return null
+  }
+}
+
 // Persist one update into a source_item. Pure persistence — NO secret
 // verification, NO ack (callers own those). Scope: direct-message TEXT and
 // VOICE/AUDIO; group messages (Phase 3) are ignored. Voice/audio rows store
@@ -308,14 +376,25 @@ async function persistTelegramMessage(
       return { outcome: "ignored" }
     }
   }
+  const externalId = `${message.chat.id}:${message.message_id}`
+  const sourceCreatedAt = new Date(message.date * 1000)
   const baseUpsert = {
     sourceId: scope.sourceId,
     organizationId: scope.organizationId,
-    externalId: `${message.chat.id}:${message.message_id}`,
+    externalId,
     externalType: "chat_message" as const,
     threadExternalId: String(message.chat.id),
-    sourceCreatedAt: new Date(message.date * 1000),
+    sourceCreatedAt,
   }
+  // Only for rows that are stored (not for ignored commands / empty text).
+  const threadKey = () =>
+    resolveTelegramThreadKey(
+      scope,
+      message.chat.id,
+      message.message_id,
+      sourceCreatedAt,
+      externalId,
+    )
 
   // Voice / audio: persist the file reference + any caption. Transcription
   // happens at parse time (`parseTelegramItem` downloads the bytes via the
@@ -325,6 +404,7 @@ async function persistTelegramMessage(
     const caption = message.caption?.trim() ?? ""
     const { id, inserted } = await upsertSourceItem({
       ...baseUpsert,
+      threadKey: await threadKey(),
       metadataJson: {
         provider: "telegram",
         // No usable body text yet — the transcript is produced at parse time.
@@ -353,6 +433,7 @@ async function persistTelegramMessage(
 
   const { id, inserted } = await upsertSourceItem({
     ...baseUpsert,
+    threadKey: await threadKey(),
     metadataJson: {
       provider: "telegram",
       // `rawText` is the body the parser reads (mirrors WhatsApp) — no

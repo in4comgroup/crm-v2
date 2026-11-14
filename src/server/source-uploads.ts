@@ -1,6 +1,6 @@
 import "server-only"
 
-import { and, eq } from "drizzle-orm"
+import { and, eq, isNull } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { source, sourceItem } from "@/db/schema"
 
@@ -83,4 +83,20 @@ export async function findSourceItemIdByExternalId(
 /** Insert one `source_item` row exactly as given. */
 export async function insertSourceItem(values: NewSourceItem): Promise<void> {
   await db.insert(sourceItem).values(values)
+}
+
+/**
+ * Set the thread key of an existing row only when it has none yet (a
+ * re-uploaded archive fills rows stored before thread keys existed; an
+ * existing key is never changed).
+ */
+export async function fillSourceItemThreadKey(
+  itemId: string,
+  threadKey: string | null,
+): Promise<void> {
+  if (!threadKey) return
+  await db
+    .update(sourceItem)
+    .set({ threadKey })
+    .where(and(eq(sourceItem.id, itemId), isNull(sourceItem.threadKey)))
 }

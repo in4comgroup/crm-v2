@@ -30,6 +30,7 @@ import { formatDateTime } from "@/components/blocks/admin-ai-models"
 import { AdminTopicsGolden } from "@/components/blocks/admin-topics-golden"
 import { AdminTopicsSignals } from "@/components/blocks/admin-topics-signals"
 import { AdminTopicsSpike } from "@/components/blocks/admin-topics-spike"
+import { AdminTopicsTopics } from "@/components/blocks/admin-topics-topics"
 import type {
   AdminTopicsModeUpdateResponse,
   AdminTopicsOrgsResponse,
@@ -57,6 +58,7 @@ const MODE_HINT: Record<Mode, string> = {
 }
 
 const PHASE_LABEL: Record<string, string> = {
+  intake: "Загрузка и разбор",
   signals: "Сигналы",
   topics: "Темы",
   attention: "Внимание",
@@ -65,7 +67,7 @@ const PHASE_LABEL: Record<string, string> = {
   dealState: "Состояние сделок",
 }
 
-const PHASE_ORDER = ["signals", "topics", "attention", "cards", "deals", "dealState"]
+const PHASE_ORDER = ["intake", "signals", "topics", "attention", "cards", "deals", "dealState"]
 
 const TRIGGER_LABEL: Record<string, string> = { cron: "По расписанию", manual: "Вручную" }
 
@@ -489,6 +491,19 @@ export function AdminTopics() {
           </p>
         </div>
         <AdminTopicsSignals />
+      </section>
+
+      {/* Topic engine debug (plan phase 3 task 8). */}
+      <section className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-base font-medium">Темы (отладка)</h2>
+          <p className="text-sm text-muted-foreground">
+            Темы организации: контрагент, ведущий код, балл, статус, сообщения, сигналы и журнал.
+            Действия: «Готово», «Не относится», объединение, отвязка и повторный разбор сообщения.
+            Пользователи этого не видят.
+          </p>
+        </div>
+        <AdminTopicsTopics />
       </section>
 
       {/* Golden set and model spike (plan phase 0 tasks 7–8). */}

@@ -27,6 +27,7 @@ import type {
   TeardownPreview,
   TeardownThread,
   TeardownEntity,
+  TeardownTopic,
 } from "@/app/api/admin/teardown/preview/route"
 
 type Source = {
@@ -123,7 +124,10 @@ export function AdminTeardown() {
     const delClients = new Set<string>()
     const delContacts = new Set<string>()
     const sharedKept = new Set<string>()
-    if (!preview) return { items, cards, clients: 0, contacts: 0, shared: 0 }
+    const delTopics = new Set<string>()
+    const changedTopics = new Set<string>()
+    if (!preview)
+      return { items, cards, clients: 0, contacts: 0, shared: 0, topicsDeleted: 0, topicsChanged: 0 }
     for (const t of preview.threads) {
       if (!selThreads.has(t.id)) continue
       items += t.itemCount
@@ -141,6 +145,11 @@ export function AdminTeardown() {
     for (const t of preview.threads) {
       for (const c of t.clients) consider(c, delClients)
       for (const c of t.contacts) consider(c, delContacts)
+      for (const tp of t.topics ?? []) {
+        const outcome = topicOutcome(tp, selThreads)
+        if (outcome === "delete") delTopics.add(tp.id)
+        else if (outcome === "change") changedTopics.add(tp.id)
+      }
     }
     // An entity counted deletable under one thread can't also be "kept".
     for (const id of delClients) sharedKept.delete(id)
@@ -151,6 +160,8 @@ export function AdminTeardown() {
       clients: delClients.size,
       contacts: delContacts.size,
       shared: sharedKept.size,
+      topicsDeleted: delTopics.size,
+      topicsChanged: changedTopics.size,
     }
   }, [preview, selThreads])
 
@@ -187,6 +198,8 @@ export function AdminTeardown() {
         deals: number
         tasks: number
         orders: number
+        topicsDeleted?: number
+        topicsChanged?: number
         sharedSkipped: number
         cursorReset: boolean
       }
@@ -194,6 +207,7 @@ export function AdminTeardown() {
         `Удалено · тредов ${c.threads} · элементов ${c.sourceItems} · ` +
           `карточек ${c.cards} · клиентов ${c.clients} · контактов ${c.contacts} · ` +
           `сделок ${c.deals} · задач ${c.tasks} · заказов ${c.orders}` +
+          ` · тем удалено ${c.topicsDeleted ?? 0} · тем пересчитано ${c.topicsChanged ?? 0}` +
           (c.sharedSkipped > 0 ? ` · оставлено общих ${c.sharedSkipped}` : "") +
           (c.cursorReset ? " · курсор сброшен" : ""),
       )
@@ -261,6 +275,12 @@ export function AdminTeardown() {
                   <Chip label="Карточки" value={estimate.cards} />
                   <Chip label="Клиенты" value={estimate.clients} primary />
                   <Chip label="Контакты" value={estimate.contacts} primary />
+                  {estimate.topicsDeleted > 0 && (
+                    <Chip label="Темы удаляются" value={estimate.topicsDeleted} />
+                  )}
+                  {estimate.topicsChanged > 0 && (
+                    <Chip label="Темы пересчитываются" value={estimate.topicsChanged} />
+                  )}
                   {estimate.shared > 0 && (
                     <Chip label="⚠ оставлено общих" value={estimate.shared} />
                   )}
@@ -374,6 +394,11 @@ function ThreadRow({
                 {thread.cardCount} карт.
               </span>
             )}
+            {(thread.topics?.length ?? 0) > 0 && (
+              <span title={thread.topics.map((tp) => tp.title).join("\n")}>
+                {thread.topics.length} тем.
+              </span>
+            )}
           </div>
         </div>
       </label>
@@ -450,4 +475,13 @@ function EntityGroup({
       })}
     </div>
   )
+}
+
+// Outcome of a topic for the current selection — same rule as the server
+// (`planTopicTeardown`): deleted when no non-context item is left.
+function topicOutcome(tp: TeardownTopic, selThreads: Set<string>): "delete" | "change" | null {
+  if (!tp.threadIds.some((id) => selThreads.has(id))) return null
+  const keeps =
+    tp.evidenceInOtherSources > 0 || tp.evidenceThreadIds.some((id) => !selThreads.has(id))
+  return keeps ? "change" : "delete"
 }

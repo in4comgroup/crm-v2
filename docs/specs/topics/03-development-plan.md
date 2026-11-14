@@ -1,6 +1,6 @@
 # Topics — development plan (final)
 
-Status: **final, 2026-11-13. Progress: phases 0, 1 and 2 built (not deployed); phase 3 next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
+Status: **final, 2026-11-13. Progress: phases 0–3 built (not deployed); phase 4 next.** Rebased on this repository (crm-v2) after the review of 2026-11-13.
 Spec: [01-specification.md](01-specification.md) · Decisions: [02-open-questions.md](02-open-questions.md) (§ F = R1–R23) · Registry: [05-signals-registry.md](05-signals-registry.md) · Attention: [06-attention-engine.md](06-attention-engine.md)
 
 The plan of 2026-11-10 assumed another copy of the product (Yandex models, own PostgreSQL, K8s CronJob, `llm_usage`). It is replaced by this document. Its business content (phases, scope, gates) is kept.
@@ -33,13 +33,13 @@ The plan of 2026-11-10 assumed another copy of the product (Yandex models, own P
 | Deal discovery | Process `deals.discovery` (name match); since phase 0 it journals every stage move (`deal_activity`) | Replaced in phase 5, removed in phase 12 |
 | Mock agent | Removed in phase 0 (R9) | — |
 | Orchestration | Daily cron `0 3 * * *` → `runDailyPipeline` (model catalog sync + cost check, sync → parse → upload), `pipeline_run`; **hourly** cron `0 * * * *` → `runTopicsPipeline` (phase «signals» built in phase 2; the others are stubs), `topics_run` | Phases 3–5a fill the stubs |
-| DB process | Drizzle migrations `0000`–`0017` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction), reference data in migrations | Next topics migration: **0018** |
+| DB process | Drizzle migrations `0000`–`0018` (topics: `0010` foundations, `0011`–`0014` + `0016`–`0017` signals registry, `0015` signal extraction, `0018` topics), reference data in migrations | Next topics migration: **0019** |
 | Topics foundations (phase 0) | `org_setting` (`topics.enabled`, budget override), system actor «Агент», «Темы» tab (modes, runs, golden set, model spike) | Used by every later phase |
 | Signals registry (phase 1) | DB registry (one generic pack; 158 codes after `0017`: 144 `active`, 8 `parked`, 6 `gated`, no retired codes; attributes, relations, 9 risk types, rule templates), `getEffectiveSignals(orgId)`, «Сигналы» tab with the full editor, Markdown export (preset mechanism kept, no presets defined — R22) | Extraction prompt reads it |
 | Signal extraction (phase 2) | `src/server/topics/signals/` (gates, extraction, post-processing, storage, hourly runner, manual action), `signal_instance`, `source_item_subject`, `source_item.signal_*`, `analysis_exclusion` (owner UI on Sources), `src/lib/ru-mail/`, eval runner with stored metrics, signal review on «Темы» | Input of topic resolution (phase 3): counted instances + subjects per item |
 | Access | Sign-in gate `src/proxy.ts`; routes check the session; `"use server"` modules are session-bound | Engine code is `server-only` and takes `organizationId` explicitly |
 
-Missing today: `thread_key` values (column exists), topics, attention engine, card kinds, deal types, deal state / risks, production calendar.
+Missing today: attention engine, card kinds, deal types, deal state / risks, production calendar. (Thread keys, topics and the hourly intake are built — phase 3.)
 
 ## Overview
 
@@ -48,8 +48,8 @@ Missing today: `thread_key` values (column exists), topics, attention engine, ca
 | 0 | Foundations | 1.5 | Mock agent removed, deal discovery journaled, per-org AI budget, `org_setting` + topics flag, system actor, AI processes, hourly cycle skeleton, golden set, model spike | Admin only | ✅ built |
 | 1 | Signals registry | 3 | DB registry (all parameters, one pack — R21), seed v1 by migration, «Сигналы» tab with **full editor**, per-org activation / overrides, Markdown export | Admin only | ✅ built |
 | 2 | Signal extraction | 2.5 | Gates, `topics.signal_extraction`, scoring, storage, exclusions, forwarded mail, eval runner | No (shadow) | ✅ built |
-| 3 | Topic engine | 3 | `thread_key`, topics, resolver + `topics.topic_match`, lifecycle, journal, teardown / reparse, debug page | No (shadow) | next |
-| 4 | Attention and cards | 2 | Attention engine (06, A1–A8), production calendar, card per topic with kinds, `topics.card_writer` | No (shadow) |  |
+| 3 | Topic engine | 3 | `thread_key`, topics, resolver + `topics.topic_match`, lifecycle, journal, teardown / reparse, debug page | No (shadow) | ✅ built |
+| 4 | Attention and cards | 2 | Attention engine (06, A1–A8), production calendar, card per topic with kinds, `topics.card_writer` | No (shadow) | next |
 | 5 | Deal bridge | 2 | Deal types, stage rules, auto-create + proposals, journaled moves, «Происхождение» | No (shadow) |  |
 | 5a | Deal state and risks | 1.5 | `deals.state_summary`, risk engine, «Есть риски» | No (shadow) |  |
 | 6 | UI and pilot | 2 | «Сейчас / Сводка / Неделя», topic drawer, company / deal tabs, «Создать заказ» on order topics, IN4COM switch-on | **Yes (IN4COM)** |  |
@@ -108,7 +108,7 @@ Measured prompt size (catalog v0: 90 codes, 49 "on" in the prompt): system promp
 
 Follow-ups found in phase 0 (carried into later phases):
 - ~~Anti-cues of "on" codes name some "review" codes (e.g. `PREORDER_REQUESTED`, `STOCK_AVAILABILITY_REQUEST`), which the live prompt does not contain.~~ Mostly resolved by R22: the live prompt now carries every `active` code (incl. `STOCK_AVAILABILITY_REQUEST`). Anti-cues that still name `onHold` / `parked` codes (e.g. `PREORDER_REQUESTED`) can return unknown codes; they are dropped and counted.
-- The golden set copies the item text into `topics_golden_item.text` (real client text in a second table; same tenant, admin only). Teardown / reparse integration (phase 3, task 7) must also clean or detach golden items; anonymised export is not built.
+- The golden set copies the item text into `topics_golden_item.text` (real client text in a second table; same tenant, admin only). Teardown / reparse integration (phase 3, task 7) must also clean or detach golden items; anonymised export is not built. *(Phase 3 task 7: golden items do not reference topics; a teardown detaches them through the FK `source_item_id → set null` and keeps the frozen `text` — clean-up of that text stays open; a reparse does not touch them.)*
 - ~~`catalog-v0.ts` stop-gap~~ — done in phase 1: the prompt builder, golden set and spike read the DB registry (`getEffectiveSignals`); `catalog-v0.ts` and its converter are deleted.
 - Agent users stay in `user` after their org is deleted (no FK to the org); harmless (banned, no membership), clean up with org deletion later.
 
@@ -146,6 +146,7 @@ Exit: seed applies on an empty DB and on the dev DB; editor round trip (edit →
 | 6 Post-processing | Done: `postprocess.ts` (pure, unit-tested) — spec §5.4 rules 1–7 incl. retired → successor, evidence in the author's own text (not quoted history), direction cross-check with the parse-time attribution, date gates, outranks / merges, attributes on the dominant instance (06 A2), trend ceiling. R19 needs topics → phase 3/4 |
 | 7 Runner | Done: phase «signals» of the hourly run (oldest first, 200 / org / run, concurrency 3, budget-aware, retries failed items 3×, 7-day window from the current switch-on); manual «Извлечь заново» (admin review block, Sources row action) |
 | 8 Eval runner | Done: eval = spike + post-processing; precision / recall on counted codes, real vs synthetic, quality-gate verdict, metrics stored per run (`topics_eval_run`); review-code batch over recent non-golden items |
+| 9 Hourly intake (added 2026-11-14) | Done: phase «intake» before «signals» — sync → parse → upload of the org's automated sources (parse: signal window only, 50 / org / run; upload 200), skipped while a daily run is in progress. Live check on IN4COM: 1 source, 16 new items, 5 parsed (1 complete, 4 junk), 2 uploaded, 76 s |
 
 Live check on the dev DB (IN4COM, 8 recent items, with the former preset — before R22): Telegram orders → `ORDER_REQUESTED` (score 5–6), a new decision maker in mail → `CONTACT_NEW_DECISION_MAKER` (7), a blocklisted sender skipped without a call, others none; ≈ $0.007 and 7–15 s per item with `google/gemini-2.5-flash`. The hourly run in shadow ran the phase with 0 eligible items (the newest IN4COM item is older than the 7-day window); the org was set back to `off`.
 
@@ -171,14 +172,41 @@ Exit: precision ≥ 0.85 on P6 / P8 codes and recall ≥ 0.7 on the golden set; 
 
 ## Phase 3 — Topic engine (3 weeks)
 
+**Status 2026-11-14 — built, not deployed.** Migration `0018_topics_phase3` (generated, applied to the `.env` DB). `pnpm test`: 153 tests.
+
+| Task | State |
+|---|---|
+| 1 Thread key | Done: `src/lib/thread-key.ts` (pure, unit-tested) — `nylas:<thread>`, `imap:<root Message-ID>` (IMAP sync now stores `references[]` / `inReplyTo`), `gchat:<space>/<thread>`, `tg:<chat>:<first message id of the window>` (new window after > 1 h gap or 100 messages), `wa:<chat>:<group>`; written at sync / ingest; `backfillThreadKeys` fills older items in the hourly «intake» (500 / org / run). IN4COM: 104 / 104 root items keyed (76 mail in 67 threads, 28 Telegram in 19 windows) |
+| 2 Migration | Done: `topic`, `topic_item` (role origin / update / closing / context), `topic_event` (journal, actor agent / user), FK `signal_instance.topic_id`, `source_item.topic_*` progress columns; value lists are text validated in code (`src/lib/topics/types.ts`) |
+| 3 Counterparty | Done: `counterparty.ts` (client by match keys / aliases / domain / contact email; contact by email / Telegram / name; contact-only topics R14); re-link of unresolved topics in every run |
+| 4 Resolver | Done: `resolver.ts` (pure, injectable matcher) — hard reference key → candidates (≤ 10) → `matcher.ts` (`topics.topic_match`, closed id list) → R15 bias; state codes with no topic logged only; context items (§6.4); titles «Компания — matter» |
+| 5 Lifecycle | Done: `lifecycle.ts` — closing by `closes_codes` on the topic, reopen ≤ 14 d, dormant 21 d / expired 60 d / archived sweep, sub-state waiting on us / them; actions done / dismiss / merge / detach with journal (`topic-store.ts`) |
+| 6 Score | Done: 06 §4.1–4.3 + §4.6 (instance activity incl. relevance window, base score, lead code, class by relation). Boosts / caps / profiles = phase 4; the stored score is recomputed on attach / detach / action only (scheduled recheck = phase 4) |
+| 7 Integration | Done: reparse and the manual re-extract detach the item first; teardown preview / execute count, delete or recompute topics (bulk); deleting / blocking a client or contact unlinks it from topics (journal `relinked`), the hourly re-link links it again when it comes back. The CRM has no client merge |
+| 8 Debug page | Done: block «Темы (отладка)» on «Темы» (org, status filter + counts, table, detail with items / signals / journal, actions Готово / Не относится / Объединить с… / Отвязать сообщение / Разобрать заново); API `api/admin/topics/topics`; Sources action «Извлечь сигналы и темы» |
+
+Phase «topics» of the hourly run: items with `signal_status = done` and no `topic_scanned_at`, same 7-day window, oldest first, 200 / org / run, one at a time (order matters); budget stop → items wait.
+
+Live check (IN4COM, manual action on 7 older items, ≈ $0.0015): 3 topics («ОРИКС — новый контакт» linked to client and contact; 2 order topics with an unknown counterparty), 1 context attach (same Telegram window), 3 items without counted signals ignored; re-run gave no duplicates. Real matcher, 3 cases right: reminder → same topic (high); invoice 125 vs a topic on invoice 124 → NEW; unrelated price request → NEW.
+
+**Open:** the exit gate needs topic groups in the reviewed golden set (grouping precision ≥ 0.9 / recall ≥ 0.8) — the golden set has no `expected` topic-group field yet; add it with the review. The §2.1 examples that need no LLM run as unit tests with a fake matcher.
+
+Follow-ups found in phase 3:
+- A signal for all subjects (`subjectIndex = -1`) links to the first matching topic only (`signal_instance` has one `topic_id`).
+- A topic's score does not drop by itself when a signal gets old (recheck in phase 4). Old test items show score 0 / band none because their signals are outside the relevance window — expected.
+- When a detach deletes a topic, its context items are reset; if older than the 7-day window, the hourly run does not read them again.
+- Restoring a deleted client re-links only topics with neither client nor contact.
+- Rule B4 (user dismisses one signal) exists in the pure code only; nothing stores it yet (phase 4 / 6 UI).
+- Teardown keeps the frozen text in `topics_golden_item.text` (privacy follow-up from phase 0).
+
 1. `thread_key` for all providers (spec §6.1): IMAP stores `References` at sync from now on; existing items get a best-effort key in a resumable engine step (no script).
 2. Migration: `topic` (with `client_id` and / or `contact_id`, R14), `topic_item`, `topic_event`.
 3. Counterparty resolution (reuse `companyMatchKey`, domains, contact emails; org-explicit helpers); re-link when discovery creates the client later.
 4. Resolver (spec §6.2): hard reference keys → candidates → `topics.topic_match` (closed list of ids, copied exactly) with the R15 bias; families; title building.
 5. Lifecycle (spec §7): statuses, `waiting_on_us / waiting_on_them`, closing by state codes on the same topic, reopen within 14 days of resolution, dormant after 21 days, expired after 60.
 6. Topic score, lead code, class (relationship status from order history + the companies tab).
-7. Integration: reparse resets signals and detaches; source teardown deletes topics produced only by the selected threads; client merge / delete keeps topics consistent.
-8. Admin debug page: topics with items and signals for the shadow review.
+7. Integration: reparse resets signals and detaches; source teardown deletes topics produced only by the selected threads; client merge / delete keeps topics consistent. *(Built 2026-11-14: `reparseSourceItem` + the manual re-extract detach first; teardown preview / execute plan deletes vs recomputes (`teardown-plan.ts`), counts in `teardown_log`; the CRM has no client / contact merge — soft delete / block unlinks the topics (journaled), the hourly re-link step links them again. See `src/app/AGENTS.md` § "Topics debug".)*
+8. Admin debug page: topics with items and signals for the shadow review. *(Built 2026-11-14: block «Темы (отладка)» on «Темы», API `api/admin/topics/topics`; the manual Sources action is now «Извлечь сигналы и темы».)*
 
 Exit: grouping precision ≥ 0.9 / recall ≥ 0.8; all spec §2.1 examples pass as automated tests.
 
@@ -231,19 +259,18 @@ Exit (go-live sign-off): Q23 targets met for 2 consecutive weeks.
 
 Out of this plan (separate tasks): functional roles and rights (Q33); Telegram group chats, voice notes and files (Q11, Q32).
 
-## Next steps (2026-11-14, after R22 / R23)
+## Next steps (2026-11-14, after phase 3)
 
-Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0017` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
+Environment: there is **one DB only** — the DB in `.env`, a test DB. Migrations `0000`–`0018` are applied to it; nothing is pending. A future production environment follows the runbook [07-signals-go-live.md](07-signals-go-live.md).
 
-Current state: phases 0–2 built, not deployed. The registry is one generic set (158 codes: 144 `active`, 123 in the extraction prompt; no retired codes). IN4COM: `base` pack on, no own signals or rules, topics mode `off`.
+Current state: phases 0–3 built, not deployed. Hourly run per org in `shadow` / `on`: intake (sync → parse → upload, thread keys) → signals → topics; attention / cards / deals are stubs. IN4COM: `base` pack on, topics mode `off`; 3 test topics from the live checks.
 
 | # | Step | Who | Blocks |
 |---|---|---|---|
-| 1 | Review and commit phases 0–2 incl. `0016` (R22), `0017` (R23) and the runbook 07 | Product owner | — |
-| 2 | Decide open point O1 of 07: sync + parse of mail / Google Chat / Drive in the hourly run (today only daily, so mail signals can be ≈ 25 h late) | Product owner | Useful signal latency for mail |
-| 3 | IN4COM reviewers: fill the golden set on «Темы» and review the generic signal texts (P3, phase 1 task 6); then run an eval: gate verdict and cost per item (prompt = 123 codes / 123k characters) | IN4COM + platform admin | Phase 2 exit gate, model choice, cost check |
-| 4 | **Phase 3 — topic engine** (`thread_key`, topics, resolver + `topics.topic_match`, lifecycle, teardown / reparse, debug page) | Development | Can start now |
-| 5 | Go-live of a deployed environment: runbook 07 (Vercel Pro, env, migrations on that DB, `base` pack, sources, `shadow`) | Product owner + platform admin | When a deployment is planned |
+| 1 | Review and commit phases 0–3 (incl. migrations `0016`–`0018`, runbook 07) | Product owner | — |
+| 2 | IN4COM reviewers: fill the golden set on «Темы» (codes **and** topic groups), review the generic signal texts; then run an eval (signals gate + cost per item) | IN4COM + platform admin | Phase 2 and phase 3 exit gates |
+| 3 | Optional on the test DB: switch IN4COM to `shadow` for some days, so the hourly runs (when the app is deployed or run by «Запустить сейчас») collect real signals and topics for the review in «Темы (отладка)» | Platform admin | Shadow review |
+| 4 | **Phase 4 — attention and cards** (attention engine 06, production calendar, card per topic with kinds, `topics.card_writer`) | Development | Can start now |
 
 Note: 15 of the codes made `active` by R23 are process codes (watchdogs, CRM-data trends such as `SALES_OFFER_NO_RESPONSE`, `SIGNAL_SPEND_DOWN`). They are not in the prompt and nothing emits them until phase 8 builds their process.
 

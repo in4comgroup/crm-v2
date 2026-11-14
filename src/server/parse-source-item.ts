@@ -12,6 +12,7 @@ import {
   type SourceItemKind,
   type OrgAttribution,
 } from "@/db/schema"
+import { detachSourceItemFromTopics } from "@/server/topics/topic-store"
 import {
   parserAiContext,
   type MetadataAnalysis,
@@ -102,11 +103,15 @@ import type {
 // The next Parse call starts from a clean slate. R2 objects from a prior
 // upload stay in the bucket; a follow-up Upload overwrites under the
 // same key.
-export async function reparseSourceItem(itemId: string): Promise<void> {
+export async function reparseSourceItem(
+  itemId: string,
+  opts: { actorUserId?: string | null } = {},
+): Promise<void> {
   const rows = await db
     .select({
       id: sourceItem.id,
       parentSourceItemId: sourceItem.parentSourceItemId,
+      organizationId: sourceItem.organizationId,
     })
     .from(sourceItem)
     .where(eq(sourceItem.id, itemId))
@@ -125,8 +130,16 @@ export async function reparseSourceItem(itemId: string): Promise<void> {
     .delete(sourceItem)
     .where(eq(sourceItem.parentSourceItemId, itemId))
 
-  // Topics engine output of the old parse (spec topics/01 §11): drop the
-  // item's signal instances and subjects; the columns are reset below.
+  // Topics engine output of the old parse (spec topics/01 §11). First take
+  // the item off its topics (topics left with no evidence are deleted, the
+  // others recomputed and journaled), then drop the item's signal instances
+  // and subjects; the columns are reset below.
+  if (row.organizationId) {
+    await detachSourceItemFromTopics(row.organizationId, itemId, {
+      actorUserId: opts.actorUserId ?? null,
+      reason: "reparse",
+    })
+  }
   await db.delete(signalInstance).where(eq(signalInstance.sourceItemId, itemId))
   await db
     .delete(sourceItemSubject)
@@ -167,6 +180,11 @@ export async function reparseSourceItem(itemId: string): Promise<void> {
       signalScannedAt: null,
       signalAttempts: 0,
       signalTaxonomyVersion: null,
+      // Topic resolution must run again after the new signals.
+      topicStatus: null,
+      topicReason: null,
+      topicScannedAt: null,
+      topicAttempts: 0,
     })
     .where(eq(sourceItem.id, itemId))
 }

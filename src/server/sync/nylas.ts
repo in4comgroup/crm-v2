@@ -24,6 +24,7 @@ import {
   loadAnalysisExclusions,
 } from "@/server/analysis-exclusions"
 import { matchAnalysisExclusion } from "@/lib/analysis-exclusion-match"
+import { nylasThreadKey } from "@/lib/thread-key"
 
 // Pulls inbox messages from Nylas, upserts each into source_item.
 // Two modes:
@@ -130,6 +131,7 @@ export async function syncNylasEmails(
       externalId: msg.id,
       externalType: "email",
       threadExternalId: msg.threadId ?? null,
+      threadKey: nylasThreadKey(msg.threadId),
       sourceCreatedAt: msgDate,
       metadataJson: {
         subject: msg.subject ?? "",

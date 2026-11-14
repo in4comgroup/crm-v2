@@ -5,6 +5,7 @@ export {
   type TeardownPreview,
   type TeardownThread,
   type TeardownEntity,
+  type TeardownTopic,
 } from "@/server/teardown"
 
 function errorResponse(error: unknown) {

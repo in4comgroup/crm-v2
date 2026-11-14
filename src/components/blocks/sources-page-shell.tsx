@@ -172,7 +172,7 @@ function SourcesScope({
   onBumpRefresh: () => void
   onOpenDropoffUpload: () => void
   onOpenWhatsAppUpload: () => void
-  // Platform admin: per-row «Извлечь сигналы» (topics engine, shadow review).
+  // Platform admin: per-row «Извлечь сигналы и темы» (topics engine, shadow review).
   canExtractSignals: boolean
 }) {
   const proc = useProcessRun({ onRefresh: onBumpRefresh })

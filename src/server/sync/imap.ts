@@ -22,6 +22,12 @@ import {
   loadAnalysisExclusions,
 } from "@/server/analysis-exclusions"
 import { matchAnalysisExclusion } from "@/lib/analysis-exclusion-match"
+import {
+  imapThreadKey,
+  normalizeMessageId,
+  parseMessageIdList,
+  readHeaderField,
+} from "@/lib/thread-key"
 
 // Map an imapflow envelope address to the canonical {name,email} shape that
 // discovery's `extractParticipants` reads (the Nylas from/to/cc fallback).
@@ -120,7 +126,14 @@ export async function syncImapEmails(
 
     for await (const msg of client.fetch(
       pageUids,
-      { uid: true, envelope: true, internalDate: true },
+      // `headers`: References + In-Reply-To for the thread key (spec
+      // topics/01 §6.1). The envelope carries In-Reply-To but not References.
+      {
+        uid: true,
+        envelope: true,
+        internalDate: true,
+        headers: ["references", "in-reply-to"],
+      },
       { uid: true },
     )) {
       fetched++
@@ -149,18 +162,33 @@ export async function syncImapEmails(
         continue
       }
 
+      const rawHeaders = msg.headers ? msg.headers.toString("utf8") : ""
+      const references = parseMessageIdList(readHeaderField(rawHeaders, "references"))
+      const inReplyTo =
+        normalizeMessageId(env?.inReplyTo) ??
+        parseMessageIdList(readHeaderField(rawHeaders, "in-reply-to"))[0] ??
+        null
+
       const result = await upsertSourceItem({
         sourceId: ctx.id,
         organizationId: ctx.organizationId,
         externalId: `${uidValidity}:${msg.uid}`,
         externalType: "email",
         threadExternalId: env?.inReplyTo ?? null,
+        threadKey: imapThreadKey({
+          references,
+          inReplyTo,
+          messageId: env?.messageId,
+        }),
         sourceCreatedAt,
         metadataJson: {
           mailbox,
           uid: msg.uid,
           uidValidity,
           messageId: env?.messageId ?? "",
+          // Normalised ids (no `<>`, lower-case), References in header order.
+          references,
+          inReplyTo,
           subject: env?.subject ?? "",
           from,
           to,

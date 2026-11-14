@@ -20,6 +20,7 @@ import {
   type BlocklistKind,
 } from "@/db/schema"
 import { getServerSession } from "@/lib/get-session"
+import { onEntityStatusChanged } from "@/server/topics/integration"
 import { companyMatchKey, personMatchKey } from "@/lib/translit-ru"
 import {
   domainMatches,
@@ -396,6 +397,7 @@ async function sweepExisting(
       .set({ status: "blocked" })
       .where(and(eq(client.organizationId, orgId), inArray(client.id, ids)))
     sweptClients += ids.length
+    await onEntityStatusChanged(orgId, { clientIds: ids }, "blocked")
   }
   const blockContacts = async (ids: string[]) => {
     if (ids.length === 0) return
@@ -404,6 +406,7 @@ async function sweepExisting(
       .set({ status: "blocked" })
       .where(and(eq(contact.organizationId, orgId), inArray(contact.id, ids)))
     sweptContacts += ids.length
+    await onEntityStatusChanged(orgId, { contactIds: ids }, "blocked")
   }
 
   const domainMatchesKey = (d: string) =>

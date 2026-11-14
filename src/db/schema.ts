@@ -425,6 +425,23 @@ export const client = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // «Ответственный» (Responsible): the member who works with this company.
+    // Defaults to `user_id` (the creator) on create; the org OWNER can set any
+    // member; the responsible member (not owner) can only hand the company
+    // over to an owner (src/server/client-responsible.ts). Topics: the deal
+    // owner rule and the topic assignee fall back to it.
+    responsibleUserId: text("responsible_user_id").references((): AnyPgColumn => user.id, {
+      onDelete: "set null",
+    }),
+    responsibleChangedAt: timestamp("responsible_changed_at"),
+    responsibleChangedByUserId: text("responsible_changed_by_user_id").references((): AnyPgColumn => user.id, {
+      onDelete: "set null",
+    }),
+    // Set while a handover to the owner waits for the owner's decision (the
+    // member who handed it over); cleared when an owner assigns the company.
+    responsibleHandoverFromUserId: text("responsible_handover_from_user_id").references((): AnyPgColumn => user.id, {
+      onDelete: "set null",
+    }),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
@@ -437,6 +454,7 @@ export const client = pgTable(
   (table) => [
     index("client_organizationId_idx").on(table.organizationId),
     index("client_userId_idx").on(table.userId),
+    index("client_responsible_idx").on(table.organizationId, table.responsibleUserId),
     index("client_status_idx").on(table.status),
     index("client_enrichmentStatus_idx").on(table.enrichmentStatus),
   ],
@@ -706,6 +724,11 @@ export const dealFunnelStage = pgTable(
     // Миграция: scripts/add-funnel-stage-settings.ts.
     displayName: text("display_name"),
     isHidden: boolean("is_hidden").notNull().default(false),
+    // Stage norm for the deal-card badge «N дн без активности»: the badge
+    // turns red when the days since the deal's last activity exceed it.
+    // null = the default (14 days, `DEFAULT_STALE_NORM_DAYS` in
+    // src/lib/deal-activity.ts). Edited in «Настройки стадий».
+    staleNormDays: integer("stale_norm_days"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()

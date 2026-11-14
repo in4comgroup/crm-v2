@@ -52,6 +52,7 @@ import {
 import TaskEditDialog from "@/components/forms/form-task-edit"
 import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
+import { ClientResponsibleField } from "@/components/blocks/client-responsible-field"
 import { BlacklistEntityButton } from "@/components/blocks/client-blocklist-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
@@ -535,6 +536,8 @@ export function ClientDetailDrawer({
                   Создал: {client.userName}
                 </div>
               )}
+
+              <ClientResponsibleField client={client} onChanged={onChanged} />
 
               <FormField
                 control={editForm.control}

@@ -20,11 +20,18 @@ import {
   PauseCircle,
   Bot,
   Undo2,
+  Clock,
 } from "lucide-react"
+import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 import type { DealRow } from "@/app/api/deals/route"
 import type { DealTaskInfo } from "@/hooks/use-board-intel"
 import { formatAmount } from "@/lib/deal-board"
 import { formatPauseUntil, isOpenDealStatus } from "@/lib/deal-funnel"
+import {
+  dealStaleInfo,
+  lastActivityHint,
+  type DealStaleInfo,
+} from "@/lib/deal-activity"
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
@@ -131,6 +138,51 @@ export function DealCreatedByAgentBadge({
   )
 }
 
+// «N дн» / «N дн без активности» (src/lib/deal-activity.ts): дни с последней
+// активности — последнее сообщение по темам сделки, иначе журнал / задачи /
+// создание сделки. Серая строка всегда, когда дата известна; больше нормы
+// стадии — красный бейдж (норма — в подсказке). Не на Закрыта / Проиграна и
+// не на паузе (`dealStaleInfo` → null).
+export function DealActivityAge({
+  deal,
+  info,
+}: {
+  deal: DealRow
+  info: DealStaleInfo
+}) {
+  const tip = useAnchorTooltip()
+  const hint = lastActivityHint(deal, info.isStale ? info.norm : undefined)
+  return (
+    <>
+      <span
+        className="inline-flex w-fit self-start cursor-help"
+        aria-label={hint ?? undefined}
+        onPointerDown={stop}
+        onClick={stop}
+        {...tip.bind}
+      >
+        {info.isStale ? (
+          <Badge
+            variant="secondary"
+            className="gap-1 bg-[#C1121F]/10 text-[#A31018] dark:bg-[#C1121F]/15 dark:text-[#FF8F96]"
+          >
+            <Clock className="h-3 w-3" />
+            {info.days} дн без активности
+          </Badge>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            {info.days} дн
+          </span>
+        )}
+      </span>
+      {hint && (
+        <AnchorTooltip text={hint} open={tip.open} virtualRef={tip.virtualRef} />
+      )}
+    </>
+  )
+}
+
 // Сумма и имя менеджера — в две строки (сумма сверху, менеджер под ней).
 function DealMetaLine({ deal }: { deal: DealRow }) {
   const amount = formatAmount(deal.value, deal.currency)
@@ -200,7 +252,10 @@ export function DealKanbanCard({
   const risk = deal.status !== "deleted" ? (deal.riskSummary?.top ?? null) : null
   const atRisk = Boolean(risk)
   const isPaused = deal.status === "paused"
+  // «N дн без активности»: null на терминальных стадиях / паузе / без даты.
+  const stale = dealStaleInfo(deal)
   const hasBadgeRow =
+    Boolean(stale?.isStale) ||
     movedByAgent ||
     atRisk ||
     isPaused ||
@@ -299,6 +354,8 @@ export function DealKanbanCard({
 
       <DealMetaLine deal={deal} />
 
+      {stale && !stale.isStale && <DealActivityAge deal={deal} info={stale} />}
+
       {/* «Текущее состояние» (topics phase 5a, spec §9.3): сохранённый текст
           движка, до 3 строк (полный текст + источники — в дровере). Пока его
           нет — последнее изменение (changes) или reasoning: исторические
@@ -388,6 +445,7 @@ export function DealKanbanCard({
         <div className="flex flex-col items-start gap-1">
           <DealPausedBadge deal={deal} />
           <DealCreatedByAgentBadge deal={deal} onUndo={onUndoAgent} />
+          {stale?.isStale && <DealActivityAge deal={deal} info={stale} />}
           {risk && (
             // Наведение — тултип: только САМЫЙ критичный риск (§9.4):
             // название + объяснение «в чём риск / на чём основана оценка».

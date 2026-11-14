@@ -9,6 +9,10 @@ import {
 } from "@/server/clients"
 import { getServerSession } from "@/lib/get-session"
 import {
+  ClientResponsibleError,
+  getResponsibleOptions,
+} from "@/server/client-responsible"
+import {
   getClientDetail,
   ClientContentScopeError,
   type ClientDetail,
@@ -21,6 +25,7 @@ export {
   type ClientFeedTab,
 } from "@/server/clients"
 export type { ClientTaskSummary } from "@/server/tasks"
+export type { ResponsibleOptions } from "@/server/client-responsible"
 export type { ClientDetail }
 
 function errorResponse(error: unknown) {
@@ -36,6 +41,18 @@ export async function GET(request: NextRequest) {
   try {
     // ?id= → single client detail (header + contacts) for the AI-chat
     // result card's "open detail" panel. Tenant-scoped on the active org.
+    // ?responsibleOptions=1 → viewer + human members of the active org for
+    // the «Ответственный» controls and the feed filter (any member).
+    if (new URL(request.url).searchParams.get("responsibleOptions")) {
+      try {
+        return NextResponse.json(await getResponsibleOptions())
+      } catch (e) {
+        if (e instanceof ClientResponsibleError) {
+          return NextResponse.json({ error: e.message }, { status: e.status })
+        }
+        throw e
+      }
+    }
     const id = new URL(request.url).searchParams.get("id")
     if (id) {
       const session = await getServerSession()
@@ -75,6 +92,7 @@ export async function GET(request: NextRequest) {
       const result = await listClientsFeed({
         tab: tab as ClientFeedTab,
         status: status ?? undefined,
+        responsible: searchParams.get("responsible"),
         limit,
         offset,
       })
@@ -153,6 +171,20 @@ export async function PUT(request: NextRequest) {
     } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
+    }
+    // «Ответственный» has its own route (PUT /api/clients/[id]/responsible)
+    // with the owner / handover rules; the generic update never changes it.
+    if (
+      body.responsibleUserId !== undefined ||
+      body.responsibleHandoverFromUserId !== undefined
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Ответственного меняют отдельным действием (назначение владельцем или передача владельцу)",
+        },
+        { status: 403 },
+      )
     }
     await updateClient(id, {
       name,

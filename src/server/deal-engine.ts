@@ -261,9 +261,10 @@ function clearRisksOnOutcomeOps(orgId: string, dealId: string, reason: string): 
  * Owner of an agent-created deal (spec §9.2 says «actor = system agent
  * user»; the owner must be a person). Rule, first that applies:
  * 1. the topic's assignee (`topic.owner_user_id`) when it is a member;
- * 2. the client's creator (`client.user_id` — this repo has no
- *    «responsible user» column yet, 06 §7.2) when still a member of the org;
- * 3. the org owner (oldest `member` with role `owner`), else the oldest member.
+ * 2. the client's responsible member («Ответственный»,
+ *    `client.responsible_user_id`, 06 §7.2) when still a member of the org;
+ * 3. the client's creator (`client.user_id`) when still a member of the org;
+ * 4. the org owner (oldest `member` with role `owner`), else the oldest member.
  * Agent users (`role = 'agent'`) are never owners.
  */
 export async function resolveDealOwner(
@@ -281,9 +282,10 @@ export async function resolveDealOwner(
   if (isMember(opts.topicOwnerUserId)) return opts.topicOwnerUserId!
   if (opts.clientId) {
     const [c] = await db
-      .select({ userId: client.userId })
+      .select({ userId: client.userId, responsibleUserId: client.responsibleUserId })
       .from(client)
       .where(and(eq(client.id, opts.clientId), eq(client.organizationId, orgId)))
+    if (isMember(c?.responsibleUserId)) return c!.responsibleUserId!
     if (isMember(c?.userId)) return c!.userId
   }
   return humans.find((m) => m.role === "owner")?.userId ?? humans[0]?.userId ?? null

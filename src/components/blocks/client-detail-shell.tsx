@@ -39,6 +39,7 @@ import {
   useRelatedTopics,
 } from "@/components/blocks/related-topics"
 import type { ClientDetail } from "@/server/client-content"
+import { ClientResponsibleField } from "@/components/blocks/client-responsible-field"
 import type { ClientRow, ClientRevenueSummary } from "@/app/api/clients/route"
 import type { DealRow } from "@/app/api/deals/route"
 import type { SourceSummary } from "@/server/sources"
@@ -115,6 +116,12 @@ export function ClientDetailShell({
       currency: detail.currency,
       userId: detail.userId,
       userName: detail.userName,
+      responsibleUserId: detail.responsibleUserId,
+      responsibleName: detail.responsibleName,
+      responsibleChangedAt: detail.responsibleChangedAt,
+      responsibleHandoverFromUserId: detail.responsibleHandoverFromUserId,
+      responsibleHandoverFromName: detail.responsibleHandoverFromName,
+      responsibleHandoverReason: detail.responsibleHandoverReason,
       organizationId: detail.organizationId,
       createdAt: detail.createdAt,
       updatedAt: detail.updatedAt,
@@ -225,6 +232,11 @@ export function ClientDetailShell({
             icon={<Globe className="h-4 w-4" />}
             value={detail.webUrl}
             href={detail.webUrl ?? undefined}
+          />
+          <ClientResponsibleField
+            client={detail}
+            onChanged={refresh}
+            className="sm:col-span-2 text-foreground"
           />
           <div className="flex items-center gap-2 sm:col-span-2 text-xs">
             <User className="h-3.5 w-3.5" />

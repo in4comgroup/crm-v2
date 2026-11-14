@@ -1,0 +1,1 @@
+ALTER TABLE "deal_funnel_stage" ADD COLUMN "stale_norm_days" integer;

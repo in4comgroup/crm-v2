@@ -12,14 +12,14 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
-import { Bell, Building2, User, Handshake, LayoutGrid, Loader } from "lucide-react"
+import { Bell, Building2, User, Handshake, LayoutGrid, Loader, UserCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { groupByDate } from "@/lib/date-groups"
 import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 
 type NotificationEvent = {
   id: string
-  type: "client" | "contact" | "deal" | "card"
+  type: "client" | "contact" | "deal" | "card" | "handover"
   title: string
   subtitle: string | null
   createdAt: string
@@ -34,6 +34,7 @@ const TYPE_ICON: Record<NotificationEvent["type"], typeof Building2> = {
   contact: User,
   deal: Handshake,
   card: LayoutGrid,
+  handover: UserCheck,
 }
 
 const POLL_MS = 45_000

@@ -15,7 +15,7 @@ import { requireSignalsAdmin } from "./require-admin"
 //   GET ?view=registry              → SignalsRegistryResponse
 //   GET ?view=org&orgId=…           → SignalsOrgResponse (404 unknown org)
 //   GET ?view=orgs                  → SignalsOrgsResponse
-//   GET ?view=history&limit=…       → SignalsHistoryResponse
+//   GET ?view=history&limit=…&offset=… → SignalsHistoryResponse (one page, newest first, + total)
 //   PUT SignalsSaveRequest          → 200 { version, warnings? } | 400 { errors }
 
 export async function GET(request: NextRequest) {
@@ -35,7 +35,9 @@ export async function GET(request: NextRequest) {
       case "orgs":
         return NextResponse.json(await listOrgsForSignals())
       case "history":
-        return NextResponse.json(await getHistory(Number(params.get("limit") ?? 20)))
+        return NextResponse.json(
+          await getHistory(Number(params.get("limit") ?? 20), Number(params.get("offset") ?? 0)),
+        )
       default:
         return NextResponse.json({ error: "view must be registry | org | orgs | history" }, { status: 400 })
     }

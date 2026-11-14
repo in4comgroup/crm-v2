@@ -28,7 +28,7 @@ Managed mostly by better-auth (`src/lib/auth.ts`).
 
 | Table | Purpose | Key columns / relations |
 | --- | --- | --- |
-| `client` | A company (UI: «Компания») | `name`, `namePhys` (person behind a non-company client), `email`, `phone`, `address`, `webUrl`, `currency`, `aliases` (text[]), `funnelPhase`, `status` (`entity_status`), `customFields` (jsonb), `enrichmentStatus`, `enrichmentCandidates` (jsonb), `userId` (creator), `organizationId` |
+| `client` | A company (UI: «Компания») | `name`, `namePhys` (person behind a non-company client), `email`, `phone`, `address`, `webUrl`, `currency`, `aliases` (text[]), `funnelPhase`, `status` (`entity_status`), `customFields` (jsonb), `enrichmentStatus`, `enrichmentCandidates` (jsonb), `userId` (creator), `organizationId`; «Ответственный» (migration `0029`): `responsibleUserId` (→ `user`, **set null**; default = creator; index with the org), `responsibleChangedAt`, `responsibleChangedByUserId` (**set null**), `responsibleHandoverFromUserId` (**set null**; set while a handover to an owner waits for the owner's decision) |
 | `contact` | A person | `name` (technical/envelope name), `nameNative` (local-script name), `aliases`, `email`, `phone`, `position`, `clientId` → `client` (**set null**), `status` |
 | `task` | Follow-up work | `type`, `priority`, `status`, `userId` (creator), `assigneeId`, `clientId` / `contactId` / `dealId` (all optional, **set null**), `dueDate` (not null) |
 | `discovery_blocklist` | Org dictionary of entities discovery must ignore | `kind` (`blocklist_kind`), `matchKey` (normalised), `label`, `note`, `sourceItemId`; unique `(org, kind, matchKey)` |
@@ -38,7 +38,7 @@ Managed mostly by better-auth (`src/lib/auth.ts`).
 
 | Table | Purpose | Key columns / relations |
 | --- | --- | --- |
-| `deal_funnel_stage` | Funnel stages | `name` (English, stable key), `displayName` (org rename), `closureProbability` (numeric 0–1), `sortOrder`, `isSystem`, `ownerOrganizationId`, `isActive`, `isPrePipeline`, `isHidden` |
+| `deal_funnel_stage` | Funnel stages | `name` (English, stable key), `displayName` (org rename), `closureProbability` (numeric 0–1), `sortOrder`, `isSystem`, `ownerOrganizationId`, `isActive`, `isPrePipeline`, `isHidden`, `staleNormDays` (norm for the card badge «N дн без активности», null = 14) |
 | `deal` | Sales opportunity | `name`, `description`, `funnelStageId` (**restrict**), `clientId` (**restrict**), `value` (numeric), `currency`, `status` (`deal_status`), `position` (fractional index for manual order in a column), `reasoning` / `changes` (LLM provenance, card display), `lastMovedBy` (`user` / `agent`); topics phase 5: `dealTypeId` (→ `deal_type`, **set null**), `pausedUntil` / `pauseReason` (status `paused`), `outcomeReason` (won / lost / withdrawn / undo reason), `createdByAgent` (badge «создал агент»); topics phase 5a: `stateText` («Текущее состояние», ≤ 3 sentences / 50 words), `stateSourceItemIds`, `stateUpdatedAt` (start of the last run), `stateDirtyAt` (new deal information, R16; index with the org). Index (org, client, type) = auto-create dedupe |
 | `deal_type` | Per-org deal types (tenant data, topics phase 5, R13 / R22) | `organizationId`, `code` (unique per org; generic: `new_location`, `listing`, `tender`, `supply_agreement`, `renewal`), `labelRu`, `sort`, `isHidden`. Created by `ensureDefaultDealTypes` (`src/server/deal-types.ts`), never by a migration; never deleted (hide instead) |
 | `deal_contact` | Deal ↔ contact (many-to-many) | PK `(dealId, contactId)`, `role` (`deal_contact_role`) |
@@ -230,7 +230,10 @@ Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
   `src/lib/client-custom-fields.ts` and validated in `src/server/clients.ts`.
   Keys today: `type` (only for one specific org), `discount` (whole percent
   0–100, used for orders), `companyKind` (`supplier` / `partner`, drives the
-  Companies tabs). Unknown keys are dropped by the server.
+  Companies tabs), `responsibleHandover` (`{ reason, at }` of a PENDING
+  handover to the owner — server-controlled, never taken from the edit form,
+  removed when an owner assigns the company). Unknown keys are dropped by the
+  server.
 - **Denormalised `organization_id` on `source_item`**, copied from the source
   at insert / parse, so tenant filters need no join.
 - **Snapshots on orders.** `order_item.unit_price` and `order.discount_percent`

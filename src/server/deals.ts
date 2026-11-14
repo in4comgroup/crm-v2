@@ -29,6 +29,7 @@ import {
 } from "@/lib/deal-funnel"
 import {
   DealTypeForbiddenError,
+  FunnelStageForbiddenError,
   ensureDefaultDealTypes,
   saveDealTypes,
   type DealTypeInput,
@@ -48,6 +49,8 @@ import {
   type DealProvenanceView,
 } from "@/server/deal-engine"
 import { getTopicsMode } from "@/server/topics/mode"
+import { loadDealLastActivity } from "@/server/deal-activity"
+import type { DealLastActivity, DealLastActivitySource } from "@/lib/deal-activity"
 import {
   getDealState,
   markDealStateDirty,
@@ -107,6 +110,16 @@ export type DealRow = {
   // Badge «Есть риски»: active count + the MOST critical active risk
   // (`top`); null = no active risk. One batched query for the whole board.
   riskSummary: DealRiskSummary | null
+  // ── «N дн без активности» (src/lib/deal-activity.ts) ──
+  // Last activity, computed at read time: the latest message on the deal's
+  // topics (source "topic", mode `on` only), else the deal's own journal /
+  // tasks / creation (source "deal"). Optional: other DealRow producers may
+  // leave them out.
+  lastActivityAt?: string | null
+  lastActivitySource?: DealLastActivitySource | null
+  lastActivityTopicTitle?: string | null
+  // The stage's norm (`deal_funnel_stage.stale_norm_days`); null = default 14.
+  staleNormDays?: number | null
   userId: string
   userName: string | null
   organizationId: string
@@ -132,6 +145,8 @@ export type DealFunnelStageOption = {
   label: string
   displayName: string | null
   isHidden: boolean
+  // «Норма, дн» for the «N дн без активности» badge; null = default 14.
+  staleNormDays: number | null
 }
 
 async function requireOrgContext() {
@@ -259,6 +274,7 @@ export async function listDealFunnelStages(): Promise<DealFunnelStageOption[]> {
       isPrePipeline: dealFunnelStage.isPrePipeline,
       displayName: dealFunnelStage.displayName,
       isHidden: dealFunnelStage.isHidden,
+      staleNormDays: dealFunnelStage.staleNormDays,
     })
     .from(dealFunnelStage)
     .where(
@@ -281,6 +297,7 @@ export async function listDealFunnelStages(): Promise<DealFunnelStageOption[]> {
       label: stageDisplayLabel(r.name, r.displayName),
       displayName: r.displayName,
       isHidden: r.isHidden,
+      staleNormDays: r.staleNormDays,
     }))
   }
 
@@ -294,6 +311,7 @@ export async function listDealFunnelStages(): Promise<DealFunnelStageOption[]> {
       isPrePipeline: dealFunnelStage.isPrePipeline,
       displayName: dealFunnelStage.displayName,
       isHidden: dealFunnelStage.isHidden,
+      staleNormDays: dealFunnelStage.staleNormDays,
     })
     .from(dealFunnelStage)
     .where(
@@ -314,6 +332,7 @@ export async function listDealFunnelStages(): Promise<DealFunnelStageOption[]> {
     label: stageDisplayLabel(r.name, r.displayName),
     displayName: r.displayName,
     isHidden: r.isHidden,
+    staleNormDays: r.staleNormDays,
   }))
 }
 
@@ -372,6 +391,7 @@ const dealRowColumns = {
   funnelStageName: dealFunnelStage.name,
   funnelStageProbability: dealFunnelStage.closureProbability,
   funnelStageDisplayName: dealFunnelStage.displayName,
+  funnelStageStaleNormDays: dealFunnelStage.staleNormDays,
   clientName: client.name,
   userName: user.name,
   dealTypeCode: dealType.code,
@@ -383,6 +403,7 @@ type DealRowSelect = {
   funnelStageName: string
   funnelStageProbability: string
   funnelStageDisplayName: string | null
+  funnelStageStaleNormDays: number | null
   clientName: string | null
   userName: string | null
   dealTypeCode: string | null
@@ -396,6 +417,7 @@ function toDealRow(
   // Engine output (state text, risks) is shown only in topics mode `on`
   // (shadow = users see nothing from the engine, spec topics/01 §12).
   engineVisible = true,
+  lastActivity: DealLastActivity | null = null,
 ): DealRow {
   return {
     id: r.deal.id,
@@ -429,6 +451,10 @@ function toDealRow(
     stateSourceItemIds: engineVisible ? (r.deal.stateSourceItemIds ?? []) : [],
     stateUpdatedAt: engineVisible && r.deal.stateUpdatedAt ? r.deal.stateUpdatedAt.toISOString() : null,
     riskSummary,
+    lastActivityAt: lastActivity ? lastActivity.at.toISOString() : null,
+    lastActivitySource: lastActivity?.source ?? null,
+    lastActivityTopicTitle: lastActivity?.topicTitle ?? null,
+    staleNormDays: r.funnelStageStaleNormDays,
     userId: r.deal.userId,
     userName: r.userName,
     organizationId: r.deal.organizationId,
@@ -488,10 +514,24 @@ export async function listDeals(
 
   // Badge «Есть риски»: ONE batched query for all deals (no N+1).
   const engineVisible = (await getTopicsMode(activeOrgId)) === "on"
-  const risks = engineVisible ? await loadRiskSummaries(activeOrgId, dealIds) : new Map<string, DealRiskSummary>()
+  const [risks, activity] = await Promise.all([
+    engineVisible ? loadRiskSummaries(activeOrgId, dealIds) : new Map<string, DealRiskSummary>(),
+    // «N дн без активности»: one aggregated pass for the whole list.
+    loadDealLastActivity(
+      activeOrgId,
+      rows.map((r) => ({ id: r.deal.id, createdAt: r.deal.createdAt })),
+      { topicsVisible: engineVisible },
+    ),
+  ])
 
   return rows.map((r) =>
-    toDealRow(r, contactsByDeal.get(r.deal.id) ?? [], risks.get(r.deal.id) ?? null, engineVisible),
+    toDealRow(
+      r,
+      contactsByDeal.get(r.deal.id) ?? [],
+      risks.get(r.deal.id) ?? null,
+      engineVisible,
+      activity.get(r.deal.id) ?? null,
+    ),
   )
 }
 
@@ -532,8 +572,21 @@ export async function getDeal(dealId: string): Promise<DealRow | null> {
     .orderBy(contact.name)
 
   const engineVisible = (await getTopicsMode(activeOrgId)) === "on"
-  const risks = engineVisible ? await loadRiskSummaries(activeOrgId, [dealId]) : new Map<string, DealRiskSummary>()
-  return toDealRow(r, contactRows, risks.get(dealId) ?? null, engineVisible)
+  const [risks, activity] = await Promise.all([
+    engineVisible ? loadRiskSummaries(activeOrgId, [dealId]) : new Map<string, DealRiskSummary>(),
+    loadDealLastActivity(
+      activeOrgId,
+      [{ id: dealId, createdAt: r.deal.createdAt }],
+      { topicsVisible: engineVisible },
+    ),
+  ])
+  return toDealRow(
+    r,
+    contactRows,
+    risks.get(dealId) ?? null,
+    engineVisible,
+    activity.get(dealId) ?? null,
+  )
 }
 
 export async function createDeal(data: {
@@ -1093,6 +1146,8 @@ export type FunnelStageSetting = {
   displayName: string | null
   isHidden: boolean
   isPrePipeline: boolean
+  // «Норма, дн»: null = default (DEFAULT_STALE_NORM_DAYS = 14).
+  staleNormDays: number | null
 }
 
 const TERMINAL_NAMES = new Set(["Closed", "Rejected"])
@@ -1107,6 +1162,7 @@ export async function getFunnelStageSettings(): Promise<FunnelStageSetting[]> {
     displayName: s.displayName,
     isHidden: s.isHidden,
     isPrePipeline: s.isPrePipeline,
+    staleNormDays: s.staleNormDays,
   }))
   if (!flow.some((s) => s.isPrePipeline)) {
     rows.unshift({
@@ -1116,6 +1172,7 @@ export async function getFunnelStageSettings(): Promise<FunnelStageSetting[]> {
       displayName: null,
       isHidden: false,
       isPrePipeline: true,
+      staleNormDays: null,
     })
   }
   return rows
@@ -1157,6 +1214,7 @@ async function materializeOrgFunnel(
         ownerOrganizationId: organizationId,
         isActive: true,
         isPrePipeline: false,
+        staleNormDays: s.staleNormDays,
       }
     }),
   ]
@@ -1199,10 +1257,28 @@ async function materializeOrgFunnel(
   return idMap
 }
 
+/** «Настройки стадий» for the dialog + whether the caller may save (org owner only). */
+export async function getFunnelStageSettingsView(): Promise<{ stages: FunnelStageSetting[]; canManage: boolean }> {
+  const { activeOrgId } = await requireOrgContext()
+  const [stages, role] = await Promise.all([getFunnelStageSettings(), getActiveOrgRole()])
+  return { stages, canManage: !!role && role.organizationId === activeOrgId && role.role === "owner" }
+}
+
+/** Owner only (same rule as «Типы сделок»): names, visibility and «Норма, дн». */
 export async function saveFunnelStageSettings(
-  input: { id: string; displayName: string | null; isHidden: boolean }[],
+  input: {
+    id: string
+    displayName: string | null
+    isHidden: boolean
+    // null = default 14; undefined = keep the stored value.
+    staleNormDays?: number | null
+  }[],
 ): Promise<void> {
   const { activeOrgId } = await requireOrgContext()
+  const role = await getActiveOrgRole()
+  if (!role || role.organizationId !== activeOrgId || role.role !== "owner") {
+    throw new FunnelStageForbiddenError()
+  }
   const current = await listDealFunnelStages()
   const idMap =
     current.length > 0 && current[0].isSystem
@@ -1215,7 +1291,13 @@ export async function saveFunnelStageSettings(
     const custom = entry.displayName?.trim() || null
     await db
       .update(dealFunnelStage)
-      .set({ displayName: custom, isHidden: !!entry.isHidden })
+      .set({
+        displayName: custom,
+        isHidden: !!entry.isHidden,
+        ...(entry.staleNormDays !== undefined
+          ? { staleNormDays: entry.staleNormDays }
+          : {}),
+      })
       .where(
         and(
           eq(dealFunnelStage.id, id),

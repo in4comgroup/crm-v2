@@ -9,6 +9,7 @@ import {
 } from "react"
 import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
+import { lastActivityHint } from "@/lib/deal-activity"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -593,6 +594,13 @@ export function DealDetailDrawer({
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
             <TabsContent value="info" className="pt-3">
             <div className="space-y-3">
+              {/* «Последняя активность» — та же дата, что у бейджа
+                  «N дн без активности» на карточке (src/lib/deal-activity.ts). */}
+              {lastActivityHint(deal) && (
+                <div className="text-xs text-muted-foreground">
+                  {lastActivityHint(deal)}
+                </div>
+              )}
               {(deal.userName || !!deal.contacts?.length) && (
                 <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
                   {deal.userName ? <span>Автор: {deal.userName}</span> : <span />}

@@ -154,21 +154,23 @@ accept|reject|deal_execute`, DELETE. No manual create, no generic update.
 
 **Pages.** `/clients` «Компании»: toolbar with «Новая компания», company-type
 filter («Все компании», «Клиенты», «Потенциальные», «Поставщики», «Партнёры»,
-«Не определено»), status filter, sort «Сначала новые / Сначала критичные»,
+«Не определено»), status filter, «Ответственный» filter (all / «Мои» / «Ждут
+решения владельца» / each member), sort «Сначала новые / Сначала критичные»,
 discovery, «Обогатить» (enrich), blocklist, Magic, card/table toggle. Clicking a
 company opens the company drawer (tabs «Общая информация», «Задачи»,
 «Контакты», «Материалы»). `/clients/[id]` is an older full company page, still
 reached from global search. `/contacts` «Контакты»: alphabetical,
 server-paginated (25 per page), card/table views, contact drawer.
 
-**Main API.** `api/clients` (GET feed / `?id=`, POST, PUT),
+**Main API.** `api/clients` (GET feed / `?id=` / `?responsibleOptions=1`, POST,
+PUT), `api/clients/[id]/responsible` (PUT: owner assigns / handover to owner),
 `api/clients/[id]/content` (company materials), `api/clients/[id]/lookup`
 (web lookup, 60 s), `api/clients/enrich/{pending,review}`,
 `api/clients/[id]/enrich` and `/enrich/resolve`; `api/contacts`.
 
 **Server modules.** `clients.ts` (incl. `lookupClientOnWeb`,
 `enrichClientFromWeb`, `resolveEnrichment`), `contacts.ts`, `client-content.ts`,
-`client-activity.ts`, `web-search.ts`.
+`client-activity.ts`, `client-responsible.ts`, `web-search.ts`.
 
 **Key rules.**
 - Tab classification: «Клиенты» = has an active deal on a stage with
@@ -183,6 +185,12 @@ server-paginated (25 per page), card/table views, contact drawer.
 - "Company materials" match source items by the company's name, address,
   website and contacts against `metadata_json` text (R2-uploaded items only).
 - Per-client discount lives in `customFields.discount` and is used by orders.
+- «Ответственный» (Responsible): one human member per company, default = the
+  creator. Only an org owner sets it (any human, not banned member). The
+  responsible member who is not an owner can only «Передать владельцу»; the
+  owner then decides (badge «Ждёт решения владельца», bell notification for
+  that owner). Everybody else reads it. The generic `PUT api/clients` refuses
+  it. Topics use it as the fallback deal owner and topic assignee.
 
 ## Deals
 

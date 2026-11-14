@@ -318,8 +318,9 @@ export type SignalsOrgsResponse = {
   orgs: { id: string; name: string; packsEnabled: string[]; activeCodes: number }[]
 }
 
-/** GET /api/admin/signals?view=history&limit= */
+/** GET /api/admin/signals?view=history&limit=&offset= (newest first; `total` = all versions). */
 export type SignalsHistoryResponse = {
+  total: number
   versions: {
     version: number
     createdAt: string

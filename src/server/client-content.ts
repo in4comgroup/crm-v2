@@ -17,6 +17,11 @@ import {
 import { db } from "@/db/drizzle"
 import { loadClientLastActivity } from "@/server/client-activity"
 import {
+  loadResponsibleNames,
+  responsibleInfoOf,
+  type ClientResponsibleInfo,
+} from "@/server/client-responsible"
+import {
   client,
   contact,
   deal,
@@ -47,7 +52,7 @@ export class ClientContentScopeError extends Error {
 
 // Contact shape mirrors `ContactRow` from `@/server/contacts` so the
 // detail page can reuse `ContactEditDialog` without remapping.
-export type ClientDetail = {
+export type ClientDetail = ClientResponsibleInfo & {
   id: string
   name: string
   namePhys: string | null
@@ -96,6 +101,9 @@ export async function getClientDetail(
       status: client.status,
       currency: client.currency,
       userId: client.userId,
+      responsibleUserId: client.responsibleUserId,
+      responsibleChangedAt: client.responsibleChangedAt,
+      responsibleHandoverFromUserId: client.responsibleHandoverFromUserId,
       organizationId: client.organizationId,
       createdAt: client.createdAt,
       updatedAt: client.updatedAt,
@@ -139,6 +147,7 @@ export async function getClientDetail(
   ])
 
   const userName = creatorRows[0]?.name ?? null
+  const responsibleNames = await loadResponsibleNames([row])
 
   const lastActivity = (
     await loadClientLastActivity(organizationId, [row.id])
@@ -160,6 +169,7 @@ export async function getClientDetail(
     currency: row.currency,
     userId: row.userId,
     userName,
+    ...responsibleInfoOf(row, responsibleNames),
     organizationId: row.organizationId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

@@ -22,6 +22,7 @@ import type { ClientRow, ClientRevenueSummary } from "@/app/api/clients/route"
 import type { DealRow } from "@/app/api/deals/route"
 import type { TaskRow } from "@/app/api/tasks/route"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
+import { HandoverPendingBadge } from "@/components/blocks/client-responsible-field"
 import { formatAmount, formatCompactNumber, CURRENCY_SYMBOL } from "@/lib/deal-board"
 import {
   clientAtRisk,
@@ -353,7 +354,14 @@ export function ClientCard({
             «Подробнее» убрана — клик по всей карточке и так открывает
             дровер (см. onClick на <Card> выше). */}
         <div className="flex-1" aria-hidden />
+        {client.responsibleHandoverFromUserId && (
+          <HandoverPendingBadge client={client} className="w-fit max-w-full truncate" />
+        )}
         <div className="pt-1 text-xs text-muted-foreground truncate">
+          Ответственный:{" "}
+          <span className="text-foreground">{client.responsibleName ?? "не назначен"}</span>
+        </div>
+        <div className="text-xs text-muted-foreground truncate">
           Создана:{" "}
           {new Date(client.createdAt).toLocaleDateString("ru-RU")}
           {client.userName && ` · ${client.userName}`}

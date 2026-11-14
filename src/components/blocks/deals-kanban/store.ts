@@ -58,13 +58,16 @@ export const TERMINAL_SORT_LABEL: Record<TerminalSortMode, string> = {
 // МОК приоритета агента (UX №3). Реальная логика — на бэке (agent priority
 // score из сигналов: застой, риск, нет следующего шага, внешние события).
 // Пока детерминированный прокси: сделки, которые агент недавно тронул
-// (lastMovedBy==='agent'), + давно без активности (updatedAt) поднимаются
-// наверх как «требующие внимания». Возвращает score — больше = выше.
+// (lastMovedBy==='agent'), + давно без активности (lastActivityAt — та же
+// дата, что у бейджа «N дн без активности», src/lib/deal-activity.ts; нет —
+// createdAt) поднимаются наверх как «требующие внимания». Возвращает score —
+// больше = выше.
 // TODO(backend): заменить на реальный agent priority score.
 function agentPriorityScore(d: DealRow): number {
   const agentTouched = d.lastMovedBy === "agent" ? 1_000_000_000_000 : 0
   // Чем старее последняя активность, тем выше (−timestamp, чтобы старые росли).
-  const staleness = -new Date(d.updatedAt).getTime() / 1000
+  const at = new Date(d.lastActivityAt ?? d.createdAt).getTime()
+  const staleness = Number.isFinite(at) ? -at / 1000 : 0
   return agentTouched + staleness
 }
 

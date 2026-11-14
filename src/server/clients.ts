@@ -35,6 +35,16 @@ import { z } from "zod"
 import { getServerSession } from "@/lib/get-session"
 import { aiGenerateText } from "@/server/ai/runtime"
 import { onEntityStatusChanged } from "@/server/topics/integration"
+import {
+  loadResponsibleNames,
+  responsibleInfoOf,
+  type ClientResponsibleInfo,
+} from "@/server/client-responsible"
+import {
+  HANDOVER_NOTE_KEY,
+  matchesResponsibleFilter,
+  type ResponsibleFilter,
+} from "@/lib/client-responsible"
 import { randomUUID } from "crypto"
 import { request as httpsRequest } from "node:https"
 import { request as httpRequest } from "node:http"
@@ -56,7 +66,7 @@ export type ClientContactPreview = {
   status: EntityStatus
 }
 
-export type ClientRow = {
+export type ClientRow = ClientResponsibleInfo & {
   id: string
   name: string
   namePhys: string | null
@@ -122,6 +132,7 @@ export async function listClients(): Promise<ClientRow[]> {
     .orderBy(desc(client.updatedAt))
 
   const clientIds = rows.map((r) => r.client.id)
+  const responsibleNames = await loadResponsibleNames(rows.map((r) => r.client))
   const contacts = clientIds.length
     ? await db
         .select()
@@ -171,6 +182,7 @@ export async function listClients(): Promise<ClientRow[]> {
     currency: r.client.currency,
     userId: r.client.userId,
     userName: r.userName,
+    ...responsibleInfoOf(r.client, responsibleNames),
     organizationId: r.client.organizationId,
     createdAt: r.client.createdAt.toISOString(),
     updatedAt: r.client.updatedAt.toISOString(),
@@ -248,6 +260,8 @@ export type ClientFeedTab =
 export async function listClientsFeed(params: {
   tab: ClientFeedTab
   status?: EntityStatus | "all"
+  /** «Ответственный» filter: all | mine | handover | <member user id>. */
+  responsible?: ResponsibleFilter | null
   limit?: number
   offset?: number
 }): Promise<{
@@ -255,7 +269,8 @@ export async function listClientsFeed(params: {
   total: number
   taskSummary: Record<string, ClientTaskSummary>
 }> {
-  const { activeOrgId } = await requireOrgContext()
+  const { activeOrgId, session } = await requireOrgContext()
+  const viewerUserId = session.user.id
   // До 500 — страница /clients грузит вкладку целиком и сортирует на клиенте.
   const limit = Math.min(Math.max(params.limit ?? 20, 1), 500)
   const offset = Math.max(params.offset ?? 0, 0)
@@ -302,6 +317,7 @@ export async function listClientsFeed(params: {
   const taskSummary = await listTaskSummaryByClient()
 
   const matching = rows.filter((r) => {
+    if (!matchesResponsibleFilter(params.responsible, r.client, viewerUserId)) return false
     if (params.tab === "all") return true
     const kind = r.client.customFields?.companyKind
     if (kind === "supplier") return params.tab === "supplier"
@@ -360,7 +376,10 @@ export async function listClientsFeed(params: {
     contactsByClient.set(c.clientId, list)
   }
 
-  const lastActivity = await loadClientLastActivity(activeOrgId, clientIds)
+  const [lastActivity, responsibleNames] = await Promise.all([
+    loadClientLastActivity(activeOrgId, clientIds),
+    loadResponsibleNames(page.map((r) => r.client)),
+  ])
 
   const pageTaskSummary: Record<string, ClientTaskSummary> = {}
   for (const id of clientIds) {
@@ -386,6 +405,7 @@ export async function listClientsFeed(params: {
       currency: r.client.currency,
       userId: r.client.userId,
       userName: r.userName,
+      ...responsibleInfoOf(r.client, responsibleNames),
       organizationId: r.client.organizationId,
       createdAt: r.client.createdAt.toISOString(),
       updatedAt: r.client.updatedAt.toISOString(),
@@ -434,6 +454,15 @@ function normalizeClientCustomFields(
   return out
 }
 
+/** The pending-handover note is server-controlled: keep the stored one, never the form's. */
+function keepHandoverNote(
+  next: ClientCustomFields,
+  stored: ClientCustomFields | null | undefined,
+): ClientCustomFields {
+  const note = stored?.[HANDOVER_NOTE_KEY]
+  return note === undefined ? next : { ...next, [HANDOVER_NOTE_KEY]: note }
+}
+
 // Допустимые валюты расчётов. Неизвестное значение приводим к RUB
 // (форма присылает корректные коды; защита от мусора через API).
 const ALLOWED_CURRENCIES = ["RUB", "USD", "EUR", "GBP", "CNY"]
@@ -476,6 +505,9 @@ export async function createClient(data: {
     status: data.status ?? "active",
     currency: normaliseClientCurrency(data.currency),
     userId: session.user.id,
+    // «Ответственный» defaults to the creator; changed only through
+    // src/server/client-responsible.ts (owner assigns / handover to owner).
+    responsibleUserId: session.user.id,
     organizationId: activeOrgId,
     createdAt: now,
     updatedAt: now,
@@ -501,7 +533,19 @@ export async function updateClient(
   },
 ) {
   const { session, activeOrgId } = await requireOrgContext()
-  await assertClientInOrg(clientId, activeOrgId)
+  const current = await assertClientInOrg(clientId, activeOrgId)
+  // «Ответственный» is NOT editable here (src/server/client-responsible.ts):
+  // refuse a payload that tries, so this generic update is no way around
+  // the owner / handover rules.
+  const raw = data as Record<string, unknown>
+  if (
+    "responsibleUserId" in raw ||
+    "responsibleHandoverFromUserId" in raw ||
+    "responsibleChangedByUserId" in raw ||
+    "responsibleChangedAt" in raw
+  ) {
+    throw new Error("Ответственного меняют отдельным действием (назначение владельцем или передача владельцу)")
+  }
 
   if (data.name !== undefined && !data.name.trim()) {
     throw new Error("Name is required")
@@ -534,9 +578,9 @@ export async function updateClient(
         : {}),
       ...(data.customFields !== undefined
         ? {
-            customFields: normalizeClientCustomFields(
-              activeOrgId,
-              data.customFields,
+            customFields: keepHandoverNote(
+              normalizeClientCustomFields(activeOrgId, data.customFields),
+              current.customFields,
             ),
           }
         : {}),

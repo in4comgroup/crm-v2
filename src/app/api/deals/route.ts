@@ -12,7 +12,7 @@ import {
   getDeal,
   listDealActivity,
   listRejectedDealOrigins,
-  getFunnelStageSettings,
+  getFunnelStageSettingsView,
   saveFunnelStageSettings,
   getDealTypeSettings,
   saveDealTypeSettings,
@@ -31,10 +31,17 @@ import { DealStateError } from "@/server/deal-state"
 import { AiBudgetExceededError } from "@/server/ai/budget"
 import {
   DealTypeForbiddenError,
+  FunnelStageForbiddenError,
   DealTypeValidationError,
 } from "@/server/deal-types"
 import type { DealStatus } from "@/db/schema"
 import { DEAL_STATUSES } from "@/server/db-enums"
+import {
+  DEFAULT_STALE_NORM_DAYS,
+  parseStaleNormInput,
+  STALE_NORM_MAX_DAYS,
+  STALE_NORM_MIN_DAYS,
+} from "@/lib/deal-activity"
 
 export {
   type DealRow,
@@ -63,7 +70,7 @@ const RU_ERRORS: Record<string, string> = {
 }
 
 function errorResponse(error: unknown) {
-  if (error instanceof DealTypeForbiddenError) {
+  if (error instanceof DealTypeForbiddenError || error instanceof FunnelStageForbiddenError) {
     return NextResponse.json({ error: error.message }, { status: 403 })
   }
   if (error instanceof DealTypeValidationError) {
@@ -109,8 +116,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ options })
     }
     if (url.searchParams.get("stageSettings") === "1") {
-      const stages = await getFunnelStageSettings()
-      return NextResponse.json({ stages })
+      // { stages, canManage } — only the org owner may save (PUT → 403 otherwise).
+      return NextResponse.json(await getFunnelStageSettingsView())
     }
     // Deal types (org list; the owner edits it next to «Настройки стадий»).
     // Creates the generic defaults on first use.
@@ -213,20 +220,40 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    // «Настройки стадий»: { stageSettings: [{ id, displayName, isHidden }] }.
+    // «Настройки стадий»: { stageSettings: [{ id, displayName, isHidden,
+    // staleNormDays? }] } — staleNormDays: null / "" = default 14, else 1–365;
+    // absent = keep the stored norm.
     if (Array.isArray(body?.stageSettings)) {
+      let badNorm = false
       const entries = (body.stageSettings as unknown[]).flatMap((e) => {
-        const r = e as { id?: unknown; displayName?: unknown; isHidden?: unknown }
+        const r = e as {
+          id?: unknown
+          displayName?: unknown
+          isHidden?: unknown
+          staleNormDays?: unknown
+        }
         if (typeof r?.id !== "string") return []
+        const hasNorm = Object.prototype.hasOwnProperty.call(r, "staleNormDays")
+        const norm = hasNorm ? parseStaleNormInput(r.staleNormDays) : undefined
+        if (hasNorm && norm === undefined) badNorm = true
         return [
           {
             id: r.id,
             displayName:
               typeof r.displayName === "string" ? r.displayName : null,
             isHidden: r.isHidden === true,
+            staleNormDays: norm,
           },
         ]
       })
+      if (badNorm) {
+        return NextResponse.json(
+          {
+            error: `Норма стадии — целое число дней от ${STALE_NORM_MIN_DAYS} до ${STALE_NORM_MAX_DAYS} (пусто = ${DEFAULT_STALE_NORM_DAYS})`,
+          },
+          { status: 400 },
+        )
+      }
       await saveFunnelStageSettings(entries)
       return NextResponse.json({ success: true })
     }

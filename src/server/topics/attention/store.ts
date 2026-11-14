@@ -3,7 +3,7 @@ import "server-only"
 import { randomUUID } from "node:crypto"
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { deal, dealRisk, signalInstance, sourceItem, topic, topicEvent, workCalendarDay } from "@/db/schema"
+import { client, deal, dealRisk, member, signalInstance, sourceItem, topic, topicEvent, user, workCalendarDay } from "@/db/schema"
 import type { SignalItemFacts } from "@/lib/signals/extraction-types"
 import type { DisplayProfile as RegistryDisplayProfile } from "@/lib/signals/types"
 import type { TopicAttention, TopicList } from "@/lib/topics/attention-types"
@@ -17,6 +17,7 @@ import { getPlatformSetting } from "@/server/platform-settings"
 import { getEffectiveSignals, getRegistry } from "@/server/signals/registry"
 import type { CodeBook, RelationLookup, TopicSnapshot } from "../model"
 import { hydrateTopics, loadCodeBook, loadRelationLookup } from "../topic-store"
+import { humanUsersOnly } from "../system-actor"
 import {
   compareRank,
   computeAttention,
@@ -233,6 +234,30 @@ export async function computeAttentionForRows(
     const ds = await db.select({ id: deal.id, userId: deal.userId }).from(deal).where(and(eq(deal.organizationId, ctx.orgId), inArray(deal.id, dealIds)))
     for (const d of ds) dealOwners.set(d.id, d.userId)
   }
+  // Fallback assignee (06 §7.2): the client's «Ответственный» when still a
+  // human member — only for topics with no assignee and no deal owner.
+  const needResponsible = rows.filter(
+    (r) => !r.ownerUserId && !(r.dealId && dealOwners.has(r.dealId)) && r.clientId,
+  )
+  const clientResponsible = new Map<string, string>()
+  if (needResponsible.length) {
+    const clientIds = [...new Set(needResponsible.map((r) => r.clientId!))]
+    const [cs, ms] = await Promise.all([
+      db
+        .select({ id: client.id, responsibleUserId: client.responsibleUserId })
+        .from(client)
+        .where(and(eq(client.organizationId, ctx.orgId), inArray(client.id, clientIds))),
+      db
+        .select({ userId: member.userId })
+        .from(member)
+        .innerJoin(user, eq(user.id, member.userId))
+        .where(and(eq(member.organizationId, ctx.orgId), humanUsersOnly())),
+    ])
+    const members = new Set(ms.map((m) => m.userId))
+    for (const c of cs) {
+      if (c.responsibleUserId && members.has(c.responsibleUserId)) clientResponsible.set(c.id, c.responsibleUserId)
+    }
+  }
   const env: AttentionEnv = {
     book: ctx.book,
     profiles: ctx.profiles,
@@ -265,7 +290,10 @@ export async function computeAttentionForRows(
       },
       env,
     )
-    const ownerUserId = row.ownerUserId ?? (row.dealId ? (dealOwners.get(row.dealId) ?? null) : null)
+    const ownerUserId =
+      row.ownerUserId ??
+      (row.dealId ? (dealOwners.get(row.dealId) ?? null) : null) ??
+      (row.clientId ? (clientResponsible.get(row.clientId) ?? null) : null)
     out.push({ row, prev, attention: a, ownerUserId })
   }
   return out

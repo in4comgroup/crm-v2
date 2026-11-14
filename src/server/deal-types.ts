@@ -45,6 +45,14 @@ export class DealTypeForbiddenError extends Error {
   }
 }
 
+/** A non-owner tried to change «Настройки стадий» (route → 403). Lives here, not in the "use server" deals.ts, which may export only async functions. */
+export class FunnelStageForbiddenError extends Error {
+  constructor(message = "Настройки стадий может менять только владелец организации") {
+    super(message)
+    this.name = "FunnelStageForbiddenError"
+  }
+}
+
 const cols = {
   id: dealType.id,
   code: dealType.code,

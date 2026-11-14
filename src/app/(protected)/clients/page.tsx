@@ -49,6 +49,15 @@ import { ClientEnrichControl } from "@/components/blocks/client-enrich-control"
 import { ClientBlocklistDialog } from "@/components/blocks/client-blocklist-dialog"
 import { sortClientFeed, type ClientFeedSort } from "@/lib/client-feed-sort"
 import { PageLoader } from "@/components/blocks/page-loader"
+import {
+  HandoverPendingBadge,
+  useResponsibleOptions,
+} from "@/components/blocks/client-responsible-field"
+import {
+  RESPONSIBLE_FILTER_ALL,
+  RESPONSIBLE_FILTER_HANDOVER,
+  RESPONSIBLE_FILTER_MINE,
+} from "@/lib/client-responsible"
 
 const ALL = "__all__"
 const TAB_ALL: ClientFeedTab = "all"
@@ -102,6 +111,9 @@ function TotalCapNote({ shown, total }: { shown: number; total: number }) {
 export default function ClientsPage() {
   const [tab, setTab] = useState<ClientFeedTab>("all")
   const [statusFilter, setStatusFilter] = useState<string>(ALL)
+  // «Ответственный»: all | mine | handover | <member user id> — server-side.
+  const [responsibleFilter, setResponsibleFilter] = useState<string>(RESPONSIBLE_FILTER_ALL)
+  const responsibleOptions = useResponsibleOptions()
   // Порядок ленты. Живёт на уровне страницы, поэтому не сбрасывается при
   // переключении карточки/таблица (обе раскладки показывают одни и те же rows).
   // Сортировка — на клиенте над уже загруженной вкладкой: переключение
@@ -154,6 +166,9 @@ export default function ClientsPage() {
         offset: "0",
       })
       if (statusFilter !== ALL) params.set("status", statusFilter)
+      if (responsibleFilter !== RESPONSIBLE_FILTER_ALL) {
+        params.set("responsible", responsibleFilter)
+      }
       const res = await fetch(`/api/clients?${params.toString()}`)
       if (reqIdRef.current !== reqId) return
       if (!res.ok) {
@@ -171,7 +186,7 @@ export default function ClientsPage() {
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [tab, statusFilter])
+  }, [tab, statusFilter, responsibleFilter])
 
   const sortedRows = useMemo(
     () => sortClientFeed(rows, sort, taskSummary),
@@ -184,7 +199,7 @@ export default function ClientsPage() {
     setRows([])
     void loadPage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, statusFilter])
+  }, [tab, statusFilter, responsibleFilter])
 
   const loadExtras = useCallback(async () => {
     const [revRes, dealsRes, tasksRes] = await Promise.all([
@@ -259,6 +274,12 @@ export default function ClientsPage() {
         currency: d.currency,
         userId: d.userId,
         userName: d.userName,
+        responsibleUserId: d.responsibleUserId,
+        responsibleName: d.responsibleName,
+        responsibleChangedAt: d.responsibleChangedAt,
+        responsibleHandoverFromUserId: d.responsibleHandoverFromUserId,
+        responsibleHandoverFromName: d.responsibleHandoverFromName,
+        responsibleHandoverReason: d.responsibleHandoverReason,
         organizationId: d.organizationId,
         createdAt: d.createdAt,
         updatedAt: d.updatedAt,
@@ -348,6 +369,23 @@ export default function ClientsPage() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={responsibleFilter} onValueChange={setResponsibleFilter}>
+            <SelectTrigger size="sm" className="w-fit" aria-label="Ответственный">
+              <SelectValue placeholder="Ответственный" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={RESPONSIBLE_FILTER_ALL}>Ответственный: все</SelectItem>
+              <SelectItem value={RESPONSIBLE_FILTER_MINE}>Мои</SelectItem>
+              <SelectItem value={RESPONSIBLE_FILTER_HANDOVER}>
+                Ждут решения владельца
+              </SelectItem>
+              {(responsibleOptions?.members ?? []).map((m) => (
+                <SelectItem key={m.userId} value={m.userId}>
+                  {m.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Tabs
             value={sort}
             onValueChange={(v) => setSort(v as ClientFeedSort)}
@@ -357,8 +395,15 @@ export default function ClientsPage() {
               <TabsTrigger value="critical">Сначала критичные</TabsTrigger>
             </TabsList>
           </Tabs>
-          {statusFilter !== ALL && (
-            <Button variant="ghost" size="sm" onClick={() => setStatusFilter(ALL)}>
+          {(statusFilter !== ALL || responsibleFilter !== RESPONSIBLE_FILTER_ALL) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setStatusFilter(ALL)
+                setResponsibleFilter(RESPONSIBLE_FILTER_ALL)
+              }}
+            >
               <X className="h-4 w-4 mr-1" />
               Сбросить
             </Button>
@@ -464,6 +509,7 @@ export default function ClientsPage() {
                         <TableHead>Выручка за 12 мес.</TableHead>
                         <TableHead>Дата создания</TableHead>
                         <TableHead>Кто создал</TableHead>
+                        <TableHead>Ответственный</TableHead>
                         <TableHead>Статус</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -500,6 +546,10 @@ export default function ClientsPage() {
                               {new Date(c.createdAt).toLocaleDateString("ru-RU")}
                             </TableCell>
                             <TableCell>{c.userName ?? "—"}</TableCell>
+                            <TableCell>
+                              <div>{c.responsibleName ?? "—"}</div>
+                              <HandoverPendingBadge client={c} className="mt-1" />
+                            </TableCell>
                             <TableCell>
                               <Badge
                                 variant="secondary"

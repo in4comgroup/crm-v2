@@ -27,8 +27,7 @@ import {
 type Version = SignalsHistoryResponse["versions"][number]
 type Change = Version["changes"][number]
 
-// The history API caps at 200 versions; load them whole and page here.
-const HISTORY_LOAD = 200
+// Server paging: one page of versions per request (`limit` + `offset`, `total` for the pager).
 
 function changedFields(c: Change): { field: string; before: unknown; after: unknown }[] {
   const keys = new Set([...Object.keys(c.before ?? {}), ...Object.keys(c.after ?? {})])
@@ -95,26 +94,32 @@ export function SignalsHistorySheet({
 }) {
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
-  const [data, setData] = useState<{ key: string; versions: Version[] | null; error: string | null } | null>(null)
+  const [data, setData] = useState<{
+    key: string
+    versions: Version[] | null
+    total: number
+    error: string | null
+  } | null>(null)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
-  const reqKey = String(refreshKey)
+  const reqKey = `${refreshKey}:${page}:${pageSize}`
 
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    getJson<SignalsHistoryResponse>(`${SIGNALS_API}?view=history&limit=${HISTORY_LOAD}`)
-      .then((d) => !cancelled && setData({ key: reqKey, versions: d.versions, error: null }))
+    getJson<SignalsHistoryResponse>(`${SIGNALS_API}?view=history&limit=${pageSize}&offset=${page * pageSize}`)
+      .then((d) => !cancelled && setData({ key: reqKey, versions: d.versions, total: d.total, error: null }))
       .catch(
         (e) =>
           !cancelled &&
-          setData({ key: reqKey, versions: null, error: e instanceof Error ? e.message : String(e) }),
+          setData({ key: reqKey, versions: null, total: 0, error: e instanceof Error ? e.message : String(e) }),
       )
     return () => {
       cancelled = true
     }
-  }, [open, reqKey])
+  }, [open, reqKey, page, pageSize])
 
   const versions = data?.versions ?? null
+  const total = data?.total ?? 0
   const loading = open && data?.key !== reqKey
   const orgName = (id: string) => orgs.find((o) => o.id === id)?.name ?? id
   const toggle = (v: number) =>
@@ -142,7 +147,7 @@ export function SignalsHistorySheet({
           {versions && versions.length === 0 && (
             <p className="py-6 text-center text-sm text-muted-foreground">Изменений ещё не было</p>
           )}
-          {versions?.slice(page * pageSize, (page + 1) * pageSize).map((v) => {
+          {versions?.map((v) => {
             const isOpen = expanded.has(v.version)
             return (
               <Fragment key={v.version}>
@@ -178,12 +183,13 @@ export function SignalsHistorySheet({
               </Fragment>
             )
           })}
-          {versions && versions.length > 0 && (
+          {total > 0 && (
             <TablePager
               className="pt-2"
-              page={Math.min(page, pageCount(versions.length, pageSize) - 1)}
+              page={Math.min(page, pageCount(total, pageSize) - 1)}
               pageSize={pageSize}
-              total={versions.length}
+              total={total}
+              disabled={loading}
               onPageChange={setPage}
               onPageSizeChange={(n) => {
                 setPageSize(n)

@@ -1,6 +1,6 @@
 import "server-only"
 
-import { and, asc, desc, eq, inArray, isNull, max } from "drizzle-orm"
+import { and, asc, count, desc, eq, inArray, isNull, max } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import {
   dealFunnelStage,
@@ -563,9 +563,15 @@ export async function listOrgsForSignals(): Promise<SignalsOrgsResponse> {
   }
 }
 
-/** Last `limit` taxonomy versions with their change rows, newest first. */
-export async function getHistory(limit = 20): Promise<SignalsHistoryResponse> {
+/**
+ * One page of taxonomy versions with their change rows, newest first:
+ * `limit` (1–200, default 20) versions after skipping `offset`. `total` =
+ * all versions (for the pager).
+ */
+export async function getHistory(limit = 20, offset = 0): Promise<SignalsHistoryResponse> {
   const n = Math.min(Math.max(Math.trunc(limit) || 20, 1), 200)
+  const skip = Math.max(Math.trunc(offset) || 0, 0)
+  const [{ total }] = await db.select({ total: count() }).from(signalTaxonomyVersion)
   const versions = await db
     .select({
       version: signalTaxonomyVersion.version,
@@ -578,7 +584,8 @@ export async function getHistory(limit = 20): Promise<SignalsHistoryResponse> {
     .leftJoin(user, eq(user.id, signalTaxonomyVersion.createdByUserId))
     .orderBy(desc(signalTaxonomyVersion.version))
     .limit(n)
-  if (versions.length === 0) return { versions: [] }
+    .offset(skip)
+  if (versions.length === 0) return { total, versions: [] }
   const changes = await db
     .select()
     .from(signalRegistryChange)
@@ -603,6 +610,7 @@ export async function getHistory(limit = 20): Promise<SignalsHistoryResponse> {
     byVersion.set(c.version, list)
   }
   return {
+    total,
     versions: versions.map((v) => ({
       version: v.version,
       createdAt: v.createdAt.toISOString(),

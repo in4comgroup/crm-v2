@@ -1264,6 +1264,8 @@ export async function applyDiscovery(
       funnelPhase: "awareness" as const,
       status: "initial" as const,
       userId: session.user.id,
+      // «Ответственный» defaults to the creator (src/server/client-responsible.ts).
+      responsibleUserId: session.user.id,
       organizationId: activeOrgId,
       createdAt: now,
       updatedAt: now,

@@ -204,6 +204,20 @@
       "when": 1794671889996,
       "tag": "0028_cards_contract_old_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794675679409,
+      "tag": "0029_client_responsible_user",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794676532282,
+      "tag": "0030_deal_stage_stale_norm",
+      "breakpoints": true
     }
   ]
 }

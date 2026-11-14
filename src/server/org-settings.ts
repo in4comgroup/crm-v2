@@ -6,6 +6,7 @@ import { z } from "zod"
 import { db } from "@/db/drizzle"
 import { orgSetting, orgSettingLog, user } from "@/db/schema"
 import { attentionParamsOverrideSchema, type AttentionParamsOverride } from "@/lib/topics/attention-params"
+import { deliveryParamsOverrideSchema, type DeliveryParamsOverride } from "@/lib/topics/delivery-params"
 
 // Per-organization settings (table `org_setting`), the per-org twin of
 // src/server/platform-settings.ts. Every key is declared here with a zod
@@ -31,6 +32,16 @@ export const ORG_SETTINGS = {
   "attention.params": {
     schema: attentionParamsOverrideSchema.nullable(),
     default: null as AttentionParamsOverride | null,
+  },
+  // Topics delivery (phase 7): org switch for the email digests / evening
+  // reminders. Default false — no topics email leaves the platform for an
+  // org until a platform admin switches it on («Темы» → «Рассылка»).
+  "topics.delivery.email": { schema: z.boolean(), default: false },
+  // Per-org override of the delivery parameters (06 §13: evening time, P6
+  // daily limit, reminders per cycle, digest size); null = platform_setting.
+  "delivery.params": {
+    schema: deliveryParamsOverrideSchema.nullable(),
+    default: null as DeliveryParamsOverride | null,
   },
   // Deal bridge (topics phase 5, spec 01 §9.2, 06 §13): per-org overrides of
   // the platform values (null = platform_setting, then the code default).

@@ -1,6 +1,6 @@
 # Topics — signals automation: go-live runbook
 
-Status: **draft, 2026-11-14.** Covers the whole MVP (phases 0–6): foundations, signals registry, signal extraction, hourly intake, topic engine, attention, topic cards, deal bridge, deal state and risks, user UI. Extend it with delivery (phase 7) and system-of-record signals (phase 8).
+Status: **draft, 2026-11-14.** Covers the whole MVP (phases 0–6) and the email part of delivery (phase 7): foundations, signals registry, signal extraction, hourly intake, topic engine, attention, topic cards, deal bridge, deal state and risks, user UI, email digests and evening reminders. Extend it with Telegram delivery (phase 7, later) and system-of-record signals (phase 8).
 
 Purpose: one step-by-step list of what to switch on / off and what to check, so the whole signals flow works in a **new environment** (the first production deployment). Today there is only one environment and one DB (the DB in `.env`, a test DB). Some parts cannot be tested there (§3), so they must be checked at the switch-on.
 
@@ -26,6 +26,7 @@ Related: spec [01-specification.md](01-specification.md) (§5 extraction, §13 o
 | 7 | **Cards phase**: one open topic card per placed topic; AI `topics.card_writer` only on first placement / new cycle (≤ 40 / org / run); close / expire with the topic | `src/server/topics/cards/` | Same hourly run, after «attention». Cards are **hidden from users unless the org mode is `on`** |
 | 8 | **Deals phase**: new signals of the last 30 days on topics (50 topics / run) → the org's stage rules → auto-create (score ≥ 7, high confidence, client resolved, no open deal of client + type) / `deal_proposal` card / forward move / `stage_confirmation` card / outcome / pause; every change journaled with topic, item, rule, evidence | `src/server/topics/deals/`, `src/server/deal-engine.ts` | Same hourly run, after «cards». **In `shadow`: dry run** — decisions and hidden cards are stored, deals are not changed. Without org stage rules the phase skips the org |
 | 9 | **Deal state phase**: risk engine for touched deals (9 generic types, stage guards, conditions, clearing; new risk → forced card update, serious risk raises the topic to «Сейчас»), then `deals.state_summary` for dirty deals after the 10-min debounce (≤ 20 AI calls / org / run; fixed texts without AI for no data / won / lost) | `src/server/topics/deal-state/`, `src/server/deal-state.ts`, `src/server/deal-risks.ts` | Same hourly run, after «deals». State text and risks are **visible to users only in mode `on`** (deal board / drawer); the topic lists UI is phase 6 |
+| 10 | **Delivery phase** (last): for orgs in `on` — morning digest 07:30 («Сейчас» + «Сводка»), weekly digest Friday 12:00 («Неделя»), evening reminders 17:00 («Не закрыто сегодня», ≤ 3 per cycle; also the «Напоминание» marker in the app); org time, working days only, first hourly run inside a 4 h window; P6 daily limit 3 per recipient (read-time, overflow → «Сводка»); one sent digest per user × kind × day (`topic_delivery`) | `src/server/topics/delivery/`, `src/lib/topics/delivery-*.ts` | **Email leaves only when the org switch `topics.delivery.email` is on (default off)** and the email provider env is set; else rows `skipped`. Telegram: stub (later) |
 
 **Latency:** every message of an org in `shadow` / `on` gets signals in ≤ 1 hour (sync, parse and signals run in the same hourly run). The «intake» phase is skipped while a daily pipeline run is in progress (no double parse); the next hour catches up. Code: `src/server/topics/intake.ts`.
 
@@ -83,6 +84,8 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | T11 | «Сигналы сообщений» on «Темы»: open 10 items with signals and 10 skipped items | Evidence quotes are real text of the author; skip reasons make sense (automated, out-of-office, blocklist …) |
 | T11b | «Темы (отладка)»: open 10 topics in «Сейчас» / «Сводка» | The «Внимание» section explains the list in plain Russian; card text follows §9.1 (headline «Компания — действие, цель», ≤ 3 steps, roles not names, no invented dates); no topic card is visible on the dashboard while the org is `shadow` |
 | T11a | «Темы (отладка)» on «Темы»: phase «topics» in «Запуски» has `failed = 0`; open 10 topics | One business question per topic (§2.1); reminders joined to their request; two invoices = two topics; counterparty linked to the right client / contact; titles «Компания — вопрос» |
+| T14 | Email env set (`EMAIL_PROVIDER` + Nylas `NYLAS_API_KEY` / `NYLAS_API_URI` / `NYLAS_GRANT_ID` with a send scope, or Resend `RESEND_API_KEY` + `RESEND_FROM` on a verified domain) and `NEXT_PUBLIC_APP_URL` = the public HTTPS origin; /settings → «Темы» → «Рассылка» → org → «Показать письмо» for each kind → «Отправить мне тестовое письмо» | Test mail arrives; links open the app; log row «Тестовое письмо» |
+| T15 | Switch on «Рассылка тем по почте» for the org (B9) | Next run inside a window (07:30–11:30, Fri 12:00–16:00, 17:00–21:00 org time) logs `sent` rows; members can turn kinds off on /account → «Уведомления» |
 | T13 | After B7 (`on`): log in as an org member; open the dashboard | Tabs «Темы» / «История карточек»; «Сейчас» shows the open topic cards with actions; «Принять» makes a task; «Отклонить» asks for a reason code; «Создать заказ» opens the order dialog; the company page has «Темы»; «Найти в источниках» / Magic buttons are gone |
 | T12 | «Использование ИИ»: filter process «Извлечение сигналов» | Cost per item and per day as expected (§6 M3); no budget block for the org |
 
@@ -97,6 +100,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | B5 | **Noise sources** decided by the owner: newsletters, service mailboxes, private chats → «Исключения из анализа»; irrelevant companies → blocklist; own names / domains → own-org identity | IN4COM owner | Lists filled before T9 |
 | B6 | **Budget** agreed: daily AI USD per org from the measured cost (M3) × expected volume | Product owner | Org override set on «Дневной бюджет ИИ» if 5 USD is not enough |
 | B7 | **Switch to `on`** («Темы» → org → «Включено») after the shadow review: users get the dashboard tabs «Сейчас / Сводка / Неделя / Все темы», the topic drawer, «Темы» tabs, agent deals, deal state and risks; the old Custom-rule cards (incl. «Telegram orders», R7) and the name-based deal discovery stop for the org | Product owner | Shadow review (B4) accepted |
+| B9 | **Email digests on** for the org after the test mail (T14) is accepted | Product owner | Members informed that digests start |
 | B8 | **Tuning loop** for 4 weeks after `on`: weekly read of reject reasons and missed items → registry edits in «Сигналы» → eval | IN4COM reviewers + platform admin | Go-live sign-off: Q23 targets for 2 consecutive weeks |
 
 ## 6. Monitoring after the switch-on
@@ -136,6 +140,7 @@ GROUP BY 1 ORDER BY 2 DESC;
 | One noisy sender / chat | «Исключения из анализа» | Not stored / not analysed from now on; already parsed items need a re-parse to drop (O4) |
 | Bad code text | Edit the code in «Сигналы» (new version), or set its stage to `onHold` | Next items use the new text; stored signals are not re-scored (re-run «Извлечь заново» per item if needed) |
 | Wrong agent deals | Org setting `deals.autoCreateEnabled = false` (proposals only), or set the org back to `shadow` (deals: dry run) | No new automatic deals; existing ones can be undone with «Отменить» |
+| Too many / wrong emails | «Рассылка» → switch «Рассылка тем по почте» off (stops at once); a member turns kinds off on /account → «Уведомления» | No further digests; the log keeps the history |
 | Whole engine | Remove the topics cron from `vercel.ts` and redeploy | No hourly run for any org |
 
 ## 8. Re-checks after a change

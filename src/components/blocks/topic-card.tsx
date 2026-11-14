@@ -591,6 +591,11 @@ export function TopicEntryCard({
               {CYCLE_MARKER_LABELS_RU[entry.marker]}
             </Badge>
           )}
+          {entry.reminder && a?.list === "now" && (
+            <Badge className="shrink-0 bg-amber-500/15 text-amber-700 dark:text-amber-300" variant="secondary">
+              Напоминание {entry.reminder.count}
+            </Badge>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {a?.class && (
@@ -609,6 +614,11 @@ export function TopicEntryCard({
             <Badge variant="outline" className="font-normal">
               <Handshake className="h-3 w-3 mr-1" />
               Решение по сделке
+            </Badge>
+          )}
+          {a?.limited && (
+            <Badge variant="outline" className="font-normal">
+              Лимит дня «Сейчас»
             </Badge>
           )}
           {entry.snoozedUntil && (

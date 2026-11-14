@@ -2,7 +2,7 @@
 // §13). Client-safe: typed defaults + a zod schema of a PARTIAL override.
 // Settings ladder (06 §13): org_setting `attention.params` → platform_setting
 // `attention.params` → these defaults (src/server/topics/attention/store.ts).
-// Evening reminders / P6 daily limit / delivery are phase 7 — not here.
+// Evening reminders / P6 daily limit / delivery (phase 7): src/lib/topics/delivery-params.ts.
 
 import { z } from "zod"
 

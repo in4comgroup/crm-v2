@@ -4,6 +4,8 @@ import type { SignalClass, SignalKind } from "@/lib/signals/types"
 import type { TopicAttention } from "@/lib/topics/attention-types"
 import { WorkCalendar } from "@/lib/topics/attention-calendar"
 import { ATTENTION_DEFAULTS, mergeAttentionParams, type AttentionParams } from "@/lib/topics/attention-params"
+import { DELIVERY_DEFAULTS } from "@/lib/topics/delivery-params"
+import { cycleRemindersAfter, eveningReminderDue } from "@/lib/topics/delivery-routing"
 import type { CodeBook, CodeInfo } from "../model"
 import { makeBook } from "../test-fixtures"
 import {
@@ -291,7 +293,57 @@ describe("06 §16 acceptance", () => {
     expect(plain.list).toBe("week")
   })
 
-  it.todo("12 evening reminders stop after 3 per cycle (phase 7 — delivery)")
+  it("12 evening reminders stop after 3 per cycle; a material change resets the counter; a NOOP item does not", () => {
+    const req = ai("SALES_OFFER_REQUESTED", "2026-11-16 10:00")
+    let t = topic({ subState: "waiting_on_us", instances: [req] })
+    let a = step(t, "2026-11-16 10:05", null)
+    expect([a.profile, a.list]).toEqual(["P6", "now"])
+    // Store + delivery phase in miniature: recompute (counter reset on a new
+    // cycle), then the evening check marks the topic once per evening.
+    let reminders = cycleRemindersAfter(0, a)
+    let last: Date | null = null
+    const evening = (at: string) => {
+      a = step(t, at, a)
+      reminders = cycleRemindersAfter(reminders, a)
+      const now = msk(at)
+      const due = eveningReminderDue(
+        { status: "open", subState: t.subState, attention: a, cycleReminders: reminders, lastReminderAt: last },
+        now,
+        (d) => CAL.localDay(d),
+        DELIVERY_DEFAULTS.p6RepeatMax,
+      )
+      if (due) {
+        reminders++
+        last = now
+      }
+      return due
+    }
+    expect(evening("2026-11-16 17:00")).toBe(true)
+    expect(evening("2026-11-16 18:00")).toBe(false) // once per evening
+    expect(evening("2026-11-17 17:00")).toBe(true)
+    expect(evening("2026-11-18 17:00")).toBe(true)
+    expect(reminders).toBe(3)
+    // A NOOP item («Спасибо, получили»: no counted code) is not material.
+    t = { ...t, items: [...t.items, itm("2026-11-19 12:00")], lastActivityAt: msk("2026-11-19 12:00") }
+    expect(evening("2026-11-19 17:00")).toBe(false)
+    expect(a.cycleStarted).toBe(false)
+    expect(reminders).toBe(3)
+    // The client chases (boost R, material) → new cycle → reminders again.
+    const chase = ai("SALES_OFFER_REQUESTED", "2026-11-20 10:00")
+    t = topic({ subState: "waiting_on_us", instances: [req, chase] })
+    a = step(t, "2026-11-20 10:05", a)
+    expect(a.cycleStarted).toBe(true)
+    reminders = cycleRemindersAfter(reminders, a)
+    expect(reminders).toBe(0)
+    expect(evening("2026-11-20 17:00")).toBe(true)
+    expect(reminders).toBe(1)
+    // D4 topics never get evening reminders; waiting on them neither.
+    const d4 = step(topic({ subState: "waiting_on_us", instances: [ai("ORDER_REQUESTED", "2026-11-16 10:00")] }), "2026-11-16 17:00", null)
+    expect(d4.list).toBe("digest")
+    const off = { status: "open", cycleReminders: 0, lastReminderAt: null }
+    expect(eveningReminderDue({ ...off, subState: "waiting_on_us", attention: d4 }, msk("2026-11-16 17:00"), (d) => CAL.localDay(d), 3)).toBe(false)
+    expect(eveningReminderDue({ ...off, subState: "waiting_on_them", attention: a }, msk("2026-11-23 17:00"), (d) => CAL.localDay(d), 3)).toBe(false)
+  })
 
   it("13 expiry: P6 cycle, 7 working days → «Неделя / Истекло» for 7 days, then only «Все темы»", () => {
     const t = topic({ instances: [ai("DELIVERY_DISCREPANCY", "2026-11-16 10:00")] })

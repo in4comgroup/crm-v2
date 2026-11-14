@@ -80,6 +80,8 @@ export type TopicEntryAttention = {
   cycleStartedAt: string | null
   cycleReason: string | null
   cardExpiresAt: string | null
+  /** P6 daily limit (phase 7): moved from «Сейчас» to «Сводка» for the viewer. */
+  limited?: boolean
 }
 
 export type CycleMarker = "new" | "updated"
@@ -115,6 +117,8 @@ export type TopicEntry = {
   /** Open deal cards of the topic (`deal_proposal` / `stage_confirmation`). */
   dealCards: TopicCardView[]
   marker: CycleMarker | null
+  /** In-app evening reminder (phase 7): «Напоминание N из max» of this cycle, last 24 h. */
+  reminder: { count: number; at: string } | null
 }
 
 export type TopicListResponse = {

@@ -16,7 +16,7 @@ import type { TopicsMode } from "./mode"
 // per phase, records the error and goes on with the next phase.
 //
 // All phases are built: intake, signals, topics, attention, cards, deals
-// (plan phases 2–5) and dealState (5a). Plan: docs/specs/topics/03-development-plan.md.
+// (plan phases 2–5), dealState (5a) and delivery (7, email; Telegram open). Plan: docs/specs/topics/03-development-plan.md.
 
 export type TopicsPhaseName =
   | "intake"
@@ -26,6 +26,7 @@ export type TopicsPhaseName =
   | "cards"
   | "deals"
   | "dealState"
+  | "delivery"
 
 export type TopicsPhaseContext = {
   organizationId: string
@@ -93,6 +94,13 @@ async function runDealState(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult>
   return runDealStatePhase(ctx)
 }
 
+// Phase 7: delivery — src/server/topics/delivery/phase.ts (email digests:
+// morning / weekly / evening reminders; Telegram later). Last phase.
+async function runDelivery(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  const { runDeliveryPhase } = await import("@/server/topics/delivery/phase")
+  return runDeliveryPhase(ctx)
+}
+
 /** Phases in execution order. */
 export const TOPICS_PHASES: readonly TopicsPhase[] = [
   { name: "intake", run: runIntake },
@@ -102,4 +110,5 @@ export const TOPICS_PHASES: readonly TopicsPhase[] = [
   { name: "cards", run: runCards },
   { name: "deals", run: runDeals },
   { name: "dealState", run: runDealState },
+  { name: "delivery", run: runDelivery },
 ]

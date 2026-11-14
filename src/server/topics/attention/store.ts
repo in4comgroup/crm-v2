@@ -9,6 +9,7 @@ import type { DisplayProfile as RegistryDisplayProfile } from "@/lib/signals/typ
 import type { TopicAttention, TopicList } from "@/lib/topics/attention-types"
 import { WorkCalendar, type CalendarDay } from "@/lib/topics/attention-calendar"
 import { attentionParamsHash, mergeAttentionParams, type AttentionParams } from "@/lib/topics/attention-params"
+import { cycleRemindersAfter } from "@/lib/topics/delivery-routing"
 import { TOPIC_LIVE_STATUSES, type TopicStatus } from "@/lib/topics/types"
 import { getOrgSetting } from "@/server/org-settings"
 import { getPlatformSetting } from "@/server/platform-settings"
@@ -315,7 +316,8 @@ export async function recomputeAttentionForRows(
           nextAttentionCheckAt: a.nextCheckAt ? new Date(a.nextCheckAt) : null,
           cycleStartedAt: a.cycleStartedAt ? new Date(a.cycleStartedAt) : null,
           cycleReason: a.cycleReason,
-          ...(a.cycleStarted ? { cycleReminders: 0 } : {}),
+          // A new cycle resets the evening reminders (06 §7.3, phase 7).
+          cycleReminders: cycleRemindersAfter(row.cycleReminders, a),
           waitingSince: a.waitingSince ? new Date(a.waitingSince) : null,
           ownerUserId,
           ...(snoozeEnded ? { snoozedUntil: null } : {}),

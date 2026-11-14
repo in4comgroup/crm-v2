@@ -42,6 +42,8 @@ import {
   type TopicTab,
 } from "@/lib/topics/topic-ui"
 import { isTopicStatus, TOPIC_LIVE_STATUSES, type TopicStatus } from "@/lib/topics/types"
+import { reminderMarker, splitWithDailyLimit, type RoutableEntry } from "@/lib/topics/delivery-routing"
+import { loadDeliveryParams, orgHumanMemberIds } from "@/server/topics/delivery/store"
 import { getRegistry } from "@/server/signals/registry"
 import { placeStoredAttention } from "@/server/topics/attention/engine"
 import { loadAttentionParams, loadCalendarDays, readTopicList } from "@/server/topics/attention/store"
@@ -153,6 +155,19 @@ function entryAttention(a: TopicAttention | null): TopicEntryAttention | null {
     cycleStartedAt: a.cycleStartedAt,
     cycleReason: a.cycleReason,
     cardExpiresAt: a.cardExpiresAt,
+  }
+}
+
+// ── P6 daily limit (phase 7, 06 §7.2; rules in src/lib/topics/delivery-routing.ts) ──
+
+type LimitContext = { memberIds: Set<string>; limit: number; dayOf: (iso: string | null) => string }
+
+async function loadLimitContext(orgId: string, placer: Placer): Promise<LimitContext> {
+  const [memberIds, dp] = await Promise.all([orgHumanMemberIds(orgId), loadDeliveryParams(orgId)])
+  return {
+    memberIds,
+    limit: dp.dailyPushLimit,
+    dayOf: (iso) => (iso ? placer.cal.localDay(new Date(iso)) : "0000-00-00"),
   }
 }
 
@@ -311,6 +326,10 @@ function toEntry(
     card: topicCard ? cardView(topicCard, now) : null,
     dealCards,
     marker: att && att.list !== "none" ? cycleMarker(att, now) : null,
+    reminder:
+      t.status === "open"
+        ? reminderMarker({ lastReminderAt: t.lastReminderAt, cycleStartedAt: t.cycleStartedAt, cycleReminders: t.cycleReminders }, now)
+        : null,
   }
 }
 
@@ -406,8 +425,19 @@ export async function readTopicTab(
 ): Promise<TopicListResponse> {
   const now = opts.now ?? new Date()
   const placer = await loadPlacer(orgId)
-  const entries =
-    tab === "all" ? await allEntries(orgId, opts.filters ?? {}, now) : await listEntries(orgId, tab, now)
+  let entries: TopicEntry[]
+  if (tab === "now" || tab === "digest") {
+    // P6 daily limit as THIS user sees it: overflow «Сейчас» → «Сводка».
+    const [lim, nowE, digestE] = await Promise.all([
+      loadLimitContext(orgId, placer),
+      listEntries(orgId, "now", now),
+      listEntries(orgId, "digest", now),
+    ])
+    const split = splitWithDailyLimit(nowE, digestE, userId, lim.memberIds, lim.limit, lim.dayOf)
+    entries = tab === "now" ? split.now : split.digest
+  } else {
+    entries = tab === "all" ? await allEntries(orgId, opts.filters ?? {}, now) : await listEntries(orgId, tab, now)
+  }
   let dealCards: TopicListResponse["dealCards"] = []
   if (tab === "now") {
     dealCards = await openDealCards(orgId, now)
@@ -429,13 +459,33 @@ export async function readTopicTab(
   }
 }
 
+/**
+ * Entries of the three attention lists for the whole org at `now` (rank
+ * order, read-time placement, NO daily limit — the caller applies it per
+ * recipient). Used by the delivery phase (plan phase 7) to build the
+ * digests from exactly what the dashboard shows.
+ */
+export async function readOrgListEntries(
+  orgId: string,
+  now: Date = new Date(),
+): Promise<{ now: TopicEntry[]; digest: TopicEntry[]; week: TopicEntry[] }> {
+  const [nowE, digest, week] = await Promise.all([
+    listEntries(orgId, "now", now),
+    listEntries(orgId, "digest", now),
+    listEntries(orgId, "week", now),
+  ])
+  return { now: nowE, digest, week }
+}
+
 /** Counts per tab (all + «Мои»). «Сейчас» counts open deal cards too; «Все темы» = live topics. */
 export async function readTopicCounts(orgId: string, userId: string, now: Date = new Date()): Promise<TopicCounts> {
   const owned = async (list: Exclude<TopicList, "none">) => {
     const rows = await readTopicList(orgId, list, now)
-    return rows.map((r) => ({ ownerUserId: r.ownerUserId, dealId: r.dealId }))
+    return rows.map((r) => ({ topicId: r.topicId, ownerUserId: r.ownerUserId, dealId: r.dealId, attention: r.attention }))
   }
-  const [nowRows, digestRows, weekRows, liveRows, dealCards] = await Promise.all([
+  const placer = await loadPlacer(orgId)
+  const [lim, nowRaw, digestRaw, weekRows, liveRows, dealCards] = await Promise.all([
+    loadLimitContext(orgId, placer),
     owned("now"),
     owned("digest"),
     owned("week"),
@@ -445,7 +495,7 @@ export async function readTopicCounts(orgId: string, userId: string, now: Date =
       .where(and(eq(topic.organizationId, orgId), inArray(topic.status, LIVE))),
     openDealCards(orgId, now),
   ])
-  const dealIds = [...new Set([...nowRows, ...digestRows, ...weekRows, ...liveRows].map((r) => r.dealId).filter((x): x is string => !!x))]
+  const dealIds = [...new Set([...nowRaw, ...digestRaw, ...weekRows, ...liveRows].map((r) => r.dealId).filter((x): x is string => !!x))]
   const dealOwner = new Map<string, string>()
   for (let i = 0; i < dealIds.length; i += 500) {
     const rows = await db
@@ -456,13 +506,24 @@ export async function readTopicCounts(orgId: string, userId: string, now: Date =
   }
   const withOwner = (rows: { ownerUserId: string | null; dealId: string | null }[]) =>
     rows.map((r) => ({ ownerUserId: r.ownerUserId, dealOwnerUserId: r.dealId ? (dealOwner.get(r.dealId) ?? null) : null }))
+  const routable = (rows: typeof nowRaw): RoutableEntry[] =>
+    rows.map((r) => ({
+      topicId: r.topicId,
+      ownerUserId: r.ownerUserId,
+      dealOwnerUserId: r.dealId ? (dealOwner.get(r.dealId) ?? null) : null,
+      attention: r.attention,
+    }))
+  // P6 daily limit as this user sees it (same rule as `readTopicTab`).
+  const split = splitWithDailyLimit(routable(nowRaw), routable(digestRaw), userId, lim.memberIds, lim.limit, lim.dayOf)
+  const nowRows = split.now
+  const digestRows = split.digest
   const owners = await topicOwners(orgId, [...new Set(dealCards.map((c) => c.topicId))])
   const dealCardOwners = dealCards.map((c) => owners.get(c.topicId) ?? { ownerUserId: null, dealOwnerUserId: null })
-  const nowCount = countEntries(withOwner(nowRows), userId)
+  const nowCount = countEntries(nowRows, userId)
   const dealCount = countEntries(dealCardOwners, userId)
   return {
     now: { all: nowCount.all + dealCount.all, mine: nowCount.mine + dealCount.mine },
-    digest: countEntries(withOwner(digestRows), userId),
+    digest: countEntries(digestRows, userId),
     week: countEntries(withOwner(weekRows), userId),
     all: countEntries(withOwner(liveRows), userId),
   }

@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { formatDateTime } from "@/components/blocks/admin-ai-models"
+import { AdminTopicsDelivery } from "@/components/blocks/admin-topics-delivery"
 import { AdminTopicsGolden } from "@/components/blocks/admin-topics-golden"
 import { AdminTopicsSignals } from "@/components/blocks/admin-topics-signals"
 import { AdminTopicsSpike } from "@/components/blocks/admin-topics-spike"
@@ -65,9 +66,10 @@ const PHASE_LABEL: Record<string, string> = {
   cards: "Карточки",
   deals: "Сделки",
   dealState: "Состояние сделок",
+  delivery: "Рассылка",
 }
 
-const PHASE_ORDER = ["intake", "signals", "topics", "attention", "cards", "deals", "dealState"]
+const PHASE_ORDER = ["intake", "signals", "topics", "attention", "cards", "deals", "dealState", "delivery"]
 
 const TRIGGER_LABEL: Record<string, string> = { cron: "По расписанию", manual: "Вручную" }
 
@@ -479,6 +481,18 @@ export function AdminTopics() {
             </TableBody>
           </Table>
         </Card>
+      </section>
+
+      {/* Delivery: email digests + evening reminders (plan phase 7). */}
+      <section className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-base font-medium">Рассылка</h2>
+          <p className="text-sm text-muted-foreground">
+            Письма по темам: утренняя сводка, итоги недели, вечерние напоминания «Не закрыто сегодня».
+            Почта уходит только когда тема организации «Включено» и включён переключатель ниже.
+          </p>
+        </div>
+        <AdminTopicsDelivery />
       </section>
 
       {/* Shadow review of the signal extraction (plan phase 2). */}

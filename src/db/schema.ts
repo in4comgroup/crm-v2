@@ -3143,6 +3143,10 @@ export const topic = pgTable(
     cycleStartedAt: timestamp("cycle_started_at"),
     cycleReminders: integer("cycle_reminders").notNull().default(0),
     cycleReason: text("cycle_reason"),
+    // Last evening reminder (phase 7 delivery, 06 §7.3): set by the delivery
+    // phase at `eveningDigestTime` (once per local day); drives the in-app
+    // «Напоминание» marker and the once-per-evening guard of `cycle_reminders`.
+    lastReminderAt: timestamp("last_reminder_at"),
     // Since when the topic waits on us (boost O, 06 §4.4).
     waitingSince: timestamp("waiting_since"),
     snoozedAt: timestamp("snoozed_at"),
@@ -3386,4 +3390,63 @@ export const dealRisk = pgTable(
       .on(table.dealId, table.riskType)
       .where(sql`${table.status} = 'active'`),
   ],
+)
+
+// ── Topics plan phase 7: delivery (spec topics/01 §8.1, 06 §7.3, Q15) ──
+// One row per delivery attempt: a digest / reminder email (later Telegram)
+// to one user. `local_date` = the org-local day (for the per-day limits and
+// the idempotency of digests). channel: email | telegram. kind:
+// morning_digest | weekly_digest | evening_reminder | push | test. status:
+// sent | failed | skipped. Value lists are text validated in code.
+export const topicDelivery = pgTable(
+  "topic_delivery",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    kind: text("kind").notNull(),
+    localDate: date("local_date", { mode: "string" }).notNull(),
+    topicIds: text("topic_ids").array().notNull().default(sql`'{}'::text[]`),
+    cardIds: text("card_ids").array().notNull().default(sql`'{}'::text[]`),
+    status: text("status").notNull(),
+    error: text("error"),
+    subject: text("subject"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("topic_delivery_org_user_day_idx").on(table.organizationId, table.userId, table.localDate),
+    // One morning / weekly digest per user and local day (re-runs are no-ops).
+    uniqueIndex("topic_delivery_digest_uq")
+      .on(table.organizationId, table.userId, table.channel, table.kind, table.localDate)
+      .where(sql`${table.kind} IN ('morning_digest', 'weekly_digest', 'evening_reminder') AND ${table.status} = 'sent'`),
+  ],
+)
+
+// Per-user delivery choices inside one org (phase 7). No row = defaults
+// (all email kinds on). Telegram binding fields are kept for later.
+export const topicDeliveryPref = pgTable(
+  "topic_delivery_pref",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    emailMorning: boolean("email_morning").notNull().default(true),
+    emailWeekly: boolean("email_weekly").notNull().default(true),
+    emailEvening: boolean("email_evening").notNull().default(true),
+    telegramEnabled: boolean("telegram_enabled").notNull().default(false),
+    telegramChatId: text("telegram_chat_id"),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.organizationId] })],
 )

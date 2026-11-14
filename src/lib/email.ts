@@ -30,7 +30,35 @@ const RESEND_DEFAULT_FROM = "onboarding@resend.dev"
 interface SendEmailValues {
   to: string
   subject: string
+  /** HTML body. */
   body: string
+  /**
+   * Optional plain-text alternative. Resend sends it as the text/plain part;
+   * the Nylas send API has no separate text part, so Nylas ignores it.
+   */
+  text?: string
+}
+
+export type EmailProviderStatus =
+  | { configured: true; provider: "nylas" | "resend" }
+  | { configured: false; provider: "nylas" | "resend"; reason: string }
+
+/**
+ * Is outgoing system mail configured in this environment? Checks only the
+ * env vars the active provider needs (no network call). Used by callers that
+ * must never throw on a missing provider (topics digests record `skipped`).
+ */
+export function emailProviderStatus(): EmailProviderStatus {
+  const provider = (process.env.EMAIL_PROVIDER ?? "nylas").toLowerCase() === "resend" ? "resend" : "nylas"
+  if (provider === "resend") {
+    return process.env.RESEND_API_KEY
+      ? { configured: true, provider }
+      : { configured: false, provider, reason: "RESEND_API_KEY is not configured" }
+  }
+  const missing = ["NYLAS_API_KEY", "NYLAS_GRANT_ID"].filter((k) => !process.env[k])
+  return missing.length
+    ? { configured: false, provider, reason: `${missing.join(", ")} not configured` }
+    : { configured: true, provider }
 }
 
 // --- Resend (legacy / fallback) --------------------------------------------
@@ -39,6 +67,7 @@ export async function sendEmailsViaResend({
   to,
   subject,
   body,
+  text,
 }: SendEmailValues) {
   const from = process.env.RESEND_FROM || RESEND_DEFAULT_FROM
   const { data, error } = await getResend().emails.send({
@@ -46,6 +75,7 @@ export async function sendEmailsViaResend({
     to,
     subject,
     html: body,
+    ...(text ? { text } : {}),
   })
   if (error) {
     console.error("[resend] send failed", { to, subject, from, error })

@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { AccountAiUsage } from "@/components/blocks/account-ai-usage"
+import { AccountTopicDelivery } from "@/components/blocks/account-topic-delivery"
 
 type User = {
   id: string
@@ -39,6 +40,10 @@ export default function AccountPage() {
   const [organization, setOrganization] = useState<Organization | null>(null)
   const [memberRole, setMemberRole] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
+  // «Уведомления по темам» (topics phase 7): only when the org's topics mode
+  // is `on`. `?tab=notifications` (link in the digest emails) opens it.
+  const [topicsOn, setTopicsOn] = useState(false)
+  const [tab, setTab] = useState("info")
 
   //console.log("User session in settings page:", session)
 
@@ -51,12 +56,20 @@ export default function AccountPage() {
       // «Участники» с кнопкой «Сохранить» появлялись на несколько секунд
       // позже остальной страницы.
       try {
-        const [orgRes, activeMember] = await Promise.all([
+        const [orgRes, activeMember, topicsState] = await Promise.all([
           fetch(`/api/organization?userId=${encodeURIComponent(user.id)}`).then(
             (r) => r.json(),
           ),
           authClient.organization.getActiveMember(),
+          fetch("/api/topics?state=1")
+            .then((r) => (r.ok ? r.json() : { visible: false }))
+            .catch(() => ({ visible: false })),
         ])
+        const on = topicsState?.visible === true
+        setTopicsOn(on)
+        if (on && new URLSearchParams(window.location.search).get("tab") === "notifications") {
+          setTab("notifications")
+        }
         const org: Organization | null = orgRes.organization ?? null
         let role: string | null = null
         if (org?.id && activeMember.data?.organizationId === org.id) {
@@ -120,13 +133,14 @@ export default function AccountPage() {
         <PageHeaderActions />
       </div>
 
-      <Tabs defaultValue="info" className="flex-1 gap-4">
+      <Tabs value={tab} onValueChange={setTab} className="flex-1 gap-4">
         <TabsList>
           <TabsTrigger value="info">Информация об организации</TabsTrigger>
           {isOwner && user && (
             <TabsTrigger value="members">Участники</TabsTrigger>
           )}
           {isOwner && <TabsTrigger value="ai-usage">Использование ИИ</TabsTrigger>}
+          {topicsOn && <TabsTrigger value="notifications">Уведомления</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="info" className="flex flex-col gap-4">
@@ -172,6 +186,13 @@ export default function AccountPage() {
         {isOwner && (
           <TabsContent value="ai-usage">
             <AccountAiUsage />
+          </TabsContent>
+        )}
+
+        {/* Any member: the user's own topics delivery choices. */}
+        {topicsOn && (
+          <TabsContent value="notifications">
+            <AccountTopicDelivery />
           </TabsContent>
         )}
       </Tabs>

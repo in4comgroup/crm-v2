@@ -23,6 +23,7 @@ import {
   DIGEST_VISIBLE_ITEMS,
   TOPIC_TABS,
   TOPIC_TAB_LABELS_RU,
+  isTopicTab,
   splitDigest,
   splitWeek,
   type TopicCounts,
@@ -76,6 +77,22 @@ export function TopicListsSection() {
   const [showMore, setShowMore] = useState(false)
   const [drawerId, setDrawerId] = useState<string | null>(null)
   const req = useRef(0)
+
+  // Deep links (topics phase 7 emails): `?topic=<id>` opens the topic drawer,
+  // `?tab=now|digest|week|all` picks the tab. Read once, then removed from the URL.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search)
+    const topicId = qs.get("topic")
+    const tabParam = qs.get("tab")
+    if (tabParam && isTopicTab(tabParam)) setTab(tabParam)
+    if (topicId) setDrawerId(topicId)
+    if (topicId || tabParam) {
+      qs.delete("topic")
+      qs.delete("tab")
+      const rest = qs.toString()
+      window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`)
+    }
+  }, [])
 
   const load = useCallback(async () => {
     const id = ++req.current

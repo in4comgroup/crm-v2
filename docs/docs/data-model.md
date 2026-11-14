@@ -158,12 +158,24 @@ for the columns, `0020_work_calendar_ru_2026_2027` for the calendar seed; spec
 
 | Table / columns | Purpose | Key columns |
 | --- | --- | --- |
-| `topic` (attention columns) | Result of the attention engine per topic | `attention` (jsonb `TopicAttention`, `src/lib/topics/attention-types.ts`: score after boosts, band, class, lead, boosts, profiles, list, escalations I1–I5, deadline, rank + `rankKey`, cycle, card expiry, next check, Russian explanation, engine memory), `display_profile` (P8 / P6 / D4 / W1 / null), `list` (now / digest / week / none; indexed with the org), `next_attention_check_at` (when the hourly run must recompute; phase 3 writes set it to now; indexed with the org), `cycle_started_at`, `cycle_reason`, `cycle_reminders` (phase 7), `waiting_since`, `snoozed_at`, `owner_user_id` (assignee; deal owner by default, **set null**) |
+| `topic` (attention columns) | Result of the attention engine per topic | `attention` (jsonb `TopicAttention`, `src/lib/topics/attention-types.ts`: score after boosts, band, class, lead, boosts, profiles, list, escalations I1–I5, deadline, rank + `rankKey`, cycle, card expiry, next check, Russian explanation, engine memory), `display_profile` (P8 / P6 / D4 / W1 / null), `list` (now / digest / week / none; indexed with the org), `next_attention_check_at` (when the hourly run must recompute; phase 3 writes set it to now; indexed with the org), `cycle_started_at`, `cycle_reason`, `cycle_reminders` (evening reminders in this cycle; reset to 0 on a new cycle; phase 7), `last_reminder_at` (last evening reminder; phase 7, migration `0025`), `waiting_since`, `snoozed_at`, `owner_user_id` (assignee; deal owner by default, **set null**) |
 | `topic_event` (new type) | Journal of list changes | `type = attention_changed`, `payload` { from, to, reason, escalations, score, profile } |
 | `topic_event` (phase 5 types) | Deal bridge journal | `deal_decision` (one per decided signal instance = idempotency marker: `payload.instanceId`, `code`, `confidence`, `topicScore`, `dryRun`, `results[{ ruleId, effect, action, reason, dealId, cardId, stageId }]`), `deal_context` (in-stage code: `dealId`, `code`, `evidence`), `deal_undone`, `deal_proposal_accepted` / `_rejected`, `stage_confirmed` / `stage_confirmation_rejected` |
 | `topic_event` (phase 5a type) | Deal risk journal on the trigger topic | `deal_risk`, `payload` { action: activated / cleared, riskId, riskType, labelRu, severity, occurrences, dealId, triggerInstanceIds / by, reason, clearInstanceId } |
 | `card` (phase 5 kinds) | Deal cards | `kind` = `deal_proposal` or `stage_confirmation`, `proposal` (jsonb `DealCardProposal`, `src/lib/topics/cards.ts`: action, rule, code, evidence, client, type, target / from stage, deal), `dealId` (created / moved deal, **set null**); one open card per topic and kind |
 | `work_calendar_day` | Russian production calendar (platform reference data, one custom migration per year) | PK (`region` = RU, `day`), `is_working`, `is_short` (pre-holiday, −1 h), `note`. Only exceptions of Mon–Fri are stored; a year with no rows = plain Mon–Fri. Seeded: 2026, 2027 |
+
+Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
+`0025_topics_phase7_reminder_marker`; written only by
+`src/server/topics/delivery/`; text value lists validated in code,
+`src/lib/topics/delivery-routing.ts`):
+
+| Table / columns | Purpose | Key columns |
+| --- | --- | --- |
+| `topic_delivery` | Delivery log: one row per attempt to one user (email digests, evening reminders, admin test sends; Telegram later) | `organization_id` (**cascade**), `user_id` (**cascade**), `channel` (email / telegram), `kind` (morning_digest / weekly_digest / evening_reminder / push / test), `local_date` (org-local day), `topic_ids[]`, `card_ids[]`, `status` (sent / failed / skipped), `error` (failure text or skip reason: empty, opted_out, no_email, provider not configured), `subject`, `created_at`; index org + user + day; partial unique index = one `sent` digest per org + user + channel + kind + day |
+| `topic_delivery_pref` | Per-user delivery choices inside one org (no row = defaults) | PK (`user_id`, `organization_id`), both **cascade**; `email_morning`, `email_weekly`, `email_evening` (default true), `telegram_enabled` (default false), `telegram_chat_id` (later), `updated_at` |
+| `topic.last_reminder_at` | Last evening reminder of the topic | once per local evening; drives the in-app «Напоминание» marker |
+| `org_setting` keys | Delivery switches | `topics.delivery.email` (boolean, default false — no topics email for the org until a platform admin enables it), `delivery.params` (partial override; same key on `platform_setting`) |
 
 ## 8. Admin and audit
 

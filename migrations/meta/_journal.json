@@ -239,6 +239,20 @@
       "when": 1794732309623,
       "tag": "0033_identity_remove_vertical_values",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794741157570,
+      "tag": "0034_custom_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794742221982,
+      "tag": "0035_custom_fields_list",
+      "breakpoints": true
     }
   ]
 }

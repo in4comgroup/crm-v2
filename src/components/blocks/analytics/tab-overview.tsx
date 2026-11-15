@@ -32,7 +32,7 @@ export function TabOverview({ data }: { data: SalesAnalytics }) {
   const p = data.previousTotals
 
   const clientTypeRows = foldTail(
-    data.clientTypes.map((r) => ({ ...r, label: clientTypeLabel(r.key) })),
+    data.clientTypes.map((r) => ({ ...r, label: clientTypeLabel(r.key, data.clientTypeLabels) })),
     6,
   )
   const clientTypeSeries = buildSeries(clientTypeRows.map((r) => r.label))
@@ -110,7 +110,7 @@ export function TabOverview({ data }: { data: SalesAnalytics }) {
 
         <ChartCard
           title="Структура продаж по типу клиента"
-          description="On-trade / off-trade и прочие категории"
+          description="Доли типов клиентов (поле «Тип клиента»)"
         >
           <ShareDonut rows={clientTypeRows} series={clientTypeSeries} height={280} />
         </ChartCard>

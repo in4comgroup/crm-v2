@@ -1,7 +1,7 @@
 "use client"
 
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -28,7 +28,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
-import { AlertTriangle, Plus, Rows4, PlayingCardsFan } from "lucide-react"
+import { AlertTriangle, Plus, Rows4, PlayingCardsFan, SlidersHorizontal } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 import type { ContactRow, ClientOption } from "@/app/api/contacts/route"
@@ -36,6 +36,16 @@ import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
 import { ContactCard } from "@/components/blocks/contact-card"
 import { PageLoader } from "@/components/blocks/page-loader"
+import { CustomFieldsDialog } from "@/components/blocks/custom-fields-dialog"
+import {
+  CustomFieldCell,
+  CustomFieldFilterChips,
+  CustomFieldFiltersButton,
+  activeCustomFilters,
+  listColumnFields,
+  useCustomFieldDefs,
+} from "@/components/blocks/custom-field-filters"
+import { encodeCustomFilters, type CustomFieldFilter } from "@/lib/custom-fields"
 
 type ContactView = "cards" | "table"
 
@@ -64,6 +74,23 @@ export default function ContactsPage() {
   const [view, setView] = useState<ContactView>("table")
   const cardsViewTip = useAnchorTooltip()
   const tableViewTip = useAnchorTooltip()
+  const fieldsTip = useAnchorTooltip()
+  // Custom contact fields (any member reads the definitions; «Настроить
+  // поля» = org owner only). List columns + «Фильтр по полям» (server-side,
+  // `?cf=`, AND with the other filters). Filters live in page state.
+  const {
+    fields: customFields,
+    canManage: canManageFields,
+    reload: reloadCustomFields,
+  } = useCustomFieldDefs("contact")
+  const listFields = useMemo(() => listColumnFields(customFields), [customFields])
+  const [customFilters, setCustomFilters] = useState<CustomFieldFilter[]>([])
+  // Only complete conditions of shown fields; the string keeps the list from
+  // reloading on an incomplete edit.
+  const cfParam = useMemo(
+    () => encodeCustomFilters(activeCustomFilters(customFilters, customFields)),
+    [customFilters, customFields],
+  )
   const [canBlock, setCanBlock] = useState(false)
   // Отличаем «реально пусто» от «запрос не выполнился» (сеть/БД) — иначе
   // сбой рендерится как «контактов нет», что читается как потеря данных.
@@ -82,6 +109,7 @@ export default function ContactsPage() {
       })
       if (statusFilter !== ALL) params.set("status", statusFilter)
       if (clientFilter !== ALL) params.set("clientId", clientFilter)
+      if (cfParam) params.set("cf", cfParam)
       const res = await fetch(`/api/contacts?${params.toString()}`)
       if (reqIdRef.current !== reqId) return
       if (!res.ok) {
@@ -98,7 +126,7 @@ export default function ContactsPage() {
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [page, statusFilter, clientFilter])
+  }, [page, statusFilter, clientFilter, cfParam])
 
   useEffect(() => {
     void load()
@@ -107,7 +135,7 @@ export default function ContactsPage() {
   // Filter changes reset to page 1.
   useEffect(() => {
     setPage(1)
-  }, [statusFilter, clientFilter])
+  }, [statusFilter, clientFilter, cfParam])
 
   useEffect(() => {
     fetch("/api/contacts?clientOptions=1")
@@ -191,7 +219,31 @@ export default function ContactsPage() {
             ))}
           </SelectContent>
         </Select>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <CustomFieldFiltersButton
+            fields={customFields}
+            value={customFilters}
+            onChange={setCustomFilters}
+          />
+          {canManageFields && (
+            <CustomFieldsDialog
+              entity="contact"
+              onChanged={() => {
+                void reloadCustomFields()
+                void load()
+              }}
+              trigger={
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  aria-label="Настроить поля"
+                  {...fieldsTip.bind}
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                </Button>
+              }
+            />
+          )}
           <Tabs value={view} onValueChange={(v) => setView(v as ContactView)}>
             <TabsList>
               <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
@@ -204,8 +256,19 @@ export default function ContactsPage() {
           </Tabs>
           <AnchorTooltip text="в виде карточек" open={cardsViewTip.open} virtualRef={cardsViewTip.virtualRef} />
           <AnchorTooltip text="списком" open={tableViewTip.open} virtualRef={tableViewTip.virtualRef} />
+          <AnchorTooltip text="настроить поля" open={fieldsTip.open} virtualRef={fieldsTip.virtualRef} />
         </div>
       </div>
+
+      {customFilters.length > 0 && (
+        <div className="shrink-0">
+          <CustomFieldFilterChips
+            fields={customFields}
+            value={customFilters}
+            onChange={setCustomFilters}
+          />
+        </div>
+      )}
 
       <div className="text-xs text-muted-foreground shrink-0">
         {rows.length} из {total} контактов
@@ -239,6 +302,7 @@ export default function ContactsPage() {
                 key={c.id}
                 contact={c}
                 onOpenDetail={() => setEditingContact(c)}
+                listFields={listFields}
               />
             ))}
           </div>
@@ -253,6 +317,11 @@ export default function ContactsPage() {
                     <TableHead>Телефон</TableHead>
                     <TableHead>Компания</TableHead>
                     <TableHead>Статус</TableHead>
+                    {listFields.map((f) => (
+                      <TableHead key={f.id} className="max-w-[16rem] truncate">
+                        {f.label}
+                      </TableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -278,6 +347,11 @@ export default function ContactsPage() {
                           {STATUS_LABEL[c.status] ?? c.status}
                         </Badge>
                       </TableCell>
+                      {listFields.map((f) => (
+                        <TableCell key={f.id}>
+                          <CustomFieldCell field={f} value={c.customValues?.[f.id]} />
+                        </TableCell>
+                      ))}
                     </TableRow>
                   ))}
                 </TableBody>

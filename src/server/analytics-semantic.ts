@@ -1,7 +1,8 @@
 import "server-only"
 
 import { sql, type SQL } from "drizzle-orm"
-import { execRows, withBase } from "@/server/analytics-query"
+import { clientTypeKeySql, execRows, withBase } from "@/server/analytics-query"
+import { loadClientTypeField, type ClientTypeField } from "@/server/client-type-field"
 import {
   DEFAULT_TOP_N,
   DIMENSIONS,
@@ -16,7 +17,6 @@ import {
   type MeasureKey,
 } from "@/lib/analytics-semantic"
 import { clientTypeLabel, formatPeriod } from "@/lib/analytics-format"
-import { CLIENT_TYPE_VALUES } from "@/lib/client-custom-fields"
 import { ORDER_STATUS_LABEL } from "@/lib/orders-format"
 import type { OrderStatus } from "@/db/schema"
 
@@ -46,6 +46,13 @@ type DimExpr = { key: SQL; label: SQL; joins: JoinKey[] }
 
 type JoinKey = "user" | "client" | "product" | "oagg"
 
+/**
+ * Per-request org context: the org's «Тип клиента» custom field
+ * (`systemKey = "client_type"`, spec clients-contacts Q12) — its id is a
+ * bound parameter, its option ids are the dimension keys.
+ */
+type QueryCtx = { clientType: ClientTypeField | null }
+
 const TIME_UNITS: Record<string, { unit: string; fmt: string }> = {
   "time.day": { unit: "day", fmt: "YYYY-MM-DD" },
   "time.week": { unit: "week", fmt: "YYYY-MM-DD" },
@@ -64,7 +71,7 @@ const ORDER_VALUE_BUCKET_SQL = (col: SQL) => sql`case
 end`
 
 /** Resolve a dimension to its (key, label) SQL for the given grain. */
-function dimensionExpr(dim: DimensionKey, grain: Grain): DimExpr {
+function dimensionExpr(dim: DimensionKey, grain: Grain, ctx: QueryCtx): DimExpr {
   const base = grain === "order" ? sql.raw("o") : sql.raw("li")
 
   const time = TIME_UNITS[dim]
@@ -86,12 +93,12 @@ function dimensionExpr(dim: DimensionKey, grain: Grain): DimExpr {
         label: sql`coalesce(nullif(u.department, ''), 'Без отдела')`,
         joins: ["user"],
       }
-    case "clientType":
-      return {
-        key: sql`coalesce(nullif(c.custom_fields ->> 'type', ''), 'unknown')`,
-        label: sql`coalesce(nullif(c.custom_fields ->> 'type', ''), 'unknown')`,
-        joins: ["client"],
-      }
+    case "clientType": {
+      // Key AND label = the option id; the Russian label is applied in JS
+      // (`labelFor`) and reversed for filters (`resolveFilterValue`).
+      const e = clientTypeKeySql(ctx.clientType?.fieldId ?? null)
+      return { key: e, label: e, joins: ["client"] }
+    }
     case "client":
       return { key: sql`c.id`, label: sql`c.name`, joins: ["client"] }
     case "status": {
@@ -214,10 +221,10 @@ const BUCKET_LABELS: Record<string, string> = {
 }
 
 /** Human label for a raw dimension key. */
-function labelFor(dim: DimensionKey, raw: string): string {
+function labelFor(dim: DimensionKey, raw: string, ctx: QueryCtx): string {
   if (isTimeDimension(dim)) return formatPeriod(raw, true)
   if (dim === "status") return ORDER_STATUS_LABEL[raw as OrderStatus] ?? raw
-  if (dim === "clientType") return clientTypeLabel(raw)
+  if (dim === "clientType") return clientTypeLabel(raw, ctx.clientType?.labels)
   if (dim === "orderValueBucket") return BUCKET_LABELS[raw] ?? raw
   return raw
 }
@@ -225,13 +232,13 @@ function labelFor(dim: DimensionKey, raw: string): string {
 /**
  * Map a human-typed filter value back to the raw DB value.
  *
- * For enum-ish dimensions the SQL "label" IS the raw value («on_trade»,
- * «finalized») — the Russian label is applied in JS afterwards. So a model that
+ * For enum-ish dimensions the SQL "label" IS the raw value (an option id of
+ * «Тип клиента», «finalized») — the label is applied in JS afterwards. So a model that
  * filters by what it saw on screen («On-trade», «Оформлен») would match nothing
  * unless we reverse the mapping here. Name-valued dimensions (seller, client)
  * are matched against their label in SQL instead, so they need no reversal.
  */
-function resolveFilterValue(dim: DimensionKey, value: string): string {
+function resolveFilterValue(dim: DimensionKey, value: string, ctx: QueryCtx): string {
   const v = value.trim().toLowerCase()
   if (dim === "status") {
     const hit = (Object.keys(ORDER_STATUS_LABEL) as OrderStatus[]).find(
@@ -240,8 +247,10 @@ function resolveFilterValue(dim: DimensionKey, value: string): string {
     return hit ?? value
   }
   if (dim === "clientType") {
-    const hit = CLIENT_TYPE_VALUES.find(
-      (t) => t === v || clientTypeLabel(t).toLowerCase() === v,
+    const labels = ctx.clientType?.labels ?? {}
+    if (v === "без типа") return "unknown"
+    const hit = Object.keys(labels).find(
+      (id) => id.toLowerCase() === v || labels[id].trim().toLowerCase() === v,
     )
     return hit ?? value
   }
@@ -284,21 +293,26 @@ export async function runAnalyticsQuery(
   const statusInvolved = touched.includes("status")
   const bookedOnly = !statusInvolved
 
+  // The «Тип клиента» field is read only when the query touches it.
+  const ctx: QueryCtx = {
+    clientType: touched.includes("clientType") ? await loadClientTypeField(organizationId) : null,
+  }
+
   const joins = new Set<JoinKey>()
   const measure = measureExpr(spec.measure, grain, bookedOnly)
   measure.joins.forEach((j) => joins.add(j))
 
-  const dim = spec.dimension ? dimensionExpr(spec.dimension, grain) : null
+  const dim = spec.dimension ? dimensionExpr(spec.dimension, grain, ctx) : null
   dim?.joins.forEach((j) => joins.add(j))
-  const split = spec.splitBy ? dimensionExpr(spec.splitBy, grain) : null
+  const split = spec.splitBy ? dimensionExpr(spec.splitBy, grain, ctx) : null
   split?.joins.forEach((j) => joins.add(j))
 
   // Filters: same whitelist as grouping, values always bound as parameters.
   const whereParts: SQL[] = []
   for (const f of filters) {
-    const e = dimensionExpr(f.dimension, grain)
+    const e = dimensionExpr(f.dimension, grain, ctx)
     e.joins.forEach((j) => joins.add(j))
-    const value = resolveFilterValue(f.dimension, f.value)
+    const value = resolveFilterValue(f.dimension, f.value, ctx)
     // Match the raw key OR the display label, case-insensitively: name-valued
     // dimensions (seller, client) arrive as names, enum ones as raw values
     // after `resolveFilterValue` has reversed any Russian label.
@@ -377,12 +391,12 @@ export async function runAnalyticsQuery(
 
   let out: AnalyticsResultRow[] = rows.map((r) => ({
     key: r.k ?? "—",
-    label: labelFor(spec.dimension!, r.l ?? "—"),
+    label: labelFor(spec.dimension!, r.l ?? "—", ctx),
     value: Number(r.v ?? 0),
     ...(split
       ? {
           splitKey: r.sk ?? "—",
-          splitLabel: labelFor(spec.splitBy!, r.sl ?? "—"),
+          splitLabel: labelFor(spec.splitBy!, r.sl ?? "—", ctx),
         }
       : {}),
   }))

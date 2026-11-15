@@ -103,7 +103,7 @@ export function TabAssistant() {
               <ConversationEmptyState
                 icon={<ChartColumnBig className="size-8" />}
                 title="Спросите про продажи"
-                description="Например: «Кто лучший продавец за период?» или «Сравни on-trade и off-trade по месяцам»"
+                description="Например: «Кто лучший продавец за период?» или «Сравни выручку по типам клиентов по месяцам»"
               />
             ) : (
               messages.map((m) => (

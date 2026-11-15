@@ -30,6 +30,8 @@ import {
   pluralizeOrders,
 } from "@/lib/client-mocks"
 import { COMPANY_KIND_LABELS } from "@/lib/client-custom-fields"
+import type { CustomFieldDef } from "@/lib/custom-fields"
+import { CustomFieldsSummary } from "@/components/blocks/custom-field-filters"
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
@@ -150,6 +152,7 @@ export function ClientCard({
   tasks = [],
   tasksLoaded = true,
   onOpenDetail,
+  listFields = [],
 }: {
   client: ClientRow
   onChanged: () => void
@@ -162,6 +165,9 @@ export function ClientCard({
   // миг мелькнёт ложное «пусто» до прихода реальных данных.
   tasksLoaded?: boolean
   onOpenDetail: (clientId: string) => void
+  // Custom fields marked «Показывать в списке» (position order): up to 3
+  // «Название: значение» pairs with a value are shown in one muted line.
+  listFields?: readonly CustomFieldDef[]
 }) {
   const preview = client.contacts.slice(0, 2)
   const moreCount = Math.max(0, client.contacts.length - preview.length)
@@ -348,6 +354,8 @@ export function ClientCard({
             )}
           </div>
         )}
+
+        <CustomFieldsSummary fields={listFields} values={client.customValues} />
 
         {/* Spacer pushes the creator row to the bottom of the card so it
             stays aligned across cards of different content height. Кнопка

@@ -6,6 +6,8 @@ import { and, asc, eq, desc, ilike, inArray, isNull, or } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
 import { onEntityStatusChanged } from "@/server/topics/integration"
+import { parseCustomFilters } from "@/lib/custom-fields"
+import { customFilterConditions, listCustomFields } from "@/server/custom-fields"
 
 export type ContactRow = {
   id: string
@@ -23,6 +25,8 @@ export type ContactRow = {
   organizationId: string
   createdAt: string
   updatedAt: string
+  /** Custom field values («Поля») — only on `listContactsPaged` rows (list columns). */
+  customValues?: Record<string, unknown>
 }
 
 async function requireOrgContext() {
@@ -142,6 +146,8 @@ export async function listContactsPaged(params: {
   q?: string
   status?: EntityStatus | "all"
   clientId?: string | "none" | "all"
+  /** Custom field filters, `?cf=` JSON (docs/specs/clients-contacts §3.5). */
+  customFilters?: string | null
   limit?: number
   offset?: number
 }): Promise<{ rows: ContactRow[]; total: number }> {
@@ -171,6 +177,11 @@ export async function listContactsPaged(params: {
     conditions.push(isNull(contact.clientId))
   } else if (params.clientId && params.clientId !== "all") {
     conditions.push(eq(contact.clientId, params.clientId))
+  }
+
+  if (params.customFilters) {
+    const defs = await listCustomFields(activeOrgId, "contact")
+    conditions.push(...customFilterConditions("contact", parseCustomFilters(params.customFilters, defs), defs))
   }
 
   const where = and(...conditions)
@@ -206,6 +217,7 @@ export async function listContactsPaged(params: {
       organizationId: r.contact.organizationId,
       createdAt: r.contact.createdAt.toISOString(),
       updatedAt: r.contact.updatedAt.toISOString(),
+      customValues: (r.contact.customValues ?? {}) as Record<string, unknown>,
     })),
   }
 }

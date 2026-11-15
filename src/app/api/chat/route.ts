@@ -22,6 +22,7 @@ import { listDeals } from "@/server/deals"
 import { searchWeb } from "@/server/web-search"
 import { getOwnOrgContext } from "@/server/identity/own-org"
 import { loadClientProfileTexts } from "@/server/identity/client-profile-context"
+import { loadCustomValuesText } from "@/server/custom-fields"
 import { aiStreamText } from "@/server/ai/runtime"
 import {
   entitySearchScore,
@@ -234,15 +235,40 @@ function buildSourceTools(organizationId: string | null) {
         // profile summary («Профиль клиента») rides along when one exists.
         // Best effort — a failed read never breaks the search.
         const shownClients = matchedClients.slice(0, ENTITY_CAP)
-        const profiles = await loadClientProfileTexts(
-          organizationId,
-          shownClients.map((c) => c.id),
-        ).catch((e) => {
-          console.error("[chat] client profiles failed", e)
-          return new Map<string, { summary: string }>()
-        })
+        const shownContacts = matchedContacts.slice(0, ENTITY_CAP)
+        // Custom fields (spec clients-contacts Q11): «Название: значение»
+        // lines of the SHOWN fields, ≤ 400 chars each. Best effort too.
+        const noText = () => new Map<string, string>()
+        const [profiles, clientFields, contactFields] = await Promise.all([
+          loadClientProfileTexts(
+            organizationId,
+            shownClients.map((c) => c.id),
+          ).catch((e) => {
+            console.error("[chat] client profiles failed", e)
+            return new Map<string, { summary: string }>()
+          }),
+          loadCustomValuesText(
+            organizationId,
+            "client",
+            shownClients.map((c) => c.id),
+            400,
+          ).catch((e) => {
+            console.error("[chat] client custom fields failed", e)
+            return noText()
+          }),
+          loadCustomValuesText(
+            organizationId,
+            "contact",
+            shownContacts.map((c) => c.id),
+            400,
+          ).catch((e) => {
+            console.error("[chat] contact custom fields failed", e)
+            return noText()
+          }),
+        ])
         const clients = shownClients.map((c) => {
           const profile = profiles.get(c.id)?.summary ?? ""
+          const fields = clientFields.get(c.id) ?? ""
           return {
             id: c.id,
             name: c.name,
@@ -251,16 +277,21 @@ function buildSourceTools(organizationId: string | null) {
             email: c.email,
             status: c.status,
             ...(profile ? { profile } : {}),
+            ...(fields ? { fields } : {}),
           }
         })
-        const contacts = matchedContacts.slice(0, ENTITY_CAP).map((c) => ({
-          id: c.id,
-          name: c.name,
-          nameNative: c.nameNative,
-          email: c.email,
-          clientName: c.clientName,
-          status: c.status,
-        }))
+        const contacts = shownContacts.map((c) => {
+          const fields = contactFields.get(c.id) ?? ""
+          return {
+            id: c.id,
+            name: c.name,
+            nameNative: c.nameNative,
+            email: c.email,
+            clientName: c.clientName,
+            status: c.status,
+            ...(fields ? { fields } : {}),
+          }
+        })
         const deals = matchedDeals.slice(0, ENTITY_CAP).map((d) => ({
           id: d.id,
           name: d.name,

@@ -67,16 +67,15 @@ import type { TaskRow } from "@/app/api/tasks/route"
 import type { ContactRow } from "@/app/api/contacts/route"
 import type { SourceSummary } from "@/server/sources"
 import {
-  CLIENT_TYPE_LABELS,
-  CLIENT_TYPE_VALUES,
   COMPANY_KIND_LABELS,
   COMPANY_KIND_VALUES,
-  orgHasStructuredClientType,
-  type ClientType,
   type CompanyKind,
 } from "@/lib/client-custom-fields"
+import {
+  CustomFieldsPanel,
+  type CustomFieldsPanelHandle,
+} from "@/components/blocks/custom-fields-tab"
 
-const TYPE_NONE = "__none__"
 const COMPANY_KIND_NONE = "__none__"
 
 const STATUS_OPTIONS: { value: EntityStatus; label: string }[] = [
@@ -110,7 +109,6 @@ type ClientEditFormData = {
   email: string
   address: string
   webUrl: string
-  type: ClientType | typeof TYPE_NONE
   discount: string
   companyKind: CompanyKind | typeof COMPANY_KIND_NONE
   funnelPhase: FunnelPhase
@@ -128,7 +126,6 @@ function buildDefaults(client: ClientRow | null): ClientEditFormData {
     email: client?.email ?? "",
     address: client?.address ?? "",
     webUrl: client?.webUrl ?? "",
-    type: client?.customFields?.type ?? TYPE_NONE,
     discount:
       client?.customFields?.discount != null
         ? String(client.customFields.discount)
@@ -264,7 +261,11 @@ export function ClientDetailDrawer({
     clientId ? { clientId } : null,
     open,
   )
-  const showTypeField = orgHasStructuredClientType(client?.organizationId)
+  // «Поля» (custom company fields, docs/specs/clients-contacts): mounted on
+  // the first visit of the tab and then kept mounted (hidden) so unsaved
+  // edits survive tab switches; the close guard below also asks about them.
+  const [fieldsVisitedFor, setFieldsVisitedFor] = useState<string | null>(null)
+  const fieldsPanelRef = useRef<CustomFieldsPanelHandle | null>(null)
 
   const reloadTasks = useCallback((id: string) => {
     fetch("/api/tasks")
@@ -343,9 +344,14 @@ export function ClientDetailDrawer({
       .filter(Boolean)
     const discountValue =
       data.discount.trim() === "" ? undefined : Number(data.discount)
-    const customFields = {
+    // The old hard-coded `type` key is never sent any more: the company type
+    // is a normal custom field now (spec Q12), edited in the «Поля» tab.
+    const baseCustomFields: Record<string, unknown> = {
       ...(client.customFields ?? {}),
-      type: data.type === TYPE_NONE ? undefined : data.type,
+    }
+    delete baseCustomFields.type
+    const customFields = {
+      ...baseCustomFields,
       discount: discountValue,
       companyKind:
         data.companyKind === COMPANY_KIND_NONE ? undefined : data.companyKind,
@@ -387,7 +393,10 @@ export function ClientDetailDrawer({
   }
 
   function handleSheetOpenChange(next: boolean) {
-    if (!next && editForm.formState.isDirty) {
+    if (
+      !next &&
+      (editForm.formState.isDirty || fieldsPanelRef.current?.isDirty())
+    ) {
       setConfirmCloseOpen(true)
       return
     }
@@ -442,6 +451,9 @@ export function ClientDetailDrawer({
             <Tabs
               key={client.id}
               defaultValue="info"
+              onValueChange={(v) => {
+                if (v === "fields") setFieldsVisitedFor(client.id)
+              }}
               className="flex flex-1 min-h-0 flex-col gap-0"
             >
             <div className="px-4 pt-4 border-b shrink-0">
@@ -497,6 +509,9 @@ export function ClientDetailDrawer({
               >
                 <TabsTrigger value="info" className="flex-none">
                   Общая информация
+                </TabsTrigger>
+                <TabsTrigger value="fields" className="flex-none">
+                  Поля
                 </TabsTrigger>
                 <TabsTrigger value="tasks" className="flex-none">
                   Задачи
@@ -726,35 +741,6 @@ export function ClientDetailDrawer({
                 />
               </div>
 
-              {showTypeField && (
-                <FormField
-                  control={editForm.control}
-                  name="type"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs text-muted-foreground">
-                        Тип
-                      </FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Выберите тип" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={TYPE_NONE}>—</SelectItem>
-                          {CLIENT_TYPE_VALUES.map((t) => (
-                            <SelectItem key={t} value={t}>
-                              {CLIENT_TYPE_LABELS[t]}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </FormItem>
-                  )}
-                />
-              )}
-
               <div className="grid grid-cols-3 gap-3">
                 <FormField
                   control={editForm.control}
@@ -856,6 +842,21 @@ export function ClientDetailDrawer({
                   Сохранить
                 </Button>
               </div>
+            </TabsContent>
+
+            <TabsContent
+              value="fields"
+              forceMount={fieldsVisitedFor === client.id ? true : undefined}
+              className="pt-3 data-[state=inactive]:hidden"
+            >
+              {fieldsVisitedFor === client.id && (
+                <CustomFieldsPanel
+                  entity="client"
+                  entityId={client.id}
+                  handleRef={fieldsPanelRef}
+                  onChanged={onChanged}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="tasks" className="py-4 space-y-2 text-sm">
@@ -1051,11 +1052,18 @@ export function ClientDetailDrawer({
             </Button>
             <Button
               disabled={isPending}
-              onClick={() => {
+              onClick={async () => {
                 setConfirmCloseOpen(false)
-                editForm.handleSubmit((data) =>
-                  onSave(data, { closeAfter: true }),
-                )()
+                // «Поля» first (own endpoint); stay open when it fails.
+                const panel = fieldsPanelRef.current
+                if (panel?.isDirty() && !(await panel.save())) return
+                if (editForm.formState.isDirty) {
+                  editForm.handleSubmit((data) =>
+                    onSave(data, { closeAfter: true }),
+                  )()
+                } else {
+                  onOpenChange(false)
+                }
               }}
             >
               Сохранить

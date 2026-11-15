@@ -63,6 +63,8 @@ export type ClientDetail = ClientResponsibleInfo & {
   address: string | null
   webUrl: string | null
   customFields: ClientCustomFields
+  /** Custom field values («Поля», docs/specs/clients-contacts). */
+  customValues: Record<string, unknown>
   funnelPhase: FunnelPhase
   status: EntityStatus
   currency: string
@@ -97,6 +99,7 @@ export async function getClientDetail(
       address: client.address,
       webUrl: client.webUrl,
       customFields: client.customFields,
+      customValues: client.customValues,
       funnelPhase: client.funnelPhase,
       status: client.status,
       currency: client.currency,
@@ -164,6 +167,7 @@ export async function getClientDetail(
     address: row.address,
     webUrl: row.webUrl,
     customFields: row.customFields ?? {},
+    customValues: (row.customValues ?? {}) as Record<string, unknown>,
     funnelPhase: row.funnelPhase,
     status: row.status,
     currency: row.currency,

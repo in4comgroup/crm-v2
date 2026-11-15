@@ -107,6 +107,7 @@ export async function GET(request: NextRequest) {
         industry: searchParams.get("industry"),
         role: searchParams.get("role"),
         size: searchParams.get("size"),
+        customFilters: searchParams.get("cf"),
         limit,
         offset,
       })

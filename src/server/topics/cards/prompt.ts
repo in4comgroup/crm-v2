@@ -5,6 +5,7 @@
 
 import { z } from "zod"
 import { CARD_TEXT_LIMITS, type CardWriterDecision, type TopicCardText } from "@/lib/topics/cards"
+import { clientFieldsBlock } from "@/lib/topics/client-fields-block"
 
 export const CARD_WRITER_PROCESS = "topics.card_writer" as const
 
@@ -72,6 +73,11 @@ export type CardWriterInput = {
   org?: { roleLine: string; productsLine: string } | null
   /** Identity I4: «Профиль клиента «…»: …» of the topic's client ("" / null = none). */
   clientProfile?: string | null
+  /**
+   * Custom fields (spec clients-contacts Q11, only with `identity.promptContext`):
+   * «Название: значение» lines of the client's SHOWN fields ("" / null = none).
+   */
+  clientFields?: string | null
 }
 
 export type CardWriter = (input: CardWriterInput) => Promise<CardWriterOutput>
@@ -129,6 +135,8 @@ export function buildCardWriterPrompt(input: CardWriterInput): string {
   lines.push(`Вопрос: ${t.matter || "—"}`)
   lines.push(`Компания: ${t.counterparty || "—"}`)
   if (input.clientProfile && input.clientProfile.trim()) lines.push(input.clientProfile.trim())
+  const fields = clientFieldsBlock(input.clientFields)
+  if (fields) lines.push(fields)
   lines.push(`Статус: ${WAITING_RU[t.waiting]}`)
   if (t.leadCode) lines.push(`Главный сигнал: ${t.leadLabelRu ?? t.leadCode}${t.class ? ` (${CLASS_RU[t.class]})` : ""}`)
   if (t.leadNoteRu) lines.push(`Подсказка к карточке: ${t.leadNoteRu}`)

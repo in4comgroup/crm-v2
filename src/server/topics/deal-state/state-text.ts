@@ -3,6 +3,7 @@
 // summary runner (summary.ts) loads the input and calls the model.
 
 import { z } from "zod"
+import { clientFieldsBlock } from "@/lib/topics/client-fields-block"
 import { DEAL_STATE_NO_DATA_TEXT } from "@/lib/topics/deal-state"
 
 export const DEAL_STATE_PROCESS = "deals.state_summary" as const
@@ -71,6 +72,11 @@ export type DealStateInput = {
   orgRoleLine?: string | null
   /** Identity I4: «Профиль клиента «…»: …» of the deal's client ("" / null = none). */
   clientProfile?: string | null
+  /**
+   * Custom fields (spec clients-contacts Q11, only with `identity.promptContext`):
+   * «Название: значение» lines of the client's SHOWN fields ("" / null = none).
+   */
+  clientFields?: string | null
 }
 
 // ── Output ────────────────────────────────────────────────────────────────
@@ -135,6 +141,7 @@ export function buildDealStatePrompt(input: DealStateInput): string {
       `Название: ${input.dealName}`,
       `Клиент: ${input.clientName}`,
       clientProfile || null,
+      clientFieldsBlock(input.clientFields) || null,
       `Стадия: ${input.stageName}`,
       `Статус: ${input.statusRu}${input.pausedUntil ? ` (пауза до ${input.pausedUntil})` : ""}`,
       input.dealTypeLabel ? `Тип: ${input.dealTypeLabel}` : null,

@@ -25,6 +25,7 @@ import {
   type DealStatus,
 } from "@/db/schema"
 import { computePosition } from "@/lib/kanban-move"
+import { loadClientTypeValue } from "@/server/client-type-field"
 import { getOrgSetting } from "@/server/org-settings"
 import { getPlatformSetting } from "@/server/platform-settings"
 
@@ -683,16 +684,14 @@ export async function listOpenClientDeals(
     )
 }
 
-/** Client facts for the stage-rule `clientGuard` (new client, client type). */
+/** Client facts for the stage-rule `clientGuard` (new client, client type = option id + label). */
 export async function loadClientGuardFacts(
   orgId: string,
   clientId: string,
-): Promise<{ isNew: boolean; type: string | null }> {
-  const [[c], [d], [o]] = await Promise.all([
-    db
-      .select({ customFields: client.customFields })
-      .from(client)
-      .where(and(eq(client.id, clientId), eq(client.organizationId, orgId))),
+): Promise<{ isNew: boolean; type: string | null; typeLabel: string | null }> {
+  const [t, [d], [o]] = await Promise.all([
+    // «Тип клиента» = the org's custom field with systemKey `client_type`.
+    loadClientTypeValue(orgId, clientId),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(deal)
@@ -702,10 +701,10 @@ export async function loadClientGuardFacts(
       .from(order)
       .where(and(eq(order.organizationId, orgId), eq(order.clientId, clientId))),
   ])
-  const cf = (c?.customFields ?? {}) as Record<string, unknown>
   return {
     isNew: (d?.n ?? 0) === 0 && (o?.n ?? 0) === 0,
-    type: typeof cf.type === "string" && cf.type.trim() ? cf.type.trim() : null,
+    type: t.type,
+    typeLabel: t.typeLabel,
   }
 }
 

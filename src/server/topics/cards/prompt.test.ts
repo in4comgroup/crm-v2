@@ -73,4 +73,18 @@ describe("card writer prompt", () => {
     // Still no engine fields.
     for (const w of ["балл", "score", "band", "p8", "d4", "w1"]) expect(on.toLowerCase()).not.toContain(w)
   })
+
+  it("custom fields: «Поля компании» block after the client profile; empty / off = no block", () => {
+    const off = buildCardWriterPrompt(input)
+    expect(buildCardWriterPrompt({ ...input, clientFields: null })).toBe(off)
+    expect(buildCardWriterPrompt({ ...input, clientFields: "  " })).toBe(off)
+    expect(off).not.toContain("Поля компании:")
+    const on = buildCardWriterPrompt({
+      ...input,
+      org: { roleLine: "Наша компания: Альфа — производитель.", productsLine: "" },
+      clientProfile: "Профиль клиента «Норлекс»: отрасль: розница",
+      clientFields: "Сегмент: A\nИНН: 7700000000",
+    })
+    expect(on).toContain("Профиль клиента «Норлекс»: отрасль: розница\nПоля компании:\nСегмент: A\nИНН: 7700000000\nСтатус:")
+  })
 })

@@ -33,6 +33,8 @@ import {
   type ClientTaskSummary,
 } from "@/server/tasks"
 import { getServerSession } from "@/lib/get-session"
+import { matchesCustomFilters, parseCustomFilters } from "@/lib/custom-fields"
+import { listCustomFields } from "@/server/custom-fields"
 import { onEntityStatusChanged } from "@/server/topics/integration"
 import {
   loadResponsibleNames,
@@ -58,10 +60,8 @@ import {
   type EnrichFillable,
 } from "@/server/identity/client-enrichment"
 import {
-  isClientType,
   isCompanyKind,
   normalizeDiscountPercent,
-  orgHasStructuredClientType,
   type ClientCustomFields,
 } from "@/lib/client-custom-fields"
 
@@ -104,6 +104,8 @@ export type ClientRow = ClientResponsibleInfo & {
    * — only on `listClientsFeed` rows; null when the client has no profile row.
    */
   profileTags?: ClientProfileTags | null
+  /** Custom field values («Поля») — only on `listClientsFeed` rows (list columns). */
+  customValues?: Record<string, unknown>
 }
 
 export type ClientProfileTags = {
@@ -287,6 +289,8 @@ export async function listClientsFeed(params: {
   industry?: string | null
   role?: string | null
   size?: string | null
+  /** Custom field filters, `?cf=` JSON (docs/specs/clients-contacts §3.5). */
+  customFilters?: string | null
   limit?: number
   offset?: number
 }): Promise<{
@@ -351,6 +355,8 @@ export async function listClientsFeed(params: {
     .where(and(eq(client.organizationId, activeOrgId), ...statusConditions))
 
   const taskSummary = await listTaskSummaryByClient()
+  const cfDefs = params.customFilters ? await listCustomFields(activeOrgId, "client") : []
+  const cfFilters = parseCustomFilters(params.customFilters, cfDefs)
 
   const industryFilter = (params.industry ?? "").trim()
   const roleFilter = (params.role ?? "").trim()
@@ -374,6 +380,7 @@ export async function listClientsFeed(params: {
   const matching = rows.filter((r) => {
     if (!matchesResponsibleFilter(params.responsible, r.client, viewerUserId)) return false
     if (!matchesProfile(r.profile)) return false
+    if (cfFilters.length && !matchesCustomFilters(r.client.customValues as Record<string, unknown>, cfFilters, cfDefs)) return false
     if (params.tab === "all") return true
     const kind = r.client.customFields?.companyKind
     if (kind === "supplier") return params.tab === "supplier"
@@ -456,6 +463,7 @@ export async function listClientsFeed(params: {
       address: r.client.address,
       webUrl: r.client.webUrl,
       customFields: r.client.customFields ?? {},
+      customValues: (r.client.customValues ?? {}) as Record<string, unknown>,
       funnelPhase: r.client.funnelPhase,
       status: r.client.status,
       currency: r.client.currency,
@@ -499,19 +507,16 @@ function cleanAliases(raw: string[] | null | undefined): string[] | null {
 }
 
 /**
- * Normalise the custom-fields bag for the given org. The `discount` percentage
- * is kept for ALL orgs (validated to a whole 0–100, omitted when unset). The
- * structured `type` is kept only for the designated org. Unknown keys are
- * dropped — the bag is extensible by design but the server controls what lands.
+ * Normalise the system bag `client.custom_fields`: the `discount` percentage
+ * (a whole 0–100, omitted when unset) and `companyKind`. Unknown keys are
+ * dropped — the server controls what lands. Org-defined fields (incl. the
+ * «Тип клиента» converted from the old `type` key) live in
+ * `client.custom_values` (src/server/custom-fields.ts).
  */
 function normalizeClientCustomFields(
-  organizationId: string,
   raw: ClientCustomFields | null | undefined,
 ): ClientCustomFields {
   const out: ClientCustomFields = {}
-  if (orgHasStructuredClientType(organizationId) && isClientType(raw?.type)) {
-    out.type = raw.type
-  }
   const discount = normalizeDiscountPercent(raw?.discount)
   if (discount != null) out.discount = discount
   if (isCompanyKind(raw?.companyKind)) out.companyKind = raw.companyKind
@@ -564,7 +569,7 @@ export async function createClient(data: {
     email: data.email?.trim() || null,
     address: data.address?.trim() || null,
     webUrl: data.webUrl?.trim() || null,
-    customFields: normalizeClientCustomFields(activeOrgId, data.customFields),
+    customFields: normalizeClientCustomFields(data.customFields),
     funnelPhase: data.funnelPhase ?? "awareness",
     status: data.status ?? "active",
     currency: normaliseClientCurrency(data.currency),
@@ -647,7 +652,7 @@ export async function updateClient(
       ...(data.customFields !== undefined
         ? {
             customFields: keepHandoverNote(
-              normalizeClientCustomFields(activeOrgId, data.customFields),
+              normalizeClientCustomFields(data.customFields),
               current.customFields,
             ),
           }

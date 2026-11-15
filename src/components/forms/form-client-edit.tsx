@@ -30,22 +30,16 @@ import {
   FormMessage,
 } from "@/components/ui/form"
 import { toast } from "sonner"
-import { authClient } from "@/lib/auth-client"
 import type { ClientRow, ClientContactPreview } from "@/app/api/clients/route"
 import type { FunnelPhase, EntityStatus } from "@/db/schema"
 import {
-  CLIENT_TYPE_LABELS,
-  CLIENT_TYPE_VALUES,
   COMPANY_KIND_LABELS,
   COMPANY_KIND_VALUES,
-  orgHasStructuredClientType,
-  type ClientType,
   type CompanyKind,
 } from "@/lib/client-custom-fields"
 
-// Sentinel for the "no type selected" option — shadcn SelectItem can't carry
+// Sentinel for the "no kind selected" option — shadcn SelectItem can't carry
 // an empty-string value.
-const TYPE_NONE = "__none__"
 const COMPANY_KIND_NONE = "__none__"
 
 const FUNNEL_PHASES: FunnelPhase[] = [
@@ -108,8 +102,6 @@ type ClientFormData = {
   email: string
   address: string
   webUrl: string
-  /** Stored under `customFields.type`; `TYPE_NONE` means unset. */
-  type: ClientType | typeof TYPE_NONE
   /** Stored under `customFields.discount`; whole % 0–100, "" means no discount. */
   discount: string
   /** Stored under `customFields.companyKind`; `COMPANY_KIND_NONE` means unset. */
@@ -161,12 +153,6 @@ export default function ClientEditDialog({
 }: Props) {
   const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
-  const { data: session } = authClient.useSession()
-
-  // Active org: the client's own org in edit mode, otherwise the session's
-  // active org for create mode. Drives whether the `type` field is shown.
-  const orgId = client?.organizationId ?? session?.session.activeOrganizationId
-  const showTypeField = orgHasStructuredClientType(orgId)
 
   const form = useForm<ClientFormData>({
     defaultValues: {
@@ -178,7 +164,6 @@ export default function ClientEditDialog({
       email: client?.email ?? "",
       address: client?.address ?? "",
       webUrl: client?.webUrl ?? "",
-      type: client?.customFields?.type ?? TYPE_NONE,
       discount:
         client?.customFields?.discount != null
           ? String(client.customFields.discount)
@@ -201,8 +186,7 @@ export default function ClientEditDialog({
         email: client?.email ?? "",
         address: client?.address ?? "",
         webUrl: client?.webUrl ?? "",
-        type: client?.customFields?.type ?? TYPE_NONE,
-        discount:
+          discount:
           client?.customFields?.discount != null
             ? String(client.customFields.discount)
             : "",
@@ -220,14 +204,14 @@ export default function ClientEditDialog({
           .split(",")
           .map((a) => a.trim())
           .filter(Boolean)
-        // Fold the flat `type` select back into the extensible custom-fields
-        // bag, preserving any other keys already on the client. The server
-        // re-validates + forces `{}` for orgs without the structured type.
-        const { type, discount, companyKind, ...rest } = data
+        // Fold the flat discount / kind controls back into the system
+        // custom-fields bag, preserving any other keys already on the client.
+        // The server re-validates and drops unknown keys. (Org-defined
+        // fields, incl. «Тип клиента», are edited on the «Поля» tab.)
+        const { discount, companyKind, ...rest } = data
         const discountValue = discount.trim() === "" ? undefined : Number(discount)
         const customFields = {
           ...(client?.customFields ?? {}),
-          type: type === TYPE_NONE ? undefined : type,
           // Server re-validates to a whole 0–100 (or drops it).
           discount: discountValue,
           companyKind:
@@ -424,37 +408,6 @@ export default function ClientEditDialog({
                 </FormItem>
               )}
             />
-
-            {showTypeField && (
-              <FormField
-                control={form.control}
-                name="type"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-gray-400">Тип</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Выберите тип" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value={TYPE_NONE}>—</SelectItem>
-                        {CLIENT_TYPE_VALUES.map((t) => (
-                          <SelectItem key={t} value={t}>
-                            {CLIENT_TYPE_LABELS[t]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
 
             <FormField
               control={form.control}

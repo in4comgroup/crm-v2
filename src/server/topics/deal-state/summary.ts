@@ -24,6 +24,7 @@ import type { DealStateDecision } from "@/lib/topics/deal-state"
 import { TOPIC_STATUS_LABELS_RU, TOPIC_SUB_STATE_LABELS_RU, isTopicStatus, type TopicSubState } from "@/lib/topics/types"
 import { aiCallInfo, aiGenerateText } from "@/server/ai/runtime"
 import { getOrgFunnel, outcomeStage } from "@/server/deal-engine"
+import { loadCustomValuesText } from "@/server/custom-fields"
 import { loadClientProfileTexts } from "@/server/identity/client-profile-context"
 import { getTopicsOrgPrompt } from "@/server/identity/prompt-context"
 import { messageContent } from "@/server/topics/signals/evidence"
@@ -311,9 +312,18 @@ export async function loadDealStateInput(orgId: string, dealId: string, now: Dat
     orgPrompt && d.clientId
       ? ((await loadClientProfileTexts(orgId, [d.clientId], { withSegment: true })).get(d.clientId)?.summary ?? "")
       : ""
+  // Custom fields (spec clients-contacts Q11): same gate as the profile.
+  const clientFields =
+    orgPrompt && d.clientId
+      ? ((await loadCustomValuesText(orgId, "client", [d.clientId])).get(d.clientId) ?? "")
+      : ""
 
   const input: DealStateInput = {
-    ...(orgPrompt ? { orgRoleLine: orgPrompt.roleLine || null, clientProfile: clientProfile || null } : {}),
+    ...(orgPrompt ? {
+          orgRoleLine: orgPrompt.roleLine || null,
+          clientProfile: clientProfile || null,
+          clientFields: clientFields || null,
+        } : {}),
     dealId,
     dealName: d.name,
     clientName: d.clientName ?? "—",

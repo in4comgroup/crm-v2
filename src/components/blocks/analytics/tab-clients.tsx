@@ -23,19 +23,21 @@ import {
 import type { SalesAnalytics, StackPoint } from "@/server/analytics"
 
 /**
- * Clients cut by their `custom_fields.type` (on-trade / off-trade), plus the
- * portfolio scatter that shows how order count and basket size trade off.
+ * Clients cut by the org's «Тип клиента» custom field (option labels come
+ * from `data.clientTypeLabels`), plus the portfolio scatter that shows how
+ * order count and basket size trade off.
  */
 export function TabClients({ data }: { data: SalesAnalytics }) {
   const [metric, setMetric] = useState<MetricKey>("revenue")
+  const typeLabels = data.clientTypeLabels
 
   const typeRows = useMemo(
     () =>
       foldTail(
-        data.clientTypes.map((r) => ({ ...r, label: clientTypeLabel(r.key) })),
+        data.clientTypes.map((r) => ({ ...r, label: clientTypeLabel(r.key, typeLabels) })),
         6,
       ),
-    [data.clientTypes],
+    [data.clientTypes, typeLabels],
   )
   const typeSeries = useMemo(
     () => buildSeries(typeRows.map((r) => r.label)),
@@ -43,17 +45,17 @@ export function TabClients({ data }: { data: SalesAnalytics }) {
   )
 
   const typeStack = useMemo(() => {
-    // The pivot is keyed by the raw enum value; relabel before remapping so the
+    // The pivot is keyed by the option id; relabel before remapping so the
     // stack, the donut and the table all speak the same language.
     const labelled: StackPoint[] = data.clientTypeMonthly.map((p) => {
       const out: StackPoint = { period: String(p.period) }
       for (const k of data.clientTypeKeys) {
-        out[clientTypeLabel(k)] = Number(p[k] ?? 0)
+        out[clientTypeLabel(k, typeLabels)] = Number(p[k] ?? 0)
       }
       return out
     })
     return remapStack(labelled, typeSeries)
-  }, [data.clientTypeMonthly, data.clientTypeKeys, typeSeries])
+  }, [data.clientTypeMonthly, data.clientTypeKeys, typeSeries, typeLabels])
 
   // Scatter compares every pair of hues at once, so it's capped at the three
   // slots that clear the all-pairs separation gates. Rarer types fold in as a
@@ -72,14 +74,14 @@ export function TabClients({ data }: { data: SalesAnalytics }) {
   )
 
   const scatterConfig = useMemo(
-    () => buildSafeConfig(scatterTypes, clientTypeLabel),
-    [scatterTypes],
+    () => buildSafeConfig(scatterTypes, (k: string) => clientTypeLabel(k, typeLabels)),
+    [scatterTypes, typeLabels],
   )
 
   const typeTableRows = useMemo(
     () =>
-      data.clientTypes.map((r) => ({ ...r, label: clientTypeLabel(r.key) })),
-    [data.clientTypes],
+      data.clientTypes.map((r) => ({ ...r, label: clientTypeLabel(r.key, typeLabels) })),
+    [data.clientTypes, typeLabels],
   )
 
   return (
@@ -91,7 +93,7 @@ export function TabClients({ data }: { data: SalesAnalytics }) {
       <div className="grid gap-4 lg:grid-cols-3">
         <ChartCard
           title="Категории клиентов"
-          description="Доля on-trade / off-trade в выручке"
+          description="Доля типов клиентов в выручке"
         >
           {typeRows.length ? (
             <ShareDonut
@@ -107,7 +109,7 @@ export function TabClients({ data }: { data: SalesAnalytics }) {
 
         <ChartCard
           title="Категории клиентов по месяцам"
-          description="Как менялось соотношение каналов продаж"
+          description="Как менялось соотношение типов клиентов"
           className="lg:col-span-2"
         >
           {typeStack.length ? (

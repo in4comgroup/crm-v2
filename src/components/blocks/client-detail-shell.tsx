@@ -41,6 +41,7 @@ import {
 import type { ClientDetail } from "@/server/client-content"
 import { ClientResponsibleField } from "@/components/blocks/client-responsible-field"
 import { ClientProfileBlock } from "@/components/blocks/client-profile-block"
+import { CustomFieldsPanel } from "@/components/blocks/custom-fields-tab"
 import type { ClientRow, ClientRevenueSummary } from "@/app/api/clients/route"
 import type { DealRow } from "@/app/api/deals/route"
 import type { SourceSummary } from "@/server/sources"
@@ -253,6 +254,16 @@ export function ClientDetailShell({
               )}
             </span>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* «Поля» — org custom fields of the company (docs/specs/clients-contacts, Q4). */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Поля</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CustomFieldsPanel entity="client" entityId={detail.id} />
         </CardContent>
       </Card>
 

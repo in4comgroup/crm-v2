@@ -413,6 +413,9 @@ export const client = pgTable(
       .$type<ClientCustomFields>()
       .notNull()
       .default({}),
+    // Org-defined custom field values («Поля», docs/specs/clients-contacts):
+    // { "<custom_field.id>": value }. System keys stay in `custom_fields`.
+    customValues: jsonb("custom_values").$type<Record<string, unknown>>().notNull().default({}),
     // Alternate spellings / synonyms for this company seen across sources
     // (cross-script + with/without legal form, e.g. ["Norleks", "Норлекс", "Norleks
     // INTER"]). Used by discovery to dedup a known client against new
@@ -459,6 +462,8 @@ export const client = pgTable(
   },
   (table) => [
     index("client_organizationId_idx").on(table.organizationId),
+    // Custom field filters on /clients (`?`, `?|` on custom_values).
+    index("client_custom_values_gin").using("gin", table.customValues),
     index("client_userId_idx").on(table.userId),
     index("client_responsible_idx").on(table.organizationId, table.responsibleUserId),
     index("client_status_idx").on(table.status),
@@ -484,6 +489,8 @@ export const contact = pgTable(
     // sources (e.g. ["Богданов Евгений", "Евгений Богданов", "Женя"]). Used
     // for search + dedup. Nullable; populated by discovery + the edit form.
     // Matched via `personMatchKey`.
+    // Org-defined custom field values («Поля», docs/specs/clients-contacts).
+    customValues: jsonb("custom_values").$type<Record<string, unknown>>().notNull().default({}),
     aliases: text("aliases").array(),
     phone: text("phone"),
     email: text("email"),
@@ -506,6 +513,8 @@ export const contact = pgTable(
   },
   (table) => [
     index("contact_organizationId_idx").on(table.organizationId),
+    // Custom field filters on /contacts (`?`, `?|` on custom_values).
+    index("contact_custom_values_gin").using("gin", table.customValues),
     index("contact_userId_idx").on(table.userId),
     index("contact_clientId_idx").on(table.clientId),
     index("contact_status_idx").on(table.status),
@@ -3685,4 +3694,60 @@ export const clientProfileProposal = pgTable(
     index("client_profile_proposal_client_idx").on(table.clientId, table.status),
     index("client_profile_proposal_org_idx").on(table.organizationId, table.status),
   ],
+)
+
+// ── Custom fields of companies and contacts (docs/specs/clients-contacts) ──
+// Org-scoped field definitions; the org OWNER manages them, every member
+// edits the values (`client.custom_values` / `contact.custom_values`, keyed
+// by the field id). `entity` client | contact and `type` are text validated
+// in code (src/lib/custom-fields.ts). «Удалить» = `archived_at`.
+export const customField = pgTable(
+  "custom_field",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    entity: text("entity").notNull(),
+    label: text("label").notNull(),
+    type: text("type").notNull(),
+    // { options?: [{ id, label, archived? }], currency?, decimals?, multiline? }
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+    helpText: text("help_text"),
+    section: text("section"),
+    isShown: boolean("is_shown").notNull().default(true),
+    // «Показывать в списке»: a column on /clients or /contacts (spec §3.3).
+    showInList: boolean("show_in_list").notNull().default(false),
+    position: integer("position").notNull().default(0),
+    archivedAt: timestamp("archived_at"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    updatedByUserId: text("updated_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index("custom_field_org_entity_idx").on(table.organizationId, table.entity, table.position)],
+)
+
+// One row per changed custom value (Q9): who, when, before, after.
+export const customFieldValueLog = pgTable(
+  "custom_field_value_log",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    entity: text("entity").notNull(),
+    entityId: text("entity_id").notNull(),
+    fieldId: text("field_id")
+      .notNull()
+      .references(() => customField.id, { onDelete: "cascade" }),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    changedByUserId: text("changed_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("custom_field_value_log_entity_idx").on(table.organizationId, table.entity, table.entityId, table.createdAt)],
 )

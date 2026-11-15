@@ -31,6 +31,7 @@ import {
   PlayingCardsFan,
   X,
   ScanSearch,
+  SlidersHorizontal,
 } from "lucide-react"
 import type {
   ClientRow,
@@ -47,6 +48,16 @@ import { DiscoverDialog } from "@/components/blocks/discover-dialog"
 import { MagicDiscoverButton } from "@/components/blocks/magic-discover-button"
 import { ClientEnrichControl } from "@/components/blocks/client-enrich-control"
 import { ClientBlocklistDialog } from "@/components/blocks/client-blocklist-dialog"
+import { CustomFieldsDialog } from "@/components/blocks/custom-fields-dialog"
+import {
+  CustomFieldCell,
+  CustomFieldFilterChips,
+  CustomFieldFiltersButton,
+  activeCustomFilters,
+  listColumnFields,
+  useCustomFieldDefs,
+} from "@/components/blocks/custom-field-filters"
+import { encodeCustomFilters, type CustomFieldFilter } from "@/lib/custom-fields"
 import { sortClientFeed, type ClientFeedSort } from "@/lib/client-feed-sort"
 import { PageLoader } from "@/components/blocks/page-loader"
 import {
@@ -176,6 +187,23 @@ export default function ClientsPage() {
   const cardsViewTip = useAnchorTooltip()
   const tableViewTip = useAnchorTooltip()
   const blocklistTip = useAnchorTooltip()
+  const fieldsTip = useAnchorTooltip()
+  // Custom company fields (any member reads the definitions; «Настроить
+  // поля» = org owner only). List columns + «Фильтр по полям» (server-side,
+  // `?cf=`, AND with the other filters). Filters live in page state.
+  const {
+    fields: customFields,
+    canManage: canManageFields,
+    reload: reloadCustomFields,
+  } = useCustomFieldDefs("client")
+  const listFields = useMemo(() => listColumnFields(customFields), [customFields])
+  const [customFilters, setCustomFilters] = useState<CustomFieldFilter[]>([])
+  // Only complete conditions of shown fields; the string keeps the feed from
+  // reloading on an incomplete edit.
+  const cfParam = useMemo(
+    () => encodeCustomFilters(activeCustomFilters(customFilters, customFields)),
+    [customFilters, customFields],
+  )
 
   const reqIdRef = useRef(0)
 
@@ -195,6 +223,7 @@ export default function ClientsPage() {
       if (industryFilter !== ALL) params.set("industry", industryFilter)
       if (roleFilter !== ALL) params.set("role", roleFilter)
       if (sizeFilter !== ALL) params.set("size", sizeFilter)
+      if (cfParam) params.set("cf", cfParam)
       const res = await fetch(`/api/clients?${params.toString()}`)
       if (reqIdRef.current !== reqId) return
       if (!res.ok) {
@@ -212,7 +241,7 @@ export default function ClientsPage() {
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [tab, statusFilter, responsibleFilter, industryFilter, roleFilter, sizeFilter])
+  }, [tab, statusFilter, responsibleFilter, industryFilter, roleFilter, sizeFilter, cfParam])
 
   const sortedRows = useMemo(
     () => sortClientFeed(rows, sort, taskSummary),
@@ -225,7 +254,7 @@ export default function ClientsPage() {
     setRows([])
     void loadPage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, statusFilter, responsibleFilter, industryFilter, roleFilter, sizeFilter])
+  }, [tab, statusFilter, responsibleFilter, industryFilter, roleFilter, sizeFilter, cfParam])
 
   const loadExtras = useCallback(async () => {
     const [revRes, dealsRes, tasksRes] = await Promise.all([
@@ -295,6 +324,7 @@ export default function ClientsPage() {
         address: d.address,
         webUrl: d.webUrl,
         customFields: d.customFields,
+        customValues: d.customValues,
         funnelPhase: d.funnelPhase,
         status: d.status,
         currency: d.currency,
@@ -463,7 +493,10 @@ export default function ClientsPage() {
               <TabsTrigger value="critical">Сначала критичные</TabsTrigger>
             </TabsList>
           </Tabs>
-          {(statusFilter !== ALL || responsibleFilter !== RESPONSIBLE_FILTER_ALL || profileFiltered) && (
+          {(statusFilter !== ALL ||
+            responsibleFilter !== RESPONSIBLE_FILTER_ALL ||
+            profileFiltered ||
+            customFilters.length > 0) && (
             <Button
               variant="ghost"
               size="sm"
@@ -473,6 +506,7 @@ export default function ClientsPage() {
                 setIndustryFilter(ALL)
                 setRoleFilter(ALL)
                 setSizeFilter(ALL)
+                setCustomFilters([])
               }}
             >
               <X className="h-4 w-4 mr-1" />
@@ -506,6 +540,30 @@ export default function ClientsPage() {
                 }
               />
             )}
+            <CustomFieldFiltersButton
+              fields={customFields}
+              value={customFilters}
+              onChange={setCustomFilters}
+            />
+            {canManageFields && (
+              <CustomFieldsDialog
+                entity="client"
+                onChanged={() => {
+                  void reloadCustomFields()
+                  void loadPage()
+                }}
+                trigger={
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Настроить поля"
+                    {...fieldsTip.bind}
+                  >
+                    <SlidersHorizontal className="h-4 w-4" />
+                  </Button>
+                }
+              />
+            )}
             <MagicDiscoverButton onApplied={refreshAll} />
             <Tabs value={view} onValueChange={(v) => setView(v as ClientView)}>
               <TabsList>
@@ -518,10 +576,16 @@ export default function ClientsPage() {
               </TabsList>
             </Tabs>
             <AnchorTooltip text="список блокировки" open={blocklistTip.open} virtualRef={blocklistTip.virtualRef} />
+            <AnchorTooltip text="настроить поля" open={fieldsTip.open} virtualRef={fieldsTip.virtualRef} />
             <AnchorTooltip text="в виде карточек" open={cardsViewTip.open} virtualRef={cardsViewTip.virtualRef} />
             <AnchorTooltip text="списком" open={tableViewTip.open} virtualRef={tableViewTip.virtualRef} />
           </div>
         </div>
+        <CustomFieldFilterChips
+          fields={customFields}
+          value={customFilters}
+          onChange={setCustomFilters}
+        />
       </div>
 
       {/* Без внешнего Card-контейнера — как на Задачах, заголовок страницы
@@ -557,6 +621,7 @@ export default function ClientsPage() {
                     activeDeal={activeDealByClient[c.id]}
                     tasks={tasksByClient[c.id] ?? []}
                     tasksLoaded={tasksLoaded}
+                    listFields={listFields}
                     onOpenDetail={(id) => {
                       setOpenClientId(id)
                       setDrawerOpen(true)
@@ -583,6 +648,11 @@ export default function ClientsPage() {
                         <TableHead>Кто создал</TableHead>
                         <TableHead>Ответственный</TableHead>
                         <TableHead>Статус</TableHead>
+                        {listFields.map((f) => (
+                          <TableHead key={f.id} className="max-w-[16rem] truncate">
+                            {f.label}
+                          </TableHead>
+                        ))}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -641,6 +711,11 @@ export default function ClientsPage() {
                                 {STATUS_LABEL[c.status] ?? c.status}
                               </Badge>
                             </TableCell>
+                            {listFields.map((f) => (
+                              <TableCell key={f.id}>
+                                <CustomFieldCell field={f} value={c.customValues?.[f.id]} />
+                              </TableCell>
+                            ))}
                           </MotionTableRow>
                         )
                       })}

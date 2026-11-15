@@ -1,42 +1,18 @@
-// Client "custom fields" — an extensible jsonb bag on the `client` row
-// (`client.custom_fields`). The shape is deliberately open so per-tenant
-// catalog attributes can grow without a migration. Today the only key is
-// `type`, and it's only populated for one org (see below).
+// Client system bag — `client.custom_fields` (jsonb). It holds only the
+// keys the code itself reads: `discount` and `companyKind` (+ the
+// server-controlled handover note). Org-defined fields live in
+// `client.custom_values` (src/lib/custom-fields.ts); the old hard-coded
+// `type` key of one org was converted into an org «Тип клиента» field
+// (spec docs/specs/clients-contacts, decision Q12).
 //
 // This module is client-safe (no "server-only", no DB imports) so the edit
 // form, the server functions, and the schema's `$type<>()` can all share it.
 
 /**
- * Org whose clients carry the structured `type` custom field (a value from
- * `CLIENT_TYPE_VALUES`). Every other org stores an empty `{}` custom-fields
- * object — the `type` selector is hidden for them.
- */
-export const CLIENT_TYPE_ORG_ID = "1dNkC4rBtl9FEvnK95Svlfs63oSU57Ni"
-
-/** Allowed `type` values for the designated org. */
-export const CLIENT_TYPE_VALUES = [
-  "on_trade",
-  "off_trade",
-  "own_needs",
-  "internet_shop",
-] as const
-
-export type ClientType = (typeof CLIENT_TYPE_VALUES)[number]
-
-/** Human-readable labels for the `type` select. */
-export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
-  on_trade: "On-trade",
-  off_trade: "Off-trade",
-  own_needs: "Own needs",
-  internet_shop: "Internet shop",
-}
-
-/**
  * Manual company-relationship tag — distinguishes a company with no deal
  * history (a supplier we buy from vs. a partner we collaborate with) since
- * deal state alone can't tell them apart. Available to ALL orgs (unlike
- * `type`). See the "Компании" page's tabs (`src/server/clients.ts` →
- * `listClientsFeed`).
+ * deal state alone can't tell them apart. Available to ALL orgs. See the
+ * "Компании" page's tabs (`src/server/clients.ts` → `listClientsFeed`).
  */
 export const COMPANY_KIND_VALUES = ["supplier", "partner"] as const
 
@@ -57,12 +33,10 @@ export function isCompanyKind(value: unknown): value is CompanyKind {
 
 /** Extensible per-client custom-fields bag stored as jsonb. */
 export type ClientCustomFields = {
-  type?: ClientType
   /**
    * Per-client discount, a whole percentage 0–100. Applied to the catalog
    * subtotal of every order placed for this client (snapshotted onto the order
-   * at save time). Absent / 0 = no discount. Available to ALL orgs (unlike
-   * `type`).
+   * at save time). Absent / 0 = no discount. Available to ALL orgs.
    */
   discount?: number
   /** See `CompanyKind` above. Unset = auto-classified from deal state instead. */
@@ -88,19 +62,4 @@ export function normalizeDiscountPercent(raw: unknown): number | null {
   const v = Math.round(n)
   if (v <= 0) return null
   return Math.min(v, MAX_DISCOUNT_PERCENT)
-}
-
-/** Whether the given org gets the structured `type` custom field. */
-export function orgHasStructuredClientType(
-  organizationId: string | null | undefined,
-): boolean {
-  return organizationId === CLIENT_TYPE_ORG_ID
-}
-
-/** Narrowing guard for an arbitrary value against `ClientType`. */
-export function isClientType(value: unknown): value is ClientType {
-  return (
-    typeof value === "string" &&
-    (CLIENT_TYPE_VALUES as readonly string[]).includes(value)
-  )
 }

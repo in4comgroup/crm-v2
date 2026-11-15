@@ -3,8 +3,10 @@ import { sql, type SQL } from "drizzle-orm"
 import {
   BOOKED_ORDER_STATUSES,
   PRODUCT_ATTRIBUTE_KEYS,
+  clientTypeLabel,
   type ProductAttributeKey,
 } from "@/lib/analytics-format"
+import { loadClientTypeField } from "@/server/client-type-field"
 
 // ── Sales analytics: the queries ─────────────────────────────────────
 //
@@ -119,9 +121,12 @@ export type SalesAnalytics = {
   departments: SliceRow[]
   departmentMonthly: StackPoint[]
   departmentKeys: string[]
+  /** Keys = option ids of the org's «Тип клиента» field, `unknown` = none. */
   clientTypes: SliceRow[]
   clientTypeMonthly: StackPoint[]
   clientTypeKeys: string[]
+  /** Option id → label of the «Тип клиента» field ({} when the org has none). */
+  clientTypeLabels: Record<string, string>
   topClients: SliceRow[]
   clientScatter: ClientScatterPoint[]
   statuses: StatusRow[]
@@ -303,6 +308,17 @@ const toSlice = (r: SliceSqlRow): SliceRow => ({
   avgOrderValue: r.orders > 0 ? r.revenue / r.orders : 0,
 })
 
+/**
+ * SQL of a client's type key (alias `c` = client): the option id stored
+ * under the field id in `custom_values`, `unknown` when empty / no field.
+ * The field id is a bound parameter.
+ */
+export function clientTypeKeySql(fieldId: string | null): SQL {
+  return fieldId
+    ? sql`coalesce(nullif(c.custom_values ->> ${fieldId}::text, ''), 'unknown')`
+    : sql`'unknown'::text`
+}
+
 // ── the one public entry point ───────────────────────────────────────
 
 export async function computeSalesAnalytics(params: {
@@ -325,6 +341,14 @@ export async function computeSalesAnalytics(params: {
   const prevTo = new Date(from.getTime())
 
   const base = withBase(organizationId, from, to)
+
+  // «Тип клиента» = the org's custom field with systemKey `client_type`
+  // (spec clients-contacts Q12); its value is the option id in
+  // `client.custom_values`. No field → every client is «unknown».
+  const typeField = await loadClientTypeField(organizationId)
+  const clientTypeLabels = typeField?.labels ?? {}
+  const ctypeSql = clientTypeKeySql(typeField?.fieldId ?? null)
+  const typeLabel = (key: string) => clientTypeLabel(key, clientTypeLabels)
 
   const [totals, previousTotals, daily, monthly, annual] = await Promise.all([
     loadTotals(organizationId, from, to),
@@ -392,12 +416,12 @@ export async function computeSalesAnalytics(params: {
       group by 1, 2
       order by 1
     `),
-    // Client type (custom_fields.type) — on_trade / off_trade / …
+    // Client type — option of the org's «Тип клиента» custom field.
     execRows<SliceSqlRow>(sql`
       ${base}
       select
-        coalesce(nullif(c.custom_fields ->> 'type', ''), 'unknown')  as key,
-        coalesce(nullif(c.custom_fields ->> 'type', ''), 'unknown')  as label,
+        ${ctypeSql}                                                  as key,
+        ${ctypeSql}                                                  as label,
         null::text                                                   as extra,
         coalesce(sum(o.net) filter (where o.booked), 0)::float8      as revenue,
         count(*) filter (where o.booked)::int                        as orders,
@@ -413,7 +437,7 @@ export async function computeSalesAnalytics(params: {
       ${base}
       select
         to_char(date_trunc('month', o.order_date), 'YYYY-MM')        as period,
-        coalesce(nullif(c.custom_fields ->> 'type', ''), 'unknown')  as stack,
+        ${ctypeSql}                                                  as stack,
         coalesce(sum(o.net) filter (where o.booked), 0)::float8      as value
       from o
       join client c on c.id = o.client_id
@@ -425,7 +449,7 @@ export async function computeSalesAnalytics(params: {
       select
         c.id                                                         as key,
         c.name                                                       as label,
-        coalesce(nullif(c.custom_fields ->> 'type', ''), 'unknown')  as extra,
+        ${ctypeSql}                                                  as extra,
         coalesce(sum(o.net) filter (where o.booked), 0)::float8      as revenue,
         count(*) filter (where o.booked)::int                        as orders,
         coalesce(sum(oagg.units) filter (where o.booked), 0)::int    as units,
@@ -443,7 +467,7 @@ export async function computeSalesAnalytics(params: {
       select
         c.id                                                         as id,
         c.name                                                       as name,
-        coalesce(nullif(c.custom_fields ->> 'type', ''), 'unknown')  as type,
+        ${ctypeSql}                                                  as type,
         count(*) filter (where o.booked)::int                        as orders,
         coalesce(sum(o.net) filter (where o.booked), 0)::float8      as revenue,
         case when count(*) filter (where o.booked) > 0
@@ -582,10 +606,15 @@ export async function computeSalesAnalytics(params: {
     departments: departmentsRaw.map(toSlice),
     departmentMonthly: dept.points,
     departmentKeys: dept.keys,
-    clientTypes: clientTypesRaw.map(toSlice),
+    clientTypes: clientTypesRaw.map((r) => ({ ...toSlice(r), label: typeLabel(r.key) })),
     clientTypeMonthly: ctype.points,
     clientTypeKeys: ctype.keys,
-    topClients: topClientsRaw.map(toSlice),
+    clientTypeLabels,
+    // `extra` of a top client = its type label.
+    topClients: topClientsRaw.map((r) => ({
+      ...toSlice(r),
+      extra: r.extra && r.extra !== "unknown" ? typeLabel(r.extra) : null,
+    })),
     clientScatter,
     statuses,
     statusMonthly: statusPivot.points,

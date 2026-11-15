@@ -1,6 +1,8 @@
 "use client"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { CustomFieldsSummary } from "@/components/blocks/custom-field-filters"
+import type { CustomFieldDef } from "@/lib/custom-fields"
 import { Badge } from "@/components/ui/badge"
 import { Mail, Phone, Briefcase, Building2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -34,9 +36,12 @@ const STATUS_LABEL: Record<string, string> = {
 export function ContactCard({
   contact,
   onOpenDetail,
+  listFields = [],
 }: {
   contact: ContactRow
   onOpenDetail: (contactId: string) => void
+  /** «Показывать в списке» fields (≤ 3 values shown, docs/specs/clients-contacts §3.3). */
+  listFields?: readonly CustomFieldDef[]
 }) {
   return (
     <Card
@@ -106,6 +111,7 @@ export function ContactCard({
         {contact.userName && (
           <div className="text-xs pt-1">Кто создал: {contact.userName}</div>
         )}
+        <CustomFieldsSummary fields={listFields} values={contact.customValues} />
       </CardContent>
     </Card>
   )

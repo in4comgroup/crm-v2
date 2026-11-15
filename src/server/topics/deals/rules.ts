@@ -65,7 +65,11 @@ export type DealLite = {
   dealTypeCode: string | null
 }
 
-export type ClientFacts = { isNew: boolean; type: string | null }
+/**
+ * `type` = the option id of the org's «Тип клиента» custom field
+ * (`config.systemKey = "client_type"`), `typeLabel` = that option's label.
+ */
+export type ClientFacts = { isNew: boolean; type: string | null; typeLabel?: string | null }
 
 export type DealBridgeParamsLite = {
   autoCreateEnabled: boolean
@@ -189,6 +193,8 @@ const STAGE_EFFECTS = new Set(["create_deal", "move_stage", "outcome_won", "outc
  * `guards.clientGuard` is free text in the templates (e.g.
  * «client_type = Розница», «client_is_new only (draft…)»). Known forms are
  * checked; anything else is `unknown` → a person decides (proposal).
+ * `client_type = X` reads the org's «Тип клиента» custom field (option id or
+ * label, case-insensitive).
  */
 export function evalClientGuard(text: string | undefined, facts: ClientFacts | null): "pass" | "fail" | "unknown" {
   const t = (text ?? "").trim()
@@ -198,8 +204,10 @@ export function evalClientGuard(text: string | undefined, facts: ClientFacts | n
   if (low.includes("client_is_new")) return facts.isNew ? "pass" : "fail"
   const m = /client_type\s*=\s*([^;()]+)/i.exec(t)
   if (m) {
+    // Match the option id OR its label, case-insensitively.
     const want = m[1].trim().toLowerCase()
-    return facts.type && facts.type.trim().toLowerCase() === want ? "pass" : "fail"
+    const hit = [facts.type, facts.typeLabel].some((v) => !!v && v.trim().toLowerCase() === want)
+    return hit ? "pass" : "fail"
   }
   return "unknown"
 }

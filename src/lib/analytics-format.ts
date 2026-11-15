@@ -4,7 +4,6 @@
 // component share one source of truth and can never drift.
 
 import type { OrderStatus } from "@/db/schema"
-import { CLIENT_TYPE_LABELS, isClientType } from "@/lib/client-custom-fields"
 
 // ── Domain constants ─────────────────────────────────────────────────
 
@@ -115,10 +114,13 @@ export const STATUS_ORDER: OrderStatus[] = [
 
 // ── Labels ───────────────────────────────────────────────────────────
 
-/** Client `custom_fields.type`, with a bucket for clients that have none. */
-export function clientTypeLabel(value: string): string {
-  if (isClientType(value)) return CLIENT_TYPE_LABELS[value]
-  return "Без типа"
+/**
+ * Label of a client-type key — the option id of the org's «Тип клиента»
+ * custom field (`systemKey = "client_type"`); `labels` = option id → label
+ * (`SalesAnalytics.clientTypeLabels`). No label → the «Без типа» bucket.
+ */
+export function clientTypeLabel(value: string, labels?: Readonly<Record<string, string>>): string {
+  return labels?.[value] ?? "Без типа"
 }
 
 export const ORDER_VALUE_BUCKET_LABELS: Record<string, string> = {

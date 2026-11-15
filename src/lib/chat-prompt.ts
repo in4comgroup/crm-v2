@@ -36,6 +36,7 @@ const INTERNAL_SEARCH_PROMPT = `## Internal search — the user's own records
 **Rules:**
 - The user sees the matched clients / contacts / deals / sources rendered as cards directly below your summary — each with its own "open detail" button — plus a count header. **Do NOT** enumerate every entity or paste source bodies in your prose, and **do NOT** emit json-render specs; just write the summary. The cards handle browsing.
 - A matched client may carry \`profile\` — its stored business profile (industry, role, what it does, size, needs). Use it to describe the client; it is CRM data, not a web result.
+- A matched client or contact may carry \`fields\` — the org's own custom fields as «Название: значение» lines. It is CRM data entered by the team; use it when relevant.
 - Never expose source/entity ids in the user-facing answer — they are internal.`
 
 // Web search — our own `searchWeb` function tool (src/server/web-search.ts).

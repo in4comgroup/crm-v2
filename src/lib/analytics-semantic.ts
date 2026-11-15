@@ -121,7 +121,7 @@ export const DIMENSIONS: Record<DimensionKey, DimensionDef> = {
   "time.year": { label: "По годам", hint: "Yearly.", isTime: true },
   seller: { label: "Сотрудник", hint: "The salesperson who owns the order." },
   department: { label: "Отдел", hint: "The salesperson's department («Отдел 1/2/3»)." },
-  clientType: { label: "Тип клиента", hint: "on-trade / off-trade / own needs / internet shop." },
+  clientType: { label: "Тип клиента", hint: "Варианты поля «Тип клиента» организации; «Без типа» — не указан." },
   client: { label: "Клиент", hint: "The buying company." },
   status: { label: "Статус заказа", hint: "Order lifecycle status. Use with measure=orders." },
   orderValueBucket: { label: "Размер заказа", hint: "Order-size band (<50k, 50–100k, …)." },
@@ -227,8 +227,8 @@ export const SUGGESTION_CHIPS: SuggestionChip[] = [
     prompt: "Кто лучший продавец за период? Покажи рейтинг по выручке",
   },
   {
-    label: "On-trade и off-trade",
-    prompt: "Сравни on-trade и off-trade по выручке по месяцам",
+    label: "Типы клиентов",
+    prompt: "Сравни выручку по типам клиентов по месяцам",
   },
   {
     label: "Топ стран",

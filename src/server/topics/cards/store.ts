@@ -12,6 +12,7 @@ import {
   type TopicCardMeta,
   type TopicCardText,
 } from "@/lib/topics/cards"
+import { loadCustomValuesText } from "@/server/custom-fields"
 import { loadClientProfileTexts } from "@/server/identity/client-profile-context"
 import { getTopicsOrgPrompt } from "@/server/identity/prompt-context"
 import { getRegistry } from "@/server/signals/registry"
@@ -209,6 +210,11 @@ export async function buildCardInput(args: {
     orgPrompt && row.clientId
       ? ((await loadClientProfileTexts(orgId, [row.clientId], { withSegment: true })).get(row.clientId)?.summary ?? "")
       : ""
+  // Custom fields (spec clients-contacts Q11): same gate as the profile.
+  const clientFields =
+    orgPrompt && row.clientId
+      ? ((await loadCustomValuesText(orgId, "client", [row.clientId])).get(row.clientId) ?? "")
+      : ""
   const notes = new Map(registry.categories.map((c) => [c.code, c.cardNoteRu]))
   const meta = metaOf(current)
   const since = meta?.writtenAt ? new Date(meta.writtenAt) : null
@@ -363,6 +369,7 @@ export async function buildCardInput(args: {
       ? {
           org: { roleLine: orgPrompt.roleLine, productsLine: orgPrompt.productsLine },
           clientProfile: clientProfile || null,
+          clientFields: clientFields || null,
         }
       : {}),
   }

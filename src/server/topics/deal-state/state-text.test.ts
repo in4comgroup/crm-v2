@@ -178,5 +178,34 @@ describe("prompt", () => {
     expect(on).toContain("## Наша компания\nНаша компания: Альфа — производитель.")
     expect(on).toContain("Клиент: Норлекс\nПрофиль клиента «Норлекс»: отрасль: розница")
   })
+
+  it("custom fields: «Поля компании» block after the client profile; empty / off = no block", () => {
+    const input: DealStateInput = {
+      dealId: "d1",
+      dealName: "Норлекс — поставка",
+      clientName: "Норлекс",
+      stageName: "Квалификация",
+      statusRu: "активна",
+      dealTypeLabel: null,
+      amount: null,
+      pausedUntil: null,
+      topics: [],
+      items: [],
+      risks: [],
+      previousText: null,
+      today: "2026-11-14",
+    }
+    const off = buildDealStatePrompt(input)
+    expect(buildDealStatePrompt({ ...input, clientFields: null })).toBe(off)
+    expect(buildDealStatePrompt({ ...input, clientFields: "" })).toBe(off)
+    expect(off).not.toContain("Поля компании:")
+    const on = buildDealStatePrompt({
+      ...input,
+      orgRoleLine: "Наша компания: Альфа — производитель.",
+      clientProfile: "Профиль клиента «Норлекс»: отрасль: розница",
+      clientFields: "Сегмент: A",
+    })
+    expect(on).toContain("Профиль клиента «Норлекс»: отрасль: розница\nПоля компании:\nСегмент: A\nСтадия:")
+  })
 })
 

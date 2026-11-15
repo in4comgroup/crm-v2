@@ -1004,7 +1004,7 @@ export const card = pgTable(
     // ── Topic cards (topics plan phase 4, spec topics/01 §9.1). All null on
     // old Custom-rule cards (R10). Value lists are text validated in code
     // (src/lib/topics/cards.ts): kind topic | deal_proposal |
-    // stage_confirmation; status open | accepted | rejected | superseded |
+    // stage_confirmation | deal_link (spec topics/10); status open | accepted | rejected | superseded |
     // expired | closed. The old `accepted` boolean is written in parallel
     // (expand phase). Engine fields (score … taxonomy_version) are a
     // snapshot taken when the card is written (06 A8), never by the LLM.

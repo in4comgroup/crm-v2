@@ -35,12 +35,14 @@ export const DIGEST_VISIBLE_ITEMS = 5
 /** Hours after the cycle start in which an entry carries «Новое» / «Обновлено». */
 export const CYCLE_MARKER_HOURS = 24
 
+import type { CardKind } from "@/lib/topics/cards"
+
 // ── API shapes ────────────────────────────────────────────────────────────
 
 /** One card of a topic as the UI shows it (topic card or deal card). */
 export type TopicCardView = {
   id: string
-  kind: "topic" | "deal_proposal" | "stage_confirmation"
+  kind: CardKind
   /** Effective status (an open card past `expiresAt` reads as `expired`). */
   status: string | null
   headline: string

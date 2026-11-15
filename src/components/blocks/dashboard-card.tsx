@@ -41,6 +41,12 @@ import { SourceMessageDialog } from "@/components/blocks/source-message-dialog"
 import type { CardRow } from "@/app/api/cards/route"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
 import {
+  CARD_REJECT_DIALOG_TITLE_RU,
+  DealLinkChooser,
+  dealExecuteToast,
+  defaultRejectReason,
+} from "@/components/blocks/deal-link-chooser"
+import {
   DEAL_CARD_ACCEPT_LABEL_RU,
   DEAL_CARD_REJECT_LABEL_RU,
   isDealCardKind,
@@ -249,9 +255,11 @@ export function DashboardCard({
   // Topic cards (card.kind set) need a reason CODE; the text is optional.
   const isTopicCard = !!card.kind
   // Deal cards (topics phase 5): «Создать» / «Подтвердить» execute the
-  // proposal; «Не сделка» / «Отклонить» = reject with a reason code.
+  // proposal, a `deal_link` card picks one of the client's open deals +
+  // «Связать»; «Не сделка» / «Отклонить» / «Ни к одной» = reject with a
+  // reason code.
   const dealKind = isDealCardKind(card.kind) ? card.kind : null
-  const [rejectCode, setRejectCode] = useState("")
+  const [rejectCode, setRejectCode] = useState<string>(defaultRejectReason(card.kind))
   const rejectReady = isTopicCard ? !!rejectCode : !!rejectReason.trim()
   const [sourceOpen, setSourceOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -315,26 +323,25 @@ export function DashboardCard({
     })
   }
 
-  const handleDealExecute = () => {
+  const handleDealExecute = (dealId?: string) => {
+    if (!dealKind) return
     startTransition(async () => {
       try {
         const res = await fetch("/api/cards", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: card.id, action: "deal_execute" }),
+          body: JSON.stringify({
+            id: card.id,
+            action: "deal_execute",
+            ...(dealId ? { dealId } : {}),
+          }),
         })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) {
           toast.error(body.error || "Не удалось выполнить действие")
           return
         }
-        toast.success(
-          dealKind === "deal_proposal"
-            ? body.linked
-              ? "Тема привязана к открытой сделке"
-              : "Сделка создана"
-            : "Стадия сделки обновлена",
-        )
+        toast.success(dealExecuteToast(dealKind, body.linked))
         onChanged()
       } catch {
         toast.error("Не удалось выполнить действие")
@@ -367,7 +374,7 @@ export function DashboardCard({
         toast.success("Карточка отклонена")
         setRejectOpen(false)
         setRejectReason("")
-        setRejectCode("")
+        setRejectCode(defaultRejectReason(card.kind))
         onChanged()
       } catch {
         toast.error("Не удалось отклонить карточку")
@@ -682,20 +689,29 @@ export function DashboardCard({
             зазор вместо того, чтобы плотно прилипать к низу карточки. */}
         <div className="mt-auto flex flex-col gap-2 pt-2">
             {!resolved && !readOnly && (
-            <div className="flex gap-2">
+            // deal_link: the deal chooser takes its own full-width line
+            // above «Ни к одной».
+            <div className={cn("flex gap-2", dealKind === "deal_link" && "flex-col")}>
             {/* new_order cards swap "Принять" for "Создать заказ" in the
                 exact same slot — the one recommendation on a new_order card
                 IS "create the order", so a generic task made no sense there,
                 and a THIRD button living inside the Рекомендация block (the
                 earlier approach) looked bolted-on next to this row. One
                 slot, one action per category, same visual rhythm either way. */}
-            {dealKind ? (
+            {dealKind === "deal_link" ? (
+              <DealLinkChooser
+                options={card.proposal?.dealOptions}
+                pending={isPending}
+                onLink={handleDealExecute}
+                buttonClassName="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:hover:bg-emerald-400/25"
+              />
+            ) : dealKind ? (
               <Button
                 size="sm"
                 variant="secondary"
                 className="flex-1 bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:hover:bg-emerald-400/25"
                 disabled={isPending}
-                onClick={handleDealExecute}
+                onClick={() => handleDealExecute()}
               >
                 <Handshake className="h-4 w-4 mr-1" />
                 {DEAL_CARD_ACCEPT_LABEL_RU[dealKind]}
@@ -771,7 +787,7 @@ export function DashboardCard({
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                   <DialogTitle>
-                    {dealKind === "deal_proposal" ? "Это не сделка" : "Отклонить карточку"}
+                    {dealKind ? CARD_REJECT_DIALOG_TITLE_RU[dealKind] : "Отклонить карточку"}
                   </DialogTitle>
                   <DialogDescription>
                     Укажите краткую причину. Она сохранится вместе с карточкой,

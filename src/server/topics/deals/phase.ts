@@ -33,6 +33,7 @@ import {
   type OrgFunnelStage,
 } from "@/server/deal-engine"
 import { closeOpenDealProposals, insertDealCard, openDealCardKinds } from "@/server/topics/cards/deal-cards"
+import { runDealAutoLink } from "./auto-link"
 import { loadCodeBook, hydrateTopics } from "@/server/topics/topic-store"
 import type { TopicSnapshot } from "@/server/topics/model"
 import type { TopicsPhaseContext, TopicsPhaseResult } from "@/server/topics/phases"
@@ -510,6 +511,21 @@ export async function loadOrgDealContext(
 }
 
 export async function runDealsPhase(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
+  // 1) Stage rules (create / link / move by signal codes); 2) auto-link of
+  // the remaining business topics to the client's open deal (spec
+  // topics/10) — also for orgs without stage rules.
+  const rules = await runStageRules(ctx)
+  let link: Record<string, number>
+  try {
+    link = await runDealAutoLink(ctx.organizationId, ctx.actorUserId, ctx.mode)
+  } catch (e) {
+    console.error(`[topics:deals] org ${ctx.organizationId} auto-link:`, e)
+    link = { linkErrors: 1 }
+  }
+  return "skipped" in rules ? { noStageRules: 1, ...link } : { ...rules, ...link }
+}
+
+async function runStageRules(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
   const orgId = ctx.organizationId
   const octx = await loadOrgDealContext(orgId, ctx.actorUserId, ctx.mode !== "on")
   if (!octx) return { skipped: "no stage rules" }

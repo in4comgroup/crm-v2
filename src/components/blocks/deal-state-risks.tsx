@@ -1,12 +1,14 @@
 "use client"
 
 import { useCallback, useEffect, useState, useTransition } from "react"
+import Link from "next/link"
 import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
   FileText,
   History,
+  Link2,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -16,6 +18,13 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Dialog,
   DialogContent,
@@ -36,8 +45,10 @@ import {
   DEAL_RISK_CLEARED_BY_LABELS_RU,
   DEAL_STATE_DECISION_LABELS_RU,
   DEAL_STATE_NO_DATA_TEXT,
+  type DealLinkedTopicView,
   type DealRiskView,
 } from "@/lib/topics/deal-state"
+import { TOPIC_STATUS_LABELS_RU, type TopicStatus } from "@/lib/topics/types"
 
 // «Текущее состояние» + «Риски» of the deal drawer (topics plan phase 5a,
 // spec topics/01 §9.3 / §9.4 / §14). Data: GET /api/deals?stateFor= /
@@ -195,39 +206,62 @@ export function DealStateBlock({
     })
   }
 
-  // Spec §9.3: the old discovery text (reasoning / changes) stays for orgs
-  // with topics off / shadow — shown only when there is no new state.
-  if (!hasNewState) {
-    const canRefresh = view?.canRefresh ?? false
-    if (!deal.reasoning && !deal.changes && !canRefresh) return null
+  const canRefresh = view?.canRefresh ?? false
+  const header = (
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-300">
+        <Sparkles className="h-3.5 w-3.5" />
+        Текущее состояние
+      </div>
+      {canRefresh && (
+        <RefreshButton pending={isPending} dirty={!!view?.pending} onClick={refresh} />
+      )}
+    </div>
+  )
+
+  // Spec topics/10: the state is built ONLY from topics linked to the deal.
+  // No linked topic → say so (and offer to link one) instead of any text;
+  // the old discovery text (reasoning / changes) is never the status.
+  if (view && view.linkedTopics.length === 0) {
     return (
       <div className="mt-3 rounded-lg border bg-violet-500/5 p-3 text-sm space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-300">
-            <Sparkles className="h-3.5 w-3.5" />
-            {deal.reasoning || deal.changes ? "Состояние сделки" : "Текущее состояние"}
-          </div>
-          {canRefresh && (
-            <RefreshButton
-              pending={isPending}
-              dirty={!!view?.pending}
-              onClick={refresh}
-            />
-          )}
+        {header}
+        <div className="text-muted-foreground">
+          Нет связанных тем — состояние сделки не обновляется из источников.
         </div>
-        {deal.reasoning && (
-          <div className="max-w-[32rem] whitespace-pre-wrap">{deal.reasoning}</div>
-        )}
-        {deal.changes && (
-          <div>
-            <div className="text-xs text-muted-foreground">Последнее изменение</div>
-            <div className="max-w-[32rem] whitespace-pre-wrap">{deal.changes}</div>
+        {!view.topicsOn ? (
+          <div className="text-xs text-muted-foreground">
+            Темы для организации не включены.
+          </div>
+        ) : view.linkableTopics.length > 0 ? (
+          <LinkTopicControl
+            dealId={deal.id}
+            topics={view.linkableTopics}
+            onLinked={() => {
+              load(deal.id)
+              onChanged()
+            }}
+          />
+        ) : (
+          <div className="text-xs text-muted-foreground">
+            У компании нет открытых тем без сделки.
           </div>
         )}
-        {!deal.reasoning && !deal.changes && (
-          <div className="text-muted-foreground">
-            Текст состояния ещё не подготовлен.
+      </div>
+    )
+  }
+
+  // Not loaded yet and the board row has no text: keep the block's place.
+  if (!view && !hasNewState) {
+    return (
+      <div className="mt-3 rounded-lg border bg-violet-500/5 p-3 text-sm space-y-2">
+        {header}
+        {data?.error && data.dealId === deal.id ? (
+          <div className="text-xs text-muted-foreground">
+            Не удалось загрузить состояние сделки.
           </div>
+        ) : (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         )}
       </div>
     )
@@ -238,15 +272,7 @@ export function DealStateBlock({
 
   return (
     <div className="mt-3 rounded-lg border bg-violet-500/5 p-3 text-sm space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-300">
-          <Sparkles className="h-3.5 w-3.5" />
-          Текущее состояние
-        </div>
-        {(view?.canRefresh ?? false) && (
-          <RefreshButton pending={isPending} dirty={!!view?.pending} onClick={refresh} />
-        )}
-      </div>
+      {header}
       {text ? (
         <div
           className={`max-w-[32rem] whitespace-pre-wrap ${isNoData ? "text-muted-foreground" : ""}`}
@@ -259,6 +285,22 @@ export function DealStateBlock({
       {updatedAt && (
         <div className="text-xs text-muted-foreground">
           Обновлено {formatDateTime(updatedAt)}
+        </div>
+      )}
+      {view && view.linkedTopics.length > 0 && (
+        <div className="text-xs text-muted-foreground">
+          Темы:{" "}
+          {view.linkedTopics.map((t, i) => (
+            <span key={t.id}>
+              {i > 0 && ", "}
+              <Link
+                href={`/dashboard?topic=${encodeURIComponent(t.id)}`}
+                className="text-foreground underline decoration-dashed decoration-muted-foreground/60 underline-offset-4 hover:decoration-foreground"
+              >
+                {t.title || "Тема без названия"}
+              </Link>
+            </span>
+          ))}
         </div>
       )}
       {view ? (
@@ -332,6 +374,97 @@ export function DealStateBlock({
           if (!o) setOpenItem(null)
         }}
       />
+    </div>
+  )
+}
+
+function topicStatusLabel(status: string): string {
+  return status in TOPIC_STATUS_LABELS_RU
+    ? TOPIC_STATUS_LABELS_RU[status as TopicStatus]
+    : status
+}
+
+function topicOptionLabel(t: DealLinkedTopicView): string {
+  return [
+    t.title || "Тема без названия",
+    topicStatusLabel(t.status),
+    t.lastActivityAt ? formatDate(t.lastActivityAt) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+}
+
+// «Связать тему»: link one live topic of the deal's client (without a deal)
+// to this deal → POST /api/topics { action: "link_deal" }. From then on the
+// state text is built from that topic.
+function LinkTopicControl({
+  dealId,
+  topics,
+  onLinked,
+}: {
+  dealId: string
+  topics: DealLinkedTopicView[]
+  onLinked: () => void
+}) {
+  // Exactly one topic → preselect it.
+  const [topicId, setTopicId] = useState(topics.length === 1 ? topics[0].id : "")
+  const chosen = topics.some((t) => t.id === topicId) ? topicId : ""
+  const [isPending, startTransition] = useTransition()
+
+  const link = () => {
+    if (!chosen) return
+    startTransition(async () => {
+      try {
+        const res = await fetch("/api/topics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "link_deal", topicId: chosen, dealId }),
+        })
+        if (!res.ok) {
+          toast.error(await readError(res, "Не удалось связать тему со сделкой"))
+          return
+        }
+        toast.success("Тема связана со сделкой")
+        setTopicId("")
+        onLinked()
+      } catch {
+        toast.error("Не удалось связать тему со сделкой")
+      }
+    })
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground">Связать тему</div>
+      <div className="flex min-w-0 max-w-[32rem] items-center gap-2">
+        <Select value={chosen} onValueChange={setTopicId} disabled={isPending}>
+          <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label="Тема">
+            <SelectValue placeholder="Выберите тему" />
+          </SelectTrigger>
+          <SelectContent>
+            {topics.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {topicOptionLabel(t)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="shrink-0"
+          disabled={isPending || !chosen}
+          onClick={link}
+        >
+          {isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Link2 className="h-3.5 w-3.5" />
+          )}
+          Связать
+        </Button>
+      </div>
     </div>
   )
 }

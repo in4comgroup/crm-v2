@@ -35,6 +35,12 @@ import TaskEditDialog from "@/components/forms/form-task-edit"
 import type { CardRow } from "@/app/api/cards/route"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
 import {
+  CARD_REJECT_DIALOG_TITLE_RU,
+  DealLinkChooser,
+  dealExecuteToast,
+  defaultRejectReason,
+} from "@/components/blocks/deal-link-chooser"
+import {
   DEAL_CARD_ACCEPT_LABEL_RU,
   DEAL_CARD_REJECT_LABEL_RU,
   isDealCardKind,
@@ -99,7 +105,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
   const isTopicCard = !!card.kind
   // Deal cards (topics phase 5) — see DashboardCard.
   const dealKind = isDealCardKind(card.kind) ? card.kind : null
-  const [rejectCode, setRejectCode] = useState("")
+  const [rejectCode, setRejectCode] = useState<string>(defaultRejectReason(card.kind))
   const rejectReady = isTopicCard ? !!rejectCode : !!rejectReason.trim()
   const [isPending, startTransition] = useTransition()
 
@@ -143,26 +149,25 @@ export function CardDetailShell({ card }: { card: CardRow }) {
     })
   }
 
-  const handleDealExecute = () => {
+  const handleDealExecute = (dealId?: string) => {
+    if (!dealKind) return
     startTransition(async () => {
       try {
         const res = await fetch("/api/cards", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: card.id, action: "deal_execute" }),
+          body: JSON.stringify({
+            id: card.id,
+            action: "deal_execute",
+            ...(dealId ? { dealId } : {}),
+          }),
         })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) {
           toast.error(body.error || "Не удалось выполнить действие")
           return
         }
-        toast.success(
-          dealKind === "deal_proposal"
-            ? body.linked
-              ? "Тема привязана к открытой сделке"
-              : "Сделка создана"
-            : "Стадия сделки обновлена",
-        )
+        toast.success(dealExecuteToast(dealKind, body.linked))
         router.refresh()
       } catch {
         toast.error("Не удалось выполнить действие")
@@ -195,7 +200,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
         toast.success("Карточка отклонена")
         setRejectOpen(false)
         setRejectReason("")
-        setRejectCode("")
+        setRejectCode(defaultRejectReason(card.kind))
         router.refresh()
       } catch {
         toast.error("Не удалось отклонить карточку")
@@ -344,13 +349,27 @@ export function CardDetailShell({ card }: { card: CardRow }) {
           )}
 
           {!resolved && (
-            <div className="flex gap-2 pt-3 border-t border-border/40">
+            // deal_link: the deal chooser takes its own full-width line
+            // above «Ни к одной».
+            <div
+              className={cn(
+                "flex gap-2 pt-3 border-t border-border/40",
+                dealKind === "deal_link" && "flex-col",
+              )}
+            >
               {/* new_order cards swap "Принять" for "Создать заказ" in the
                   same slot — same consolidation as dashboard-card.tsx: one
                   recommendation, one action, not a competing task button
                   next to a separate order button. */}
-              {dealKind ? (
-                <Button disabled={isPending} className="flex-1" onClick={handleDealExecute}>
+              {dealKind === "deal_link" ? (
+                <DealLinkChooser
+                  size="default"
+                  options={card.proposal?.dealOptions}
+                  pending={isPending}
+                  onLink={handleDealExecute}
+                />
+              ) : dealKind ? (
+                <Button disabled={isPending} className="flex-1" onClick={() => handleDealExecute()}>
                   <Handshake className="h-4 w-4 mr-1" />
                   {DEAL_CARD_ACCEPT_LABEL_RU[dealKind]}
                 </Button>
@@ -396,7 +415,9 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-md">
                   <DialogHeader>
-                    <DialogTitle>Отклонить карточку</DialogTitle>
+                    <DialogTitle>
+                      {dealKind ? CARD_REJECT_DIALOG_TITLE_RU[dealKind] : "Отклонить карточку"}
+                    </DialogTitle>
                     <DialogDescription>
                       Укажите краткую причину. Она сохранится вместе с карточкой,
                       чтобы команда видела, почему её отклонили.

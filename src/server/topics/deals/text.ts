@@ -10,10 +10,23 @@ function quote(s: string, max = 240): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t
 }
 
-export function dealCardText(kind: "deal_proposal" | "stage_confirmation", p: DealCardProposal): DealCardText {
+export function dealCardText(kind: "deal_proposal" | "stage_confirmation" | "deal_link", p: DealCardProposal): DealCardText {
   const who = p.clientName || p.contactName || "Клиент"
   let headline: string
   let recommendation: string
+  if (kind === "deal_link") {
+    // Spec topics/10 §3: the client has 2+ open deals — a person picks one.
+    const n = p.dealOptions?.length ?? 0
+    headline = `${who} — к какой сделке относится тема?`
+    recommendation = [
+      `Тема «${p.dealName}» не связана со сделкой, а у компании ${n} открытых сделок.`,
+      "Выберите сделку и нажмите «Связать» — её состояние будет обновляться по этой теме.",
+      "Если тема не относится ни к одной сделке — нажмите «Ни к одной».",
+    ].join("\n")
+    const why = p.evidence ? `${p.codeLabelRu}: «${quote(p.evidence)}»` : p.codeLabelRu
+    const analysis = [headline, `Почему: ${why}`, `Решает человек: ${p.reasonRu}`].join("\n\n")
+    return { headline, analysis, recommendation, taskTitle: "Связать тему со сделкой" }
+  }
   if (kind === "deal_proposal") {
     headline = p.dealTypeLabelRu ? `${who} — новая возможность: ${p.dealTypeLabelRu}` : `${who} — новая возможность`
     recommendation = [

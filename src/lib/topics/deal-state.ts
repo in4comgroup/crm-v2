@@ -61,6 +61,22 @@ export type DealStateView = {
   dirtyAt: string | null
   pending: boolean
   versions: DealStateVersionView[]
+  /**
+   * Topics linked to the deal (spec topics/10). Empty = the state is NOT
+   * updated from sources; the UI says so instead of showing old text.
+   */
+  linkedTopics: DealLinkedTopicView[]
+  /** The org runs topics in mode `on` (topic links can be made by users). */
+  topicsOn: boolean
+  /** Live topics of the deal's client without a deal (mode `on` only), newest first, ≤ 20. */
+  linkableTopics: DealLinkedTopicView[]
+}
+
+export type DealLinkedTopicView = {
+  id: string
+  title: string
+  status: string
+  lastActivityAt: string | null
 }
 
 /** Source item cited by a risk (for «Источники»). */

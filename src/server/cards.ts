@@ -664,13 +664,16 @@ async function userCardVisible(orgId: string, current: typeof card.$inferSelect)
  * proposal (creates the deal / moves the stage) as the signed-in user.
  * Only while the card is open and visible (org topics mode `on`).
  */
-export async function executeDealCard(cardId: string): Promise<{ dealId: string; linked?: boolean }> {
+export async function executeDealCard(
+  cardId: string,
+  opts: { dealId?: string | null } = {},
+): Promise<{ dealId: string; linked?: boolean }> {
   const { session, activeOrgId } = await requireOrgContext()
   const current = await assertCardInOrg(cardId, activeOrgId)
   if (!isDealCardKind(current.kind)) throw new Error("Not a deal card")
   if (!(await userCardVisible(activeOrgId, current))) throw new Error("Card not found")
   assertTopicCardOpen(current)
-  return acceptDealCard(activeOrgId, cardId, session.user.id)
+  return acceptDealCard(activeOrgId, cardId, session.user.id, { dealId: opts.dealId ?? null })
 }
 
 export async function deleteCard(cardId: string) {

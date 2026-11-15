@@ -5,13 +5,14 @@
 // and `card.events`. No DB, no server imports.
 
 /** card.kind (null = old Custom-rule card). */
-export const CARD_KINDS = ["topic", "deal_proposal", "stage_confirmation"] as const
+export const CARD_KINDS = ["topic", "deal_proposal", "stage_confirmation", "deal_link"] as const
 export type CardKind = (typeof CARD_KINDS)[number]
 
 export const CARD_KIND_LABELS_RU: Record<CardKind, string> = {
   topic: "Карточка темы",
   deal_proposal: "Новая возможность?",
   stage_confirmation: "Подтвердить стадию",
+  deal_link: "К какой сделке относится тема?",
 }
 
 /** card.status (null = old Custom-rule card). */
@@ -46,6 +47,8 @@ export const CARD_REJECT_REASONS = [
   "not_a_deal",
   "deal_exists",
   "wrong_stage",
+  // Deal link cards (docs/specs/topics/10-deal-status-from-topics.md).
+  "no_matching_deal",
   "other",
 ] as const
 export type CardRejectReason = (typeof CARD_REJECT_REASONS)[number]
@@ -61,6 +64,7 @@ export const CARD_REJECT_REASON_LABELS_RU: Record<CardRejectReason, string> = {
   not_a_deal: "Это не сделка",
   deal_exists: "Сделка уже есть",
   wrong_stage: "Неверная стадия",
+  no_matching_deal: "Не относится ни к одной сделке",
   other: "Другое",
 }
 
@@ -69,6 +73,7 @@ export const CARD_REJECT_REASONS_BY_KIND: Record<CardKind, readonly CardRejectRe
   topic: ["not_relevant", "already_done", "wrong_counterparty", "wrong_facts", "wrong_priority", "duplicate", "not_now", "other"],
   deal_proposal: ["not_a_deal", "deal_exists", "wrong_counterparty", "wrong_facts", "not_now", "other"],
   stage_confirmation: ["wrong_stage", "wrong_facts", "not_now", "other"],
+  deal_link: ["no_matching_deal", "wrong_counterparty", "not_relevant", "other"],
 }
 
 export function isCardKind(v: unknown): v is CardKind {
@@ -149,7 +154,7 @@ export type TopicCardMeta = TopicCardText & {
 // ── Deal cards (topics plan phase 5, spec §9.1 / §9.2) ────────────────────
 
 /** What «Создать» / «Подтвердить» does on a deal card. */
-export const DEAL_CARD_ACTIONS = ["create", "move", "outcome_won", "outcome_lost", "pause", "resume"] as const
+export const DEAL_CARD_ACTIONS = ["create", "move", "outcome_won", "outcome_lost", "pause", "resume", "link"] as const
 export type DealCardAction = (typeof DEAL_CARD_ACTIONS)[number]
 
 /**
@@ -188,18 +193,35 @@ export type DealCardProposal = {
   fromStageLabelRu: string | null
   /** Existing deal (stage_confirmation). */
   dealId: string | null
+  /**
+   * `deal_link` card (action `link`): the client's open deals to choose from
+   * (spec topics/10). «Связать» sends the chosen `dealId`.
+   */
+  dealOptions?: DealLinkOption[]
 }
+
+/** One choice of a `deal_link` card (snapshot when the card was written). */
+export type DealLinkOption = {
+  id: string
+  name: string
+  stageLabelRu: string | null
+  status: "active" | "paused"
+}
+
+export type DealCardKind = "deal_proposal" | "stage_confirmation" | "deal_link"
 
 /** Short Russian label of the button that executes a deal card. */
-export const DEAL_CARD_ACCEPT_LABEL_RU: Record<"deal_proposal" | "stage_confirmation", string> = {
+export const DEAL_CARD_ACCEPT_LABEL_RU: Record<DealCardKind, string> = {
   deal_proposal: "Создать",
   stage_confirmation: "Подтвердить",
+  deal_link: "Связать",
 }
-export const DEAL_CARD_REJECT_LABEL_RU: Record<"deal_proposal" | "stage_confirmation", string> = {
+export const DEAL_CARD_REJECT_LABEL_RU: Record<DealCardKind, string> = {
   deal_proposal: "Не сделка",
   stage_confirmation: "Отклонить",
+  deal_link: "Ни к одной",
 }
 
-export function isDealCardKind(v: unknown): v is "deal_proposal" | "stage_confirmation" {
-  return v === "deal_proposal" || v === "stage_confirmation"
+export function isDealCardKind(v: unknown): v is DealCardKind {
+  return v === "deal_proposal" || v === "stage_confirmation" || v === "deal_link"
 }

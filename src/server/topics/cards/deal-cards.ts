@@ -7,6 +7,7 @@ import { card, cardClient, cardContact, topic, topicEvent } from "@/db/schema"
 import {
   CARD_REJECT_REASON_LABELS_RU,
   isCardRejectReason,
+  type DealCardKind,
   type DealCardProposal,
 } from "@/lib/topics/cards"
 import {
@@ -30,7 +31,8 @@ import { dealCardText } from "@/server/topics/deals/text"
 // `server-only`: the "use server" wrapper in src/server/cards.ts checks the
 // session, the org and the card's visibility before calling the actions.
 
-export type DealCardKind = "deal_proposal" | "stage_confirmation"
+export type { DealCardKind } from "@/lib/topics/cards"
+const DEAL_CARD_KINDS: DealCardKind[] = ["deal_proposal", "stage_confirmation", "deal_link"]
 
 type BatchOps = Parameters<typeof db.batch>[0]
 const asBatch = (ops: unknown[]) => ops as unknown as BatchOps
@@ -45,7 +47,7 @@ export async function openDealCardKinds(orgId: string, topicId: string): Promise
         eq(card.organizationId, orgId),
         eq(card.topicId, topicId),
         eq(card.status, "open"),
-        inArray(card.kind, ["deal_proposal", "stage_confirmation"]),
+        inArray(card.kind, DEAL_CARD_KINDS),
       ),
     )
   return new Set(rows.map((r) => r.kind as DealCardKind))
@@ -109,6 +111,28 @@ export async function insertDealCard(
   }
 }
 
+/**
+ * Open `deal_link` cards become `closed` when their topic already has a deal
+ * (linked by a person, by the rules or by the auto-link step) or is no
+ * longer live (spec topics/10 §3). `topicId` limits it to one topic.
+ */
+export async function closeStaleDealLinkCards(orgId: string, topicId?: string): Promise<number> {
+  const rows = await db
+    .update(card)
+    .set({ status: "closed" })
+    .where(
+      and(
+        eq(card.organizationId, orgId),
+        eq(card.kind, "deal_link"),
+        eq(card.status, "open"),
+        ...(topicId ? [eq(card.topicId, topicId)] : []),
+        sql`exists (select 1 from ${topic} t where t.id = ${card.topicId} and (t.deal_id is not null or t.status in ('merged','dismissed','archived','expired')))`,
+      ),
+    )
+    .returning({ id: card.id })
+  return rows.length
+}
+
 /** Open proposals of a topic become `closed` (the deal now exists). */
 export async function closeOpenDealProposals(orgId: string, topicId: string): Promise<number> {
   const rows = await db
@@ -132,7 +156,7 @@ async function loadOpenDealCard(orgId: string, cardId: string) {
     .from(card)
     .where(and(eq(card.organizationId, orgId), eq(card.id, cardId)))
   if (!c) throw new DealEngineError("Card not found", "not_found")
-  if (c.kind !== "deal_proposal" && c.kind !== "stage_confirmation") {
+  if (!DEAL_CARD_KINDS.includes(c.kind as DealCardKind)) {
     throw new DealEngineError("Это не карточка сделки")
   }
   if (c.status !== "open") throw new DealEngineError("Card is no longer open")
@@ -165,8 +189,10 @@ export async function acceptDealCard(
   orgId: string,
   cardId: string,
   userId: string,
+  opts: { dealId?: string | null } = {},
 ): Promise<{ dealId: string; linked?: boolean }> {
   const { c, p } = await loadOpenDealCard(orgId, cardId)
+  if (c.kind === "deal_link") return acceptDealLinkCard(orgId, c, p, userId, opts.dealId ?? null)
   const actor: DealActor = { kind: "user", userId }
   const prov = {
     topicId: c.topicId,
@@ -274,6 +300,47 @@ export async function acceptDealCard(
 }
 
 /**
+ * «Связать» on a `deal_link` card (spec topics/10 §3): the person picks one
+ * of the card's deals; it must still be an open deal of the topic's client.
+ * Links through `setTopicDeal` (deal activity + dirty state + the topic
+ * journal line `deal_linked` + attention), then the card is `accepted`.
+ */
+async function acceptDealLinkCard(
+  orgId: string,
+  c: typeof card.$inferSelect,
+  p: DealCardProposal,
+  userId: string,
+  dealId: string | null,
+): Promise<{ dealId: string; linked: boolean }> {
+  if (!c.topicId) throw new DealEngineError("У карточки нет темы")
+  if (!dealId || !(p.dealOptions ?? []).some((o) => o.id === dealId)) {
+    throw new DealEngineError("Выберите сделку из списка")
+  }
+  const [t] = await db
+    .select({ dealId: topic.dealId, clientId: topic.clientId })
+    .from(topic)
+    .where(and(eq(topic.organizationId, orgId), eq(topic.id, c.topicId)))
+  if (!t) throw new DealEngineError("Тема не найдена", "not_found")
+  if (t.dealId) throw new DealEngineError("Тема уже привязана к сделке")
+  const open = t.clientId ? await listOpenClientDeals(orgId, t.clientId) : []
+  if (!open.some((d) => d.id === dealId)) throw new DealEngineError("Сделка уже закрыта или относится к другой компании")
+  const { setTopicDeal } = await import("@/server/topics/topic-store")
+  await setTopicDeal(orgId, c.topicId, dealId, userId)
+  await db.batch(
+    asBatch([
+      db
+        .update(card)
+        .set({ status: "accepted", accepted: true, decidedAt: new Date(), decidedByUserId: userId, dealId })
+        .where(and(eq(card.organizationId, orgId), eq(card.id, c.id), eq(card.status, "open"))),
+      db.insert(topicEvent).values(
+        topicEventRow(orgId, c.topicId, "deal_link_accepted", userId, p.sourceItemId, { cardId: c.id, dealId }),
+      ),
+    ]),
+  )
+  return { dealId, linked: true }
+}
+
+/**
  * «Не сделка» / «Отклонить»: the card becomes `rejected` with the reason
  * code + text (kept for evaluation) and the topic journal gets an event.
  */
@@ -303,7 +370,17 @@ export async function rejectDealCard(
   if (c.topicId) {
     ops.push(
       db.insert(topicEvent).values(
-        topicEventRow(orgId, c.topicId, c.kind === "deal_proposal" ? "deal_proposal_rejected" : "stage_confirmation_rejected", userId, p.sourceItemId, {
+        topicEventRow(
+          orgId,
+          c.topicId,
+          c.kind === "deal_proposal"
+            ? "deal_proposal_rejected"
+            : c.kind === "deal_link"
+              ? "deal_link_rejected"
+              : "stage_confirmation_rejected",
+          userId,
+          p.sourceItemId,
+          {
           cardId,
           action: p.action,
           ruleId: p.ruleId,
@@ -321,7 +398,7 @@ export async function countDealCards(orgId: string): Promise<Record<string, Reco
   const rows = await db
     .select({ kind: card.kind, status: card.status, n: sql<number>`count(*)::int` })
     .from(card)
-    .where(and(eq(card.organizationId, orgId), inArray(card.kind, ["deal_proposal", "stage_confirmation"])))
+    .where(and(eq(card.organizationId, orgId), inArray(card.kind, DEAL_CARD_KINDS)))
     .groupBy(card.kind, card.status)
   const out: Record<string, Record<string, number>> = {}
   for (const r of rows) {

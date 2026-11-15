@@ -1,9 +1,15 @@
 import "server-only"
 
-import { and, desc, eq } from "drizzle-orm"
+import { and, desc, eq, inArray, isNull } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { deal, dealStateVersion, user } from "@/db/schema"
-import { DEAL_STATE_DECISIONS, type DealStateDecision, type DealStateView } from "@/lib/topics/deal-state"
+import { deal, dealStateVersion, topic, user } from "@/db/schema"
+import {
+  DEAL_STATE_DECISIONS,
+  type DealLinkedTopicView,
+  type DealStateDecision,
+  type DealStateView,
+} from "@/lib/topics/deal-state"
+import { getTopicsMode } from "@/server/topics/mode"
 import { markDealsStateDirty } from "@/server/topics/deal-state/params"
 import { runDealStateForDeal, type DealStateRunResult } from "@/server/topics/deal-state/summary"
 
@@ -27,6 +33,8 @@ export class DealStateError extends Error {
 }
 
 const VERSIONS_LIMIT = 20
+// Topics a user may link from the deal side (spec topics/10 §4): live ones.
+const LINKABLE_TOPIC_STATUSES = ["open", "dormant", "resolved"]
 const iso = (d: Date | null) => (d ? d.toISOString() : null)
 
 function asDecision(v: string): DealStateDecision {
@@ -42,10 +50,43 @@ export async function getDealState(orgId: string, dealId: string): Promise<DealS
       stateSourceItemIds: deal.stateSourceItemIds,
       stateUpdatedAt: deal.stateUpdatedAt,
       stateDirtyAt: deal.stateDirtyAt,
+      clientId: deal.clientId,
     })
     .from(deal)
     .where(and(eq(deal.organizationId, orgId), eq(deal.id, dealId)))
   if (!d) throw new DealStateError("Сделка не найдена", "not_found")
+  const topicCols = { id: topic.id, title: topic.title, status: topic.status, lastActivityAt: topic.lastActivityAt }
+  const toView = (r: { id: string; title: string | null; status: string; lastActivityAt: Date | null }): DealLinkedTopicView => ({
+    id: r.id,
+    title: r.title ?? "Без названия",
+    status: r.status,
+    lastActivityAt: iso(r.lastActivityAt),
+  })
+  const [linked, mode] = await Promise.all([
+    db
+      .select(topicCols)
+      .from(topic)
+      .where(and(eq(topic.organizationId, orgId), eq(topic.dealId, dealId)))
+      .orderBy(desc(topic.lastActivityAt)),
+    getTopicsMode(orgId),
+  ])
+  const topicsOn = mode === "on"
+  const linkable =
+    topicsOn && d.clientId
+      ? await db
+          .select(topicCols)
+          .from(topic)
+          .where(
+            and(
+              eq(topic.organizationId, orgId),
+              eq(topic.clientId, d.clientId),
+              isNull(topic.dealId),
+              inArray(topic.status, LINKABLE_TOPIC_STATUSES),
+            ),
+          )
+          .orderBy(desc(topic.lastActivityAt))
+          .limit(20)
+      : []
   const versions = await db
     .select({ v: dealStateVersion, actorName: user.name })
     .from(dealStateVersion)
@@ -61,6 +102,9 @@ export async function getDealState(orgId: string, dealId: string): Promise<DealS
     updatedAt: iso(d.stateUpdatedAt),
     dirtyAt: iso(d.stateDirtyAt),
     pending,
+    linkedTopics: linked.map(toView),
+    topicsOn,
+    linkableTopics: linkable.map(toView),
     versions: versions.map(({ v, actorName }) => ({
       id: v.id,
       decision: asDecision(v.decision),

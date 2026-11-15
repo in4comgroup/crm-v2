@@ -43,11 +43,18 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Textarea } from "@/components/ui/textarea"
 import TaskEditDialog from "@/components/forms/form-task-edit"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
+import {
+  CARD_REJECT_DIALOG_TITLE_RU,
+  DealLinkChooser,
+  dealExecuteToast,
+  defaultRejectReason,
+} from "@/components/blocks/deal-link-chooser"
 import { NewOrderDialog } from "@/components/blocks/order-request-wizard"
 import { cn } from "@/lib/utils"
 import type { TaskPriority, TaskStatus } from "@/db/schema"
 import { TOPIC_LIST_LABELS_RU } from "@/lib/topics/attention-types"
 import {
+  CARD_KIND_LABELS_RU,
   CARD_STATUS_LABELS_RU,
   DEAL_CARD_ACCEPT_LABEL_RU,
   DEAL_CARD_REJECT_LABEL_RU,
@@ -207,7 +214,7 @@ function RejectDialog({
   onOpenChange: (o: boolean) => void
   onDone: () => void
 }) {
-  const [code, setCode] = useState("")
+  const [code, setCode] = useState<string>(defaultRejectReason(card.kind))
   const [text, setText] = useState("")
   const [pending, start] = useTransition()
   const submit = () =>
@@ -216,7 +223,7 @@ function RejectDialog({
         await postJson("/api/cards", "PUT", { id: card.id, action: "reject", rejectReasonCode: code, rejectionReason: text.trim() })
         toast.success("Карточка отклонена")
         onOpenChange(false)
-        setCode("")
+        setCode(defaultRejectReason(card.kind))
         setText("")
         onDone()
       } catch (e) {
@@ -227,7 +234,7 @@ function RejectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{card.kind === "deal_proposal" ? "Это не сделка" : "Отклонить карточку"}</DialogTitle>
+          <DialogTitle>{CARD_REJECT_DIALOG_TITLE_RU[card.kind]}</DialogTitle>
           <DialogDescription>Выберите причину. Комментарий — по желанию. Причины помогают настроить систему.</DialogDescription>
         </DialogHeader>
         <CardRejectReasonSelect value={code} onChange={setCode} disabled={pending} kind={card.kind} />
@@ -452,7 +459,10 @@ export function TopicCardActions({
   )
 }
 
-/** «Создать» / «Подтвердить» + «Не сделка» / «Отклонить» of an open deal card. */
+/**
+ * «Создать» / «Подтвердить» / deal chooser + «Связать» (deal_link) and
+ * «Не сделка» / «Отклонить» / «Ни к одной» of an open deal card.
+ */
 export function DealCardActions({
   card,
   topicId,
@@ -466,12 +476,12 @@ export function DealCardActions({
   const [pending, start] = useTransition()
   if (card.kind === "topic" || card.status !== "open") return null
   const kind = card.kind
-  const execute = () =>
+  const execute = (dealId?: string) =>
     start(async () => {
       try {
-        const r = await postJson("/api/cards", "PUT", { id: card.id, action: "deal_execute" })
+        const r = await postJson("/api/cards", "PUT", { id: card.id, action: "deal_execute", ...(dealId ? { dealId } : {}) })
         await recompute(topicId)
-        toast.success(kind === "deal_proposal" ? (r.linked ? "Тема привязана к открытой сделке" : "Сделка создана") : "Стадия сделки обновлена")
+        toast.success(dealExecuteToast(kind, r.linked))
         onChanged()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Не удалось выполнить действие")
@@ -479,10 +489,20 @@ export function DealCardActions({
     })
   return (
     <div className="flex flex-wrap gap-2">
-      <Button size="sm" variant="secondary" className={ACCEPT_TONE} disabled={pending} onClick={execute}>
-        <Handshake className="h-4 w-4 mr-1" />
-        {DEAL_CARD_ACCEPT_LABEL_RU[kind]}
-      </Button>
+      {kind === "deal_link" ? (
+        <DealLinkChooser
+          options={card.proposal?.dealOptions}
+          pending={pending}
+          onLink={execute}
+          className="w-full"
+          buttonClassName={ACCEPT_TONE}
+        />
+      ) : (
+        <Button size="sm" variant="secondary" className={ACCEPT_TONE} disabled={pending} onClick={() => execute()}>
+          <Handshake className="h-4 w-4 mr-1" />
+          {DEAL_CARD_ACCEPT_LABEL_RU[kind]}
+        </Button>
+      )}
       <Button size="sm" variant="outline" disabled={pending} onClick={() => setRejectOpen(true)}>
         <X className="h-4 w-4 mr-1" />
         {DEAL_CARD_REJECT_LABEL_RU[kind]}
@@ -492,7 +512,7 @@ export function DealCardActions({
   )
 }
 
-/** Compact deal card («Новая возможность?» / «Подтвердить стадию»). */
+/** Compact deal card («Новая возможность?» / «Подтвердить стадию» / «К какой сделке относится тема?»). */
 export function DealCardBlock({
   card,
   topicId,
@@ -512,7 +532,7 @@ export function DealCardBlock({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {card.kind === "deal_proposal" ? "Новая возможность?" : "Подтвердить стадию"}
+            {CARD_KIND_LABELS_RU[card.kind]}
           </div>
           <p className="font-medium leading-snug">{card.headline}</p>
         </div>

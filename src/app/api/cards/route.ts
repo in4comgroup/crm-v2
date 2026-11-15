@@ -63,10 +63,12 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
     }
     // Deal cards (topics phase 5): «Создать» (deal_proposal) / «Подтвердить»
-    // (stage_confirmation). «Не сделка» / «Отклонить» = action "reject"
+    // (stage_confirmation) / «Связать» (deal_link, body `dealId`).
+    // «Не сделка» / «Отклонить» / «Ни к одной» = action "reject"
     // with a reason code.
     if (action === "deal_execute") {
-      const result = await executeDealCard(id)
+      // `deal_link` cards (spec topics/10): `dealId` = the chosen deal.
+      const result = await executeDealCard(id, { dealId: typeof body.dealId === "string" ? body.dealId : null })
       return NextResponse.json({ success: true, ...result })
     }
     if (action === "accept") {

@@ -62,8 +62,10 @@ import {
 } from "@/lib/topics/deal-state"
 import {
   CARD_EVENT_GROUP_LABELS_RU,
+  CARD_KIND_LABELS_RU,
   CARD_REJECT_REASON_LABELS_RU,
   CARD_STATUS_LABELS_RU,
+  isCardKind,
   type CardRejectReason,
   type CardStatus,
 } from "@/lib/topics/cards"
@@ -136,7 +138,7 @@ function DealCardView({ c }: { c: TopicDebugDealCard }) {
   return (
     <div className="rounded-lg border p-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline">{c.kind === "deal_proposal" ? "Новая возможность?" : "Подтвердить стадию"}</Badge>
+        <Badge variant="outline">{isCardKind(c.kind) ? CARD_KIND_LABELS_RU[c.kind] : c.kind}</Badge>
         <CardStatusBadge status={c.status} />
         <span className="font-medium">{c.headline}</span>
         <span className="ml-auto text-muted-foreground">{fmtDate(c.createdAt)}</span>
@@ -147,6 +149,7 @@ function DealCardView({ c }: { c: TopicDebugDealCard }) {
           {p.evidence && <> · «{p.evidence}»</>}
           {p.dealTypeLabelRu && <> · тип: {p.dealTypeLabelRu}</>}
           {p.stageLabelRu && <> · стадия: {p.fromStageLabelRu ? `${p.fromStageLabelRu} → ` : ""}{p.stageLabelRu}</>}
+          {p.dealOptions && p.dealOptions.length > 0 && <> · сделки на выбор: {p.dealOptions.map((o) => o.name).join(", ")}</>}
         </div>
       )}
       {(c.rejectReasonCode || c.rejectionReason) && (

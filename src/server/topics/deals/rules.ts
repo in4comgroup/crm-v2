@@ -97,7 +97,7 @@ export type TopicDealInput = {
   /** New instances of the topic, oldest first. */
   instances: InstanceLite[]
   /** Kinds of the topic's open engine cards (one open card per topic and kind). */
-  openCardKinds: ReadonlySet<"deal_proposal" | "stage_confirmation">
+  openCardKinds: ReadonlySet<"deal_proposal" | "stage_confirmation" | "deal_link">
 }
 
 export type DealAction =

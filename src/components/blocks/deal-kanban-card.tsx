@@ -356,25 +356,18 @@ export function DealKanbanCard({
 
       {stale && !stale.isStale && <DealActivityAge deal={deal} info={stale} />}
 
-      {/* «Текущее состояние» (topics phase 5a, spec §9.3): сохранённый текст
-          движка, до 3 строк (полный текст + источники — в дровере). Пока его
-          нет — последнее изменение (changes) или reasoning: исторические
-          данные удалённого старого discovery. Плашка с чётким
-          фоном+рамкой (полупрозрачная карточка «съедала» muted/50). */}
-      {deal.stateText ? (
+      {/* «Текущее состояние» (topics phase 5a, spec §9.3 + topics/10): only
+          the engine's stored text, built from the topics linked to the deal,
+          up to 3 lines (full text + sources in the drawer). The old discovery
+          text (changes / reasoning) is never shown as the status. Plain
+          background + border (a translucent card «ate» muted/50). */}
+      {deal.stateText && (
         <div
           className="rounded-md border border-border bg-muted p-2 text-xs text-foreground/80 line-clamp-3"
           title={deal.stateText}
         >
           {deal.stateText}
         </div>
-      ) : (
-        isActive &&
-        (deal.changes || deal.reasoning) && (
-          <div className="rounded-md border border-border bg-muted p-2 text-xs text-foreground/80">
-            {deal.changes ?? deal.reasoning}
-          </div>
-        )
       )}
 
       {/* Задачи: заголовок СНАРУЖИ плашки. Одна задача → «Задача»; несколько →

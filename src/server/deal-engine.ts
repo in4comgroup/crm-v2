@@ -129,6 +129,11 @@ export function outcomeStage(stages: readonly OrgFunnelStage[], outcome: "won" |
   return stages.find((s) => s.name.trim().toLowerCase() === name) ?? null
 }
 
+/** Won / lost stage of the org funnel («Closed» / «Rejected»). */
+export function isTerminalStage(stages: readonly OrgFunnelStage[], stageId: string): boolean {
+  return isTerminal(stages, stageId)
+}
+
 function isTerminal(stages: readonly OrgFunnelStage[], stageId: string): boolean {
   return stageId === outcomeStage(stages, "won")?.id || stageId === outcomeStage(stages, "lost")?.id
 }

@@ -749,6 +749,20 @@ export const dealFunnelStage = pgTable(
     // null = the default (14 days, `DEFAULT_STALE_NORM_DAYS` in
     // src/lib/deal-activity.ts). Edited in «Настройки стадий».
     staleNormDays: integer("stale_norm_days"),
+    // ── Custom funnel (docs/specs/funnel §3.1) ──
+    // Role of the stage for the engine / board: area0 | active | won | lost
+    // (text validated in code, src/lib/funnel/config.ts). Replaces the old
+    // name-based «Closed» / «Rejected» checks. `code` = stable machine key per
+    // org (s1…, won, lost, area0, st_…) used by templates / import / export.
+    role: text("role").notNull().default("active"),
+    code: text("code"),
+    description: text("description"),
+    entryCondition: text("entry_condition"),
+    signalsHint: text("signals_hint"),
+    // false = deals in this stage never count in the money forecast.
+    inForecast: boolean("in_forecast").notNull().default(true),
+    // stage = closure_probability of the stage; expert = deal.expert_probability.
+    probabilityMode: text("probability_mode").notNull().default("stage"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -830,6 +844,15 @@ export const deal = pgTable(
     stateSourceItemIds: text("state_source_item_ids").array(),
     stateUpdatedAt: timestamp("state_updated_at"),
     stateDirtyAt: timestamp("state_dirty_at"),
+    // ── Custom funnel (docs/specs/funnel §3.4, §3.5) ──
+    // «Экспертная вероятность» 0–100 % set by a person (forecast of stages
+    // with probability_mode = expert); «Бюджет из брифа» = the client's figure,
+    // never in the forecast; the reason code of the outcome (org reason lists).
+    expertProbability: integer("expert_probability"),
+    expertProbabilityByUserId: text("expert_probability_by_user_id").references((): AnyPgColumn => user.id, { onDelete: "set null" }),
+    expertProbabilityAt: timestamp("expert_probability_at"),
+    briefBudget: numeric("brief_budget", { precision: 14, scale: 2 }),
+    outcomeReasonCode: text("outcome_reason_code"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -3708,6 +3731,18 @@ export const clientProfileProposal = pgTable(
     index("client_profile_proposal_org_idx").on(table.organizationId, table.status),
   ],
 )
+
+// ── Funnel templates (docs/specs/funnel §3.7) — PLATFORM reference data ──
+// Rows come from migrations with fixed codes (ON CONFLICT DO NOTHING);
+// `config` = FunnelConfig (src/lib/funnel/config.ts), generic wording only.
+export const funnelTemplate = pgTable("funnel_template", {
+  code: text("code").primaryKey(),
+  labelRu: text("label_ru").notNull(),
+  description: text("description"),
+  sort: integer("sort").notNull().default(0),
+  config: jsonb("config").$type<Record<string, unknown>>().notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+})
 
 // ── Documents (docs/specs/attachments §3.3) ───────────────────────────────
 // Many-to-many: a document (file `source_item`) ↔ company / contact / deal /

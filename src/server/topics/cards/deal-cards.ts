@@ -67,10 +67,12 @@ export async function insertDealCard(
     band: string | null
     leadCode: string | null
     taxonomyVersion: number | null
+    /** «Условие входа» of the target stage (custom funnel §6), added to the text. */
+    stageEntryCondition?: string | null
   },
 ): Promise<string | null> {
   const id = randomUUID()
-  const text = dealCardText(args.kind, args.proposal)
+  const text = dealCardText(args.kind, args.proposal, { stageEntryCondition: args.stageEntryCondition ?? null })
   const ops: unknown[] = [
     db.insert(card).values({
       id,
@@ -340,9 +342,15 @@ async function acceptDealLinkCard(
   return { dealId, linked: true }
 }
 
+/** Prefix of a no-go reject code: `nogo:<code of the org's no-go list>` (docs/specs/funnel §3.2). */
+export const NO_GO_REASON_PREFIX = "nogo:"
+
 /**
  * «Не сделка» / «Отклонить»: the card becomes `rejected` with the reason
  * code + text (kept for evaluation) and the topic journal gets an event.
+ * «No-go» on a gated `deal_proposal` (custom funnel §3.2): `reasonCode` =
+ * `nogo:<code>` from the ORG's no-go list (validated here); the journal gets
+ * `deal_no_go { reasonCode, reasonLabel, text }`.
  */
 export async function rejectDealCard(
   orgId: string,
@@ -352,8 +360,43 @@ export async function rejectDealCard(
   text?: string | null,
 ): Promise<void> {
   const { c, p } = await loadOpenDealCard(orgId, cardId)
-  if (!isCardRejectReason(reasonCode)) throw new DealEngineError("Rejection reason code is required")
   const trimmed = text?.trim() ?? ""
+  if (reasonCode.startsWith(NO_GO_REASON_PREFIX)) {
+    if (c.kind !== "deal_proposal") throw new DealEngineError("«No-go» — только для предложения новой возможности")
+    const code = reasonCode.slice(NO_GO_REASON_PREFIX.length)
+    const { getOutcomeReasons } = await import("@/server/funnel-config")
+    const reason = (await getOutcomeReasons(orgId)).noGo.find((r) => r.code === code)
+    if (!reason) throw new DealEngineError("Выберите причину отказа из списка организации")
+    const ops: unknown[] = [
+      db
+        .update(card)
+        .set({
+          status: "rejected",
+          accepted: false,
+          rejectionReason: trimmed || `Отказ от участия: ${reason.label}`,
+          rejectReasonCode: reasonCode,
+          decidedAt: new Date(),
+          decidedByUserId: userId,
+        })
+        .where(and(eq(card.organizationId, orgId), eq(card.id, cardId), eq(card.status, "open"))),
+    ]
+    if (c.topicId) {
+      ops.push(
+        db.insert(topicEvent).values(
+          topicEventRow(orgId, c.topicId, "deal_no_go", userId, p.sourceItemId, {
+            cardId,
+            ruleId: p.ruleId,
+            reasonCode: code,
+            reasonLabel: reason.label,
+            text: trimmed || null,
+          }),
+        ),
+      )
+    }
+    await db.batch(asBatch(ops))
+    return
+  }
+  if (!isCardRejectReason(reasonCode)) throw new DealEngineError("Rejection reason code is required")
   const ops: unknown[] = [
     db
       .update(card)

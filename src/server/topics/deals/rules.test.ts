@@ -329,3 +329,35 @@ describe("evalClientGuard", () => {
     expect(evalClientGuard("client_is_new", null)).toBe("unknown")
   })
 })
+
+describe("evaluateTopicDeals — entry gate go / no-go (docs/specs/funnel §3.2)", () => {
+  const gated = (p: Partial<TopicDealInput> = {}) => {
+    const base = input(p)
+    return input({ ...p, params: { ...base.params, entryGate: "go_no_go" } })
+  }
+
+  it("a create that would happen becomes a go / no-go proposal at the rule's stage", () => {
+    const [d] = evaluateTopicDeals(gated())
+    expect(d.action).toBe("propose")
+    expect(d.reason).toBe("entry_gate")
+    expect(d.stageId).toBe("s1")
+  })
+
+  it("never auto-creates even with the proposal threshold above the score", () => {
+    const i = gated()
+    expect(actions({ ...i, params: { ...i.params, proposalMinScore: 9 } })).toEqual(["r-create:propose:entry_gate"])
+  })
+
+  it("weaker signals keep the normal proposal path", () => {
+    expect(actions(gated({ instances: [inst({ confidence: "medium" })] }))).toEqual(["r-create:propose:medium_confidence"])
+  })
+
+  it("the client's open deal of the same type is still linked (no gate)", () => {
+    const open = { id: "d1", stageId: "s2", status: "active" as const, dealTypeCode: "new_location" }
+    expect(actions(gated({ openClientDeals: [open] }))).toEqual(["r-create:link:existing_deal"])
+  })
+
+  it("an open proposal is not duplicated", () => {
+    expect(actions(gated({ openCardKinds: new Set(["deal_proposal"]) }))).toEqual(["r-create:skip:proposal_open"])
+  })
+})

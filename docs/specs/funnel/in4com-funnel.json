@@ -1,0 +1,418 @@
+{
+  "v": 1,
+  "stages": [
+    {
+      "code": "area0",
+      "name": "Контакт до запроса",
+      "role": "area0",
+      "description": "Работа с целевой компанией: карта людей, касания до появления конкретной возможности. Зона отношений, а не стадия сделки.",
+      "entryCondition": "Известна компания или человек; запроса и решения о продаже может не быть.",
+      "signalsHint": "Знакомство, ответ на письмо, встреча на мероприятии, переход знакомого человека в другую компанию; новость или публичное упоминание как повод для контакта. Сохраняем контекст, гипотезу потребности, владельца отношений и следующий шаг. В прогноз не входит.",
+      "inForecast": false,
+      "probabilityMode": "stage",
+      "probability": 0
+    },
+    {
+      "code": "s1",
+      "name": "Новая возможность",
+      "role": "active",
+      "description": "Конкретная потребность, запрос или подходящая закупка; первая оценка и решение go / no-go — условие входа в воронку.",
+      "entryCondition": "У клиента есть конкретная задача, персональное приглашение или подходящая закупка, и мы решили участвовать (go).",
+      "signalsHint": "Клиент описал задачу, пригласил к отбору или объявил конкурс с понятным предметом. Сигнал сохраняется сразу; после решения go создаётся сделка. Это ещё не подготовка решения и не прогноз.",
+      "inForecast": false,
+      "probabilityMode": "stage",
+      "probability": 0
+    },
+    {
+      "code": "s2",
+      "name": "Запрошены материалы или решение",
+      "role": "active",
+      "description": "Квалификация нашей компании и запрос решения от клиента.",
+      "entryCondition": "Клиент просит материалы для оценки нашей компании или предложение по конкретной задаче.",
+      "signalsHint": "Кейсы, анкеты, документы или RFI в рамках отбора; бриф или RFP с просьбой предложить подход, концепцию, план или тестовое задание. Общая просьба «пришлите кейсы» без задачи остаётся касанием в зоне «Контакт до запроса».",
+      "inForecast": false,
+      "probabilityMode": "stage",
+      "probability": 0
+    },
+    {
+      "code": "s3",
+      "name": "Финальный выбор",
+      "role": "active",
+      "description": "Шорт-лист и финальные условия.",
+      "entryCondition": "Клиент подтвердил следующий тур или после рассмотрения решения обсуждает актуальные условия.",
+      "signalsHint": "Подтверждён шорт-лист или финал; запрошена обновлённая смета; после представления решения обсуждаются объём, цена и условия закупки. Ранний вопрос о бюджете сам по себе стадию не меняет.",
+      "inForecast": true,
+      "probabilityMode": "expert",
+      "probability": 0.3
+    },
+    {
+      "code": "s4",
+      "name": "Выбраны",
+      "role": "active",
+      "description": "Устный выбор и официальная победа.",
+      "entryCondition": "Клиент прямо сообщил, что выбрал нас; обязательство заказать ещё не оформлено.",
+      "signalsHint": "Сообщение о выборе от уполномоченного лица клиента или официальное уведомление о победе. Похвала решению или догадка сотрудника клиента — не выбор.",
+      "inForecast": true,
+      "probabilityMode": "expert",
+      "probability": 0.7
+    },
+    {
+      "code": "won",
+      "name": "Заказ подтверждён",
+      "role": "won",
+      "description": "Подтверждённый заказ и передача в исполнение.",
+      "entryCondition": "Клиент принял обязательство заказать согласованную работу.",
+      "signalsHint": "Подписан договор или дополнение, оформлен обязательный заказ, принята оферта. Победа без подтверждённого заказа остаётся на стадии «Выбраны». Оплата — отдельный факт.",
+      "inForecast": false,
+      "probabilityMode": "stage",
+      "probability": 1
+    },
+    {
+      "code": "lost",
+      "name": "Не состоялась",
+      "role": "lost",
+      "description": "Подтверждённый проигрыш или отмена закупки.",
+      "entryCondition": "Клиент сообщил о выборе другого участника или об отмене закупки; причина указана.",
+      "signalsHint": "Явный отказ, выбор другого участника, отмена закупки. Молчание клиента — не проигрыш.",
+      "inForecast": false,
+      "probabilityMode": "stage",
+      "probability": 0
+    }
+  ],
+  "dealTypes": [
+    {
+      "code": "new_client",
+      "label": "Новый клиент"
+    },
+    {
+      "code": "major_extra_order",
+      "label": "Существенный допзаказ действующего клиента"
+    },
+    {
+      "code": "retender",
+      "label": "Повторный конкурс за текущий контракт"
+    },
+    {
+      "code": "new_location",
+      "label": "Новый клиент / новая точка",
+      "hidden": true
+    },
+    {
+      "code": "listing",
+      "label": "Ввод в ассортимент / листинг",
+      "hidden": true
+    },
+    {
+      "code": "tender",
+      "label": "Тендер",
+      "hidden": true
+    },
+    {
+      "code": "supply_agreement",
+      "label": "Годовой договор поставки",
+      "hidden": true
+    },
+    {
+      "code": "renewal",
+      "label": "Продление",
+      "hidden": true
+    }
+  ],
+  "reasons": {
+    "lost": [
+      {
+        "code": "competitor",
+        "label": "Выбрали другого"
+      },
+      {
+        "code": "cancelled",
+        "label": "Клиент отменил закупку"
+      },
+      {
+        "code": "price",
+        "label": "Цена"
+      },
+      {
+        "code": "no_reply_after_final",
+        "label": "Нет ответа после финала"
+      },
+      {
+        "code": "other",
+        "label": "Другое"
+      }
+    ],
+    "noGo": [
+      {
+        "code": "not_our_profile",
+        "label": "Не наш профиль"
+      },
+      {
+        "code": "low_chances",
+        "label": "Низкие шансы"
+      },
+      {
+        "code": "no_resources",
+        "label": "Нет ресурсов"
+      },
+      {
+        "code": "timing",
+        "label": "Сроки не подходят"
+      },
+      {
+        "code": "other",
+        "label": "Другое"
+      }
+    ],
+    "withdrawn": [
+      {
+        "code": "decided_to_stop",
+        "label": "Решили не участвовать дальше"
+      },
+      {
+        "code": "conflict_of_interest",
+        "label": "Конфликт интересов"
+      },
+      {
+        "code": "other",
+        "label": "Другое"
+      }
+    ]
+  },
+  "entryGate": "go_no_go",
+  "rules": [
+    {
+      "signal": "SALES_TENDER_INVITATION",
+      "effect": "create_deal",
+      "stage": "s1",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_NEW_DEMAND",
+      "effect": "create_deal",
+      "stage": "s1",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_RFI_REQUESTED",
+      "effect": "create_deal",
+      "stage": "s2",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_RFI_REQUESTED",
+      "effect": "move_stage",
+      "stage": "s2",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_BRIEF_RECEIVED",
+      "effect": "create_deal",
+      "stage": "s2",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_BRIEF_RECEIVED",
+      "effect": "move_stage",
+      "stage": "s2",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_MATERIAL_REQUESTED",
+      "effect": "create_deal",
+      "stage": "s2",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_MATERIAL_REQUESTED",
+      "effect": "move_stage",
+      "stage": "s2",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_OFFER_REQUESTED",
+      "effect": "move_stage",
+      "stage": "s2",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_SHORTLISTED",
+      "effect": "move_stage",
+      "stage": "s3",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_FINAL_TERMS",
+      "effect": "move_stage",
+      "stage": "s3",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_SELECTED",
+      "effect": "move_stage",
+      "stage": "s4",
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "CONTRACT_SIGNED",
+      "effect": "outcome_won",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_BOOKING_RECEIVED",
+      "effect": "outcome_won",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_LOST",
+      "effect": "outcome_lost",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": true,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_OFFER_DECLINED",
+      "effect": "outcome_lost",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": true,
+      "minConfidence": "high",
+      "enabled": true
+    },
+    {
+      "signal": "DECISION_POSTPONED",
+      "effect": "pause",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": true,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "SALES_BUDGET_MENTIONED",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "MEETING_NEW_STAKEHOLDER",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "MEETING_URGENT",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "MEETING_DELAYED",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "MEETING_CANCEL",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "FEEDBACK_QUALITY_PRAISE",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "FEEDBACK_COMM_PRAISE",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "FEEDBACK_PRICE_PRAISE",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    },
+    {
+      "signal": "CONTACT_NEW_DECISION_MAKER",
+      "effect": "in_stage",
+      "stage": null,
+      "dealTypes": [],
+      "requiresConfirmation": false,
+      "minConfidence": "medium",
+      "enabled": true
+    }
+  ]
+}

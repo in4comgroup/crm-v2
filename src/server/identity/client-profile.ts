@@ -220,7 +220,7 @@ async function loadClientRelation(orgId: string, head: ClientHead, now: Date): P
             eq(deal.organizationId, orgId),
             eq(deal.clientId, head.id),
             eq(deal.status, "active"),
-            sql`${dealFunnelStage.closureProbability} >= 1`,
+            eq(dealFunnelStage.role, "won"),
           ),
         )
         .limit(1),

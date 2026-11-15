@@ -77,6 +77,12 @@ export type DealStateInput = {
    * «Название: значение» lines of the client's SHOWN fields ("" / null = none).
    */
   clientFields?: string | null
+  /**
+   * Custom funnel (docs/specs/funnel §6, Q13; only with `identity.promptContext`):
+   * «Условие входа» of the deal's current stage ("" / null = none → the
+   * prompt is the text without it).
+   */
+  stageEntryCondition?: string | null
 }
 
 // ── Output ────────────────────────────────────────────────────────────────
@@ -143,6 +149,9 @@ export function buildDealStatePrompt(input: DealStateInput): string {
       clientProfile || null,
       clientFieldsBlock(input.clientFields) || null,
       `Стадия: ${input.stageName}`,
+      (input.stageEntryCondition ?? "").trim()
+        ? `Условие входа стадии (определение организации): ${(input.stageEntryCondition ?? "").trim()}`
+        : null,
       `Статус: ${input.statusRu}${input.pausedUntil ? ` (пауза до ${input.pausedUntil})` : ""}`,
       input.dealTypeLabel ? `Тип: ${input.dealTypeLabel}` : null,
       input.amount ? `Сумма: ${input.amount}` : null,

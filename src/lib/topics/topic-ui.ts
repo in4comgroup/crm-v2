@@ -456,6 +456,12 @@ export function describeTopicEvent(
       return "Предложение сделки принято"
     case "deal_proposal_rejected":
       return "Предложение сделки отклонено: «Не сделка»"
+    case "deal_no_go": {
+      // Entry gate «No-go» (docs/specs/funnel §3.2).
+      const label = str(p.reasonLabel)
+      const text = str(p.text)
+      return `Отказ от участия${label ? `: ${label}` : ""}${text ? ` — ${text}` : ""}`
+    }
     case "stage_confirmed":
       return "Стадия сделки подтверждена"
     case "stage_confirmation_rejected":

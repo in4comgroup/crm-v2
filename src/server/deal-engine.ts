@@ -24,6 +24,7 @@ import {
   user,
   type DealStatus,
 } from "@/db/schema"
+import { isTerminalStageRole, stageRoleOf, type DealStageRole } from "@/lib/deal-funnel"
 import { computePosition } from "@/lib/kanban-move"
 import { loadClientTypeValue } from "@/server/client-type-field"
 import { getOrgSetting } from "@/server/org-settings"
@@ -79,6 +80,17 @@ export type OrgFunnelStage = {
   isPrePipeline: boolean
   isHidden: boolean
   closureProbability: number
+  // ── Custom funnel (docs/specs/funnel §3.1) ──
+  /** area0 | active | won | lost — every logic check goes by the role, never by the name. */
+  role: DealStageRole
+  /** Stable machine key per funnel (s1…, won, lost, area0, st_…); null on legacy rows. */
+  code: string | null
+  inForecast: boolean
+  probabilityMode: "stage" | "expert"
+  description: string | null
+  entryCondition: string | null
+  signalsHint: string | null
+  staleNormDays: number | null
 }
 
 // ── Funnel ────────────────────────────────────────────────────────────────
@@ -97,9 +109,26 @@ export async function getOrgFunnel(orgId: string): Promise<OrgFunnelStage[]> {
     isPrePipeline: dealFunnelStage.isPrePipeline,
     isHidden: dealFunnelStage.isHidden,
     closureProbability: dealFunnelStage.closureProbability,
+    role: dealFunnelStage.role,
+    code: dealFunnelStage.code,
+    inForecast: dealFunnelStage.inForecast,
+    probabilityMode: dealFunnelStage.probabilityMode,
+    description: dealFunnelStage.description,
+    entryCondition: dealFunnelStage.entryCondition,
+    signalsHint: dealFunnelStage.signalsHint,
+    staleNormDays: dealFunnelStage.staleNormDays,
   }
-  const map = (rows: { closureProbability: string }[]) =>
-    rows.map((r) => ({ ...r, closureProbability: Number(r.closureProbability) })) as OrgFunnelStage[]
+  const map = (rows: (Omit<OrgFunnelStage, "closureProbability" | "role" | "probabilityMode"> & {
+    closureProbability: string
+    role: string
+    probabilityMode: string
+  })[]): OrgFunnelStage[] =>
+    rows.map((r) => ({
+      ...r,
+      closureProbability: Number(r.closureProbability),
+      role: stageRoleOf(r.role),
+      probabilityMode: r.probabilityMode === "expert" ? "expert" : "stage",
+    }))
   const orgRows = await db
     .select(cols)
     .from(dealFunnelStage)
@@ -121,22 +150,22 @@ export async function getOrgFunnel(orgId: string): Promise<OrgFunnelStage[]> {
 }
 
 /**
- * Terminal stages by meaning: won = «Closed», lost = «Rejected» (the
- * board's terminal columns are keyed by `name`, never renamed — see
- * `deal_funnel_stage.display_name`).
+ * Outcome stage by ROLE (docs/specs/funnel §3.1): won = the stage with
+ * role `won`, lost = role `lost`. Never by name — an org names its stages
+ * freely. Exactly one of each per funnel (validated on save).
  */
 export function outcomeStage(stages: readonly OrgFunnelStage[], outcome: "won" | "lost"): OrgFunnelStage | null {
-  const name = outcome === "won" ? "closed" : "rejected"
-  return stages.find((s) => s.name.trim().toLowerCase() === name) ?? null
+  return stages.find((s) => s.role === outcome) ?? null
 }
 
-/** Won / lost stage of the org funnel («Closed» / «Rejected»). */
+/** Won / lost stage of the org funnel (by role). */
 export function isTerminalStage(stages: readonly OrgFunnelStage[], stageId: string): boolean {
   return isTerminal(stages, stageId)
 }
 
 function isTerminal(stages: readonly OrgFunnelStage[], stageId: string): boolean {
-  return stageId === outcomeStage(stages, "won")?.id || stageId === outcomeStage(stages, "lost")?.id
+  const s = stages.find((x) => x.id === stageId)
+  return !!s && isTerminalStageRole(s.role)
 }
 
 // ── Settings (spec §9.2, 06 §13; ladder org → platform → default) ────────
@@ -146,10 +175,12 @@ export type DealBridgeParams = {
   autoCreateMinScore: number
   autoCreateMinConfidence: "low" | "medium" | "high"
   proposalMinScore: number
+  /** Org entry gate (docs/specs/funnel §3.2): `go_no_go` = never auto-create. */
+  entryGate: "none" | "go_no_go"
 }
 
 export async function getDealBridgeParams(orgId: string): Promise<DealBridgeParams> {
-  const [oe, os, oc, op, pe, ps, pc, pp] = await Promise.all([
+  const [oe, os, oc, op, pe, ps, pc, pp, gate] = await Promise.all([
     getOrgSetting(orgId, "deals.autoCreateEnabled"),
     getOrgSetting(orgId, "deals.autoCreateMinScore"),
     getOrgSetting(orgId, "deals.autoCreateMinConfidence"),
@@ -158,12 +189,14 @@ export async function getDealBridgeParams(orgId: string): Promise<DealBridgePara
     getPlatformSetting("deals.autoCreateMinScore"),
     getPlatformSetting("deals.autoCreateMinConfidence"),
     getPlatformSetting("deals.proposalMinScore"),
+    getOrgSetting(orgId, "deals.entryGate"),
   ])
   return {
     autoCreateEnabled: oe ?? pe,
     autoCreateMinScore: os ?? ps,
     autoCreateMinConfidence: oc ?? pc,
     proposalMinScore: op ?? pp,
+    entryGate: gate,
   }
 }
 
@@ -474,7 +507,7 @@ export async function moveDealForward(
   const from = stages.find((s) => s.id === d.funnelStageId)
   const to = stages.find((s) => s.id === toStageId)
   if (!to) throw new DealEngineError("Стадия не принадлежит воронке организации")
-  if (to.isPrePipeline) throw new DealEngineError("В «Контакт до запроса» сделку не переводят")
+  if (to.role === "area0") throw new DealEngineError("В «Контакт до запроса» сделку не переводят")
   if (isTerminal(stages, to.id)) throw new DealEngineError("Финальная стадия ставится только итогом сделки")
   if (from && isTerminal(stages, from.id)) return { moved: false, fromStageId: d.funnelStageId }
   if (from && to.sortOrder <= from.sortOrder) return { moved: false, fromStageId: d.funnelStageId }
@@ -509,7 +542,12 @@ export async function setDealOutcome(
   dealId: string,
   outcome: DealOutcome,
   actor: DealActor,
-  opts: DealProvenance & { reason?: string | null; stageId?: string | null } = {},
+  opts: DealProvenance & {
+    reason?: string | null
+    stageId?: string | null
+    /** Code from the org's reason list (docs/specs/funnel §3.5); validated by the caller. */
+    reasonCode?: string | null
+  } = {},
 ): Promise<{ fromStageId: string; toStageId: string }> {
   if (outcome === "withdrawn" && actor.kind !== "user") {
     throw new DealEngineError("Итог «Отказались мы» ставит только пользователь", "forbidden")
@@ -517,12 +555,20 @@ export async function setDealOutcome(
   const d = await loadDeal(orgId, dealId)
   if (d.status === "deleted" || d.status === "cancelled") throw new DealEngineError("Сделка уже закрыта")
   const reason = (opts.reason ?? opts.evidence ?? "").trim() || null
+  const reasonCode = opts.reasonCode?.trim() || null
   if (outcome === "withdrawn") {
     await db.batch(
       asBatch([
         db
           .update(deal)
-          .set({ status: "cancelled", outcomeReason: reason, pausedUntil: null, pauseReason: null, ...DIRTY() })
+          .set({
+            status: "cancelled",
+            outcomeReason: reason,
+            outcomeReasonCode: reasonCode,
+            pausedUntil: null,
+            pauseReason: null,
+            ...DIRTY(),
+          })
           .where(and(eq(deal.id, dealId), eq(deal.organizationId, orgId))),
         ...clearRisksOnOutcomeOps(orgId, dealId, "Итог сделки: отказались мы"),
         db.insert(dealActivity).values(
@@ -536,7 +582,10 @@ export async function setDealOutcome(
     return { fromStageId: d.funnelStageId, toStageId: d.funnelStageId }
   }
   const stages = await getOrgFunnel(orgId)
-  const target = opts.stageId ? stages.find((s) => s.id === opts.stageId) : outcomeStage(stages, outcome)
+  // The outcome stage is found by ROLE; an explicit `stageId` (a rule
+  // target) counts only when it has the matching role.
+  const explicit = opts.stageId ? stages.find((s) => s.id === opts.stageId && s.role === outcome) : undefined
+  const target = explicit ?? outcomeStage(stages, outcome)
   if (!target) throw new DealEngineError(`В воронке нет стадии для итога «${outcome}»`)
   const position = await appendPosition(orgId, target.id)
   await db.batch(
@@ -547,6 +596,7 @@ export async function setDealOutcome(
           funnelStageId: target.id,
           status: "active",
           outcomeReason: reason,
+          outcomeReasonCode: reasonCode,
           pausedUntil: null,
           pauseReason: null,
           lastMovedBy: actor.kind,

@@ -260,6 +260,20 @@
       "when": 1794744527757,
       "tag": "0036_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794748876841,
+      "tag": "0037_custom_funnel",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794749432387,
+      "tag": "0038_funnel_codes_and_templates",
+      "breakpoints": true
     }
   ]
 }

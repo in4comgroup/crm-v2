@@ -96,13 +96,22 @@ import {
   DealStateBlock,
 } from "@/components/blocks/deal-state-risks"
 import { formatPauseUntil, isOpenDealStatus } from "@/lib/deal-funnel"
+import {
+  ReasonSelect,
+  stagePickerSuffix,
+  type BoardDeal,
+  type BoardStage,
+} from "@/components/blocks/deal-funnel-ui"
+import { DEFAULT_FUNNEL_REASONS, type FunnelReason } from "@/lib/funnel/config"
 
 // Тот же список, что раньше был в модалке-редакторе (form-deal-edit.tsx) —
 // не импортируем оттуда, чтобы не тянуть create-only компонент ради одной
 // константы после того, как edit-режим оттуда убран.
 const DEAL_STATUS_OPTIONS: { value: DealStatus; label: string }[] = [
   { value: "active", label: "Активна" },
-  { value: "cancelled", label: "Отменена (проиграна / отозвана)" },
+  // «Мы вышли» = внутренний итог (spec funnel W4): причина из списка
+  // организации обязательна.
+  { value: "cancelled", label: "Мы вышли (сделка отменена)" },
   { value: "deleted", label: "Удалена (скрыта, исключена из поиска)" },
 ]
 
@@ -121,9 +130,20 @@ type DealEditFormData = {
   status: DealStatus
   // "" = без типа.
   dealTypeId: string
+  // Custom funnel (docs/specs/funnel §3.4): «Экспертная вероятность, %»
+  // (0–100, "" = нет) и «Бюджет из брифа» ("" = нет; вне прогноза).
+  expertProbability: string
+  briefBudget: string
+  // «Мы вышли» (status → cancelled): код причины + необязательный текст.
+  outcomeReasonCode: string
+  outcomeReasonText: string
 }
 
-function formDefaults(deal: DealRow): DealEditFormData {
+function numText(v: string | number | null | undefined): string {
+  return v === null || v === undefined ? "" : String(v)
+}
+
+function formDefaults(deal: BoardDeal): DealEditFormData {
   return {
     name: deal.name,
     description: deal.description ?? "",
@@ -131,6 +151,10 @@ function formDefaults(deal: DealRow): DealEditFormData {
     value: deal.value ?? "",
     status: deal.status,
     dealTypeId: deal.dealTypeId ?? "",
+    expertProbability: numText(deal.expertProbability),
+    briefBudget: numText(deal.briefBudget),
+    outcomeReasonCode: "",
+    outcomeReasonText: "",
   }
 }
 
@@ -166,8 +190,9 @@ export function DealDetailDrawer({
   onChanged,
   onRequestStageChange,
   onUndoAgent,
+  withdrawnReasons = DEFAULT_FUNNEL_REASONS.withdrawn,
 }: {
-  deal: DealRow | null
+  deal: BoardDeal | null
   stages: DealFunnelStageOption[]
   // Для инлайн-формы редактирования (Клиент-селект) — тот же массив, что
   // deals-board.tsx уже фетчит для формы создания сделки, доп. запрос не
@@ -185,6 +210,8 @@ export function DealDetailDrawer({
   onRequestStageChange: (deal: DealRow, toStageId: string) => void
   // «Отменить» у бейджа «создал агент» — диалог подтверждения на доске.
   onUndoAgent?: (deal: DealRow) => void
+  // «Мы вышли»: причины организации (GET /api/deals/funnel → reasons.withdrawn).
+  withdrawnReasons?: readonly FunnelReason[]
 }) {
   // Стадию берём прямо из deal.funnelStageId — после перевода onChanged →
   // router.refresh обновляет проп (deal выводится из живого списка на доске).
@@ -389,6 +416,10 @@ export function DealDetailDrawer({
           value: "",
           status: "active",
           dealTypeId: "",
+          expertProbability: "",
+          briefBudget: "",
+          outcomeReasonCode: "",
+          outcomeReasonText: "",
         },
   })
   const watchedClientId = editForm.watch("clientId")
@@ -425,6 +456,30 @@ export function DealDetailDrawer({
       toast.error("Сумма должна быть числом")
       return
     }
+    // Экспертная вероятность и бюджет из брифа уходят, только если их
+    // меняли — иначе сервер переписал бы «кто / когда» оценки.
+    const { dirtyFields } = editForm.formState
+    const expertText = data.expertProbability.trim()
+    const expertValue = expertText === "" ? null : Number(expertText)
+    if (
+      expertValue !== null &&
+      (!Number.isInteger(expertValue) || expertValue < 0 || expertValue > 100)
+    ) {
+      toast.error("Экспертная вероятность — целое число от 0 до 100")
+      return
+    }
+    const budgetText = data.briefBudget.trim()
+    const budgetValue = budgetText === "" ? null : Number(budgetText)
+    if (budgetValue !== null && (!Number.isFinite(budgetValue) || budgetValue < 0)) {
+      toast.error("Бюджет из брифа должен быть числом")
+      return
+    }
+    // «Мы вышли»: причина обязательна при переходе в cancelled.
+    const withdrawing = data.status === "cancelled" && deal.status !== "cancelled"
+    if (withdrawing && !data.outcomeReasonCode) {
+      toast.error("Укажите причину: почему мы вышли")
+      return
+    }
     startTransition(async () => {
       try {
         const res = await fetch("/api/deals", {
@@ -438,6 +493,16 @@ export function DealDetailDrawer({
             value: numericValue,
             status: data.status,
             dealTypeId: data.dealTypeId || null,
+            ...(dirtyFields.expertProbability
+              ? { expertProbability: expertValue }
+              : {}),
+            ...(dirtyFields.briefBudget ? { briefBudget: budgetValue } : {}),
+            ...(withdrawing
+              ? {
+                  outcomeReasonCode: data.outcomeReasonCode,
+                  outcomeReason: data.outcomeReasonText.trim() || null,
+                }
+              : {}),
           }),
         })
         if (!res.ok) {
@@ -449,7 +514,7 @@ export function DealDetailDrawer({
         // Сброс к только что сохранённым значениям — иначе isDirty остаётся
         // true (RHF сравнивает с исходным defaultValues, не с сервером), и
         // диалог «есть несохранённые изменения» ложно всплывал бы снова.
-        editForm.reset(data)
+        editForm.reset({ ...data, outcomeReasonCode: "", outcomeReasonText: "" })
         onChanged()
         if (opts?.closeAfter) onOpenChange(false)
       } catch {
@@ -481,6 +546,22 @@ export function DealDetailDrawer({
     (t) => !t.isHidden || t.id === deal.dealTypeId,
   )
   const tasks = taskData && taskData.dealId === deal.id ? taskData.items : []
+  // Стадия сделки: экспертная вероятность нужна для прогноза, когда стадия
+  // в прогнозе и вероятность «экспертная» (spec funnel §3.4).
+  const dealStage = stages.find((s) => s.id === deal.funnelStageId) as
+    | BoardStage
+    | undefined
+  const needsExpert =
+    dealStage?.probabilityMode === "expert" && dealStage.inForecast !== false
+  const watchedStatus = editForm.watch("status")
+  const watchedExpert = editForm.watch("expertProbability")
+  const withdrawing = watchedStatus === "cancelled" && deal.status !== "cancelled"
+  const expertSetMeta = [
+    deal.expertProbabilityBy,
+    deal.expertProbabilityAt ? formatDate(deal.expertProbabilityAt) : null,
+  ]
+    .filter(Boolean)
+    .join(", ")
 
   return (
     <Sheet open={open} onOpenChange={handleSheetOpenChange}>
@@ -703,6 +784,80 @@ export function DealDetailDrawer({
               />
               <FormField
                 control={editForm.control}
+                name="expertProbability"
+                render={({ field }) => {
+                  const missing = needsExpert && watchedExpert.trim() === ""
+                  return (
+                    <FormItem>
+                      <FormLabel className="text-xs text-muted-foreground">
+                        Экспертная вероятность, %
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="1"
+                          inputMode="numeric"
+                          placeholder={missing ? "Нужна для прогноза" : "—"}
+                          aria-invalid={missing || undefined}
+                          className={
+                            missing
+                              ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500/30"
+                              : undefined
+                          }
+                          {...field}
+                        />
+                      </FormControl>
+                      {missing ? (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                          Стадия «{dealStage?.label}» считает прогноз по
+                          экспертной вероятности — без неё сделка «без оценки».
+                        </p>
+                      ) : (
+                        expertSetMeta &&
+                        deal.expertProbability != null && (
+                          <p className="text-xs text-muted-foreground">
+                            Оценку поставил(а): {expertSetMeta}
+                          </p>
+                        )
+                      )}
+                    </FormItem>
+                  )
+                }}
+              />
+              <FormField
+                control={editForm.control}
+                name="briefBudget"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs text-muted-foreground">
+                      Бюджет из брифа
+                    </FormLabel>
+                    <FormControl>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                          {currencySymbol}
+                        </span>
+                        <Input
+                          className="pl-7"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          inputMode="decimal"
+                          placeholder="0"
+                          {...field}
+                        />
+                      </div>
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      Цифра клиента; не входит в прогноз.
+                    </p>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
                 name="dealTypeId"
                 render={({ field }) => (
                   <FormItem>
@@ -772,6 +927,45 @@ export function DealDetailDrawer({
                   </FormItem>
                 )}
               />
+              {/* «Мы вышли»: причина из списка организации (обязательно) +
+                  комментарий; уходят вместе с «Сохранить». */}
+              {withdrawing && (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <FormField
+                    control={editForm.control}
+                    name="outcomeReasonCode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-muted-foreground">
+                          Почему мы вышли
+                        </FormLabel>
+                        <ReasonSelect
+                          reasons={withdrawnReasons}
+                          value={field.value}
+                          onChange={field.onChange}
+                          ariaLabel="Причина: мы вышли"
+                        />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={editForm.control}
+                    name="outcomeReasonText"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <Textarea
+                            {...field}
+                            rows={2}
+                            placeholder="Комментарий (необязательно)"
+                            className="text-sm"
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
 
               {/* Пауза (§9.2): до какой даты и почему + «Снять с паузы»;
                   для открытой сделки без паузы — «Поставить на паузу». */}
@@ -868,10 +1062,7 @@ export function DealDetailDrawer({
                 .filter((s) => !s.isHidden || s.id === deal.funnelStageId)
                 .map((s) => (
                   <SelectItem key={s.id} value={s.id}>
-                    {s.label}{" "}
-                    {s.isPrePipeline
-                      ? "(до воронки)"
-                      : `(${Math.round(s.closureProbability * 100)}%)`}
+                    {s.label} {stagePickerSuffix(s as BoardStage)}
                   </SelectItem>
                 ))}
             </SelectContent>

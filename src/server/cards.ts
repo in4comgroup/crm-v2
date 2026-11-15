@@ -24,7 +24,7 @@ import {
   type TopicCardEvent,
   type TopicCardMeta,
 } from "@/lib/topics/cards"
-import { acceptDealCard, proposalOf, rejectDealCard } from "@/server/topics/cards/deal-cards"
+import { acceptDealCard, NO_GO_REASON_PREFIX, proposalOf, rejectDealCard } from "@/server/topics/cards/deal-cards"
 import { effectiveCardStatus } from "@/server/topics/cards/logic"
 import { userCardFilter } from "@/server/topics/cards/visibility"
 import {
@@ -630,6 +630,12 @@ export async function rejectCard(
   if (!(await userCardVisible(activeOrgId, current))) throw new Error("Card not found")
   assertTopicCardOpen(current)
   const code = opts?.reasonCode
+  // «No-go» of a gated deal proposal (docs/specs/funnel §3.2): `nogo:<code>`
+  // of the org's no-go list — validated by rejectDealCard.
+  if (typeof code === "string" && code.startsWith(NO_GO_REASON_PREFIX) && current.kind === "deal_proposal") {
+    await rejectDealCard(activeOrgId, cardId, session.user.id, code, trimmed)
+    return
+  }
   if (!isCardRejectReason(code)) throw new Error("Rejection reason code is required")
   if (isDealCardKind(current.kind)) {
     // «Не сделка» / «Отклонить»: same columns + a topic_event (phase 5).

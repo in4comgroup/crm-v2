@@ -41,6 +41,13 @@ import { SourceMessageDialog } from "@/components/blocks/source-message-dialog"
 import type { CardRow } from "@/app/api/cards/route"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
 import {
+  GO_LABEL,
+  NO_GO_DIALOG_DESCRIPTION,
+  NO_GO_DIALOG_TITLE,
+  NO_GO_LABEL,
+  dealCardGate,
+} from "@/components/blocks/deal-funnel-ui"
+import {
   CARD_REJECT_DIALOG_TITLE_RU,
   DealLinkChooser,
   dealExecuteToast,
@@ -259,7 +266,11 @@ export function DashboardCard({
   // «Связать»; «Не сделка» / «Отклонить» / «Ни к одной» = reject with a
   // reason code.
   const dealKind = isDealCardKind(card.kind) ? card.kind : null
-  const [rejectCode, setRejectCode] = useState<string>(defaultRejectReason(card.kind))
+  // Go / no-go proposal (custom funnel §3.2): «Go» / «No-go», no-go needs
+  // one of the org reasons (sent as `nogo:<code>`).
+  const { gate, noGoReasons } = dealCardGate(card)
+  const initialRejectCode = gate ? "" : defaultRejectReason(card.kind)
+  const [rejectCode, setRejectCode] = useState<string>(initialRejectCode)
   const rejectReady = isTopicCard ? !!rejectCode : !!rejectReason.trim()
   const [sourceOpen, setSourceOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -374,7 +385,7 @@ export function DashboardCard({
         toast.success("Карточка отклонена")
         setRejectOpen(false)
         setRejectReason("")
-        setRejectCode(defaultRejectReason(card.kind))
+        setRejectCode(initialRejectCode)
         onChanged()
       } catch {
         toast.error("Не удалось отклонить карточку")
@@ -714,7 +725,7 @@ export function DashboardCard({
                 onClick={() => handleDealExecute()}
               >
                 <Handshake className="h-4 w-4 mr-1" />
-                {DEAL_CARD_ACCEPT_LABEL_RU[dealKind]}
+                {gate ? GO_LABEL : DEAL_CARD_ACCEPT_LABEL_RU[dealKind]}
               </Button>
             ) : card.category === "new_order" ? (
               onCreateOrder ? (
@@ -781,17 +792,26 @@ export function DashboardCard({
                   disabled={isPending}
                 >
                   <X className="h-4 w-4 mr-1" />
-                  {dealKind ? DEAL_CARD_REJECT_LABEL_RU[dealKind] : "Отклонить"}
+                  {gate
+                    ? NO_GO_LABEL
+                    : dealKind
+                      ? DEAL_CARD_REJECT_LABEL_RU[dealKind]
+                      : "Отклонить"}
                 </Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                   <DialogTitle>
-                    {dealKind ? CARD_REJECT_DIALOG_TITLE_RU[dealKind] : "Отклонить карточку"}
+                    {gate
+                      ? NO_GO_DIALOG_TITLE
+                      : dealKind
+                        ? CARD_REJECT_DIALOG_TITLE_RU[dealKind]
+                        : "Отклонить карточку"}
                   </DialogTitle>
                   <DialogDescription>
-                    Укажите краткую причину. Она сохранится вместе с карточкой,
-                    чтобы команда видела, почему её отклонили.
+                    {gate
+                      ? NO_GO_DIALOG_DESCRIPTION
+                      : "Укажите краткую причину. Она сохранится вместе с карточкой, чтобы команда видела, почему её отклонили."}
                   </DialogDescription>
                 </DialogHeader>
                 {isTopicCard && (
@@ -800,6 +820,7 @@ export function DashboardCard({
                     onChange={setRejectCode}
                     disabled={isPending}
                     kind={card.kind}
+                    noGoReasons={gate ? noGoReasons : undefined}
                   />
                 )}
                 <Textarea
@@ -825,7 +846,7 @@ export function DashboardCard({
                     onClick={handleReject}
                     disabled={isPending || !rejectReady}
                   >
-                    Отклонить карточку
+                    {gate ? NO_GO_LABEL : "Отклонить карточку"}
                   </Button>
                 </DialogFooter>
               </DialogContent>

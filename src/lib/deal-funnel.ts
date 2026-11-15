@@ -25,6 +25,35 @@ export function stageDisplayLabel(
   return custom ? custom : dealStageLabel(name)
 }
 
+// ── Stage roles (docs/specs/funnel §3.1) ──────────────────────────────────
+// Every logic check of a stage's meaning goes by `deal_funnel_stage.role`
+// (area0 | active | won | lost), never by its name — an org may name and
+// order its stages freely. Client-safe helpers shared by server and UI.
+
+export type DealStageRole = "area0" | "active" | "won" | "lost"
+
+/** Normalises a stored role (unknown / missing → "active"). */
+export function stageRoleOf(role: string | null | undefined): DealStageRole {
+  return role === "area0" || role === "won" || role === "lost" ? role : "active"
+}
+
+/** won / lost = the outcome (terminal) stages of the funnel. */
+export function isTerminalStageRole(role: string | null | undefined): boolean {
+  const r = stageRoleOf(role)
+  return r === "won" || r === "lost"
+}
+
+/** «Контакт до запроса» (area 0): out of the funnel, never an engine target. */
+export function isArea0StageRole(role: string | null | undefined): boolean {
+  return stageRoleOf(role) === "area0"
+}
+
+/** area0 / active = a deal on this stage is still open work («потенциальный»). */
+export function isOpenStageRole(role: string | null | undefined): boolean {
+  const r = stageRoleOf(role)
+  return r === "area0" || r === "active"
+}
+
 // Id «виртуальной» 0-й стадии в «Настройках стадий», пока орга сидит на
 // системной воронке: в диалоге она уже видна, а создаётся при первом
 // сохранении (saveFunnelStageSettings в src/server/deals.ts).

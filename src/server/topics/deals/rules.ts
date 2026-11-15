@@ -43,8 +43,9 @@ export type RuleLite = {
 export type StageLite = {
   id: string
   sortOrder: number
+  /** Stage role `area0` («Контакт до запроса», docs/specs/funnel §3.1). */
   isPrePipeline: boolean
-  /** won = «Closed», lost = «Rejected», null = working stage. */
+  /** Stage role won / lost; null = a working stage (role active / area0). */
   terminal: "won" | "lost" | null
 }
 
@@ -76,6 +77,12 @@ export type DealBridgeParamsLite = {
   autoCreateMinScore: number
   autoCreateMinConfidence: Confidence
   proposalMinScore: number
+  /**
+   * Org entry gate (docs/specs/funnel §3.2, W1): `go_no_go` = the engine never
+   * auto-creates; a create that would happen becomes a «go / no-go?»
+   * proposal (reason `entry_gate`). Absent = `none`.
+   */
+  entryGate?: "none" | "go_no_go"
 }
 
 export type TopicDealInput = {
@@ -147,6 +154,7 @@ export const CONCRETE_TASK_FACT = "concrete_task"
 /** Russian labels of the decision reasons (debug view, card text). */
 export const DEAL_REASON_LABELS_RU: Record<string, string> = {
   auto: "условия автосоздания выполнены",
+  entry_gate: "нужно решение go / no-go перед воронкой",
   auto_off: "автосоздание выключено для организации",
   medium_confidence: "уверенность ниже порога автосоздания",
   score_below_auto: "оценка темы ниже порога автосоздания",
@@ -363,6 +371,18 @@ export function evaluateTopicDeals(input: TopicDealInput): DealDecision[] {
                       : guard === "unknown"
                         ? "client_guard_unknown"
                         : null
+          if (!autoBlock && p.entryGate === "go_no_go") {
+            // Entry gate (W1): a person decides go / no-go — never an
+            // auto-create; the proposal threshold does not apply (the signal
+            // passed the auto-create bar).
+            if (openCards.has("deal_proposal")) {
+              skip("proposal_open")
+              continue
+            }
+            openCards.add("deal_proposal")
+            emit("propose", "entry_gate", extra)
+            continue
+          }
           if (!autoBlock) {
             deal = { id: NEW_DEAL_ID, stageId: target.id, status: "active", dealTypeCode: typeCode }
             createdByInstance = inst.id

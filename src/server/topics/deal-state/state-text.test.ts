@@ -209,3 +209,32 @@ describe("prompt", () => {
   })
 })
 
+
+describe("prompt — stage entry condition (docs/specs/funnel §6, Q13)", () => {
+  const input: DealStateInput = {
+    dealId: "d1",
+    dealName: "Норлекс — конкурс",
+    clientName: "Норлекс",
+    stageName: "Финальный выбор",
+    statusRu: "активна",
+    dealTypeLabel: null,
+    amount: null,
+    pausedUntil: null,
+    topics: [],
+    items: [],
+    risks: [],
+    previousText: null,
+    today: "2026-11-15",
+  }
+
+  it("off (absent / empty) = the prompt is byte-identical", () => {
+    const off = buildDealStatePrompt(input)
+    expect(buildDealStatePrompt({ ...input, stageEntryCondition: null })).toBe(off)
+    expect(buildDealStatePrompt({ ...input, stageEntryCondition: "  " })).toBe(off)
+  })
+
+  it("on = the line right after the stage", () => {
+    const on = buildDealStatePrompt({ ...input, stageEntryCondition: "Клиент подтвердил шорт-лист" })
+    expect(on).toContain("Стадия: Финальный выбор\nУсловие входа стадии (определение организации): Клиент подтвердил шорт-лист")
+  })
+})

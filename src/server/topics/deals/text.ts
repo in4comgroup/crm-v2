@@ -10,7 +10,16 @@ function quote(s: string, max = 240): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t
 }
 
-export function dealCardText(kind: "deal_proposal" | "stage_confirmation" | "deal_link", p: DealCardProposal): DealCardText {
+/**
+ * `opts.stageEntryCondition` = «Условие входа» of the target stage (custom
+ * funnel, docs/specs/funnel §6 / Q13): added to the recommendation so the
+ * person decides by the org's own stage definition. Always on (no LLM).
+ */
+export function dealCardText(
+  kind: "deal_proposal" | "stage_confirmation" | "deal_link",
+  p: DealCardProposal,
+  opts: { stageEntryCondition?: string | null } = {},
+): DealCardText {
   const who = p.clientName || p.contactName || "Клиент"
   let headline: string
   let recommendation: string
@@ -27,7 +36,16 @@ export function dealCardText(kind: "deal_proposal" | "stage_confirmation" | "dea
     const analysis = [headline, `Почему: ${why}`, `Решает человек: ${p.reasonRu}`].join("\n\n")
     return { headline, analysis, recommendation, taskTitle: "Связать тему со сделкой" }
   }
-  if (kind === "deal_proposal") {
+  if (kind === "deal_proposal" && p.gate) {
+    // Entry gate go / no-go (docs/specs/funnel §3.2).
+    headline = `${who} — новая возможность: go / no-go?`
+    recommendation = [
+      `«Go» — создать сделку «${p.dealName}»${p.dealTypeLabelRu ? ` (${p.dealTypeLabelRu})` : ""}${
+        p.stageLabelRu ? ` на стадии «${p.stageLabelRu}»` : ""
+      }.`,
+      "«No-go» — отказаться от участия и указать причину.",
+    ].join("\n")
+  } else if (kind === "deal_proposal") {
     headline = p.dealTypeLabelRu ? `${who} — новая возможность: ${p.dealTypeLabelRu}` : `${who} — новая возможность`
     recommendation = [
       `Создать сделку «${p.dealName}»${p.dealTypeLabelRu ? ` (${p.dealTypeLabelRu})` : ""}${
@@ -58,8 +76,13 @@ export function dealCardText(kind: "deal_proposal" | "stage_confirmation" | "dea
         ? "Подтвердите или отклоните."
         : `Подтвердите перевод${p.fromStageLabelRu ? ` «${p.fromStageLabelRu}» →` : ""} «${to}» или отклоните.`
   }
+  const condition = opts.stageEntryCondition?.trim()
+  if (condition && p.stageId && p.action !== "pause" && p.action !== "resume") {
+    recommendation = `${recommendation}\nУсловие входа${p.stageLabelRu ? ` в «${p.stageLabelRu}»` : ""}: ${quote(condition, 400)}`
+  }
   const why = p.evidence ? `${p.codeLabelRu}: «${quote(p.evidence)}»` : p.codeLabelRu
   const analysis = [headline, `Почему: ${why}`, `Решает человек: ${p.reasonRu}`].join("\n\n")
-  const taskTitle = kind === "deal_proposal" ? "Проверить возможность" : "Проверить стадию сделки"
+  const taskTitle =
+    kind === "deal_proposal" ? (p.gate ? "Решить go / no-go" : "Проверить возможность") : "Проверить стадию сделки"
   return { headline, analysis, recommendation, taskTitle }
 }

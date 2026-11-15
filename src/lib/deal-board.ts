@@ -1,12 +1,54 @@
 import type { DealRow, DealFunnelStageOption } from "@/server/deals"
-import { isOpenDealStatus } from "@/lib/deal-funnel"
+import { isOpenDealStatus, isTerminalStageRole, stageRoleOf } from "@/lib/deal-funnel"
 
-// Терминальные (закрывающие) системные стадии — в доске выносятся на отдельную
-// полку, drop в них запрещён. Имена соответствуют английским именам стадий в БД.
+// Terminal (outcome) stages = role `won` / `lost` (docs/specs/funnel §3.1) —
+// the board puts them into the «Закрытие» column. Decided by ROLE, never by
+// the stage name: an org names its stages freely.
+
+/** Something that carries a stage role: a stage option (`role`) or a deal row (`funnelStageRole`). */
+export type StageRoleCarrier = { role?: string | null } | { funnelStageRole?: string | null }
+
+function roleOfCarrier(x: StageRoleCarrier): string | null | undefined {
+  return "role" in x ? x.role : "funnelStageRole" in x ? x.funnelStageRole : undefined
+}
+
+/**
+ * @deprecated Legacy name list of the SYSTEM funnel; only the string form of
+ * `isTerminalStage` reads it. Pass a stage / deal object instead.
+ */
 export const TERMINAL_STAGE_NAMES = ["Closed", "Rejected"] as const
 
-export function isTerminalStage(stageName: string): boolean {
-  return (TERMINAL_STAGE_NAMES as readonly string[]).includes(stageName)
+/**
+ * Terminal stage (won / lost). Pass the stage option or the deal row (by
+ * role). The string form (a stage NAME) is a deprecated fallback kept only
+ * until every caller passes an object — it is wrong for custom funnels.
+ */
+export function isTerminalStage(stage: string | StageRoleCarrier): boolean {
+  if (typeof stage === "string") return (TERMINAL_STAGE_NAMES as readonly string[]).includes(stage)
+  return isTerminalStageRole(roleOfCarrier(stage))
+}
+
+/** Won outcome stage (role `won`) — stage option or deal row. */
+export function isWonStage(stage: StageRoleCarrier): boolean {
+  return stageRoleOf(roleOfCarrier(stage)) === "won"
+}
+
+/** Lost outcome stage (role `lost`) — stage option or deal row. */
+export function isLostStage(stage: StageRoleCarrier): boolean {
+  return stageRoleOf(roleOfCarrier(stage)) === "lost"
+}
+
+/** «Контакт до запроса» (role `area0`) — stage option or deal row. */
+export function isArea0Stage(stage: StageRoleCarrier): boolean {
+  return stageRoleOf(roleOfCarrier(stage)) === "area0"
+}
+
+/** The org's won / lost stage among the stage options (by role). */
+export function outcomeStageOf(
+  stages: readonly DealFunnelStageOption[],
+  outcome: "won" | "lost",
+): DealFunnelStageOption | null {
+  return stages.find((s) => s.role === outcome) ?? null
 }
 
 export const CURRENCY_SYMBOL: Record<string, string> = {
@@ -51,18 +93,50 @@ export const STAGE_COLOR: Record<string, string> = {
 }
 export const STAGE_DEFAULT = "bg-[#5D7183] text-white"
 
+// Role colours (docs/specs/funnel §3.1): the outcome stages of ANY funnel
+// get the won / lost tones, whatever their names.
+export const STAGE_ROLE_COLOR = {
+  won: "bg-[#1F7A4D] text-white",
+  lost: "bg-[#242424] text-[#E7E5E4] dark:bg-[#3B3B40] dark:text-[#D6D6DA]",
+} as const
+
+// Progression of the active stages by position (custom stages with no
+// name entry): neutral → teal → blue → violet → burnt orange, then repeat.
+export const STAGE_PROGRESSION = [
+  "bg-[#5D7183] text-white",
+  "bg-[#0E7490] text-white",
+  "bg-[#2F6BBF] text-white",
+  "bg-[#6D49B8] text-white",
+  "bg-[#C2410C] text-white",
+] as const
+
 // «Область 0» до воронки (isPrePipeline) — намеренно бледная, с пунктиром:
 // это преддверие воронки, а не её стадия (звонок 26.10: «эти все яркие, а
 // там совершенно не ярко-бледный»).
 export const PRE_PIPELINE_STAGE_COLOR =
   "border-dashed border-[#5D7183]/45 bg-[#5D7183]/8 text-foreground dark:bg-[#5D7183]/15"
 
+/**
+ * Column colour. Role first (area0 → pale, won / lost → outcome tones), then
+ * the name map of known stages, then — for any custom stage — the
+ * progression by `activeIndex` (0-based position among the active stages),
+ * else the neutral default.
+ */
 export function stageColorClass(stage: {
   name: string
   isPrePipeline?: boolean
+  role?: string | null
+  activeIndex?: number
 }): string {
-  if (stage.isPrePipeline) return PRE_PIPELINE_STAGE_COLOR
-  return STAGE_COLOR[stage.name] ?? STAGE_DEFAULT
+  const role = stage.role ? stageRoleOf(stage.role) : null
+  if (role === "area0" || stage.isPrePipeline) return PRE_PIPELINE_STAGE_COLOR
+  if (role === "won" || role === "lost") return STAGE_ROLE_COLOR[role]
+  const byName = STAGE_COLOR[stage.name]
+  if (byName) return byName
+  if (typeof stage.activeIndex === "number" && stage.activeIndex >= 0) {
+    return STAGE_PROGRESSION[stage.activeIndex % STAGE_PROGRESSION.length]
+  }
+  return STAGE_DEFAULT
 }
 
 export function formatAmount(
@@ -151,9 +225,10 @@ export function aggregateByCurrency(
   return parts.length ? parts.join(" · ") : "0 ₽"
 }
 
-// Взвешенный прогноз: Σ value × вероятность, по открытым (active + paused)
-// НЕтерминальным сделкам.
-// closureProbability — доля 0..1.
+// Взвешенный прогноз (legacy): Σ value × вероятность стадии по открытым
+// (active + paused) НЕтерминальным сделкам. closureProbability — доля 0..1.
+// The custom-funnel forecast (W5: «В прогнозе», expert probability, «Без
+// оценки») is `computeForecast` in src/lib/funnel/forecast.ts.
 export function weightedForecast(
   deals: DealRow[],
   stages: DealFunnelStageOption[],
@@ -162,7 +237,7 @@ export function weightedForecast(
   let total = 0
   for (const d of deals) {
     if (!isOpenDealStatus(d.status)) continue
-    if (isTerminalStage(d.funnelStageName)) continue
+    if (isTerminalStageRole(d.funnelStageRole)) continue
     const prob = probByStageId.get(d.funnelStageId) ?? d.funnelStageProbability
     total += dealAmount(d.value) * prob
   }

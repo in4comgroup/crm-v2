@@ -198,6 +198,14 @@ export type DealCardProposal = {
    * (spec topics/10). «Связать» sends the chosen `dealId`.
    */
   dealOptions?: DealLinkOption[]
+  /**
+   * Custom funnel (docs/specs/funnel §3.2): `deal_proposal` written under
+   * the org entry gate `go_no_go` — the UI shows «Go» / «No-go», and «No-go»
+   * needs one of `noGoReasons` (snapshot of the org list; sent as
+   * `rejectReasonCode = "nogo:<code>"`).
+   */
+  gate?: boolean
+  noGoReasons?: { code: string; label: string }[]
 }
 
 /** One choice of a `deal_link` card (snapshot when the card was written). */

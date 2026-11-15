@@ -55,3 +55,28 @@ describe("dealCardText", () => {
     )
   })
 })
+
+describe("dealCardText — custom funnel (docs/specs/funnel §3.2, §6)", () => {
+  it("gated proposal asks go / no-go", () => {
+    const t = dealCardText("deal_proposal", { ...base, gate: true, noGoReasons: [{ code: "other", label: "Другое" }] })
+    expect(t.headline).toBe("Норлекс — новая возможность: go / no-go?")
+    expect(t.recommendation).toContain("«Go»")
+    expect(t.recommendation).toContain("«No-go»")
+    expect(t.taskTitle).toBe("Решить go / no-go")
+  })
+
+  it("confirmation adds the entry condition of the target stage", () => {
+    const t = dealCardText(
+      "stage_confirmation",
+      { ...base, action: "move", stageLabelRu: "Финальный выбор" },
+      { stageEntryCondition: "Клиент подтвердил шорт-лист" },
+    )
+    expect(t.recommendation).toContain("Условие входа в «Финальный выбор»: Клиент подтвердил шорт-лист")
+  })
+
+  it("no entry condition → text unchanged", () => {
+    const a = dealCardText("stage_confirmation", { ...base, action: "move" })
+    const b = dealCardText("stage_confirmation", { ...base, action: "move" }, { stageEntryCondition: "  " })
+    expect(b).toEqual(a)
+  })
+})

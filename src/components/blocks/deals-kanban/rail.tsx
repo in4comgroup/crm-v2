@@ -15,8 +15,11 @@ export function Rail({
   count,
   amount,
   onExpand,
+  activeIndex,
 }: {
   stage: DealFunnelStageOption
+  // Позиция среди активных стадий — цвет кастомной стадии (stageColorClass).
+  activeIndex?: number
   count: number
   // Агрегированная сумма по колонке (aggregateByCurrency) — как в шапке колонки.
   amount: string
@@ -26,7 +29,7 @@ export function Rail({
     id: `col:${stage.id}`,
     data: { type: "column" as const, stageId: stage.id },
   })
-  const colorClass = stageColorClass(stage)
+  const colorClass = stageColorClass({ ...stage, activeIndex })
 
   return (
     <div

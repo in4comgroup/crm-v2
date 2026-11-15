@@ -50,6 +50,13 @@ import {
   defaultRejectReason,
 } from "@/components/blocks/deal-link-chooser"
 import { NewOrderDialog } from "@/components/blocks/order-request-wizard"
+import {
+  GO_LABEL,
+  NO_GO_DIALOG_DESCRIPTION,
+  NO_GO_DIALOG_TITLE,
+  NO_GO_LABEL,
+  dealCardGate,
+} from "@/components/blocks/deal-funnel-ui"
 import { cn } from "@/lib/utils"
 import type { TaskPriority, TaskStatus } from "@/db/schema"
 import { TOPIC_LIST_LABELS_RU } from "@/lib/topics/attention-types"
@@ -214,7 +221,10 @@ function RejectDialog({
   onOpenChange: (o: boolean) => void
   onDone: () => void
 }) {
-  const [code, setCode] = useState<string>(defaultRejectReason(card.kind))
+  // Go / no-go proposal (custom funnel §3.2): the org no-go list, required.
+  const { gate, noGoReasons } = dealCardGate(card)
+  const initialCode = gate ? "" : defaultRejectReason(card.kind)
+  const [code, setCode] = useState<string>(initialCode)
   const [text, setText] = useState("")
   const [pending, start] = useTransition()
   const submit = () =>
@@ -223,7 +233,7 @@ function RejectDialog({
         await postJson("/api/cards", "PUT", { id: card.id, action: "reject", rejectReasonCode: code, rejectionReason: text.trim() })
         toast.success("Карточка отклонена")
         onOpenChange(false)
-        setCode(defaultRejectReason(card.kind))
+        setCode(initialCode)
         setText("")
         onDone()
       } catch (e) {
@@ -234,17 +244,25 @@ function RejectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{CARD_REJECT_DIALOG_TITLE_RU[card.kind]}</DialogTitle>
-          <DialogDescription>Выберите причину. Комментарий — по желанию. Причины помогают настроить систему.</DialogDescription>
+          <DialogTitle>{gate ? NO_GO_DIALOG_TITLE : CARD_REJECT_DIALOG_TITLE_RU[card.kind]}</DialogTitle>
+          <DialogDescription>
+            {gate ? NO_GO_DIALOG_DESCRIPTION : "Выберите причину. Комментарий — по желанию. Причины помогают настроить систему."}
+          </DialogDescription>
         </DialogHeader>
-        <CardRejectReasonSelect value={code} onChange={setCode} disabled={pending} kind={card.kind} />
+        <CardRejectReasonSelect
+          value={code}
+          onChange={setCode}
+          disabled={pending}
+          kind={card.kind}
+          noGoReasons={gate ? noGoReasons : undefined}
+        />
         <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Комментарий (необязательно)" rows={3} />
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={pending}>
             Отмена
           </Button>
           <Button onClick={submit} disabled={pending || !code}>
-            Отклонить
+            {gate ? NO_GO_LABEL : "Отклонить"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -476,6 +494,7 @@ export function DealCardActions({
   const [pending, start] = useTransition()
   if (card.kind === "topic" || card.status !== "open") return null
   const kind = card.kind
+  const { gate } = dealCardGate(card)
   const execute = (dealId?: string) =>
     start(async () => {
       try {
@@ -500,12 +519,12 @@ export function DealCardActions({
       ) : (
         <Button size="sm" variant="secondary" className={ACCEPT_TONE} disabled={pending} onClick={() => execute()}>
           <Handshake className="h-4 w-4 mr-1" />
-          {DEAL_CARD_ACCEPT_LABEL_RU[kind]}
+          {gate ? GO_LABEL : DEAL_CARD_ACCEPT_LABEL_RU[kind]}
         </Button>
       )}
       <Button size="sm" variant="outline" disabled={pending} onClick={() => setRejectOpen(true)}>
         <X className="h-4 w-4 mr-1" />
-        {DEAL_CARD_REJECT_LABEL_RU[kind]}
+        {gate ? NO_GO_LABEL : DEAL_CARD_REJECT_LABEL_RU[kind]}
       </Button>
       <RejectDialog card={card} open={rejectOpen} onOpenChange={setRejectOpen} onDone={() => void recompute(topicId).then(onChanged)} />
     </div>
@@ -532,7 +551,7 @@ export function DealCardBlock({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {CARD_KIND_LABELS_RU[card.kind]}
+            {dealCardGate(card).gate ? "Новая возможность: go / no-go" : CARD_KIND_LABELS_RU[card.kind]}
           </div>
           <p className="font-medium leading-snug">{card.headline}</p>
         </div>

@@ -299,6 +299,14 @@ export async function PUT(request: NextRequest) {
       value,
       dealTypeId,
     } = body
+    // Custom funnel (docs/specs/funnel §3.4 / §3.5): outcome reason of a close
+    // (lost move / withdrawn = cancel) — code from the org list + text.
+    const outcome = {
+      outcomeReasonCode:
+        typeof body.outcomeReasonCode === "string" ? body.outcomeReasonCode : null,
+      outcomeReason:
+        typeof body.outcomeReason === "string" ? body.outcomeReason : null,
+    }
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
     }
@@ -360,6 +368,7 @@ export async function PUT(request: NextRequest) {
             ? position
             : null,
         historyNote: body.historyNote ?? undefined,
+        ...outcome,
       })
       return NextResponse.json({ success: true })
     }
@@ -380,7 +389,7 @@ export async function PUT(request: NextRequest) {
           { status: 400 },
         )
       }
-      await moveDeal(id, { funnelStageId, position })
+      await moveDeal(id, { funnelStageId, position, ...outcome })
       return NextResponse.json({ success: true })
     }
     const isValidStatus = (s: unknown): s is DealStatus =>
@@ -395,7 +404,7 @@ export async function PUT(request: NextRequest) {
           { status: 400 },
         )
       }
-      await setDealStatus(id, status)
+      await setDealStatus(id, status, outcome)
       return NextResponse.json({ success: true })
     }
     if (status !== undefined && !isValidStatus(status)) {
@@ -419,6 +428,15 @@ export async function PUT(request: NextRequest) {
           : typeof dealTypeId === "string" && dealTypeId
             ? dealTypeId
             : null,
+      // undefined = keep; null / "" = clear. Validated in updateDeal.
+      expertProbability:
+        body.expertProbability === undefined
+          ? undefined
+          : body.expertProbability === null || body.expertProbability === ""
+            ? null
+            : Number(body.expertProbability),
+      briefBudget: body.briefBudget === undefined ? undefined : body.briefBudget,
+      ...outcome,
     })
     return NextResponse.json({ success: true })
   } catch (error) {

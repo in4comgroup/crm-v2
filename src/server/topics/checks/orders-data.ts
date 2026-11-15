@@ -375,8 +375,7 @@ async function loadReactivationInfo(orgId: string, clientIds: string[]): Promise
         clientId: deal.clientId,
         status: deal.status,
         updatedAt: deal.updatedAt,
-        p: dealFunnelStage.closureProbability,
-        pre: dealFunnelStage.isPrePipeline,
+        role: dealFunnelStage.role,
       })
       .from(deal)
       .innerJoin(dealFunnelStage, eq(dealFunnelStage.id, deal.funnelStageId))
@@ -402,10 +401,10 @@ async function loadReactivationInfo(orgId: string, clientIds: string[]): Promise
     const e = get(d.clientId)
     e.lastContactAt = maxDate(e.lastContactAt, d.updatedAt)
     if (!(OPEN_DEAL_STATUSES as readonly string[]).includes(d.status)) continue
-    const p = Number(d.p)
-    if (p >= 1) won.add(d.clientId)
-    else if (d.pre || p > 0) open.add(d.clientId)
-    else e.hasLostDeal = true
+    // By stage role (docs/specs/funnel §3.1): won / open (area0, active) / lost.
+    if (d.role === "won") won.add(d.clientId)
+    else if (d.role === "lost") e.hasLostDeal = true
+    else open.add(d.clientId)
   }
   for (const id of open) if (!won.has(id)) get(id).potentialTab = true
   return out

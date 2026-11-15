@@ -119,7 +119,7 @@ export async function loadRelationLookup(orgId: string, now: Date): Promise<Rela
       .from(deal)
       .innerJoin(dealFunnelStage, eq(dealFunnelStage.id, deal.funnelStageId))
       .where(
-        and(eq(deal.organizationId, orgId), eq(deal.status, "active"), sql`${dealFunnelStage.closureProbability} >= 1`),
+        and(eq(deal.organizationId, orgId), eq(deal.status, "active"), eq(dealFunnelStage.role, "won")),
       ),
   ])
   const byClient = new Map<string, Date[]>()

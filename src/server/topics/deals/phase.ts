@@ -25,7 +25,6 @@ import {
   listOpenClientDeals,
   loadClientGuardFacts,
   moveDealForward,
-  outcomeStage,
   pauseDeal,
   resumeDeal,
   setDealOutcome,
@@ -33,6 +32,7 @@ import {
   type OrgFunnelStage,
 } from "@/server/deal-engine"
 import { closeOpenDealProposals, insertDealCard, openDealCardKinds } from "@/server/topics/cards/deal-cards"
+import { getOutcomeReasons } from "@/server/funnel-config"
 import { runDealAutoLink } from "./auto-link"
 import { loadCodeBook, hydrateTopics } from "@/server/topics/topic-store"
 import type { TopicSnapshot } from "@/server/topics/model"
@@ -107,14 +107,13 @@ export async function loadOrgStageRules(orgId: string): Promise<RuleLite[]> {
   }))
 }
 
+/** Stages for the pure rules — meaning by ROLE (docs/specs/funnel §3.1), never by name. */
 function stageLite(stages: readonly OrgFunnelStage[]): StageLite[] {
-  const won = outcomeStage(stages, "won")?.id
-  const lost = outcomeStage(stages, "lost")?.id
   return stages.map((s) => ({
     id: s.id,
     sortOrder: s.sortOrder,
-    isPrePipeline: s.isPrePipeline,
-    terminal: s.id === won ? "won" : s.id === lost ? "lost" : null,
+    isPrePipeline: s.role === "area0",
+    terminal: s.role === "won" ? "won" : s.role === "lost" ? "lost" : null,
   }))
 }
 
@@ -203,6 +202,8 @@ type OrgDealContext = {
   rules: RuleLite[]
   params: Awaited<ReturnType<typeof getDealBridgeParams>>
   book: Awaited<ReturnType<typeof loadCodeBook>>
+  /** No-go reasons of the org (snapshot on gated proposals, docs/specs/funnel §3.2). */
+  noGoReasons: { code: string; label: string }[]
 }
 
 export type TopicDealOutcome = {
@@ -303,6 +304,10 @@ export async function processTopicDeals(
     const s = id ? octx.stages.find((x) => x.id === id) : undefined
     return s ? stageDisplayLabel(s.name, s.displayName) : null
   }
+  // «Условие входа» of the target stage (docs/specs/funnel §6, Q13): shown on
+  // the card so the person decides by the org's own definition.
+  const targetStageCondition = (id: string | null): string | null =>
+    (id ? octx.stages.find((x) => x.id === id)?.entryCondition?.trim() : null) || null
   const proposalFor = (d: DealDecision, action: DealCardProposal["action"], dealId: string | null): DealCardProposal => {
     const type = d.dealTypeCode ? octx.typeByCode.get(d.dealTypeCode) : undefined
     return {
@@ -331,6 +336,11 @@ export async function processTopicDeals(
       fromStageId: d.fromStageId,
       fromStageLabelRu: stageLabel(d.fromStageId),
       dealId,
+      // Entry gate (docs/specs/funnel §3.2): every proposal of a gated org is
+      // a «go / no-go?» card; «No-go» needs one of these reasons.
+      ...(action === "create" && octx.params.entryGate === "go_no_go"
+        ? { gate: true, noGoReasons: octx.noGoReasons }
+        : {}),
     }
   }
 
@@ -432,6 +442,7 @@ export async function processTopicDeals(
               kind,
               topicId: snap.id,
               proposal: proposalFor(d, action, d.action === "confirm" ? realId(d.dealId) : null),
+              stageEntryCondition: targetStageCondition(d.stageId),
               score: snap.score,
               band: snap.band,
               leadCode: snap.leadCode,
@@ -491,11 +502,12 @@ export async function loadOrgDealContext(
 ): Promise<OrgDealContext | null> {
   const rules = await loadOrgStageRules(orgId)
   if (rules.length === 0) return null
-  const [types, stages, params, book] = await Promise.all([
+  const [types, stages, params, book, reasons] = await Promise.all([
     ensureDefaultDealTypes(orgId),
     getOrgFunnel(orgId),
     getDealBridgeParams(orgId),
     loadCodeBook(orgId),
+    getOutcomeReasons(orgId),
   ])
   return {
     orgId,
@@ -507,6 +519,7 @@ export async function loadOrgDealContext(
     rules,
     params,
     book,
+    noGoReasons: reasons.noGo.map((r) => ({ code: r.code, label: r.label })),
   }
 }
 

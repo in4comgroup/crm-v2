@@ -23,9 +23,12 @@ import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
 import {
   dealStageLabel,
+  isTerminalStageRole,
   OPEN_DEAL_STATUSES,
   PRE_PIPELINE_VIRTUAL_ID,
   stageDisplayLabel,
+  stageRoleOf,
+  type DealStageRole,
 } from "@/lib/deal-funnel"
 import {
   DealTypeForbiddenError,
@@ -36,6 +39,7 @@ import {
   type DealTypeRow,
 } from "@/server/deal-types"
 import { getActiveOrgRole } from "@/server/sources"
+import { resolveOutcomeReason } from "@/server/funnel-config"
 import type {
   DealRiskSummary,
   DealRiskView,
@@ -120,6 +124,18 @@ export type DealRow = {
   lastActivityTopicTitle?: string | null
   // The stage's norm (`deal_funnel_stage.stale_norm_days`); null = default 14.
   staleNormDays?: number | null
+  // ── Custom funnel (docs/specs/funnel §3.1 / §3.4 / §3.5) ──
+  // Role of the deal's stage: the UI decides terminal / area 0 by this, not
+  // by `funnelStageName` (helpers in src/lib/deal-funnel.ts).
+  funnelStageRole: DealStageRole
+  // «Экспертная вероятность, %» 0–100 (forecast of `expert` stages) + who / when.
+  expertProbability: number | null
+  expertProbabilityBy: string | null
+  expertProbabilityAt: string | null
+  // «Бюджет из брифа» (the client's figure; never in the forecast). Decimal string like `value`.
+  briefBudget: string | null
+  // Code from the org's outcome reason list (lost / withdrawn); text stays in `outcomeReason`.
+  outcomeReasonCode: string | null
   userId: string
   userName: string | null
   organizationId: string
@@ -147,6 +163,20 @@ export type DealFunnelStageOption = {
   isHidden: boolean
   // «Норма, дн» for the «N дн без активности» badge; null = default 14.
   staleNormDays: number | null
+  // ── Custom funnel (docs/specs/funnel §3.1) ──
+  // Meaning of the stage — the UI and the engine decide by `role`, never by
+  // `name` (won / lost = the terminal «Закрытие» column, area0 = «Контакт до
+  // запроса»). Helpers: src/lib/deal-funnel.ts (`isTerminalStageRole` …).
+  role: DealStageRole
+  // Stable machine key per funnel (s1…, won, lost, area0, st_…); null = legacy row.
+  code: string | null
+  // «В прогнозе» + «Вероятность» (stage = closureProbability, expert = the deal's).
+  inForecast: boolean
+  probabilityMode: "stage" | "expert"
+  description: string | null
+  // «Условие входа» — column hint on the board.
+  entryCondition: string | null
+  signalsHint: string | null
 }
 
 async function requireOrgContext() {
@@ -263,66 +293,36 @@ function normaliseValue(
 // without bleed-through from the system bucket.
 export async function listDealFunnelStages(): Promise<DealFunnelStageOption[]> {
   const { activeOrgId } = await requireOrgContext()
+  return loadFunnelStageOptions(activeOrgId)
+}
 
-  const orgRows = await db
-    .select({
-      id: dealFunnelStage.id,
-      name: dealFunnelStage.name,
-      closureProbability: dealFunnelStage.closureProbability,
-      sortOrder: dealFunnelStage.sortOrder,
-      isSystem: dealFunnelStage.isSystem,
-      isPrePipeline: dealFunnelStage.isPrePipeline,
-      displayName: dealFunnelStage.displayName,
-      isHidden: dealFunnelStage.isHidden,
-      staleNormDays: dealFunnelStage.staleNormDays,
-    })
-    .from(dealFunnelStage)
-    .where(
-      and(
-        eq(dealFunnelStage.isActive, true),
-        eq(dealFunnelStage.isSystem, false),
-        eq(dealFunnelStage.ownerOrganizationId, activeOrgId),
-      ),
-    )
-    .orderBy(asc(dealFunnelStage.sortOrder), asc(dealFunnelStage.name))
+const funnelStageOptionColumns = {
+  id: dealFunnelStage.id,
+  name: dealFunnelStage.name,
+  closureProbability: dealFunnelStage.closureProbability,
+  sortOrder: dealFunnelStage.sortOrder,
+  isSystem: dealFunnelStage.isSystem,
+  isPrePipeline: dealFunnelStage.isPrePipeline,
+  displayName: dealFunnelStage.displayName,
+  isHidden: dealFunnelStage.isHidden,
+  staleNormDays: dealFunnelStage.staleNormDays,
+  role: dealFunnelStage.role,
+  code: dealFunnelStage.code,
+  inForecast: dealFunnelStage.inForecast,
+  probabilityMode: dealFunnelStage.probabilityMode,
+  description: dealFunnelStage.description,
+  entryCondition: dealFunnelStage.entryCondition,
+  signalsHint: dealFunnelStage.signalsHint,
+}
 
-  if (orgRows.length > 0) {
-    return orgRows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      closureProbability: Number(r.closureProbability),
-      sortOrder: r.sortOrder,
-      isSystem: r.isSystem,
-      isPrePipeline: r.isPrePipeline,
-      label: stageDisplayLabel(r.name, r.displayName),
-      displayName: r.displayName,
-      isHidden: r.isHidden,
-      staleNormDays: r.staleNormDays,
-    }))
-  }
+function selectFunnelStageOptions() {
+  return db.select(funnelStageOptionColumns).from(dealFunnelStage)
+}
 
-  const systemRows = await db
-    .select({
-      id: dealFunnelStage.id,
-      name: dealFunnelStage.name,
-      closureProbability: dealFunnelStage.closureProbability,
-      sortOrder: dealFunnelStage.sortOrder,
-      isSystem: dealFunnelStage.isSystem,
-      isPrePipeline: dealFunnelStage.isPrePipeline,
-      displayName: dealFunnelStage.displayName,
-      isHidden: dealFunnelStage.isHidden,
-      staleNormDays: dealFunnelStage.staleNormDays,
-    })
-    .from(dealFunnelStage)
-    .where(
-      and(
-        eq(dealFunnelStage.isActive, true),
-        eq(dealFunnelStage.isSystem, true),
-      ),
-    )
-    .orderBy(asc(dealFunnelStage.sortOrder), asc(dealFunnelStage.name))
+type FunnelStageOptionSelect = Awaited<ReturnType<typeof selectFunnelStageOptions>>[number]
 
-  return systemRows.map((r) => ({
+function toFunnelStageOption(r: FunnelStageOptionSelect): DealFunnelStageOption {
+  return {
     id: r.id,
     name: r.name,
     closureProbability: Number(r.closureProbability),
@@ -333,7 +333,37 @@ export async function listDealFunnelStages(): Promise<DealFunnelStageOption[]> {
     displayName: r.displayName,
     isHidden: r.isHidden,
     staleNormDays: r.staleNormDays,
-  }))
+    role: stageRoleOf(r.role),
+    code: r.code,
+    inForecast: r.inForecast,
+    probabilityMode: r.probabilityMode === "expert" ? "expert" : "stage",
+    description: r.description,
+    entryCondition: r.entryCondition,
+    signalsHint: r.signalsHint,
+  }
+}
+
+async function loadFunnelStageOptions(organizationId: string): Promise<DealFunnelStageOption[]> {
+  const orgRows = await selectFunnelStageOptions()
+    .where(
+      and(
+        eq(dealFunnelStage.isActive, true),
+        eq(dealFunnelStage.isSystem, false),
+        eq(dealFunnelStage.ownerOrganizationId, organizationId),
+      ),
+    )
+    .orderBy(asc(dealFunnelStage.sortOrder), asc(dealFunnelStage.name))
+  if (orgRows.length > 0) return orgRows.map(toFunnelStageOption)
+
+  const systemRows = await selectFunnelStageOptions()
+    .where(
+      and(
+        eq(dealFunnelStage.isActive, true),
+        eq(dealFunnelStage.isSystem, true),
+      ),
+    )
+    .orderBy(asc(dealFunnelStage.sortOrder), asc(dealFunnelStage.name))
+  return systemRows.map(toFunnelStageOption)
 }
 
 // Picker scope: any non-suspended, non-deleted client in the org. We
@@ -386,9 +416,13 @@ export async function listDealContactOptions(
 
 // One select shape for `listDeals` + `getDeal` (deal + stage + client +
 // owner + deal type), mapped by `toDealRow`.
+const expertUser = aliasedTable(user, "expert_user")
+
 const dealRowColumns = {
   deal,
   funnelStageName: dealFunnelStage.name,
+  funnelStageRole: dealFunnelStage.role,
+  expertProbabilityBy: expertUser.name,
   funnelStageProbability: dealFunnelStage.closureProbability,
   funnelStageDisplayName: dealFunnelStage.displayName,
   funnelStageStaleNormDays: dealFunnelStage.staleNormDays,
@@ -401,6 +435,8 @@ const dealRowColumns = {
 type DealRowSelect = {
   deal: typeof deal.$inferSelect
   funnelStageName: string
+  funnelStageRole: string
+  expertProbabilityBy: string | null
   funnelStageProbability: string
   funnelStageDisplayName: string | null
   funnelStageStaleNormDays: number | null
@@ -455,6 +491,12 @@ function toDealRow(
     lastActivitySource: lastActivity?.source ?? null,
     lastActivityTopicTitle: lastActivity?.topicTitle ?? null,
     staleNormDays: r.funnelStageStaleNormDays,
+    funnelStageRole: stageRoleOf(r.funnelStageRole),
+    expertProbability: r.deal.expertProbability,
+    expertProbabilityBy: r.deal.expertProbability == null ? null : r.expertProbabilityBy,
+    expertProbabilityAt: r.deal.expertProbabilityAt ? r.deal.expertProbabilityAt.toISOString() : null,
+    briefBudget: r.deal.briefBudget,
+    outcomeReasonCode: r.deal.outcomeReasonCode,
     userId: r.deal.userId,
     userName: r.userName,
     organizationId: r.deal.organizationId,
@@ -487,6 +529,7 @@ export async function listDeals(
     .innerJoin(dealFunnelStage, eq(deal.funnelStageId, dealFunnelStage.id))
     .leftJoin(client, eq(deal.clientId, client.id))
     .leftJoin(user, eq(deal.userId, user.id))
+    .leftJoin(expertUser, eq(deal.expertProbabilityByUserId, expertUser.id))
     .leftJoin(dealType, eq(deal.dealTypeId, dealType.id))
     .where(and(...conditions))
     .orderBy(desc(deal.updatedAt))
@@ -556,6 +599,7 @@ export async function getDeal(dealId: string): Promise<DealRow | null> {
     .innerJoin(dealFunnelStage, eq(deal.funnelStageId, dealFunnelStage.id))
     .leftJoin(client, eq(deal.clientId, client.id))
     .leftJoin(user, eq(deal.userId, user.id))
+    .leftJoin(expertUser, eq(deal.expertProbabilityByUserId, expertUser.id))
     .leftJoin(dealType, eq(deal.dealTypeId, dealType.id))
     .where(eq(deal.id, dealId))
     .limit(1)
@@ -672,6 +716,14 @@ export async function updateDeal(
     currency?: string | null
     status?: DealStatus
     dealTypeId?: string | null
+    // ── Custom funnel (docs/specs/funnel §3.4 / §3.5) ──
+    // «Экспертная вероятность, %» 0–100 (whole); null clears. Stamps who / when.
+    expertProbability?: number | null
+    // «Бюджет из брифа»; null clears.
+    briefBudget?: number | string | null
+    // Status → `cancelled` («Мы вышли»): code of the org's withdrawn list + text.
+    outcomeReasonCode?: string | null
+    outcomeReason?: string | null
   },
 ) {
   const { session, activeOrgId } = await requireOrgContext()
@@ -711,10 +763,24 @@ export async function updateDeal(
   if (data.dealTypeId !== undefined) {
     patch.dealTypeId = await resolveDealTypeId(data.dealTypeId, activeOrgId)
   }
+  if (data.expertProbability !== undefined) {
+    const p = parseExpertProbability(data.expertProbability)
+    if (p !== current.expertProbability) {
+      patch.expertProbability = p
+      patch.expertProbabilityByUserId = p === null ? null : session.user.id
+      patch.expertProbabilityAt = p === null ? null : new Date()
+    }
+  }
+  if (data.briefBudget !== undefined) {
+    patch.briefBudget = normaliseValue(data.briefBudget)
+  }
   // paused → active = «Снять с паузы» (journaled by the deal engine below).
   const resume = current.status === "paused" && data.status === "active"
   if (data.status !== undefined && data.status !== current.status && !resume) {
     Object.assign(patch, statusPatch(current.status, data.status))
+    if (data.status === "cancelled") {
+      Object.assign(patch, await outcomeReasonPatch(activeOrgId, "withdrawn", data.outcomeReasonCode, data.outcomeReason))
+    }
   }
 
   if (Object.keys(patch).length > 0) {
@@ -755,6 +821,8 @@ export async function updateDeal(
   if ("funnelStageId" in patch && patch.funnelStageId !== current.funnelStageId) changed.push("стадия")
   if ("status" in patch || resume) changed.push("статус")
   if (data.contactIds !== undefined) changed.push("контакты")
+  if ("expertProbability" in patch) changed.push("экспертная вероятность")
+  if ("briefBudget" in patch && patch.briefBudget !== current.briefBudget) changed.push("бюджет из брифа")
   if (changed.length > 0) {
     await markStateDirtySafe(activeOrgId, dealId, `Изменено вручную: ${changed.join(", ")}`)
   }
@@ -762,19 +830,57 @@ export async function updateDeal(
 
 // Status-only shortcut (mirrors tasks' `updateTaskStatus`). Used by the
 // `statusOnly` PUT path for quick cancel / delete / restore toggles.
-export async function setDealStatus(dealId: string, status: DealStatus) {
+export async function setDealStatus(
+  dealId: string,
+  status: DealStatus,
+  // Status `cancelled` («Мы вышли», docs/specs/funnel §3.5): a code of the
+  // org's withdrawn list (validated) + optional text.
+  outcome?: { outcomeReasonCode?: string | null; outcomeReason?: string | null },
+) {
   const { session, activeOrgId } = await requireOrgContext()
   const current = await assertDealInOrg(dealId, activeOrgId)
   if (status === current.status) return
   if (current.status === "paused" && status === "active") {
     await resumeDeal(activeOrgId, dealId, { kind: "user", userId: session.user.id })
   } else {
+    const reason =
+      status === "cancelled"
+        ? await outcomeReasonPatch(activeOrgId, "withdrawn", outcome?.outcomeReasonCode, outcome?.outcomeReason)
+        : {}
     await db
       .update(deal)
-      .set(statusPatch(current.status, status))
+      .set({ ...statusPatch(current.status, status), ...reason })
       .where(eq(deal.id, dealId))
   }
   await markStateDirtySafe(activeOrgId, dealId, "Изменено вручную: статус")
+}
+
+// «Экспертная вероятность, %»: whole 0–100 or null (docs/specs/funnel §3.4).
+function parseExpertProbability(v: unknown): number | null {
+  if (v === null || v === "") return null
+  const n = typeof v === "number" ? v : Number(v)
+  if (!Number.isInteger(n) || n < 0 || n > 100) {
+    throw new Error("Экспертная вероятность — целое число от 0 до 100")
+  }
+  return n
+}
+
+// Outcome reason of a won / lost / withdrawn close (docs/specs/funnel §3.5):
+// the code must be in the org's list of that kind; the label goes to
+// `outcome_reason` when no text is given. No code and no text → the patch
+// is empty (the old free-text-only flow keeps working). Won has no list.
+async function outcomeReasonPatch(
+  organizationId: string,
+  kind: "lost" | "withdrawn" | "won",
+  code: string | null | undefined,
+  text: string | null | undefined,
+): Promise<{ outcomeReasonCode?: string | null; outcomeReason?: string | null }> {
+  const trimmed = text?.trim() || null
+  const c = code?.trim() || null
+  if (!c) return trimmed ? { outcomeReasonCode: null, outcomeReason: trimmed } : {}
+  if (kind === "won") throw new Error("Для выигранной сделки причина из списка не нужна")
+  const reason = await resolveOutcomeReason(organizationId, kind, c)
+  return { outcomeReasonCode: reason.code, outcomeReason: trimmed ?? reason.label }
 }
 
 // Status change through the edit form / the quick shortcut. `paused` needs a
@@ -819,11 +925,23 @@ export async function moveDealStage(
     // причина. По умолчанию совпадает с `note`.
     historyNote?: string | null
     reasoning?: string | null
+    // Move to the won / lost stage (docs/specs/funnel §3.5): a code of the
+    // org's lost list (lost only) + optional text → `outcome_reason_code` /
+    // `outcome_reason`. Leaving an outcome stage clears both.
+    outcomeReasonCode?: string | null
+    outcomeReason?: string | null
   },
 ) {
   const { session, activeOrgId } = await requireOrgContext()
   await assertDealInOrg(dealId, activeOrgId)
-  await assertFunnelStageAccessible(funnelStageId, activeOrgId)
+  const target = await assertFunnelStageAccessible(funnelStageId, activeOrgId)
+  const outcomePatch = await outcomePatchForMove(
+    activeOrgId,
+    dealId,
+    target.role,
+    opts?.outcomeReasonCode,
+    opts?.outcomeReason,
+  )
 
   const before = await db
     .select({ funnelStageId: deal.funnelStageId })
@@ -846,6 +964,7 @@ export async function moveDealStage(
       funnelStageId,
       changes: trimmed || null,
       lastMovedBy: actor,
+      ...outcomePatch,
       ...(typeof position === "string" && position.length > 0
         ? { position }
         : {}),
@@ -1072,7 +1191,8 @@ export async function listRejectedDealOrigins(): Promise<
 > {
   const { activeOrgId } = await requireOrgContext()
   const stages = await listDealFunnelStages()
-  const rejected = stages.find((s) => s.name === "Rejected")
+  // The lost outcome stage by ROLE (docs/specs/funnel §3.1), never by name.
+  const rejected = stages.find((s) => s.role === "lost")
   if (!rejected) return {}
 
   const rows = await db
@@ -1098,6 +1218,31 @@ export async function listRejectedDealOrigins(): Promise<
   return result
 }
 
+// Outcome reason on a manual move (docs/specs/funnel §3.5): into the lost
+// stage → the code must be in the org's lost list; into the won stage → no
+// list (text only); out of an outcome stage into a working one → the stored
+// reason is cleared. Stage meaning by ROLE.
+async function outcomePatchForMove(
+  organizationId: string,
+  dealId: string,
+  targetRole: string,
+  code: string | null | undefined,
+  text: string | null | undefined,
+): Promise<{ outcomeReasonCode?: string | null; outcomeReason?: string | null }> {
+  const role = stageRoleOf(targetRole)
+  if (role === "lost") return outcomeReasonPatch(organizationId, "lost", code, text)
+  if (role === "won") return outcomeReasonPatch(organizationId, "won", code, text)
+  if (code?.trim()) throw new Error("Причина итога указывается только при закрытии сделки")
+  // Reopened from an outcome stage → the old outcome reason no longer applies.
+  const [row] = await db
+    .select({ role: dealFunnelStage.role })
+    .from(deal)
+    .innerJoin(dealFunnelStage, eq(dealFunnelStage.id, deal.funnelStageId))
+    .where(eq(deal.id, dealId))
+    .limit(1)
+  return row && isTerminalStageRole(row.role) ? { outcomeReasonCode: null, outcomeReason: null } : {}
+}
+
 // Kanban drag: move a deal to a column (funnel stage) at a manual-order slot.
 // The CLIENT computes `position` via fractional-indexing (computePosition in
 // src/lib/kanban-move.ts) from the neighbours at the drop point; the server
@@ -1106,11 +1251,21 @@ export async function listRejectedDealOrigins(): Promise<
 // drag counts as a touch, same as the stage-move dropdown.)
 export async function moveDeal(
   dealId: string,
-  data: { funnelStageId: string; position: string },
+  data: {
+    funnelStageId: string
+    position: string
+    // Same outcome reason rule as `moveDealStage` (won / lost stage).
+    outcomeReasonCode?: string | null
+    outcomeReason?: string | null
+  },
 ) {
   const { activeOrgId } = await requireOrgContext()
   const current = await assertDealInOrg(dealId, activeOrgId)
-  await assertFunnelStageAccessible(data.funnelStageId, activeOrgId)
+  const target = await assertFunnelStageAccessible(data.funnelStageId, activeOrgId)
+  const outcomePatch =
+    current.funnelStageId === data.funnelStageId
+      ? {}
+      : await outcomePatchForMove(activeOrgId, dealId, target.role, data.outcomeReasonCode, data.outcomeReason)
   if (typeof data.position !== "string" || data.position.length === 0) {
     throw new Error("Invalid position")
   }
@@ -1122,6 +1277,7 @@ export async function moveDeal(
       funnelStageId: data.funnelStageId,
       position: data.position,
       lastMovedBy: "user",
+      ...outcomePatch,
     })
     .where(eq(deal.id, dealId))
   // A same-stage reorder is not new deal information.
@@ -1150,11 +1306,10 @@ export type FunnelStageSetting = {
   staleNormDays: number | null
 }
 
-const TERMINAL_NAMES = new Set(["Closed", "Rejected"])
-
 export async function getFunnelStageSettings(): Promise<FunnelStageSetting[]> {
   const stages = await listDealFunnelStages()
-  const flow = stages.filter((s) => !TERMINAL_NAMES.has(s.name))
+  // Terminal = role won / lost (docs/specs/funnel §3.1), never by name.
+  const flow = stages.filter((s) => !isTerminalStageRole(s.role))
   const rows: FunnelStageSetting[] = flow.map((s) => ({
     id: s.id,
     name: s.name,
@@ -1191,8 +1346,9 @@ async function materializeOrgFunnel(
   const minSort = Math.min(...systemStages.map((s) => s.sortOrder), 10)
   const preId = randomUUID()
   idMap.set(PRE_PIPELINE_VIRTUAL_ID, preId)
+  const hasArea0 = systemStages.some((s) => s.role === "area0")
   const values = [
-    {
+    ...(hasArea0 ? [] : [{
       id: preId,
       name: PRE_PIPELINE_DEFAULT_NAME,
       closureProbability: "0",
@@ -1201,7 +1357,10 @@ async function materializeOrgFunnel(
       ownerOrganizationId: organizationId,
       isActive: true,
       isPrePipeline: true,
-    },
+      role: "area0",
+      code: "area0",
+      inForecast: false,
+    }]),
     ...systemStages.map((s) => {
       const id = randomUUID()
       idMap.set(s.id, id)
@@ -1213,8 +1372,16 @@ async function materializeOrgFunnel(
         isSystem: false,
         ownerOrganizationId: organizationId,
         isActive: true,
-        isPrePipeline: false,
+        isPrePipeline: s.role === "area0",
         staleNormDays: s.staleNormDays,
+        // Custom funnel (docs/specs/funnel §3.1): the copy keeps the meaning.
+        role: s.role,
+        code: s.code,
+        inForecast: s.inForecast,
+        probabilityMode: s.probabilityMode,
+        description: s.description,
+        entryCondition: s.entryCondition,
+        signalsHint: s.signalsHint,
       }
     }),
   ]

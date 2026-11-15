@@ -36,8 +36,19 @@ import {
   SlidersVertical,
   Tags,
 } from "lucide-react"
-import { DealStageSettingsDialog } from "@/components/blocks/deal-stage-settings-dialog"
-import { DealTypesSettingsDialog } from "@/components/blocks/deal-types-settings-dialog"
+import {
+  DealStageSettingsDialog,
+  type FunnelSettingsTab,
+} from "@/components/blocks/deal-stage-settings-dialog"
+import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
+import {
+  forecastByCurrency,
+  isOutcomeRole,
+  stageRole,
+  useFunnelReasons,
+  type BoardStage,
+} from "@/components/blocks/deal-funnel-ui"
+import type { StageRole } from "@/lib/funnel/config"
 import { DealUndoAgentDialog } from "@/components/blocks/deal-lifecycle-dialogs"
 import { isOpenDealStatus } from "@/lib/deal-funnel"
 import {
@@ -56,7 +67,6 @@ import {
   aggregateByCurrency,
   dealAmount,
   filterByOwner,
-  isTerminalStage,
   moveDirection,
   type OwnerFilter,
 } from "@/lib/deal-board"
@@ -229,8 +239,15 @@ export function DealsBoard({
   const [pendingOutcome, setPendingOutcome] = useState<PendingOutcome | null>(
     null,
   )
-  const [stageSettingsOpen, setStageSettingsOpen] = useState(false)
-  const [dealTypesOpen, setDealTypesOpen] = useState(false)
+  // «Настройки воронки» (стадии, правила, типы, причины, вход) — один
+  // диалог; кнопка «Типы сделок» открывает его же на вкладке типов.
+  const [funnelSettingsTab, setFunnelSettingsTab] =
+    useState<FunnelSettingsTab | null>(null)
+  // Перечитать причины исходов после сохранения настроек воронки.
+  const [funnelVersion, setFunnelVersion] = useState(0)
+  const reasons = useFunnelReasons(funnelVersion)
+  const forecastTip = useAnchorTooltip()
+  const unestimatedTip = useAnchorTooltip()
   // «Отменить» у бейджа «создал агент» (карточка или дровер) → один диалог.
   const [undoDeal, setUndoDeal] = useState<DealRow | null>(null)
   const [finalSort, setFinalSortState] = useState<TerminalSortMode>("default")
@@ -346,24 +363,40 @@ export function DealsBoard({
     [filtered],
   )
 
-  // Терминальные итоги (UX №4/№5/№6): «Выиграно» = активные на стадии Closed;
-  // «Проиграно» = активные на стадии Rejected + все отменённые (cancelled).
+  // Роль стадии (area0 / active / won / lost) из настроек воронки
+  // (docs/specs/funnel §3.1) — вместо прежних проверок имён «Closed» /
+  // «Rejected».
+  const roleById = useMemo(
+    () =>
+      new Map<string, StageRole>(
+        stages.map((s) => [s.id, stageRole(s as BoardStage) ?? "active"]),
+      ),
+    [stages],
+  )
+  const roleOf = useCallback(
+    (stageId: string | undefined) =>
+      (stageId ? roleById.get(stageId) : undefined) ?? null,
+    [roleById],
+  )
+
+  // Терминальные итоги (UX №4/№5/№6): «Выиграно» = активные на стадии `won`;
+  // «Проиграно» = активные на стадии `lost` + все отменённые (cancelled).
   // Deleted в итоги не входят. Считаем из filtered (агрегат виден всегда).
   const wonDeals = useMemo(
     () =>
       filtered.filter(
-        (d) => isOpenDealStatus(d.status) && d.funnelStageName === "Closed",
+        (d) => isOpenDealStatus(d.status) && roleOf(d.funnelStageId) === "won",
       ),
-    [filtered],
+    [filtered, roleOf],
   )
   const lostDeals = useMemo(
     () =>
       filteredBase.filter(
         (d) =>
           d.status === "cancelled" ||
-          (isOpenDealStatus(d.status) && d.funnelStageName === "Rejected"),
+          (isOpenDealStatus(d.status) && roleOf(d.funnelStageId) === "lost"),
       ),
-    [filteredBase],
+    [filteredBase, roleOf],
   )
 
   // «Не состоялись» по своим колонкам (не одной кучей в «Закрытие»): каждая
@@ -375,8 +408,11 @@ export function DealsBoard({
   // показываются в колонке «Закрытие» под тем же разделителем, чтобы не
   // потеряться молча.
   const flowStageIds = useMemo(
-    () => new Set(stages.filter((s) => !isTerminalStage(s.name)).map((s) => s.id)),
-    [stages],
+    () =>
+      new Set(
+        stages.filter((s) => !isOutcomeRole(roleOf(s.id))).map((s) => s.id),
+      ),
+    [stages, roleOf],
   )
   const { lostByStage, lostNoOrigin } = useMemo(() => {
     const byStage: Record<string, DealRow[]> = {}
@@ -399,25 +435,36 @@ export function DealsBoard({
   // (Trophy/Trash) считает ВСЕ lostDeals по орге, а не только lostNoOrigin —
   // это общий тотал, независимо от того, где физически лежат карточки.
   const terminalCards = useMemo(
-    () => sortTerminalCards([...wonDeals, ...lostNoOrigin], finalSort),
+    () =>
+      sortTerminalCards([...wonDeals, ...lostNoOrigin], finalSort),
     [wonDeals, lostNoOrigin, finalSort],
   )
 
   // Скрытые в «Настройках стадий» колонки (isHidden) на доску не попадают —
   // их сделки тоже не показываются (store раскладывает только по переданным).
   const flowStages = useMemo(
-    () => stages.filter((s) => !isTerminalStage(s.name) && !s.isHidden),
-    [stages],
+    () => stages.filter((s) => !isOutcomeRole(roleOf(s.id)) && !s.isHidden),
+    [stages, roleOf],
   )
-  const terminalStages = stages.filter((s) => isTerminalStage(s.name))
+  // Финальная колонка «Закрытие» = стадии `won` + `lost`.
+  const terminalStages = stages.filter((s) => isOutcomeRole(roleOf(s.id)))
   const closedStage = useMemo(
-    () => stages.find((s) => s.name === "Closed") ?? null,
-    [stages],
+    () => stages.find((s) => roleOf(s.id) === "won") ?? null,
+    [stages, roleOf],
   )
   const rejectedStage = useMemo(
-    () => stages.find((s) => s.name === "Rejected") ?? null,
-    [stages],
+    () => stages.find((s) => roleOf(s.id) === "lost") ?? null,
+    [stages, roleOf],
   )
+
+  // Позиция стадии среди активных — цвет кастомной колонки по прогрессии.
+  const activeIndexById = useMemo(() => {
+    const m = new Map<string, number>()
+    stages
+      .filter((s) => roleOf(s.id) === "active")
+      .forEach((s, i) => m.set(s.id, i))
+    return m
+  }, [stages, roleOf])
 
   // Store: группировка по стадиям, per-column сортировка, сворачивание,
   // оптимистичный reorder внутри колонки (moveOnly+position без диалога).
@@ -428,12 +475,23 @@ export function DealsBoard({
     boardId: currentUserId,
   })
 
-  const probByStageId = useMemo(
-    () => new Map(stages.map((s) => [s.id, s.closureProbability])),
-    [stages],
+  // Прогноз (spec §3.4, W5): только стадии «В прогнозе», активные (не на
+  // паузе) сделки с суммой и — для экспертной вероятности — с оценкой;
+  // «Без оценки» = сделки стадий прогноза без суммы / вероятности;
+  // «Выиграно» — факт, отдельно. Не двойной счёт бюджета из брифа.
+  const forecast = useMemo(
+    () => forecastByCurrency(stages as BoardStage[], filtered),
+    [stages, filtered],
   )
+  const forecastText = aggregateByCurrency(
+    forecast.map((f) => ({ amount: f.weighted, currency: f.currency })),
+  )
+  const wonText = aggregateByCurrency(
+    forecast.map((f) => ({ amount: f.won, currency: f.currency })),
+  )
+  const unestimatedCount = forecast.reduce((n, f) => n + f.unestimated, 0)
   const openCount = activeDeals.filter(
-    (d) => !isTerminalStage(d.funnelStageName),
+    (d) => !isOutcomeRole(roleOf(d.funnelStageId)),
   ).length
 
   // Все колонки доски свёрнуты (включая финальную) → кнопка над доской
@@ -506,15 +564,12 @@ export function DealsBoard({
     // Дроп в финальную колонку (пустая зона = sentinel `__final__`) ИЛИ на
     // терминальную карточку (реальный id стадии Closed/Rejected) → диалог исхода:
     // Выиграно → Closed, Проиграно → Rejected (см. confirmOutcome).
-    if (toStageId === FINAL_DROP_ID || (toStage && isTerminalStage(toStage.name))) {
+    const toRole = roleOf(toStage?.id)
+    if (toStageId === FINAL_DROP_ID || isOutcomeRole(toRole)) {
       if (!isOpenDealStatus(moving.status)) return // отменённые/удалённые не трогаем
       // Брошено на карточку той же терминальной стадии — переупорядочивания в
       // финальной колонке нет, диалог не дёргаем.
-      if (
-        toStage &&
-        isTerminalStage(toStage.name) &&
-        moving.funnelStageId === toStageId
-      )
+      if (toStage && isOutcomeRole(toRole) && moving.funnelStageId === toStageId)
         return
       // Дроп на свёрнутый рельс — разворачиваем, чтобы результат был виден.
       if (finalCollapsed) setFinalCollapsed(false)
@@ -585,12 +640,15 @@ export function DealsBoard({
     if (!toStage) return
     const fromStage = stages.find((s) => s.id === deal.funnelStageId)
 
-    if (isTerminalStage(toStage.name)) {
+    const toRole = roleOf(toStage.id)
+    if (isOutcomeRole(toRole)) {
       if (finalCollapsed) setFinalCollapsed(false)
       setPendingOutcome({
         dealId: deal.id,
         dealName: deal.name,
         fromLabel: fromStage?.label ?? "",
+        // Выбрана конкретная итоговая стадия — исход уже известен.
+        preset: toRole === "won" ? "won" : "lost",
       })
       return
     }
@@ -667,7 +725,11 @@ export function DealsBoard({
   // Подтверждение исхода из диалога финальной колонки: Выиграно → Closed,
   // Проиграно → Rejected. Идёт по тому же move-пути (moveDealStage, actor='user'
   // + запись в ленту решений), append в конец целевой терминальной стадии.
-  function confirmOutcome(result: "won" | "lost", note: string) {
+  function confirmOutcome(
+    result: "won" | "lost",
+    note: string,
+    reasonCode: string | null,
+  ) {
     if (!pendingOutcome) return
     const stage = result === "won" ? closedStage : rejectedStage
     if (!stage) {
@@ -705,6 +767,9 @@ export function DealsBoard({
             note: noteToSend,
             historyNote: noteToSend,
             position,
+            // Причина исхода из списка организации (spec §3.5); у «Выиграно»
+            // причины нет.
+            ...(reasonCode ? { outcomeReasonCode: reasonCode } : {}),
           }),
         })
         if (!res.ok) {
@@ -730,21 +795,33 @@ export function DealsBoard({
             <div className="flex items-baseline gap-4 flex-wrap">
               <h1 className="text-xl font-medium">Сделки</h1>
               <span className="text-sm text-muted-foreground">
-                взвешенный прогноз{" "}
-                <b className="text-foreground">
-                  {aggregateByCurrency(
-                    activeDeals
-                      .filter((d) => !isTerminalStage(d.funnelStageName))
-                      .map((d) => ({
-                        amount:
-                          dealAmount(d.value) *
-                          (probByStageId.get(d.funnelStageId) ??
-                            d.funnelStageProbability),
-                        currency: d.currency,
-                      })),
-                  )}
-                </b>{" "}
-                · открытых: <b className="text-foreground">{openCount}</b>
+                <span {...forecastTip.bind} className="cursor-default">
+                  Прогноз <b className="text-foreground">{forecastText}</b>
+                </span>
+                <AnchorTooltip
+                  text="Сумма × вероятность по активным сделкам стадий «В прогнозе». Бюджет из брифа не учитывается."
+                  open={forecastTip.open}
+                  virtualRef={forecastTip.virtualRef}
+                />
+                {unestimatedCount > 0 && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <span
+                      {...unestimatedTip.bind}
+                      className="cursor-default text-amber-700 dark:text-amber-400"
+                    >
+                      Без оценки: <b>{unestimatedCount}</b>
+                    </span>
+                    <AnchorTooltip
+                      text="Сделки стадий прогноза без суммы или без экспертной вероятности — в прогноз не входят"
+                      open={unestimatedTip.open}
+                      virtualRef={unestimatedTip.virtualRef}
+                    />
+                  </>
+                )}{" "}
+                · Выиграно <b className="text-foreground">{wonText}</b> ·
+                открытых: <b className="text-foreground">{openCount}</b>
               </span>
             </div>
             <PageHeaderActions />
@@ -833,13 +910,13 @@ export function DealsBoard({
                   <Button
                     size="icon-sm"
                     variant="outline"
-                    aria-label="Настройки стадий"
-                    onClick={() => setStageSettingsOpen(true)}
+                    aria-label="Настройки воронки"
+                    onClick={() => setFunnelSettingsTab("stages")}
                   >
                     <SlidersVertical className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Настройки стадий</TooltipContent>
+                <TooltipContent>Настройки воронки</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -847,7 +924,7 @@ export function DealsBoard({
                     size="icon-sm"
                     variant="outline"
                     aria-label="Типы сделок"
-                    onClick={() => setDealTypesOpen(true)}
+                    onClick={() => setFunnelSettingsTab("types")}
                   >
                     <Tags className="h-4 w-4" />
                   </Button>
@@ -881,14 +958,15 @@ export function DealsBoard({
               </Tooltip>
             </TooltipProvider>
             <DealStageSettingsDialog
-              open={stageSettingsOpen}
-              onOpenChange={setStageSettingsOpen}
-              onSaved={refresh}
-            />
-            <DealTypesSettingsDialog
-              open={dealTypesOpen}
-              onOpenChange={setDealTypesOpen}
-              onSaved={refresh}
+              open={funnelSettingsTab !== null}
+              initialTab={funnelSettingsTab ?? "stages"}
+              onOpenChange={(o) => {
+                if (!o) setFunnelSettingsTab(null)
+              }}
+              onSaved={() => {
+                setFunnelVersion((v) => v + 1)
+                refresh()
+              }}
             />
           </div>
         </div>
@@ -920,6 +998,7 @@ export function DealsBoard({
                 <Rail
                   key={column.stage.id}
                   stage={column.stage}
+                  activeIndex={activeIndexById.get(column.stage.id)}
                   count={column.cards.length}
                   amount={aggregateByCurrency(
                     column.cards.map((d) => ({
@@ -933,6 +1012,7 @@ export function DealsBoard({
                 <Column
                   key={column.stage.id}
                   column={column}
+                  activeIndex={activeIndexById.get(column.stage.id)}
                   lostCards={lostByStage[column.stage.id] ?? []}
                   showLost={showLostDeals}
                   tasksByDeal={board.tasksByDeal}
@@ -997,6 +1077,7 @@ export function DealsBoard({
       />
       <DealOutcomeDialog
         outcome={pendingOutcome}
+        lostReasons={reasons.lost}
         pending={isPending}
         onConfirm={confirmOutcome}
         onCancel={() => setPendingOutcome(null)}
@@ -1011,6 +1092,7 @@ export function DealsBoard({
         onChanged={refresh}
         onRequestStageChange={requestStageChange}
         onUndoAgent={setUndoDeal}
+        withdrawnReasons={reasons.withdrawn}
       />
       <DealUndoAgentDialog
         deal={undoDeal}

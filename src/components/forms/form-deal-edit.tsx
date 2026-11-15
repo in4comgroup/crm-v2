@@ -38,6 +38,7 @@ import type {
 } from "@/app/api/deals/route"
 import { CURRENCY_SYMBOL } from "@/lib/deal-board"
 import TaskEditDialog from "@/components/forms/form-task-edit"
+import { isOutcomeRole, stagePickerSuffix, stageRole } from "@/components/blocks/deal-funnel-ui"
 
 // Create-only — редактирование существующей сделки теперь идёт через
 // <DealDetailDrawer> (inline-форма прямо в панели подробностей), не через
@@ -122,9 +123,9 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
           ((tRes.types ?? []) as DealTypeOption[]).filter((t) => !t.isHidden),
         )
 
-        // Default: первая стадия САМОЙ воронки (lowest sortOrder, Qualification
-        // в системной) — 0-я «до воронки» не дефолт для новой сделки.
-        const defaultStage = stages.find((s) => !s.isPrePipeline) ?? stages[0]
+        // Default: the first ACTIVE-role stage of the funnel (docs/specs/funnel:
+        // roles, not names) — area 0 and the outcome stages are never the default.
+        const defaultStage = stages.find((s) => stageRole(s) === "active") ?? stages[0]
         form.reset({
           name: "",
           description: "",
@@ -285,13 +286,11 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {stageOptions.map((s) => (
+                        {stageOptions.filter((s) => !isOutcomeRole(stageRole(s))).map((s) => (
                           <SelectItem key={s.id} value={s.id}>
                             {s.label}{" "}
                             <span className="text-muted-foreground">
-                              {s.isPrePipeline
-                                ? "(до воронки)"
-                                : `(${Math.round(s.closureProbability * 100)}%)`}
+                              {stagePickerSuffix(s)}
                             </span>
                           </SelectItem>
                         ))}

@@ -13,6 +13,8 @@
 //      writes such as kanban position touch it).
 // The DB side is `loadDealLastActivity` in src/server/deal-activity.ts.
 
+import { isTerminalStageRole } from "@/lib/deal-funnel"
+
 // Stage norm when `deal_funnel_stage.stale_norm_days` is null.
 export const DEFAULT_STALE_NORM_DAYS = 14
 export const STALE_NORM_MIN_DAYS = 1
@@ -78,11 +80,10 @@ export function effectiveStaleNorm(staleNormDays: number | null | undefined): nu
     : DEFAULT_STALE_NORM_DAYS
 }
 
-const TERMINAL_STAGE_NAMES = new Set(["Closed", "Rejected"])
-
 export type DealStaleInput = {
   lastActivityAt?: string | null
-  funnelStageName: string
+  /** Role of the deal's stage (docs/specs/funnel §3.1): won / lost = terminal. */
+  funnelStageRole: string
   status: string
   staleNormDays?: number | null
 }
@@ -100,7 +101,7 @@ export function dealStaleInfo(
   now: Date = new Date(),
 ): DealStaleInfo | null {
   if (d.status !== "active") return null
-  if (TERMINAL_STAGE_NAMES.has(d.funnelStageName)) return null
+  if (isTerminalStageRole(d.funnelStageRole)) return null
   const days = daysSinceActivity(d.lastActivityAt, now)
   if (days === null) return null
   const norm = effectiveStaleNorm(d.staleNormDays)

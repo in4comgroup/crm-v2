@@ -126,9 +126,10 @@ function sortCards(cards: DealRow[], mode: SortMode): DealRow[] {
   }
 }
 
-// Исход карточки в терминальной колонке: выиграна (Closed) vs проиграна (прочее).
+// Исход карточки в терминальной колонке: выиграна (роль стадии `won`,
+// docs/specs/funnel §3.1 — не по имени) vs проиграна (прочее).
 function isWonDeal(d: DealRow): boolean {
-  return isOpenDealStatus(d.status) && d.funnelStageName === "Closed"
+  return isOpenDealStatus(d.status) && d.funnelStageRole === "won"
 }
 
 // Сортировка карточек финальной колонки. «По умолчанию» — по свежести; «won/lost»
@@ -405,6 +406,7 @@ export function useBoardStore({
                 ...d,
                 funnelStageId: toStageId,
                 funnelStageName: targetStage.name,
+                funnelStageRole: targetStage.role,
                 funnelStageLabel: targetStage.label,
                 funnelStageProbability: targetStage.closureProbability,
                 position: newPos,

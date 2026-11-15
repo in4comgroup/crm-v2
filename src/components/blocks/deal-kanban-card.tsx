@@ -238,10 +238,11 @@ export function DealKanbanCard({
     data: { type: "card" as const, stageId: deal.funnelStageId, dealId: deal.id },
   })
 
-  // Исход в финальной колонке: выиграна (Closed) / проиграна (Rejected). Только
-  // активные — отменённые/удалённые несут свои бейджи «Отменена»/«Удалена».
-  const isWon = isActive && deal.funnelStageName === "Closed"
-  const isLost = isActive && deal.funnelStageName === "Rejected"
+  // Исход в финальной колонке: выиграна (роль стадии `won`) / проиграна
+  // (`lost`) — по роли стадии воронки, не по имени (docs/specs/funnel §3.1).
+  // Только активные — отменённые/удалённые несут свои бейджи.
+  const isWon = isActive && deal.funnelStageRole === "won"
+  const isLost = isActive && deal.funnelStageRole === "lost"
 
   // Метка «перевёл агент»: последний перевод стадии сделал агент (движок
   // тем) и человек его ещё не пересматривал. Причина перевода (changes) — в поповере бейджа.

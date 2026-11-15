@@ -218,13 +218,15 @@ the converted «Тип клиента» read by analytics and a stage-rule guard
 
 **Purpose.** Sales funnel per org with weighted forecast and an audit journal.
 
-**Page.** `/deals` «Сделки»: kanban board (dnd-kit). Header shows weighted
-forecast (Σ value × stage probability over active non-terminal deals). Filter
+**Page.** `/deals` «Сделки»: kanban board (dnd-kit). Header shows «Прогноз» (Σ
+amount × probability over deals of stages marked «В прогнозе»; stage
+probability, or the deal's EXPERT probability when the stage says so — a deal
+without amount / expert probability is counted in «Без оценки: N»), and
+«Выиграно» apart (`computeForecast`, `src/lib/funnel/forecast.ts`). Filter
 row: «Все/Мои», text search, company combobox, «Перевёл агент» (agent-moved),
-«Не состоялись» (lost), «Лента решений»
-(decision feed), «Новая сделка», collapse-all, «Настройки стадий» (stage
-settings). Final column «Закрытие» merges Closed (won) and Rejected (lost).
-Clicking a card opens the deal drawer (the only edit surface).
+«Не состоялись» (lost), «Лента решений» (decision feed), «Новая сделка»,
+collapse-all, «Типы сделок», «Настройки воронки». Final column = the org's
+`won` + `lost` stages (by ROLE, never by name). Clicking a card opens the deal drawer (the only edit surface).
 
 **Main API.** `api/deals` (GET with many query modes, POST, PUT with `move`,
 `moveOnly`, `statusOnly`, `stageSettings` branches), `api/deals/[id]/contacts`,
@@ -233,12 +235,25 @@ Clicking a card opens the deal drawer (the only edit surface).
 **Server modules.** `deals.ts`, `deal-engine.ts`;
 helpers `src/lib/deal-board.ts`, `deal-funnel.ts`, `kanban-move.ts`.
 
+**Custom funnel** (`docs/specs/funnel/`): every org's funnel is DATA the owner
+edits in «Настройки воронки» — stages (role `area0` / `active` / `won` /
+`lost`, code, description, entry condition, signals hint, forecast settings),
+deal types, outcome reasons (lost / no-go / withdrawn), the entry gate
+(go / no-go before the pipeline) and the stage RULES (signal → create / move /
+won / lost / pause / in-stage), with validation on save, a preview on the last
+30 days and platform templates («Продажи B2B (стандарт)», «Тендеры и конкурсы
+(5 стадий)»). The engine reads only this data — no code per org. API
+`api/deals/funnel`, admin `api/admin/funnel`; server `funnel-config.ts`.
+IN4COM GmbH runs «Тендеры и конкурсы» with the go / no-go gate.
+
 **Key rules.**
 - Every creation and stage move writes a `deal_activity` row. Moving back
   needs a reason; dropping on «Закрытие» asks won/lost.
 - Manual order inside a column uses a fractional index (`deal.position`).
-- Stage settings: an org can rename and hide stages and add a pre-pipeline
-  stage; the first save copies the system stages into org-owned rows.
+- The first save of an org on the system funnel copies the system stages into
+  org-owned rows. A stage with deals cannot be removed. Deal fields «Экспертная
+  вероятность, %» and «Бюджет из брифа» (never in the forecast); outcomes carry
+  a reason code from the org lists.
 - «Текущее состояние» (`deal.state_text`) is written only from topics linked
   to the deal. Business topics of a company are linked automatically to its
   ONLY open deal; with 2+ open deals a `deal_link` card asks the user (spec

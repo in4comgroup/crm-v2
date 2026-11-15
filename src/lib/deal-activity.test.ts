@@ -76,7 +76,7 @@ describe("daysSinceActivity", () => {
 
 describe("dealStaleInfo", () => {
   const base = {
-    funnelStageName: "Proposal",
+    funnelStageRole: "active",
     status: "active",
     staleNormDays: null as number | null,
   }
@@ -95,8 +95,8 @@ describe("dealStaleInfo", () => {
   })
   it("hidden on terminal stages, paused / closed deals and unknown dates", () => {
     const at = "2026-09-01T00:00:00Z"
-    expect(dealStaleInfo({ ...base, funnelStageName: "Closed", lastActivityAt: at }, NOW)).toBeNull()
-    expect(dealStaleInfo({ ...base, funnelStageName: "Rejected", lastActivityAt: at }, NOW)).toBeNull()
+    expect(dealStaleInfo({ ...base, funnelStageRole: "won", lastActivityAt: at }, NOW)).toBeNull()
+    expect(dealStaleInfo({ ...base, funnelStageRole: "lost", lastActivityAt: at }, NOW)).toBeNull()
     expect(dealStaleInfo({ ...base, status: "paused", lastActivityAt: at }, NOW)).toBeNull()
     expect(dealStaleInfo({ ...base, status: "cancelled", lastActivityAt: at }, NOW)).toBeNull()
     expect(dealStaleInfo({ ...base, lastActivityAt: null }, NOW)).toBeNull()

@@ -84,6 +84,8 @@ export type SaveResult =
 
 type Batch = [BatchItem<"pg">, ...BatchItem<"pg">[]]
 
+export type RegistryChangeRow = ChangeRow
+
 type ChangeRow = {
   entity: SignalRegistryEntity
   entityKey: string
@@ -174,6 +176,20 @@ async function commit(
       throw err
     }
   }
+}
+
+/**
+ * Other modules' registry writes (custom funnel: the owner's stage rules,
+ * src/server/funnel-config.ts): the caller's statements + one new taxonomy
+ * version + the change rows, in ONE batch (same retry as `commit`).
+ */
+export async function commitRegistryBatch(
+  statements: BatchItem<"pg">[],
+  changes: RegistryChangeRow[],
+  summary: string,
+  userId: string,
+): Promise<number> {
+  return commit(statements, changes, summary, userId)
 }
 
 // ── key helpers ───────────────────────────────────────────────────────────

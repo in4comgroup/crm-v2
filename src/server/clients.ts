@@ -24,7 +24,7 @@ import {
   gte,
   sql,
 } from "drizzle-orm"
-import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
+import { isOpenStageRole, OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { computeOrderDiscount } from "@/lib/orders-format"
 import { loadClientLastActivity } from "@/server/client-activity"
 import { listDealFunnelStages } from "@/server/deals"
@@ -305,19 +305,14 @@ export async function listClientsFeed(params: {
   const offset = Math.max(params.offset ?? 0, 0)
 
   const stages = await listDealFunnelStages()
+  // By stage ROLE (docs/specs/funnel §3.1), never by name / probability:
+  // won = «закрыта», area0 + active = «потенциальный» (area 0 — a target
+  // company we already work with, even before an active opportunity).
   const closedStageIds = new Set(
-    stages.filter((s) => s.closureProbability >= 1).map((s) => s.id),
+    stages.filter((s) => s.role === "won").map((s) => s.id),
   )
   const openStageIds = new Set(
-    stages
-      // «Область 0» (isPrePipeline) — тоже «потенциальный»: целевая компания,
-      // с которой уже ведём отношения, хоть активной возможности ещё нет.
-      .filter(
-        (s) =>
-          s.isPrePipeline ||
-          (s.closureProbability > 0 && s.closureProbability < 1),
-      )
-      .map((s) => s.id),
+    stages.filter((s) => isOpenStageRole(s.role)).map((s) => s.id),
   )
 
   const dealRows = await db

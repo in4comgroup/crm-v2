@@ -3,6 +3,7 @@ import "server-only"
 import { randomUUID } from "node:crypto"
 import { and, desc, eq } from "drizzle-orm"
 import { z } from "zod"
+import { ENTRY_GATES, funnelConfigSchema, type EntryGate, type FunnelConfig } from "@/lib/funnel/config"
 import { db } from "@/db/drizzle"
 import { orgSetting, orgSettingLog, user } from "@/db/schema"
 import { attentionParamsOverrideSchema, type AttentionParamsOverride } from "@/lib/topics/attention-params"
@@ -61,6 +62,13 @@ export const ORG_SETTINGS = {
   },
   // Deal bridge (topics phase 5, spec 01 §9.2, 06 §13): per-org overrides of
   // the platform values (null = platform_setting, then the code default).
+  // Custom funnel (docs/specs/funnel §3.2 / §3.5): the entry gate and the
+  // org's outcome reason lists (null = generic DEFAULT_FUNNEL_REASONS).
+  "deals.entryGate": { schema: z.enum(ENTRY_GATES), default: "none" as EntryGate },
+  "deals.outcomeReasons": {
+    schema: funnelConfigSchema.shape.reasons.nullable(),
+    default: null as FunnelConfig["reasons"] | null,
+  },
   "deals.autoCreateEnabled": { schema: z.boolean().nullable(), default: null as boolean | null },
   "deals.autoCreateMinScore": { schema: z.number().int().min(0).max(20).nullable(), default: null as number | null },
   "deals.autoCreateMinConfidence": {

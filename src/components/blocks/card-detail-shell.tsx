@@ -35,6 +35,13 @@ import TaskEditDialog from "@/components/forms/form-task-edit"
 import type { CardRow } from "@/app/api/cards/route"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
 import {
+  GO_LABEL,
+  NO_GO_DIALOG_DESCRIPTION,
+  NO_GO_DIALOG_TITLE,
+  NO_GO_LABEL,
+  dealCardGate,
+} from "@/components/blocks/deal-funnel-ui"
+import {
   CARD_REJECT_DIALOG_TITLE_RU,
   DealLinkChooser,
   dealExecuteToast,
@@ -105,7 +112,11 @@ export function CardDetailShell({ card }: { card: CardRow }) {
   const isTopicCard = !!card.kind
   // Deal cards (topics phase 5) — see DashboardCard.
   const dealKind = isDealCardKind(card.kind) ? card.kind : null
-  const [rejectCode, setRejectCode] = useState<string>(defaultRejectReason(card.kind))
+  // Go / no-go proposal (custom funnel §3.2): «Go» / «No-go», no-go needs
+  // one of the org reasons (sent as `nogo:<code>`).
+  const { gate, noGoReasons } = dealCardGate(card)
+  const initialRejectCode = gate ? "" : defaultRejectReason(card.kind)
+  const [rejectCode, setRejectCode] = useState<string>(initialRejectCode)
   const rejectReady = isTopicCard ? !!rejectCode : !!rejectReason.trim()
   const [isPending, startTransition] = useTransition()
 
@@ -200,7 +211,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
         toast.success("Карточка отклонена")
         setRejectOpen(false)
         setRejectReason("")
-        setRejectCode(defaultRejectReason(card.kind))
+        setRejectCode(initialRejectCode)
         router.refresh()
       } catch {
         toast.error("Не удалось отклонить карточку")
@@ -371,7 +382,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
               ) : dealKind ? (
                 <Button disabled={isPending} className="flex-1" onClick={() => handleDealExecute()}>
                   <Handshake className="h-4 w-4 mr-1" />
-                  {DEAL_CARD_ACCEPT_LABEL_RU[dealKind]}
+                  {gate ? GO_LABEL : DEAL_CARD_ACCEPT_LABEL_RU[dealKind]}
                 </Button>
               ) : card.category === "new_order" ? (
                 <Button
@@ -410,18 +421,27 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                     className="flex-1"
                   >
                     <X className="h-4 w-4 mr-1" />
-                    {dealKind ? DEAL_CARD_REJECT_LABEL_RU[dealKind] : "Отклонить"}
+                    {gate
+                    ? NO_GO_LABEL
+                    : dealKind
+                      ? DEAL_CARD_REJECT_LABEL_RU[dealKind]
+                      : "Отклонить"}
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-md">
                   <DialogHeader>
                     <DialogTitle>
-                      {dealKind ? CARD_REJECT_DIALOG_TITLE_RU[dealKind] : "Отклонить карточку"}
+                      {gate
+                      ? NO_GO_DIALOG_TITLE
+                      : dealKind
+                        ? CARD_REJECT_DIALOG_TITLE_RU[dealKind]
+                        : "Отклонить карточку"}
                     </DialogTitle>
                     <DialogDescription>
-                      Укажите краткую причину. Она сохранится вместе с карточкой,
-                      чтобы команда видела, почему её отклонили.
-                    </DialogDescription>
+                    {gate
+                      ? NO_GO_DIALOG_DESCRIPTION
+                      : "Укажите краткую причину. Она сохранится вместе с карточкой, чтобы команда видела, почему её отклонили."}
+                  </DialogDescription>
                   </DialogHeader>
                   {isTopicCard && (
                     <CardRejectReasonSelect
@@ -429,6 +449,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                       onChange={setRejectCode}
                       disabled={isPending}
                       kind={card.kind}
+                    noGoReasons={gate ? noGoReasons : undefined}
                     />
                   )}
                   <Textarea
@@ -454,7 +475,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                       onClick={handleReject}
                       disabled={isPending || !rejectReady}
                     >
-                      Отклонить карточку
+                      {gate ? NO_GO_LABEL : "Отклонить карточку"}
                     </Button>
                   </DialogFooter>
                 </DialogContent>

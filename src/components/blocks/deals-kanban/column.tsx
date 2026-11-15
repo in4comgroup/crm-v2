@@ -1,7 +1,7 @@
 "use client"
 
 import { useDroppable } from "@dnd-kit/core"
-import { ArrowDownUp, PanelLeftClose } from "lucide-react"
+import { ArrowDownUp, Info, PanelLeftClose } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -26,6 +26,12 @@ import {
 import type { DealRow } from "@/app/api/deals/route"
 import type { DealTaskInfo } from "@/hooks/use-board-intel"
 import { DealKanbanCard } from "@/components/blocks/deal-kanban-card"
+import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
+import {
+  forecastByCurrency,
+  stageRole,
+  type BoardStage,
+} from "@/components/blocks/deal-funnel-ui"
 import {
   SORT_LABEL,
   SORT_MODES,
@@ -48,8 +54,11 @@ export function Column({
   onUndoAgent,
   onCollapse,
   onSortChange,
+  activeIndex,
 }: {
   column: BoardColumn
+  // Позиция среди активных стадий — цвет кастомной стадии (stageColorClass).
+  activeIndex?: number
   // Проигранные/отменённые сделки, закрытые именно с ЭТОГО этапа — см.
   // lostByStage в deals-board.tsx (listRejectedDealOrigins для Rejected,
   // funnelStageId напрямую для cancelled). Показаны под разделителем «Не
@@ -69,8 +78,22 @@ export function Column({
     id: `col:${stage.id}`,
     data: { type: "column" as const, stageId: stage.id },
   })
-  const colorClass = stageColorClass(stage)
-  const pre = stage.isPrePipeline
+  // Роль / прогноз стадии — из настроек воронки (docs/specs/funnel §3.1, §3.4).
+  const fs = stage as BoardStage
+  const pre = stageRole(fs) === "area0"
+  const colorClass = stageColorClass({ ...stage, activeIndex })
+  const inForecast = !pre && fs.inForecast !== false
+  const expert = fs.probabilityMode === "expert"
+  // Взвешенная сумма колонки — тем же computeForecast, что и шапка доски
+  // (экспертная вероятность сделки при probabilityMode = expert).
+  const columnForecast = forecastByCurrency([fs], cards)
+  const weightedEntries = columnForecast.map((f) => ({
+    amount: f.weighted,
+    currency: f.currency,
+  }))
+  const unestimated = columnForecast.reduce((n, f) => n + f.unestimated, 0)
+  const entryTip = useAnchorTooltip()
+  const entryCondition = fs.entryCondition?.trim() || null
 
   return (
     // Резиновая ширина: колонки делят ряд поровну — доска заполняет страницу
@@ -89,9 +112,26 @@ export function Column({
           <div className="min-w-0">
             <div className="flex items-baseline gap-2 text-sm font-medium">
               <span className="truncate">{stage.label}</span>
-              {!pre && (
+              {inForecast && (
                 <span className="text-xs opacity-70 shrink-0">
-                  {Math.round(stage.closureProbability * 100)}%
+                  {expert
+                    ? "эксп."
+                    : `${Math.round(stage.closureProbability * 100)}%`}
+                </span>
+              )}
+              {/* «Условие входа» стадии — подсказка у названия колонки. */}
+              {entryCondition && (
+                <span
+                  {...entryTip.bind}
+                  className="shrink-0 self-center opacity-70"
+                  aria-label={`Условие входа: ${entryCondition}`}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                  <AnchorTooltip
+                    text={`Условие входа: ${entryCondition}`}
+                    open={entryTip.open}
+                    virtualRef={entryTip.virtualRef}
+                  />
                 </span>
               )}
             </div>
@@ -119,15 +159,11 @@ export function Column({
                   </div>
                   {pre ? (
                     <div className="truncate opacity-80">до воронки · вне прогноза</div>
+                  ) : !inForecast ? (
+                    <div className="truncate opacity-80">вне прогноза</div>
                   ) : (
                   <div className="truncate">
-                    взвеш.{" "}
-                    {aggregateByCurrencyCompact(
-                      cards.map((d) => ({
-                        amount: dealAmount(d.value) * stage.closureProbability,
-                        currency: d.currency,
-                      })),
-                    )}
+                    взвеш. {aggregateByCurrencyCompact(weightedEntries)}
                   </div>
                   )}
                 </div>
@@ -150,16 +186,24 @@ export function Column({
                     Контакты до запроса: знакомства и отношения без активной
                     возможности. Не стадия сделки и не входит в прогноз.
                   </div>
+                ) : !inForecast ? (
+                  <div className="max-w-56">
+                    Стадия не входит в денежный прогноз.
+                  </div>
                 ) : (
-                <div>
-                  Взвешенно:{" "}
-                  {aggregateByCurrency(
-                    cards.map((d) => ({
-                      amount: dealAmount(d.value) * stage.closureProbability,
-                      currency: d.currency,
-                    })),
+                <>
+                  <div>
+                    Взвешенно: {aggregateByCurrency(weightedEntries)}
+                  </div>
+                  {expert && (
+                    <div className="max-w-56">
+                      Вероятность — экспертная, по каждой сделке.
+                    </div>
                   )}
-                </div>
+                  {unestimated > 0 && (
+                    <div>Без оценки: {unestimated}</div>
+                  )}
+                </>
                 )}
               </TooltipContent>
             </Tooltip>

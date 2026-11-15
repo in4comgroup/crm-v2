@@ -31,6 +31,7 @@ extension).
 | `/o/[token]` (+ its server actions) | Guest order confirmation for a client without an account | Opaque token = the capability; actions are pinned to that order |
 | `/api/webhooks/telegram/[sourceId]` | Called by Telegram | Per-source secret header, constant-time compare |
 | `/api/cron/daily` | Called by Vercel Cron | `Authorization: Bearer $CRON_SECRET`, required in every environment; a missing `CRON_SECRET` rejects all calls |
+| `/api/cron/topics`, `/api/cron/notifications` | Called by Vercel Cron (hourly; notifications since 2026-11-15) | Same `Bearer $CRON_SECRET` check; covered by the `/api/cron/*` pattern in `src/proxy.ts` |
 
 **Adding a public entry point** requires: a reason, its own protection, a row
 in this table, and a pattern in `src/proxy.ts`. Never widen a pattern to a

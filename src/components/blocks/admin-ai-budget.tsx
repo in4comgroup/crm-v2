@@ -4,7 +4,7 @@
 // - DAILY budget: USD of gateway cost per UTC day (spec 07). Owners never
 //   see its amounts.
 // - MONTHLY limit: USD of END-USER cost (with markup) per calendar month,
-//   UTC (spec 08). Owners see it on /account with warnings from 80 %.
+//   UTC (spec 08). Owners see it on /account: a note from 70 %, a warning from 90 %.
 // Defaults + per-organization overrides, with today's / this month's spend.
 // Background AI of an org stops when either is used up; interactive AI
 // keeps working.
@@ -147,8 +147,8 @@ export function AdminAiBudget() {
         <CardDescription className="text-xs">
           <b>Дневной бюджет</b> — себестоимость шлюза в USD за сутки (UTC); владельцы организаций
           его сумм не видят. <b>Месячный лимит</b> — стоимость для клиента (с наценкой) в USD за
-          календарный месяц (UTC); владелец видит его на странице организации, с предупреждением от
-          80 %. Когда исчерпан любой из них, фоновые процессы ИИ (разбор источников, темы)
+          календарный месяц (UTC); владелец видит его на странице организации: уведомление от 70 %,
+          предупреждение от 90 %. Когда исчерпан любой из них, фоновые процессы ИИ (разбор источников, темы)
           останавливаются; ИИ чат и другие функции, которые запускает пользователь, работают.
         </CardDescription>
       </CardHeader>

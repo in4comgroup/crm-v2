@@ -108,7 +108,8 @@ Custom-rule card generation was removed (topics plan phase 12). Topic cards come
 | `card_client` | Card ↔ company | PK `(cardId, clientId)` |
 | `card_user` | Card ↔ involved org member (not the creator) | PK `(cardId, userId)` |
 | `card_contact` | Card ↔ external contact (matched by sender email) | PK `(cardId, contactId)` |
-| `notification_read_state` | Per-user "last seen" for the header bell | `organizationId`, `userId`, `lastSeenAt` |
+| `notification` | In-app notification, one row per recipient (spec `docs/specs/notifications/`, migration `0040`) | `organizationId` (null = platform), `userId`, `kind`, `category`, `priority` (important / info), `title`, `body`, `href`, `entityType` / `entityId`, `dedupeKey` (unique per user), `payload`, `readAt`, `dismissedAt`, `resolvedAt`, `expiresAt` |
+| `notification_pref` | Notification categories a user switched off, per org | PK `(organizationId, userId)`, `categories` jsonb |
 
 ## 7. AI model registry
 

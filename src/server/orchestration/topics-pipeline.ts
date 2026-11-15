@@ -14,6 +14,7 @@ import {
   type TopicsRunOrgOutcome,
 } from "@/server/topics/runs"
 import { ORCHESTRATION_CONFIG } from "./config"
+import { notify } from "@/server/notifications/engine"
 
 // Engine-agnostic entry point of the HOURLY topics pipeline (spec topics/01
 // §13, plan phase 0 task 6). Called by:
@@ -183,6 +184,21 @@ export async function runTopicsPipeline(
     .update(topicsRun)
     .set({ finishedAt, status, orgsProcessed: orgs.length, orgs, errorsJson: errors })
     .where(eq(topicsRun.id, topicsRunId))
+
+  // Platform admins: at most one notice per UTC day for the hourly run
+  // (org owners get `process.run_failed` from the notification checks).
+  if (status === "failed" && opts.trigger === "cron") {
+    const failedOrgs = new Set(errors.map((e) => e.orgId).filter(Boolean)).size
+    await notify(null, {
+      kind: "platform.run_failed",
+      title: "Фоновый запуск тем завершился с ошибками",
+      body: `Ошибок: ${errors.length}${failedOrgs ? `, организаций с ошибками: ${failedOrgs}` : ""}. Подробности — в «Настройки» → «Темы» → журнал запусков.`,
+      href: "/settings",
+      dedupeKey: `platform.run_failed:topics:${finishedAt.toISOString().slice(0, 10)}`,
+      payload: { runId: topicsRunId, errors: errors.length, failedOrgs },
+      at: finishedAt,
+    })
+  }
 
   return {
     topicsRunId,

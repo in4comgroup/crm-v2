@@ -59,6 +59,14 @@ export const ORCHESTRATION_CONFIG = {
     // crashed run: marked `failed`, and it no longer blocks a new run.
     staleRunAfterMinutes: 120,
   },
+
+  // ── Hourly notification checks (runAllNotificationChecks,
+  //    docs/specs/notifications §3.2) ──
+  notifications: {
+    // Cron schedule expression (UTC). Every hour at :15 (after the topics
+    // run starts). **Duplicated in `vercel.ts`** — change both.
+    cron: "15 * * * *",
+  },
 } as const
 
 export type OrchestrationConfig = typeof ORCHESTRATION_CONFIG

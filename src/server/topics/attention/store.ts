@@ -381,6 +381,33 @@ export async function recomputeAttentionForRows(
     const chunk = ops.slice(i, i + 100)
     if (chunk.length) await db.batch(chunk as unknown as BatchOps)
   }
+  // Notifications (docs/specs/notifications §5 `topic.now`): a topic that
+  // ENTERS «Сейчас» → its assignee (P8 important, else info). Topics mode
+  // `on` only (users see topics only then). The P6 daily limit stays a
+  // read-time rule of the lists. Never throws.
+  const entered = computed.filter((c) => c.attention.list === "now" && c.row.list !== "now" && c.ownerUserId)
+  if (entered.length > 0) {
+    try {
+      const { getTopicsMode } = await import("../mode")
+      if ((await getTopicsMode(ctx.orgId)) === "on") {
+        const { notify } = await import("@/server/notifications/engine")
+        for (const c of entered) {
+          await notify(ctx.orgId, {
+            kind: "topic.now",
+            userIds: [c.ownerUserId],
+            priority: c.attention.profile === "P8" ? "important" : "info",
+            title: c.row.title,
+            body: c.attention.explanation?.[0] ?? null,
+            href: `/dashboard?topic=${c.row.id}`,
+            entity: { type: "topic", id: c.row.id },
+            dedupeKey: `topic.now:${c.row.id}:${c.attention.cycleStartedAt ?? now.toISOString().slice(0, 10)}`,
+          })
+        }
+      }
+    } catch (err) {
+      console.error("[topics:attention] notifications failed", ctx.orgId, err)
+    }
+  }
   return out
 }
 

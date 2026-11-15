@@ -14,6 +14,7 @@ import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { AccountAiUsage } from "@/components/blocks/account-ai-usage"
 import { AccountTopicDelivery } from "@/components/blocks/account-topic-delivery"
+import { AccountNotificationPrefs } from "@/components/blocks/account-notification-prefs"
 import { OrgProfileTab } from "@/components/blocks/org-profile-tab"
 import { OrgProfileBanner } from "@/components/blocks/org-profile-banner"
 import { AiLimitBanner } from "@/components/blocks/ai-limit-banner"
@@ -43,8 +44,10 @@ export default function AccountPage() {
   const [organization, setOrganization] = useState<Organization | null>(null)
   const [memberRole, setMemberRole] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
-  // «Уведомления по темам» (topics phase 7): only when the org's topics mode
-  // is `on`. `?tab=notifications` (link in the digest emails) opens it.
+  // «Уведомления» tab: every member (in-app notification prefs,
+  // docs/specs/notifications §6); its «Уведомления по темам» block (topics
+  // phase 7) only when the org's topics mode is `on`.
+  // `?tab=notifications` (link in the digest emails) opens it.
   const [topicsOn, setTopicsOn] = useState(false)
   const [tab, setTab] = useState("info")
   // «Профиль организации» (identity I1): mounted on the first visit and then
@@ -80,11 +83,15 @@ export default function AccountPage() {
         const on = topicsState?.visible === true
         setTopicsOn(on)
         const wantTab = new URLSearchParams(window.location.search).get("tab")
-        if (on && wantTab === "notifications") {
+        if (wantTab === "notifications") {
           setTab("notifications")
         } else if (wantTab === "org-profile") {
           setProfileVisited(true)
           setTab("org-profile")
+        } else if (wantTab === "ai-usage" || wantTab === "members") {
+          // Links from notifications (docs/specs/notifications). The tabs
+          // themselves are shown only to the roles that may see them.
+          setTab(wantTab)
         }
         const org: Organization | null = orgRes.organization ?? null
         let role: string | null = null
@@ -162,7 +169,7 @@ export default function AccountPage() {
             <TabsTrigger value="members">Участники</TabsTrigger>
           )}
           {isOwner && <TabsTrigger value="ai-usage">Использование ИИ</TabsTrigger>}
-          {topicsOn && <TabsTrigger value="notifications">Уведомления</TabsTrigger>}
+          <TabsTrigger value="notifications">Уведомления</TabsTrigger>
         </TabsList>
 
         <TabsContent value="info" className="flex flex-col gap-4">
@@ -228,12 +235,12 @@ export default function AccountPage() {
           </TabsContent>
         )}
 
-        {/* Any member: the user's own topics delivery choices. */}
-        {topicsOn && (
-          <TabsContent value="notifications">
-            <AccountTopicDelivery />
-          </TabsContent>
-        )}
+        {/* Any member: the user's own in-app notification categories, then
+            the topics delivery choices (topics mode `on` only). */}
+        <TabsContent value="notifications" className="flex flex-col gap-4">
+          <AccountNotificationPrefs />
+          {topicsOn && <AccountTopicDelivery />}
+        </TabsContent>
       </Tabs>
     </div>
   )

@@ -1152,29 +1152,6 @@ export const cardContact = pgTable(
   ],
 )
 
-// One row per (org, user) — the watermark for the notification bell
-// (src/server/notifications.ts). The feed itself is DERIVED (created_at
-// across client/contact/deal/card, newest first), not a duplicated event
-// log — this table only remembers "seen up to when" per viewer, same spirit
-// as teardown.ts's re-aggregation over existing data instead of a parallel
-// ledger. No row yet = never opened the bell; the server falls back to a
-// 24h lookback for that case rather than dumping the org's whole history.
-export const notificationReadState = pgTable(
-  "notification_read_state",
-  {
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.organizationId, table.userId] }),
-  ],
-)
-
 // ── Product catalog ──────────────────────────────────────────────────
 //
 // Org-scoped catalog of sellable items (product catalog for the
@@ -3978,4 +3955,61 @@ export const contactLinkEvent = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [index("contact_link_event_contact_idx").on(table.contactId, table.createdAt)],
+)
+
+// ── Notifications (docs/specs/notifications) ───────────────────────────────
+// One row per RECIPIENT. `kind` / `category` / `priority` are text validated
+// in code (src/lib/notifications/kinds.ts). `dedupe_key` (namespaced with
+// the org id by the engine) makes a condition notify a person once.
+// `organization_id` null = a platform notification (platform admins, shown
+// in every org). Written only through src/server/notifications/.
+export const notification = pgTable(
+  "notification",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    category: text("category").notNull(),
+    // important | info
+    priority: text("priority").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    href: text("href"),
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    dedupeKey: text("dedupe_key").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    readAt: timestamp("read_at"),
+    dismissedAt: timestamp("dismissed_at"),
+    // The condition is gone («уже не актуально»).
+    resolvedAt: timestamp("resolved_at"),
+    // Hidden after this (info 3 days, important 5 days — Q11).
+    expiresAt: timestamp("expires_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("notification_user_dedupe_uq").on(table.userId, table.dedupeKey),
+    index("notification_user_list_idx").on(table.userId, table.expiresAt, table.createdAt),
+    index("notification_dedupe_idx").on(table.dedupeKey),
+  ],
+)
+
+// Per user and org: categories switched off in the app (Q8). No row = all on.
+export const notificationPref = pgTable(
+  "notification_pref",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // { [category]: false } — absent = on
+    categories: jsonb("categories").$type<Record<string, boolean>>().notNull().default({}),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.userId] })],
 )

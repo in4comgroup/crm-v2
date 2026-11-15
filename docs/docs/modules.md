@@ -421,11 +421,21 @@ the conversation as an `aichat` source item.
 
 ## Notifications
 
-Bell in the header (`<NotificationsDrawer/>`). `GET /api/notifications` lists
-recent events of type client, contact, deal, card, handover and contact_link
-(«Контакт сменил компанию?», for the responsible members of both companies)
-for the org;
-`POST` marks them seen (`notification_read_state`). Server: `notifications.ts`.
+Bell in the header (`<NotificationsDrawer/>`), spec `docs/specs/notifications/`.
+Stored notifications per user (`notification`): categories («Задачи», «Сделки и
+темы», «Компании и контакты», «ИИ и лимиты», «Процессы и источники»,
+«Организация», «Оплата», «Платформа»), two priorities (important / info), read
+/ hide per item, «уже не актуально» when the condition is gone; info is hidden
+after 3 days, important after 5. Badge = unread count (red with an unread
+important); toasts for new important only. Sources: events (handover, contact
+changed company, new deal risk, topic in «Сейчас», order confirmed by the
+client, member joined, task assigned) and an hourly check for every org (task
+due tomorrow / today / overdue, AI limit 70 / 90 / 100 % and daily budget, org
+profile incomplete, client-profile proposals, failing sources, failed runs).
+AI usage, company profile and process notices go to org owners only. Settings
+per category: /account → «Уведомления». API `api/notifications`,
+`api/account/notification-prefs`, cron `api/cron/notifications`. Server:
+`src/server/notifications/`.
 
 ## Admin tools (`/settings`)
 
@@ -464,8 +474,8 @@ source reset.
   model / user — always cost WITH the platform markup, never the gateway cost or
   markup %; the card «Месячный лимит ИИ»; `api/account/ai-usage`, specs
   `docs/specs/models/05-…` §7 and `08-monthly-limit.md`) and tab «Уведомления»
-  (topics email choices). Owner banners on `/account`: incomplete org profile,
-  AI monthly limit ≥ 80 % / used up, daily AI budget used up.
+  (notification categories; topics email choices in mode `on`). Owner banners on `/account`: incomplete org profile,
+  AI monthly limit ≥ 70 % (info) / ≥ 90 % / used up, daily AI budget used up.
 - Invitations: owner invites by email → email with
   `/accept-invitation/<id>` → invitee signs in with an OTP sent to the invited
   address → accepts → active org is set. `/sign-up` blocks self sign-up when the

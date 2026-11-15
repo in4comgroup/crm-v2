@@ -13,6 +13,7 @@ import {
   contactLinkProposal,
   deal,
   dealActivity,
+  member,
   dealContact,
   documentLink,
   sourceItem,
@@ -342,56 +343,6 @@ async function listProposals(orgId: string, by: { contactId?: string; clientId?:
         createdAt: r.createdAt.toISOString(),
       }
     })
-}
-
-/** Bell: pending proposals the viewer should see (responsible of X or Y; everybody when neither has one). */
-export async function listProposalNotifications(
-  orgId: string,
-  userId: string,
-  opts: { limit: number; since?: Date },
-): Promise<{ id: string; contactId: string; contactName: string; subtitle: string; at: Date }[]> {
-  const fromC = client
-  const rows = await db
-    .select({
-      id: contactLinkProposal.id,
-      contactId: contactLinkProposal.contactId,
-      contactName: contact.name,
-      kind: contactLinkProposal.kind,
-      fromClientId: contactLinkProposal.fromClientId,
-      toClientId: contactLinkProposal.toClientId,
-      toCompanyName: contactLinkProposal.toCompanyName,
-      createdAt: contactLinkProposal.createdAt,
-    })
-    .from(contactLinkProposal)
-    .innerJoin(contact, eq(contact.id, contactLinkProposal.contactId))
-    .where(
-      and(
-        eq(contactLinkProposal.organizationId, orgId),
-        eq(contactLinkProposal.status, "pending"),
-        ne(contact.status, "deleted"),
-        opts.since ? gt(contactLinkProposal.createdAt, opts.since) : undefined,
-      ),
-    )
-    .orderBy(desc(contactLinkProposal.createdAt))
-    .limit(opts.limit * 3)
-  if (rows.length === 0) return []
-  const clientIds = [...new Set(rows.flatMap((r) => [r.fromClientId ?? "", r.toClientId ?? ""]).filter(Boolean))]
-  const cl = clientIds.length
-    ? await db.select({ id: fromC.id, name: fromC.name, responsible: fromC.responsibleUserId }).from(fromC).where(inArray(fromC.id, clientIds))
-    : []
-  const byId = new Map(cl.map((c) => [c.id, c]))
-  const out: { id: string; contactId: string; contactName: string; subtitle: string; at: Date }[] = []
-  for (const r of rows) {
-    const resp = [r.fromClientId, r.toClientId].map((id) => (id ? byId.get(id)?.responsible : null)).filter(Boolean)
-    if (resp.length > 0 && !resp.includes(userId)) continue
-    const x = r.fromClientId ? byId.get(r.fromClientId)?.name : null
-    const y = r.toClientId ? byId.get(r.toClientId)?.name : r.toCompanyName
-    const subtitle =
-      r.kind === "left" ? `больше не работает в ${x ?? "—"}?` : `${x ?? "—"} → ${y ?? "—"}${r.kind === "second_company" ? " (обе?)" : ""}`
-    out.push({ id: r.id, contactId: r.contactId, contactName: r.contactName, subtitle, at: r.createdAt })
-    if (out.length >= opts.limit) break
-  }
-  return out
 }
 
 // ── Write: link operations ─────────────────────────────────────────────────
@@ -757,6 +708,8 @@ export async function decideProposal(
     return { contactId: p.contactId }
   }
   const decided = { status: "accepted", decision: body.decision, decidedByUserId: userId, decidedAt: now, snoozedUntil: null }
+  const { resolveNotifications } = await import("@/server/notifications/engine")
+  await resolveNotifications(orgId, `contact.link_proposal:${p.id}`)
   if (body.decision === "other_person") {
     await db.batch(
       asBatch([
@@ -1345,7 +1298,47 @@ async function storeProposals(orgId: string, drafts: readonly ProposalDraft[], i
     pairKey: d.pairKey,
   }))
   const inserted = await db.insert(contactLinkProposal).values(rows).onConflictDoNothing().returning({ id: contactLinkProposal.id })
+  if (inserted.length > 0) await notifyProposals(orgId, inserted.map((r) => r.id))
   return inserted.length
+}
+
+/**
+ * Notifications (docs/specs/notifications §4, Q5 / Q6 of spec 04): each new
+ * «Контакт сменил компанию?» → the «Ответственный» of X and of Y; when
+ * neither company has one, the org owners. Never throws.
+ */
+async function notifyProposals(orgId: string, ids: readonly string[]): Promise<void> {
+  try {
+    const { notify } = await import("@/server/notifications/engine")
+    const views = await listProposals(orgId, { ids: [...ids] })
+    const clientIds = [...new Set(views.flatMap((v) => [v.fromClientId ?? "", v.toClientId ?? ""]).filter(Boolean))]
+    const resp = clientIds.length
+      ? await db.select({ id: client.id, r: client.responsibleUserId }).from(client).where(inArray(client.id, clientIds))
+      : []
+    const respOf = new Map(resp.map((r) => [r.id, r.r]))
+    let owners: string[] | null = null
+    for (const v of views) {
+      let userIds = [v.fromClientId, v.toClientId].map((id) => (id ? respOf.get(id) : null)).filter((x): x is string => !!x)
+      if (userIds.length === 0) {
+        owners ??= (
+          await db.select({ id: member.userId }).from(member).where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+        ).map((m) => m.id)
+        userIds = owners
+      }
+      const y = v.toClientName ?? v.toCompanyName
+      await notify(orgId, {
+        kind: "contact.link_proposal",
+        userIds,
+        title: `Контакт сменил компанию?: ${v.contactName}`,
+        body: v.kind === "left" ? `Больше не работает в ${v.fromClientName ?? "—"}?` : `${v.fromClientName ?? "—"} → ${y ?? "—"}`,
+        href: `/contacts?openContact=${v.contactId}`,
+        entity: { type: "contact", id: v.contactId },
+        dedupeKey: `contact.link_proposal:${v.id}`,
+      })
+    }
+  } catch (err) {
+    console.error("[contact-links] notifications failed", orgId, err)
+  }
 }
 
 /**

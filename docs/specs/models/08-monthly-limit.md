@@ -15,8 +15,9 @@ gateway cost and stays hidden).
 
 | State | When | Effect |
 | --- | --- | --- |
-| `ok` | spend < 80 % | — |
-| `warning` | 80 % ≤ spend < 100 % | Amber warning for the owner on `/account` |
+| `ok` | spend < 70 % | — |
+| `info` | 70 % ≤ spend < 90 % (since 2026-11-15, notifications Q3) | Calm info line for the owner on `/account`; notification `ai.limit.month.70` (info) |
+| `warning` | 90 % ≤ spend < 100 % | Amber warning for the owner on `/account`; notification `ai.limit.month.90` (important) |
 | `exceeded` | spend ≥ limit (a limit of 0 = always) | Red warning; **background** AI processes are refused like with the daily budget (usage event `status = blocked`, `error_type = monthly_limit_exceeded`, `AiBudgetExceededError` with `period = "month"`); **interactive** ones run and are logged. Resets on the 1st of the next month (UTC) |
 
 Both limits are checked by the same runtime gate (`enforceBudget`); background

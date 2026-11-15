@@ -208,7 +208,22 @@ export const auth = betterAuth({
         },
         afterAddMember: async ({ organization }) => invalidateOwnOrg(organization.id),
         afterRemoveMember: async ({ organization }) => invalidateOwnOrg(organization.id),
-        afterAcceptInvitation: async ({ organization }) => invalidateOwnOrg(organization.id),
+        afterAcceptInvitation: async ({ organization, user: joined }) => {
+          await invalidateOwnOrg(organization.id)
+          // Notifications (docs/specs/notifications §5 `member.joined`) → owners.
+          try {
+            const { notify } = await import("@/server/notifications/engine")
+            await notify(organization.id, {
+              kind: "member.joined",
+              title: `Новый участник: ${joined?.name || joined?.email || "—"}`,
+              body: joined?.email ?? null,
+              href: "/account?tab=members",
+              dedupeKey: `member.joined:${joined?.id ?? Date.now()}`,
+            })
+          } catch (err) {
+            console.error("[auth] member.joined notification failed", err)
+          }
+        },
       },
       async sendInvitationEmail(data) {
         const appUrl =

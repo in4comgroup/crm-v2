@@ -181,6 +181,25 @@ async function applyChange(
     })
     .where(and(eq(client.id, clientId), eq(client.organizationId, orgId)))
 
+  // Notifications (docs/specs/notifications §4): a handover → the receiving
+  // owner (important); a decision (assign) closes the pending handover.
+  const { notify, resolveNotifications } = await import("@/server/notifications/engine")
+  if (change.kind === "handover") {
+    const fromName = (await loadUserNames([actorUserId])).get(actorUserId) ?? null
+    const reason = readHandoverNote(fields)?.reason ?? null
+    await notify(orgId, {
+      kind: "client.handover",
+      userIds: [check.targetUserId],
+      title: `Компания передана вам: ${row.name}`,
+      body: [fromName ? `от ${fromName}` : null, reason].filter(Boolean).join(" · ") || null,
+      href: `/clients?openClient=${clientId}`,
+      entity: { type: "client", id: clientId },
+      dedupeKey: `client.handover:${clientId}:${now.getTime()}`,
+    })
+  } else {
+    await resolveNotifications(orgId, `client.handover:${clientId}:`, { prefix: true })
+  }
+
   return { clientId, responsibleUserId: check.targetUserId, responsibleHandoverFromUserId: handoverFrom, changed: true }
 }
 

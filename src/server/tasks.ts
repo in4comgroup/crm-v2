@@ -1,5 +1,7 @@
 "use server"
 
+import { onTaskChanged } from "@/server/notifications/checks"
+
 import { db } from "@/db/drizzle"
 import {
   task,
@@ -316,7 +318,38 @@ export async function createTask(data: {
     createdAt: now,
     updatedAt: now,
   })
+  if (assigneeId !== session.user.id) {
+    await notifyTaskAssigned(activeOrgId, id, data.name.trim(), assigneeId, session.user.name, due)
+  }
+  // Due reminders at once when the task is due today / tomorrow (never throws).
+  await onTaskChanged(activeOrgId, id)
   return { id }
+}
+
+// Notifications (docs/specs/notifications §4 `task.assigned`): a task that
+// someone ELSE assigned to you. Never throws.
+async function notifyTaskAssigned(
+  orgId: string,
+  taskId: string,
+  name: string,
+  assigneeId: string,
+  byName: string | null | undefined,
+  due: Date,
+): Promise<void> {
+  try {
+    const { notify } = await import("@/server/notifications/engine")
+    await notify(orgId, {
+      kind: "task.assigned",
+      userIds: [assigneeId],
+      title: `Вам назначена задача: ${name}`,
+      body: `${byName ? `от ${byName} · ` : ""}срок ${due.toLocaleDateString("ru-RU")}`,
+      href: `/tasks?openTask=${taskId}`,
+      entity: { type: "task", id: taskId },
+      dedupeKey: `task.assigned:${taskId}:${assigneeId}`,
+    })
+  } catch (err) {
+    console.error("[tasks] assigned notification failed", taskId, err)
+  }
 }
 
 export async function updateTask(
@@ -334,7 +367,7 @@ export async function updateTask(
     dueDate?: string | null
   },
 ) {
-  const { activeOrgId } = await requireOrgContext()
+  const { session, activeOrgId } = await requireOrgContext()
   const current = await assertTaskInOrg(taskId, activeOrgId)
 
   if (data.name !== undefined && !data.name.trim()) {
@@ -384,12 +417,27 @@ export async function updateTask(
       ...(due ? { dueDate: due } : {}),
     })
     .where(eq(task.id, taskId))
+
+  const reassigned = !!data.assigneeId && data.assigneeId !== current.assigneeId
+  if (reassigned && data.assigneeId !== session.user.id) {
+    await notifyTaskAssigned(activeOrgId, taskId, data.name?.trim() || current.name, data.assigneeId!, session.user.name, due ?? current.dueDate)
+  }
+  // Reminders: a new assignee → the old one's reminders close (the rule then
+  // notifies the new assignee); a moved date / closed task resolves the old ones.
+  if (reassigned) {
+    const { resolveNotifications } = await import("@/server/notifications/engine")
+    await resolveNotifications(activeOrgId, `task.due_tomorrow:${taskId}:`, { prefix: true })
+    await resolveNotifications(activeOrgId, `task.due_today:${taskId}:`, { prefix: true })
+    await resolveNotifications(activeOrgId, `task.overdue:${taskId}:`, { prefix: true })
+  }
+  await onTaskChanged(activeOrgId, taskId, { previousDueDate: current.dueDate })
 }
 
 export async function updateTaskStatus(taskId: string, status: TaskStatus) {
   const { activeOrgId } = await requireOrgContext()
   await assertTaskInOrg(taskId, activeOrgId)
   await db.update(task).set({ status }).where(eq(task.id, taskId))
+  await onTaskChanged(activeOrgId, taskId)
 }
 
 export type ClientTaskSummary = {

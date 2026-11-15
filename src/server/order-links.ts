@@ -599,5 +599,34 @@ export async function guestConfirmOrder(
   // Topics phase 10: the client confirmed → ORDER_CONFIRMED on the order's
   // topic (org from the order row; never fails the guest action).
   await afterOrderStatusChange(r.view.orderId)
+  await notifyOrderConfirmed(r.view.orderId)
   return { ok: true }
+}
+
+/**
+ * Notifications (docs/specs/notifications §5 `order.confirmed_by_client`):
+ * the client confirmed through the guest link → the order's creator
+ * (important). Never throws.
+ */
+async function notifyOrderConfirmed(orderId: string): Promise<void> {
+  try {
+    const [o] = await db
+      .select({ orgId: order.organizationId, userId: order.userId, description: order.description, clientName: client.name })
+      .from(order)
+      .leftJoin(client, eq(client.id, order.clientId))
+      .where(eq(order.id, orderId))
+    if (!o) return
+    const { notify } = await import("@/server/notifications/engine")
+    await notify(o.orgId, {
+      kind: "order.confirmed_by_client",
+      userIds: [o.userId],
+      title: `Клиент подтвердил заказ${o.clientName ? `: ${o.clientName}` : ""}`,
+      body: o.description?.slice(0, 200) || null,
+      href: `/products?openOrder=${orderId}`,
+      entity: { type: "order", id: orderId },
+      dedupeKey: `order.confirmed_by_client:${orderId}:${Date.now()}`,
+    })
+  } catch (err) {
+    console.error("[order-links] confirm notification failed", orderId, err)
+  }
 }

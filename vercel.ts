@@ -31,5 +31,12 @@ export const config: VercelConfig = {
       path: "/api/cron/topics",
       schedule: "0 * * * *",
     },
+    {
+      // Hourly notification checks for every org (docs/specs/notifications
+      // §3.2). Keep in sync with ORCHESTRATION_CONFIG.notifications.cron.
+      // At :15 so it does not start together with the topics run.
+      path: "/api/cron/notifications",
+      schedule: "15 * * * *",
+    },
   ],
 }

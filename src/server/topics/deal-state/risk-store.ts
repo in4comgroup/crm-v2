@@ -501,7 +501,44 @@ export async function applyRiskActions(
   if (res.activated || res.cleared) ops.push(markDealsStateDirtyOp(orgId, [d.id], now))
   await db.batch(asBatch(ops))
   await afterRiskChange(orgId, changed)
+  if (res.activated > 0) await notifyNewRisks(orgId, d.id, actions, typeBy, res.newRiskIds)
   return res
+}
+
+/**
+ * Notifications (docs/specs/notifications §5 `deal.risk_new`): each new risk
+ * → the deal owner; important when severity ≥ the immediate threshold (7).
+ * Never throws.
+ */
+async function notifyNewRisks(
+  orgId: string,
+  dealId: string,
+  actions: readonly RiskAction[],
+  typeBy: ReadonlyMap<string, RiskTypeDef>,
+  newRiskIds: readonly string[],
+): Promise<void> {
+  try {
+    const [row] = await db.select({ name: deal.name, owner: deal.userId }).from(deal).where(eq(deal.id, dealId))
+    if (!row?.owner) return
+    const { notify } = await import("@/server/notifications/engine")
+    const activated = actions.filter((a): a is Extract<RiskAction, { kind: "activate" }> => a.kind === "activate")
+    for (let i = 0; i < activated.length; i++) {
+      const a = activated[i]
+      const t = typeBy.get(a.riskType)
+      await notify(orgId, {
+        kind: "deal.risk_new",
+        userIds: [row.owner],
+        priority: a.severity >= 7 ? "important" : "info",
+        title: `Риск по сделке «${row.name}»: ${t?.labelRu ?? a.riskType}`,
+        body: a.evidence || t?.descriptionRu || null,
+        href: `/deals?openDeal=${dealId}`,
+        entity: { type: "deal", id: dealId },
+        dedupeKey: `deal.risk_new:${newRiskIds[i] ?? `${dealId}:${a.riskType}:${Date.now()}`}`,
+      })
+    }
+  } catch (err) {
+    console.error("[topics:dealState] risk notifications failed", orgId, dealId, err)
+  }
 }
 
 function markDealsStateDirtyOp(orgId: string, dealIds: string[], now: Date) {

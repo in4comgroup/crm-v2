@@ -15,6 +15,7 @@ import { listPendingUploadIds } from "./upload-pending"
 import { ORCHESTRATION_CONFIG } from "./config"
 import { syncAllModelCatalogs } from "@/server/ai/catalog/sync"
 import { reconcileUsageCosts } from "@/server/ai/usage"
+import { notify, resolveNotifications } from "@/server/notifications/engine"
 
 // Engine-agnostic orchestration entry point. Called by:
 //   • The Vercel Workflow (cron-triggered) — wraps this in workflow steps.
@@ -95,21 +96,22 @@ export async function runDailyPipeline(
   // Refresh the model registry from every enabled AI gateway
   // (docs/specs/models/02-model-registry.md §5). Isolated: a failure is
   // logged and never stops the source pipeline.
+  const catalogFailures: string[] = []
   try {
     for (const r of await syncAllModelCatalogs()) {
       if (!r.ok) {
-        pushError(errors, {
-          phase: "catalog",
-          message: `${r.gatewayId}: ${r.error ?? "sync failed"}`,
-        })
+        const msg = `${r.gatewayId}: ${r.error ?? "sync failed"}`
+        catalogFailures.push(msg)
+        pushError(errors, { phase: "catalog", message: msg })
       }
     }
   } catch (e) {
-    pushError(errors, {
-      phase: "catalog",
-      message: e instanceof Error ? e.message : String(e),
-    })
+    const msg = e instanceof Error ? e.message : String(e)
+    catalogFailures.push(msg)
+    pushError(errors, { phase: "catalog", message: msg })
   }
+  // Platform admins (docs/specs/notifications §5, Q12). Never throws.
+  await notifyCatalogSync(catalogFailures, startedAt)
   // Exact gateway cost for usage events that did not get it inline
   // (docs/specs/models/04-usage-and-cost.md §4). Never throws.
   const reconcile = await reconcileUsageCosts()
@@ -248,6 +250,14 @@ export async function runDailyPipeline(
     })
     .where(eq(pipelineRun.id, pipelineRunId))
 
+  if (status === "failed" && opts.trigger === "cron") {
+    await notifyRunFailed(pipelineRunId, errors, {
+      sync: syncResult.totalSourcesFailed,
+      parse: parseFailed,
+      upload: uploadFailed,
+    })
+  }
+
   return {
     pipelineRunId,
     status,
@@ -257,4 +267,47 @@ export async function runDailyPipeline(
     parseAttempted,
     uploadAttempted,
   }
+}
+
+// ── Platform notifications (docs/specs/notifications §5, Q12) ─────────────
+// Org-less rows for platform admins; `notify` / `resolveNotifications` never
+// throw, so a notification can never fail the run.
+
+async function notifyCatalogSync(failures: string[], at: Date): Promise<void> {
+  if (failures.length === 0) {
+    await resolveNotifications(null, "platform.catalog_sync_failed:", { prefix: true })
+    return
+  }
+  const detail = failures.join("; ")
+  await notify(null, {
+    kind: "platform.catalog_sync_failed",
+    title: "Ошибка синхронизации каталога моделей ИИ",
+    body: `Ежедневная синхронизация не обновила реестр моделей: ${detail.length > 600 ? `${detail.slice(0, 600)}…` : detail}`,
+    href: "/settings",
+    dedupeKey: `platform.catalog_sync_failed:${at.toISOString().slice(0, 10)}`,
+    payload: { failures },
+    at,
+  })
+}
+
+async function notifyRunFailed(
+  runId: string,
+  errors: PipelineErrorEntry[],
+  counts: { sync: number; parse: number; upload: number },
+): Promise<void> {
+  const catalog = errors.filter((e) => e.phase === "catalog").length
+  const parts = [
+    counts.sync ? `синхронизация: ${counts.sync}` : null,
+    counts.parse ? `разбор: ${counts.parse}` : null,
+    counts.upload ? `загрузка в хранилище: ${counts.upload}` : null,
+    catalog ? `каталог моделей: ${catalog}` : null,
+  ].filter(Boolean)
+  await notify(null, {
+    kind: "platform.run_failed",
+    title: "Ежедневный запуск завершился с ошибками",
+    body: `Ошибок — ${parts.join(", ") || "см. журнал запуска"}. Подробности — в статистике обработки на странице «Источники».`,
+    href: "/sources",
+    dedupeKey: `platform.run_failed:daily:${runId}`,
+    payload: { runId, ...counts, catalog },
+  })
 }

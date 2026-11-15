@@ -56,8 +56,8 @@ On the «Использование ИИ» tab, block «Наценка»:
 - **Content:** period filter; KPIs «Вызовы», «Стоимость» (with markup);
   table per process («Разбор писем», «ИИ чат», …) with calls and cost; per
   user for interactive processes.
-- **Never shown to end users:** gateway cost, markup %, model ids (shown as
-  the process name only).
+- **Never shown to end users:** gateway cost, markup %. (Model ids were
+  hidden until 2026-11-15; now shown — see §7.)
 - **Currency:** USD (gateway prices are USD).
 
 ## 6. Implementation notes (P4, 2026-11-13)
@@ -78,3 +78,26 @@ change log), API `api/admin/ai/settings`, the «Наценка» block
   processes. The API response has no gateway cost, markup % or model ids.
 - Example line in the admin block uses the selected period's real cost
   ($10 when there is none).
+
+## 7. Owner tab = the admin views (2026-11-15, product owner)
+
+The owner tab on `/account` now has the same views as the admin tab
+«Использование ИИ», for the active organization only:
+
+- Period (7 / 30 days, this / last month, own period); filters «Функция»,
+  «Модель», «Пользователь» (incl. «Фоновая обработка» = calls without a
+  user), «Статус»; CSV export of the current breakdown.
+- KPIs «Вызовы ИИ», «Токены» (in / out), «Стоимость», «За вызов», «Ошибки»;
+  a note when some amounts are still estimates.
+- Cost chart: scale «По дням / По месяцам / По годам» + its own range,
+  stacked by «Функции» / «Модели» / «Пользователи» (same rules as 04 §5).
+- Breakdown tabs «Функции» / «Модели» / «Пользователи»: calls, errors,
+  tokens, cost, share, cost per call; sortable, 10 / 25 / 50 rows per page;
+  a row click filters the page.
+
+Rules kept: org **owner** only (API 403 otherwise); every amount = cost
+with markup; the gateway cost, the markup % and the gateway are never
+sent. **Changed:** model ids are now shown to owners (decision of §5
+"never model ids" is replaced). Server: `orgUsage*` in
+`src/server/ai/usage-stats.ts` (org id explicit, no raw-cost column in
+the select). The daily-budget banner stays.

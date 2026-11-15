@@ -195,7 +195,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 404 })
     }
     if (error instanceof AiBudgetExceededError) {
-      return NextResponse.json({ error: "Дневной бюджет ИИ организации исчерпан" }, { status: 409 })
+      return NextResponse.json({ error: error.period === "month" ? "Месячный лимит ИИ организации исчерпан" : "Дневной бюджет ИИ организации исчерпан" }, { status: 409 })
     }
     if (error instanceof DealStateError) {
       return NextResponse.json({ error: error.message }, { status: error.code === "not_found" ? 404 : 400 })

@@ -16,6 +16,7 @@ import { AccountAiUsage } from "@/components/blocks/account-ai-usage"
 import { AccountTopicDelivery } from "@/components/blocks/account-topic-delivery"
 import { OrgProfileTab } from "@/components/blocks/org-profile-tab"
 import { OrgProfileBanner } from "@/components/blocks/org-profile-banner"
+import { AiLimitBanner } from "@/components/blocks/ai-limit-banner"
 
 type User = {
   id: string
@@ -151,6 +152,7 @@ export default function AccountPage() {
       {tab !== "org-profile" && (
         <OrgProfileBanner refreshKey={bannerKey} onOpen={() => openTab("org-profile")} />
       )}
+      {isOwner && tab !== "ai-usage" && <AiLimitBanner onOpen={() => openTab("ai-usage")} />}
 
       <Tabs value={tab} onValueChange={openTab} className="flex-1 gap-4">
         <TabsList>

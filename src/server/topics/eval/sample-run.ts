@@ -217,7 +217,9 @@ export async function runSampleBatch(
       } catch (error) {
         const message =
           error instanceof AiBudgetExceededError
-            ? "Дневной бюджет ИИ организации исчерпан"
+            ? error.period === "month"
+              ? "Месячный лимит ИИ организации исчерпан"
+              : "Дневной бюджет ИИ организации исчерпан"
             : error instanceof Error
               ? error.message
               : String(error)

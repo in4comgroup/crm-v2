@@ -8,6 +8,9 @@
 
 export type ChartScale = "day" | "month" | "year"
 
+/** Key of calls without a user (background jobs) in the org owner view. */
+export const AI_USAGE_BACKGROUND_USER = "background"
+
 export const CHART_SCALES: readonly ChartScale[] = ["day", "month", "year"]
 
 export const CHART_SCALE_LABELS: Record<ChartScale, string> = {

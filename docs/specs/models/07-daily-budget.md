@@ -38,6 +38,9 @@ Both are edited by the platform admin in the «Дневной бюджет ИИ�
   not a billing limit.
 - Owners: `/account` → «Использование ИИ» shows «Дневной лимит ИИ исчерпан»
   without amounts (the budget is gateway cost, which owners never see).
+- Since 2026-11-15 a second limit exists: the MONTHLY limit in end-user
+  cost, shown to owners — [08-monthly-limit.md](08-monthly-limit.md). The
+  admin block is now «Лимиты ИИ по организациям» (both limits).
 - The usage tab status filter has «Остановлено бюджетом».
 
 ## 4. Tested (2026-11-13)

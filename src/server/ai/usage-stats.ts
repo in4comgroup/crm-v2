@@ -3,7 +3,7 @@ import "server-only"
 import { and, eq, gte, lt, ne, sql, type SQL } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { aiGateway, aiUsageEvent, organization, user } from "@/db/schema"
-import type { ChartScale } from "@/lib/ai-usage-chart"
+import { AI_USAGE_BACKGROUND_USER, type ChartScale } from "@/lib/ai-usage-chart"
 
 // Usage statistics for the «Использование ИИ» admin tab and the per-process
 // / per-model numbers on the other AI tabs
@@ -299,69 +299,175 @@ export async function usageSyncStatus() {
   }
 }
 
-// ── end-user view (05 §5) ──────────────────────────────────────────────
+// ── org owner view (05 §5, extended 2026-11-15) ─────────────────────────
+//
+// The «Использование ИИ» tab on /account: the SAME views as the admin tab,
+// limited to ONE organization. Cost here is ALWAYS the end-user cost
+// (gateway cost × (1 + markup in force at call time / 100)); the raw
+// gateway cost, the markup % and the gateway are never selected, so they
+// cannot leak through these functions. Model ids are shown (product owner,
+// 2026-11-15). The org id is always an explicit argument (from the session).
 
-export type OrgUsageView = {
-  calls: number
-  cost: number // WITH markup — the only cost an end user ever sees
-  byProcess: { processKey: string; calls: number; cost: number }[]
-  byUser: { userId: string; name: string | null; calls: number; cost: number }[]
+export const BACKGROUND_USER = AI_USAGE_BACKGROUND_USER
+
+export type OrgUsageFilters = {
+  from: Date
+  to: Date // exclusive
+  processKey?: string | null
+  model?: string | null // response model, else the requested one
+  userId?: string | null // BACKGROUND_USER = calls without a user (background jobs)
+  status?: "ok" | "error" | "aborted" | "blocked" | null
 }
 
-/**
- * AI usage of ONE organization for its owners. Never returns the gateway
- * cost, the markup % or model ids — only calls and the marked-up cost, per
- * process and (for interactive processes) per user.
- */
-export async function orgUsageView(
+const MODEL_KEY = sql<string>`coalesce(${aiUsageEvent.responseModel}, ${aiUsageEvent.requestModel})`
+
+function orgWhere(orgId: string, f: OrgUsageFilters): SQL {
+  const conds: SQL[] = [
+    eq(aiUsageEvent.organizationId, orgId),
+    gte(aiUsageEvent.createdAt, f.from),
+    lt(aiUsageEvent.createdAt, f.to),
+  ]
+  if (f.processKey) conds.push(eq(aiUsageEvent.processKey, f.processKey))
+  if (f.model) conds.push(sql`${MODEL_KEY} = ${f.model}`)
+  if (f.userId === BACKGROUND_USER) conds.push(sql`${aiUsageEvent.userId} IS NULL`)
+  else if (f.userId) conds.push(eq(aiUsageEvent.userId, f.userId))
+  if (f.status) conds.push(eq(aiUsageEvent.status, f.status))
+  return and(...conds)!
+}
+
+// End-user metrics: `cost` = WITH markup. No raw cost on purpose.
+const ORG_METRICS = {
+  calls: METRICS.calls,
+  errors: METRICS.errors,
+  inputTokens: METRICS.inputTokens,
+  outputTokens: METRICS.outputTokens,
+  cost: METRICS.costWithMarkup,
+  estimated: METRICS.estimated,
+}
+
+export type OrgUsageMetrics = {
+  calls: number
+  errors: number
+  inputTokens: number
+  outputTokens: number
+  /** End-user cost (with markup), USD. */
+  cost: number
+  /** Calls whose cost is still the estimate (exact cost comes within a day). */
+  estimated: number
+}
+
+type RawOrgMetrics = {
+  calls: number
+  errors: number
+  inputTokens: number | string
+  outputTokens: number | string
+  cost: string
+  estimated: number
+}
+
+const toOrgMetrics = (r: RawOrgMetrics): OrgUsageMetrics => ({
+  calls: Number(r.calls),
+  errors: Number(r.errors),
+  inputTokens: Number(r.inputTokens),
+  outputTokens: Number(r.outputTokens),
+  cost: Number(r.cost),
+  estimated: Number(r.estimated),
+})
+
+export async function orgUsageSummary(orgId: string, f: OrgUsageFilters): Promise<OrgUsageMetrics> {
+  const [row] = await db.select(ORG_METRICS).from(aiUsageEvent).where(orgWhere(orgId, f))
+  return toOrgMetrics(row as RawOrgMetrics)
+}
+
+export type OrgUsageBreakdownRow = OrgUsageMetrics & {
+  /** process key / model id / user id (BACKGROUND_USER = no user). */
+  key: string
+  /** User name for the user view (null = deleted user); null otherwise. */
+  label: string | null
+  share: number // of total end-user cost, 0..1
+  avgCost: number
+}
+
+export async function orgUsageBreakdown(
   orgId: string,
-  from: Date,
-  to: Date,
-  interactiveProcessKeys: string[],
-): Promise<OrgUsageView> {
+  f: OrgUsageFilters,
+  groupBy: "process" | "model" | "user",
+): Promise<OrgUsageBreakdownRow[]> {
+  let rows: (RawOrgMetrics & { key: string | null; label: string | null })[]
+  if (groupBy === "user") {
+    rows = (await db
+      .select({ key: aiUsageEvent.userId, label: user.name, ...ORG_METRICS })
+      .from(aiUsageEvent)
+      .leftJoin(user, eq(user.id, aiUsageEvent.userId))
+      .where(orgWhere(orgId, f))
+      .groupBy(aiUsageEvent.userId, user.name)) as typeof rows
+  } else {
+    const key = groupBy === "process" ? aiUsageEvent.processKey : MODEL_KEY
+    rows = (await db
+      .select({ key, label: sql<null>`null`, ...ORG_METRICS })
+      .from(aiUsageEvent)
+      .where(orgWhere(orgId, f))
+      .groupBy(key)) as typeof rows
+  }
+  const total = rows.reduce((sum, r) => sum + Number(r.cost), 0)
+  return rows
+    .map((r) => {
+      const m = toOrgMetrics(r)
+      return {
+        ...m,
+        key: r.key ?? (groupBy === "user" ? BACKGROUND_USER : "unknown"),
+        label: r.label,
+        share: total > 0 ? m.cost / total : 0,
+        avgCost: m.calls ? m.cost / m.calls : 0,
+      }
+    })
+    .sort((a, b) => b.cost - a.cost || b.calls - a.calls)
+}
+
+/** End-user cost per UTC day / month / year, stacked by process / model / user (see `usageCostBuckets`). */
+export async function orgUsageCostBuckets(
+  orgId: string,
+  f: OrgUsageFilters,
+  stackBy: "process" | "model" | "user",
+  scale: ChartScale,
+): Promise<UsageCostBucketRow[]> {
+  const key =
+    stackBy === "process"
+      ? aiUsageEvent.processKey
+      : stackBy === "model"
+        ? MODEL_KEY
+        : // Fixed constant inlined (not a bind parameter), so SELECT and GROUP BY are the same expression.
+          sql<string>`coalesce(${aiUsageEvent.userId}, '${sql.raw(BACKGROUND_USER)}')`
+  const b = BUCKET_SQL[scale]
+  const bucket = sql<string>`to_char(date_trunc('${sql.raw(b.unit)}', ${aiUsageEvent.createdAt}), '${sql.raw(b.format)}')`
+  const rows = await db
+    .select({ bucket, key, calls: ORG_METRICS.calls, cost: ORG_METRICS.cost })
+    .from(aiUsageEvent)
+    .where(orgWhere(orgId, f))
+    .groupBy(bucket, key)
+    .orderBy(bucket)
+  return rows.map((r) => ({ bucket: r.bucket, key: String(r.key), calls: Number(r.calls), cost: Number(r.cost) }))
+}
+
+/** Filter options of the org in the period: models and users (with names). */
+export async function orgUsageOptions(orgId: string, f: Pick<OrgUsageFilters, "from" | "to">) {
   const base = and(
     eq(aiUsageEvent.organizationId, orgId),
-    gte(aiUsageEvent.createdAt, from),
-    lt(aiUsageEvent.createdAt, to),
-  )!
-  const [[total], byProcess, byUser] = await Promise.all([
-    db.select({ calls: METRICS.calls, cost: METRICS.costWithMarkup }).from(aiUsageEvent).where(base),
+    gte(aiUsageEvent.createdAt, f.from),
+    lt(aiUsageEvent.createdAt, f.to),
+  )
+  const [models, users] = await Promise.all([
+    db.selectDistinct({ model: MODEL_KEY }).from(aiUsageEvent).where(base),
     db
-      .select({ key: aiUsageEvent.processKey, calls: METRICS.calls, cost: METRICS.costWithMarkup })
+      .selectDistinct({ id: aiUsageEvent.userId, name: user.name })
       .from(aiUsageEvent)
-      .where(base)
-      .groupBy(aiUsageEvent.processKey),
-    interactiveProcessKeys.length
-      ? db
-          .select({
-            userId: aiUsageEvent.userId,
-            name: user.name,
-            calls: METRICS.calls,
-            cost: METRICS.costWithMarkup,
-          })
-          .from(aiUsageEvent)
-          .leftJoin(user, eq(user.id, aiUsageEvent.userId))
-          .where(
-            and(
-              base,
-              sql`${aiUsageEvent.userId} is not null`,
-              sql`${aiUsageEvent.processKey} in (${sql.join(
-                interactiveProcessKeys.map((k) => sql`${k}`),
-                sql`, `,
-              )})`,
-            ),
-          )
-          .groupBy(aiUsageEvent.userId, user.name)
-      : Promise.resolve([]),
+      .leftJoin(user, eq(user.id, aiUsageEvent.userId))
+      .where(base),
   ])
   return {
-    calls: Number(total.calls),
-    cost: Number(total.cost),
-    byProcess: byProcess
-      .map((r) => ({ processKey: r.key, calls: Number(r.calls), cost: Number(r.cost) }))
-      .sort((a, b) => b.cost - a.cost),
-    byUser: byUser
-      .map((r) => ({ userId: r.userId!, name: r.name, calls: Number(r.calls), cost: Number(r.cost) }))
-      .sort((a, b) => b.cost - a.cost),
+    models: models.map((r) => r.model).filter((m): m is string => !!m).sort(),
+    users: users
+      .map((r) => ({ id: r.id ?? BACKGROUND_USER, name: r.name }))
+      .sort((a, b) => (a.id === BACKGROUND_USER ? 1 : b.id === BACKGROUND_USER ? -1 : (a.name ?? "").localeCompare(b.name ?? "", "ru"))),
   }
 }

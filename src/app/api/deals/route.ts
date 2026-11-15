@@ -83,7 +83,7 @@ function errorResponse(error: unknown) {
   }
   if (error instanceof AiBudgetExceededError) {
     return NextResponse.json(
-      { error: "Дневной бюджет ИИ исчерпан — попробуйте обновить состояние завтра" },
+      { error: error.period === "month" ? "Месячный лимит ИИ исчерпан — состояние обновится в следующем месяце" : "Дневной бюджет ИИ исчерпан — попробуйте обновить состояние завтра" },
       { status: 409 },
     )
   }

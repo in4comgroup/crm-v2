@@ -22,6 +22,13 @@ export const PLATFORM_SETTINGS = {
     schema: z.number().min(0).max(100_000),
     default: 5,
   },
+  // Default MONTHLY AI limit per organization, USD of END-USER cost (with
+  // markup) per calendar month, UTC (docs/specs/models/08-monthly-limit.md).
+  // Per-org override: org_setting `ai.budget.monthly_usd`.
+  "ai.budget.monthly_usd": {
+    schema: z.number().min(0).max(1_000_000),
+    default: 20,
+  },
   // Markup % on top of AI gateway cost, shown to end users (05 §3).
   "ai.markup_percent": {
     schema: z.number().min(0).max(1000),

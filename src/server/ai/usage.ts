@@ -41,6 +41,8 @@ export type RecordUsageInput = {
   startedAt: Date
   // blocked = refused before the call (daily budget used up)
   status: "ok" | "error" | "aborted" | "blocked"
+  /** status `blocked`: which limit stopped the call (error_type). */
+  blockedBy?: "day" | "month"
   error?: unknown
   usage?: UsageLike
   steps?: number
@@ -153,7 +155,7 @@ export async function recordUsageEvent(input: RecordUsageInput): Promise<void> {
         input.status === "error"
           ? errorTypeOf(input.error)
           : input.status === "blocked"
-            ? "budget_exceeded"
+            ? (input.blockedBy === "month" ? "monthly_limit_exceeded" : "budget_exceeded")
             : null,
       inputTokens: t.input,
       outputTokens: t.output,
@@ -169,7 +171,7 @@ export async function recordUsageEvent(input: RecordUsageInput): Promise<void> {
       ref: input.ref ?? null,
     })
     const cost = info?.costUsd ?? estimate
-    if (input.orgId && cost) noteSpend(input.orgId, cost)
+    if (input.orgId && cost) noteSpend(input.orgId, cost, markup)
   } catch (e) {
     console.error("[ai/usage] failed to record usage event:", e)
   }

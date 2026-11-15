@@ -34,6 +34,7 @@ vendors). Follow-ups: [06 §4](06-rollout-and-questions.md). All questions
 | [05-markup-and-end-user-cost.md](05-markup-and-end-user-cost.md) | Global markup %, how end-user prices are computed and shown |
 | [06-rollout-and-questions.md](06-rollout-and-questions.md) | Phases, migrations, testing, risks, open questions |
 | [07-daily-budget.md](07-daily-budget.md) | Daily AI budget per organization (background AI stops at the cap) — implemented 2026-11-13 |
+| [08-monthly-limit.md](08-monthly-limit.md) | Monthly AI limit per organization in end-user cost (default $20): warnings for the owner from 80 %, background AI stops at 100 %; admin defaults + per-org overrides |
 
 ## Terms
 

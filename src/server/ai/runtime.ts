@@ -72,7 +72,7 @@ export class AiCapabilityUnavailableError extends Error {}
 export { AiBudgetExceededError }
 
 /**
- * Daily budget gate (docs/specs/models/07-daily-budget.md). Background
+ * Budget gate (docs/specs/models/07-daily-budget.md + 08-monthly-limit.md). Background
  * processes are refused when the org's budget is used up (a `blocked`
  * usage event is written, then AiBudgetExceededError is thrown); interactive
  * processes run anyway and only log. Calls without an org are not budgeted.
@@ -81,9 +81,13 @@ async function enforceBudget(ctx: AiCallContext, resolved: ResolvedProcess) {
   if (!ctx.orgId) return
   const status = await getOrgBudgetStatus(ctx.orgId)
   if (!status.exceeded) return
+  // The monthly limit wins the message when both are used up.
+  const period: "day" | "month" = status.monthly.level === "exceeded" ? "month" : "day"
+  const budget = period === "month" ? status.monthly.budgetUsd : status.budgetUsd
+  const spent = period === "month" ? status.monthly.spentUsd : status.spentUsd
   if (resolved.process.kind === "interactive") {
     console.warn(
-      `[ai] budget used up for org ${ctx.orgId} ($${status.spentUsd.toFixed(2)} of $${status.budgetUsd}); interactive process ${ctx.process} runs anyway`,
+      `[ai] ${period === "month" ? "monthly limit" : "daily budget"} used up for org ${ctx.orgId} ($${spent.toFixed(2)} of $${budget}); interactive process ${ctx.process} runs anyway`,
     )
     return
   }
@@ -94,9 +98,10 @@ async function enforceBudget(ctx: AiCallContext, resolved: ResolvedProcess) {
     ref: ctx.ref,
     startedAt: new Date(),
     status: "blocked",
+    blockedBy: period,
     requestModel: resolved.modelId,
   })
-  throw new AiBudgetExceededError(ctx.orgId, status.budgetUsd, status.spentUsd)
+  throw new AiBudgetExceededError(ctx.orgId, budget, spent, period)
 }
 
 function prepare(

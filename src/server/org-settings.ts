@@ -28,6 +28,12 @@ export const ORG_SETTINGS = {
     schema: z.number().min(0).max(100_000).nullable(),
     default: null as number | null,
   },
+  // Per-org override of the MONTHLY AI limit, USD of end-user cost (null =
+  // platform default `ai.budget.monthly_usd`). docs/specs/models/08-monthly-limit.md.
+  "ai.budget.monthly_usd": {
+    schema: z.number().min(0).max(1_000_000).nullable(),
+    default: null as number | null,
+  },
   // Per-org override of the attention engine parameters (06 §13): partial,
   // on top of platform_setting `attention.params` (null = no override).
   "attention.params": {
@@ -142,13 +148,20 @@ export async function setOrgSetting<K extends OrgSettingKey>(
   if (before && JSON.stringify(before.value) === JSON.stringify(parsed.data)) {
     return parsed.data as OrgSettingValue<K>
   }
-  await db
-    .insert(orgSetting)
-    .values({ organizationId: orgId, key, value: parsed.data, updatedByUserId: userId })
-    .onConflictDoUpdate({
-      target: [orgSetting.organizationId, orgSetting.key],
-      set: { value: parsed.data, updatedByUserId: userId, updatedAt: new Date() },
-    })
+  if (parsed.data === null) {
+    // null = «use the default» (every nullable key defaults to null): no row.
+    // `org_setting.value` is NOT NULL, so an upsert of null would fail.
+    if (!before) return parsed.data as OrgSettingValue<K>
+    await db.delete(orgSetting).where(where)
+  } else {
+    await db
+      .insert(orgSetting)
+      .values({ organizationId: orgId, key, value: parsed.data, updatedByUserId: userId })
+      .onConflictDoUpdate({
+        target: [orgSetting.organizationId, orgSetting.key],
+        set: { value: parsed.data, updatedByUserId: userId, updatedAt: new Date() },
+      })
+  }
   await db.insert(orgSettingLog).values({
     id: randomUUID(),
     organizationId: orgId,

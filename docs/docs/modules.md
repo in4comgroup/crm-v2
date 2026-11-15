@@ -167,7 +167,7 @@ for the owner, «Настроить поля». Clicking a company opens the com
 «Документы»), still reached from global search. `/contacts` «Контакты»:
 alphabetical, server-paginated (25 per page), card/table views (custom field
 columns + «Фильтр по полям»; owner: «Настроить поля»), contact drawer (tabs
-«Общая информация», «Поля», «Документы», «Темы»).
+«Общая информация» (with the block «Компании»), «Поля», «Документы», «Темы»).
 
 **Main API.** `api/clients` (GET feed / `?id=` / `?responsibleOptions=1`, POST,
 PUT), `api/clients/[id]/responsible` (PUT: owner assigns / handover to owner),
@@ -177,7 +177,10 @@ PUT), `api/clients/[id]/responsible` (PUT: owner assigns / handover to owner),
 («Профиль компании»: view / save / confirm / proposals / «Заполнить из
 интернета»); `api/contacts`; `api/custom-fields*` + `api/custom-values`
 (custom fields; feed filters `?cf=` on `api/clients` / `api/contacts`);
-`api/documents*` (documents of every entity, see "Documents" below).
+`api/documents*` (documents of every entity, see "Documents" below);
+`api/contacts/[id]/links`, `api/clients/[id]/contact-links`,
+`api/contact-link-proposals/[id]`, `api/contacts/merge` (contact ↔ company
+links over time).
 
 **Server modules.** `clients.ts` (incl. `lookupClientOnWeb`,
 `enrichClientFromWeb`, `resolveEnrichment`), `contacts.ts`, `client-content.ts`,
@@ -185,7 +188,8 @@ PUT), `api/clients/[id]/responsible` (PUT: owner assigns / handover to owner),
 `identity/client-profile.ts` + `identity/client-enrichment.ts` (client
 profiles, spec identity I5 / I6), `custom-fields.ts` (+ `client-type-field.ts`,
 the converted «Тип клиента» read by analytics and a stage-rule guard),
-`documents.ts` / `documents-ingest.ts`.
+`documents.ts` / `documents-ingest.ts`, `contact-links.ts` (contact ↔ company
+links, proposals, merge).
 
 **Key rules.**
 - Tab classification: «Клиенты» = has an active deal on a stage with
@@ -213,6 +217,17 @@ the converted «Тип клиента» read by analytics and a stage-rule guard
   owner then decides (badge «Ждёт решения владельца», bell notification for
   that owner). Everybody else reads it. The generic `PUT api/clients` refuses
   it. Topics use it as the fallback deal owner and topic assignee.
+- Contact ↔ company links over time (spec `docs/specs/clients-contacts/04`):
+  a contact has current and former companies (relation «Сотрудник» /
+  «Консультант / подрядчик» / «Партнёр / представитель» / «Другое»);
+  `contact.client_id` = the primary current one. No backfill: an old contact
+  shows its `client_id` as one implicit link. After each parse the system may
+  PROPOSE «Контакт сменил компанию?» (farewell / new address / same name at
+  another client's domain / two companies in 60 days / discovery); a person
+  decides «Перешёл», «Работает с обеими», «Это другой человек» or «Не сейчас».
+  Company X then lists the person under «Бывшие» («теперь в Y»); open deals of
+  X get a journal line and «Заменить в сделках». «Объединить с…» merges two
+  records of one person.
 
 ## Deals
 
@@ -407,7 +422,9 @@ the conversation as an `aichat` source item.
 ## Notifications
 
 Bell in the header (`<NotificationsDrawer/>`). `GET /api/notifications` lists
-recent events of type client, contact, deal, card for the org;
+recent events of type client, contact, deal, card, handover and contact_link
+(«Контакт сменил компанию?», for the responsible members of both companies)
+for the org;
 `POST` marks them seen (`notification_read_state`). Server: `notifications.ts`.
 
 ## Admin tools (`/settings`)

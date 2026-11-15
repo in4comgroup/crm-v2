@@ -95,7 +95,22 @@ export async function loadCounterpartyIndex(orgId: string): Promise<Counterparty
       .from(contact)
       .where(and(eq(contact.organizationId, orgId), notInArray(contact.status, ["deleted", "blocked"]))),
   ])
-  return buildCounterpartyIndex(clients, contacts)
+  // Contact ↔ company links (docs/specs/clients-contacts/04 §3, §7): extra
+  // addresses and every current company of a contact.
+  const { loadContactAddressIndex } = await import("@/server/contact-links")
+  const extra = await loadContactAddressIndex(orgId)
+  return buildCounterpartyIndex(
+    clients,
+    contacts.map((p) => {
+      const linked = extra.currentLinkClients.get(p.id) ?? []
+      const emails = (extra.addressesByContact.get(p.id) ?? []).filter((a) => a.kind === "email")
+      return {
+        ...p,
+        clientIds: [...new Set([...(p.clientId ? [p.clientId] : []), ...linked])],
+        extraEmails: emails.map((a) => ({ email: a.value, clientId: a.clientId })),
+      }
+    }),
+  )
 }
 
 /**

@@ -44,7 +44,7 @@ A deterministic step after parsing (no extra AI call; uses the parser's metadata
 
 | # | Rule | Links | Confidence |
 |---|---|---|---|
-| A1 | **Parent message participants**: the attachment's parent mail / chat item — sender + recipients (to / cc) matched EXACTLY to contacts of the org (email; Telegram handle) — never our own staff (the «us» resolver) | each matched contact + the contact's company | high |
+| A1 | **Parent message participants**: the attachment's parent mail / chat item — sender + recipients (to / cc) matched EXACTLY to contacts of the org (email — the contact's own or any extra address in `contact_address`, then the company of that address, see clients-contacts/04; Telegram handle) — never our own staff (the «us» resolver) | each matched contact + the contact's company | high |
 | A2 | **Topic of the parent item** (or of the file itself): every topic the item is linked to (`topic_item`) → the topic's company, contact and deal | company, contact, deal | high |
 | A3 | **File content**: the parser's `metadata_json.companies` / people matched to companies / contacts by the EXACT match keys already used by discovery (`companyMatchKey`, `personMatchKey`, unique hits only; own org excluded) | company / contact | medium |
 | A4 | **Drop-off with a description or an upload context**: the upload's entity (§5) is a manual link; for org-level drop-off files A3 applies (+ A2 once topics resolve them) | — | — |

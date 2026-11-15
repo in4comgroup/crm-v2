@@ -330,6 +330,10 @@ export async function parseSourceItem(
       } catch (err) {
         console.error(`[parse] document links of ${itemId} failed:`, err)
       }
+      // Contact ↔ company links (docs/specs/clients-contacts/04 §4): rules
+      // P1–P4 write pending proposals. Deterministic, never throws.
+      const { scanItemForContactLinks } = await import("@/server/contact-links")
+      await scanItemForContactLinks(ctx.organizationId, itemId)
     }
     return result
   } catch (err) {

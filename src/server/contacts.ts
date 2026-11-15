@@ -8,6 +8,12 @@ import { randomUUID } from "crypto"
 import { onEntityStatusChanged } from "@/server/topics/integration"
 import { parseCustomFilters } from "@/lib/custom-fields"
 import { customFilterConditions, listCustomFields } from "@/server/custom-fields"
+import {
+  contactLinkedToClientCondition,
+  onContactClientEdited,
+  otherCurrentCompanies,
+  resolveMergedContactId,
+} from "@/server/contact-links"
 
 export type ContactRow = {
   id: string
@@ -27,6 +33,8 @@ export type ContactRow = {
   updatedAt: string
   /** Custom field values («Поля») — only on `listContactsPaged` rows (list columns). */
   customValues?: Record<string, unknown>
+  /** Other CURRENT companies (link rows; primary = clientId) — only on `listContactsPaged` rows. */
+  otherCompanies?: { clientId: string; clientName: string; relation: string }[]
 }
 
 async function requireOrgContext() {
@@ -103,6 +111,8 @@ export async function listContacts(): Promise<ContactRow[]> {
 
 export async function getContact(contactId: string): Promise<ContactRow | null> {
   const { activeOrgId } = await requireOrgContext()
+  // A merged record resolves to the kept contact (docs/specs/clients-contacts/04 §3.3).
+  contactId = await resolveMergedContactId(activeOrgId, contactId)
 
   const rows = await db
     .select({
@@ -146,6 +156,8 @@ export async function listContactsPaged(params: {
   q?: string
   status?: EntityStatus | "all"
   clientId?: string | "none" | "all"
+  /** Company filter also matches FORMER links («Включая бывших»). */
+  includeFormer?: boolean
   /** Custom field filters, `?cf=` JSON (docs/specs/clients-contacts §3.5). */
   customFilters?: string | null
   limit?: number
@@ -176,7 +188,9 @@ export async function listContactsPaged(params: {
   if (params.clientId === "none") {
     conditions.push(isNull(contact.clientId))
   } else if (params.clientId && params.clientId !== "all") {
-    conditions.push(eq(contact.clientId, params.clientId))
+    // Every CURRENT link (docs/specs/clients-contacts/04 §6, Q11), plus former
+    // ones with «Включая бывших».
+    conditions.push(contactLinkedToClientCondition(params.clientId, !!params.includeFormer))
   }
 
   if (params.customFilters) {
@@ -199,6 +213,11 @@ export async function listContactsPaged(params: {
     db.select({ id: contact.id }).from(contact).where(where),
   ])
 
+  const others = await otherCurrentCompanies(
+    activeOrgId,
+    rows.map((r) => ({ id: r.contact.id, clientId: r.contact.clientId })),
+  )
+
   return {
     total: totalRows.length,
     rows: rows.map((r) => ({
@@ -218,6 +237,7 @@ export async function listContactsPaged(params: {
       createdAt: r.contact.createdAt.toISOString(),
       updatedAt: r.contact.updatedAt.toISOString(),
       customValues: (r.contact.customValues ?? {}) as Record<string, unknown>,
+      otherCompanies: others.get(r.contact.id) ?? [],
     })),
   }
 }
@@ -316,6 +336,9 @@ export async function updateContact(
   }
   if (data.clientId !== undefined) {
     await assertClientIfProvided(data.clientId, activeOrgId)
+    // Keep `contact_company_link` in step: with link rows, a form change of
+    // the company corrects the primary link (moves go through «Компании»).
+    await onContactClientEdited(activeOrgId, contactId, data.clientId || null)
   }
 
   await db

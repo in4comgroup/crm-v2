@@ -46,6 +46,12 @@ import type { ClientRow, ClientRevenueSummary } from "@/app/api/clients/route"
 import type { DealRow } from "@/app/api/deals/route"
 import type { SourceSummary } from "@/server/sources"
 import { DocumentsPanel } from "@/components/blocks/documents-panel"
+import { ContactLinkProposalsList } from "@/components/blocks/contact-companies-block"
+import {
+  ClientContactLinksExtras,
+  ContactAlsoLine,
+  useClientContactLinks,
+} from "@/components/blocks/client-contact-links"
 
 const PHASE_COLOR: Record<string, string> = {
   awareness: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
@@ -98,6 +104,12 @@ export function ClientDetailShell({
   // «Темы» (spec topics/01 §14): open + recent topics of the company; the
   // block is shown only when the org's topics mode is `on`.
   const relatedTopics = useRelatedTopics({ clientId: detail.id })
+  // Contacts over time (docs/specs/clients-contacts/04 §6).
+  const contactLinks = useClientContactLinks(detail.id)
+  const onContactsChanged = () => {
+    void contactLinks.reload()
+    refresh()
+  }
 
   // ClientEditDialog expects the existing list-shape (ClientRow with
   // ClientContactPreview[]). Build the slimmer row from the detail so
@@ -287,7 +299,7 @@ export function ClientDetailShell({
           </CardTitle>
           <ContactEditDialog
             mode="create"
-            onSuccess={refresh}
+            onSuccess={onContactsChanged}
             trigger={
               <Button size="sm">
                 <Plus className="h-4 w-4 mr-1" />
@@ -297,6 +309,11 @@ export function ClientDetailShell({
           />
         </CardHeader>
         <CardContent className="space-y-3">
+          <ContactLinkProposalsList
+            proposals={contactLinks.data?.proposals ?? []}
+            showContactName
+            onDecided={onContactsChanged}
+          />
           {detail.contacts.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
               К этой компании ещё не привязаны контакты.
@@ -321,6 +338,10 @@ export function ClientDetailShell({
                       <TableRow key={c.id}>
                         <TableCell className="text-sm font-medium truncate">
                           {c.name}
+                          <ContactAlsoLine
+                            entry={contactLinks.entryFor(c.id)}
+                            className="font-normal"
+                          />
                         </TableCell>
                         <TableCell className="text-sm truncate">
                           {c.nameNative ?? "—"}
@@ -407,6 +428,12 @@ export function ClientDetailShell({
               )}
             </>
           )}
+          <ClientContactLinksExtras
+            data={contactLinks.data}
+            listedContactIds={detail.contacts.map((c) => c.id)}
+            onChanged={onContactsChanged}
+            showProposals={false}
+          />
         </CardContent>
       </Card>
 

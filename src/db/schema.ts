@@ -495,10 +495,19 @@ export const contact = pgTable(
     phone: text("phone"),
     email: text("email"),
     position: text("position"),
+    // = the client of the PRIMARY CURRENT link (docs/specs/clients-contacts/04
+    // §3.1). Written together with `contact_company_link` by
+    // src/server/contact-links.ts. A contact with `client_id` and no link rows
+    // = one implicit current primary link (no backfill, Q12).
     clientId: text("client_id").references(() => client.id, {
       onDelete: "set null",
     }),
     status: entityStatus("status").notNull().default("active"),
+    // Set when this record was merged into another contact (status = deleted);
+    // old references resolve to the kept contact.
+    mergedIntoContactId: text("merged_into_contact_id").references((): AnyPgColumn => contact.id, {
+      onDelete: "set null",
+    }),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -3829,4 +3838,144 @@ export const customFieldValueLog = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [index("custom_field_value_log_entity_idx").on(table.organizationId, table.entity, table.entityId, table.createdAt)],
+)
+
+// ── Contact ↔ company links over time (docs/specs/clients-contacts/04) ─────
+// Value lists are text validated in code (src/lib/contact-links.ts).
+
+// One row per contact × company period. relation employee | consultant |
+// representative | other; status current | former; exactly one primary among
+// the current links (mirrored to `contact.client_id`).
+export const contactCompanyLink = pgTable(
+  "contact_company_link",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contact.id, { onDelete: "cascade" }),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => client.id, { onDelete: "cascade" }),
+    relation: text("relation").notNull().default("employee"),
+    status: text("status").notNull().default("current"),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    position: text("position"),
+    startedAt: timestamp("started_at"),
+    endedAt: timestamp("ended_at"),
+    // manual | discovery | proposal | implicit (the pre-existing client_id) | merge
+    source: text("source").notNull().default("manual"),
+    evidenceSourceItemId: text("evidence_source_item_id").references(() => sourceItem.id, { onDelete: "set null" }),
+    endReason: text("end_reason"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    endedByUserId: text("ended_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("contact_company_link_contact_idx").on(table.contactId, table.status),
+    index("contact_company_link_client_idx").on(table.organizationId, table.clientId, table.status),
+  ],
+)
+
+// Extra addresses of one person (Q2). `contact.email` / `phone` stay the
+// primary active ones; this table holds the rest (old X address, second
+// company address, Telegram). `value` is normalised (lower-case email, digits
+// of a phone, handle without «@»).
+export const contactAddress = pgTable(
+  "contact_address",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contact.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    value: text("value").notNull(),
+    // active | old
+    status: text("status").notNull().default("active"),
+    clientId: text("client_id").references(() => client.id, { onDelete: "set null" }),
+    // manual | proposal | merge | discovery
+    source: text("source").notNull().default("manual"),
+    firstSeenAt: timestamp("first_seen_at"),
+    lastSeenAt: timestamp("last_seen_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("contact_address_contact_value_uq").on(table.contactId, table.kind, table.value),
+    index("contact_address_org_value_idx").on(table.organizationId, table.kind, table.value),
+  ],
+)
+
+// A proposal that a contact changed company / works for two companies / is a
+// second record of the same person (rules P1–P5, §4). A person decides (Q4).
+export const contactLinkProposal = pgTable(
+  "contact_link_proposal",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contact.id, { onDelete: "cascade" }),
+    // A second record of the same person (merged on «Перешёл» / «Работает с обеими»).
+    candidateContactId: text("candidate_contact_id").references((): AnyPgColumn => contact.id, { onDelete: "cascade" }),
+    fromClientId: text("from_client_id").references(() => client.id, { onDelete: "set null" }),
+    toClientId: text("to_client_id").references(() => client.id, { onDelete: "set null" }),
+    // The new address seen (email / phone / telegram), normalised.
+    newAddressKind: text("new_address_kind"),
+    newAddress: text("new_address"),
+    // A company name seen for Y when Y is not a client yet («Создать компанию Y»).
+    toCompanyName: text("to_company_name"),
+    // moved | second_company | same_person | left
+    kind: text("kind").notNull(),
+    confidence: text("confidence").notNull().default("medium"),
+    // P1 … P5
+    rule: text("rule").notNull(),
+    // { sourceItemIds: string[], quote?: string, date?: string }
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull().default({}),
+    evidenceAt: timestamp("evidence_at"),
+    // Dedupe key of the pair (contact + candidate / address / company).
+    pairKey: text("pair_key").notNull(),
+    // pending | accepted | rejected | superseded
+    status: text("status").notNull().default("pending"),
+    // moved | both | other_person
+    decision: text("decision"),
+    snoozedUntil: timestamp("snoozed_until"),
+    decidedByUserId: text("decided_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("contact_link_proposal_contact_idx").on(table.contactId, table.status),
+    index("contact_link_proposal_org_idx").on(table.organizationId, table.status),
+    uniqueIndex("contact_link_proposal_pair_uq").on(table.organizationId, table.pairKey),
+  ],
+)
+
+// Journal of link changes (add, end, primary, decision, merge). Append-only.
+export const contactLinkEvent = pgTable(
+  "contact_link_event",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contact.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("contact_link_event_contact_idx").on(table.contactId, table.createdAt)],
 )

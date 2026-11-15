@@ -12,14 +12,24 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
-import { Bell, Building2, User, Handshake, LayoutGrid, Loader, UserCheck } from "lucide-react"
+import {
+  ArrowLeftRight,
+  Bell,
+  Building2,
+  User,
+  Handshake,
+  LayoutGrid,
+  Loader,
+  UserCheck,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { groupByDate } from "@/lib/date-groups"
 import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 
 type NotificationEvent = {
   id: string
-  type: "client" | "contact" | "deal" | "card" | "handover"
+  // contact_link = «Контакт сменил компанию?» (docs/specs/clients-contacts/04 §5).
+  type: "client" | "contact" | "deal" | "card" | "handover" | "contact_link"
   title: string
   subtitle: string | null
   createdAt: string
@@ -35,6 +45,7 @@ const TYPE_ICON: Record<NotificationEvent["type"], typeof Building2> = {
   deal: Handshake,
   card: LayoutGrid,
   handover: UserCheck,
+  contact_link: ArrowLeftRight,
 }
 
 const POLL_MS = 45_000
@@ -181,7 +192,7 @@ export function NotificationsDrawer() {
                     {group.label}
                   </div>
                   {group.items.map((e) => {
-                    const Icon = TYPE_ICON[e.type]
+                    const Icon = TYPE_ICON[e.type] ?? Bell
                     return (
                       <Link
                         key={e.id}

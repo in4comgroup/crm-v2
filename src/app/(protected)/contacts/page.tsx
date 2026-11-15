@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -46,6 +47,33 @@ import {
   useCustomFieldDefs,
 } from "@/components/blocks/custom-field-filters"
 import { encodeCustomFilters, type CustomFieldFilter } from "@/lib/custom-fields"
+import { LINK_RELATION_LABELS, type LinkRelation } from "@/lib/contact-links"
+
+// «+N»: other CURRENT companies of a contact (docs/specs/clients-contacts/04
+// §6); the primary one stays `clientId` / `clientName`.
+function OtherCompaniesBadge({ items }: { items: ContactRow["otherCompanies"] }) {
+  const tip = useAnchorTooltip()
+  if (!items || items.length === 0) return null
+  const text = items
+    .map(
+      (o) =>
+        `${o.clientName} (${(LINK_RELATION_LABELS[o.relation as LinkRelation] ?? o.relation).toLowerCase()})`,
+    )
+    .join(", ")
+  return (
+    <>
+      <Badge
+        variant="outline"
+        className="ml-1.5 px-1.5 py-0 text-[10px]"
+        aria-label={`Также: ${text}`}
+        {...tip.bind}
+      >
+        +{items.length}
+      </Badge>
+      <AnchorTooltip text={`Также: ${text}`} open={tip.open} virtualRef={tip.virtualRef} />
+    </>
+  )
+}
 
 type ContactView = "cards" | "table"
 
@@ -69,6 +97,9 @@ export default function ContactsPage() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<string>(ALL)
   const [clientFilter, setClientFilter] = useState<string>(ALL)
+  // «Включая бывших»: the company filter also matches former links (Q11).
+  const [includeFormer, setIncludeFormer] = useState(false)
+  const companyFilterActive = clientFilter !== ALL && clientFilter !== NO_CLIENT
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([])
   const [editingContact, setEditingContact] = useState<ContactRow | null>(null)
   const [view, setView] = useState<ContactView>("table")
@@ -109,6 +140,7 @@ export default function ContactsPage() {
       })
       if (statusFilter !== ALL) params.set("status", statusFilter)
       if (clientFilter !== ALL) params.set("clientId", clientFilter)
+      if (includeFormer && companyFilterActive) params.set("includeFormer", "1")
       if (cfParam) params.set("cf", cfParam)
       const res = await fetch(`/api/contacts?${params.toString()}`)
       if (reqIdRef.current !== reqId) return
@@ -126,7 +158,7 @@ export default function ContactsPage() {
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [page, statusFilter, clientFilter, cfParam])
+  }, [page, statusFilter, clientFilter, includeFormer, companyFilterActive, cfParam])
 
   useEffect(() => {
     void load()
@@ -135,7 +167,7 @@ export default function ContactsPage() {
   // Filter changes reset to page 1.
   useEffect(() => {
     setPage(1)
-  }, [statusFilter, clientFilter, cfParam])
+  }, [statusFilter, clientFilter, includeFormer, cfParam])
 
   useEffect(() => {
     fetch("/api/contacts?clientOptions=1")
@@ -219,6 +251,16 @@ export default function ContactsPage() {
             ))}
           </SelectContent>
         </Select>
+        {companyFilterActive && (
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Switch
+              size="sm"
+              checked={includeFormer}
+              onCheckedChange={setIncludeFormer}
+            />
+            Включая бывших
+          </label>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <CustomFieldFiltersButton
             fields={customFields}
@@ -341,7 +383,10 @@ export default function ContactsPage() {
                       </TableCell>
                       <TableCell>{c.email ?? "—"}</TableCell>
                       <TableCell>{c.phone ?? "—"}</TableCell>
-                      <TableCell>{c.clientName ?? "Без компании"}</TableCell>
+                      <TableCell>
+                        {c.clientName ?? "Без компании"}
+                        <OtherCompaniesBadge items={c.otherCompanies} />
+                      </TableCell>
                       <TableCell>
                         <Badge variant="secondary">
                           {STATUS_LABEL[c.status] ?? c.status}

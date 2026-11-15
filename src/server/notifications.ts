@@ -14,6 +14,7 @@ import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { getServerSession } from "@/lib/get-session"
 import { userCardFilter } from "@/server/topics/cards/visibility"
 import { listPendingHandoversForOwner } from "@/server/client-responsible"
+import { listProposalNotifications } from "@/server/contact-links"
 
 async function requireOrgContext() {
   const session = await getServerSession()
@@ -43,7 +44,10 @@ export type NotificationEvent = {
   id: string
   // handover = a company handed over to the viewer (an org owner) that waits
   // for their decision («Ответственный», src/server/client-responsible.ts).
-  type: "client" | "contact" | "deal" | "card" | "handover"
+  // contact_link = «Контакт сменил компанию?» proposal (docs/specs/clients-contacts/04
+  // §5, Q5 / Q6): shown to the responsible members of X and Y (everybody when
+  // neither company has one).
+  type: "client" | "contact" | "deal" | "card" | "handover" | "contact_link"
   title: string
   subtitle: string | null
   createdAt: string
@@ -87,7 +91,7 @@ export async function listNotifications() {
   // Topic (engine) cards only when the org's topics mode is `on`.
   const cardVisible = await userCardFilter(activeOrgId)
 
-  const [clients, contacts, deals, cards, handovers, unreadCounts] = await Promise.all([
+  const [clients, contacts, deals, cards, handovers, linkProposals, unreadCounts] = await Promise.all([
     db
       .select({ id: client.id, name: client.name, createdAt: client.createdAt })
       .from(client)
@@ -130,6 +134,7 @@ export async function listNotifications() {
     // Pending handovers to the viewer — only the owner they were handed to
     // sees them (responsible = viewer, handover still pending).
     listPendingHandoversForOwner(activeOrgId, userId, { limit: PER_TYPE_CAP }),
+    listProposalNotifications(activeOrgId, userId, { limit: PER_TYPE_CAP }),
     Promise.all([
       db
         .select({ n: count() })
@@ -189,6 +194,14 @@ export async function listNotifications() {
       createdAt: h.at.toISOString(),
       href: `/clients?openClient=${h.clientId}`,
     })),
+    ...linkProposals.map((p) => ({
+      id: `contact_link:${p.id}`,
+      type: "contact_link" as const,
+      title: `Контакт сменил компанию?: ${p.contactName}`,
+      subtitle: p.subtitle,
+      createdAt: p.at.toISOString(),
+      href: `/contacts?openContact=${p.contactId}`,
+    })),
     ...cards.map((c) => {
       const msg = (c.message ?? {}) as { analysis?: string }
       return {
@@ -205,8 +218,9 @@ export async function listNotifications() {
     .slice(0, LIST_LIMIT)
 
   const unreadHandovers = handovers.filter((h) => h.at > since).length
+  const unreadProposals = linkProposals.filter((p) => p.at > since).length
   const unreadCount =
-    unreadCounts.reduce((sum, [row]) => sum + (row?.n ?? 0), 0) + unreadHandovers
+    unreadCounts.reduce((sum, [row]) => sum + (row?.n ?? 0), 0) + unreadHandovers + unreadProposals
 
   return { events, unreadCount, sinceIso: since.toISOString() }
 }

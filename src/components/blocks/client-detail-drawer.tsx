@@ -58,6 +58,12 @@ import { ClientProfileBlock } from "@/components/blocks/client-profile-block"
 import { BlacklistEntityButton } from "@/components/blocks/client-blocklist-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
+import { ContactLinkProposalsList } from "@/components/blocks/contact-companies-block"
+import {
+  ClientContactLinksExtras,
+  ContactAlsoLine,
+  useClientContactLinks,
+} from "@/components/blocks/client-contact-links"
 import {
   RelatedTopicsList,
   useRelatedTopics,
@@ -267,6 +273,14 @@ export function ClientDetailDrawer({
   // edits survive tab switches; the close guard below also asks about them.
   const [fieldsVisitedFor, setFieldsVisitedFor] = useState<string | null>(null)
   const fieldsPanelRef = useRef<CustomFieldsPanelHandle | null>(null)
+  // «Контакты» over time (docs/specs/clients-contacts/04 §6): «также: Y»,
+  // non-primary contacts, «Бывшие» and the pending proposals of this company.
+  const contactLinks = useClientContactLinks(clientId, open)
+  const reloadContactLinks = contactLinks.reload
+  const onContactsChanged = useCallback(() => {
+    void reloadContactLinks()
+    onChanged()
+  }, [reloadContactLinks, onChanged])
 
   const reloadTasks = useCallback((id: string) => {
     fetch("/api/tasks")
@@ -531,6 +545,12 @@ export function ClientDetailDrawer({
                     <span className="ml-1.5 text-xs text-muted-foreground">
                       {client.contacts.length}
                     </span>
+                  )}
+                  {(contactLinks.data?.proposals.length ?? 0) > 0 && (
+                    <span
+                      className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
+                      aria-label="Есть вопрос по смене компании"
+                    />
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="content" className="flex-none">
@@ -972,10 +992,15 @@ export function ClientDetailDrawer({
             </TabsContent>
 
             <TabsContent value="contacts" className="py-4 space-y-2 text-sm">
+              <ContactLinkProposalsList
+                proposals={contactLinks.data?.proposals ?? []}
+                showContactName
+                onDecided={onContactsChanged}
+              />
               <ContactEditDialog
                 mode="create"
                 defaultClientId={client.id}
-                onSuccess={onChanged}
+                onSuccess={onContactsChanged}
                 trigger={
                   <Button size="sm" variant="outline">
                     <Plus className="h-4 w-4 mr-1" />
@@ -1002,6 +1027,7 @@ export function ClientDetailDrawer({
                           .filter(Boolean)
                           .join(" · ") || "—"}
                       </div>
+                      <ContactAlsoLine entry={contactLinks.entryFor(c.id)} />
                     </div>
                     <Button
                       variant="ghost"
@@ -1015,6 +1041,13 @@ export function ClientDetailDrawer({
                   </div>
                 ))
               )}
+              <ClientContactLinksExtras
+                data={contactLinks.data}
+                listedContactIds={client.contacts.map((c) => c.id)}
+                onOpenContact={openEditContact}
+                onChanged={onContactsChanged}
+                showProposals={false}
+              />
             </TabsContent>
 
             <TabsContent value="content" className="py-4 text-sm">
@@ -1042,7 +1075,7 @@ export function ClientDetailDrawer({
         onOpenChange={(o) => {
           if (!o) setEditingContact(null)
         }}
-        onChanged={onChanged}
+        onChanged={onContactsChanged}
         canBlock={canBlock}
       />
 

@@ -18,6 +18,7 @@ import { db } from "@/db/drizzle"
 import {
   client,
   contact,
+  contactAddress,
   deal,
   documentLink,
   order,
@@ -284,10 +285,29 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
           ),
         )
     : []
+  // Extra addresses of one person (`contact_address`, docs/specs/clients-contacts/04
+  // §3.2): an old X address or a second company's address maps to the same
+  // contact; the company is the address's company, else the contact's primary.
+  const addressRows = allEmails.length
+    ? await db
+        .select({ id: contact.id, email: contactAddress.value, clientId: sql<string | null>`coalesce(${contactAddress.clientId}, ${contact.clientId})` })
+        .from(contactAddress)
+        .innerJoin(contact, eq(contact.id, contactAddress.contactId))
+        .where(
+          and(
+            eq(contactAddress.organizationId, orgId),
+            eq(contactAddress.kind, "email"),
+            inArray(contactAddress.value, allEmails),
+            sql`${contact.status} not in ('deleted', 'blocked')`,
+          ),
+        )
+    : []
   const byEmail = new Map<string, { id: string; clientId: string | null }[]>()
-  for (const c of contactRows) {
+  for (const c of [...contactRows, ...addressRows]) {
     const k = (c.email ?? "").toLowerCase()
-    byEmail.set(k, [...(byEmail.get(k) ?? []), { id: c.id, clientId: c.clientId }])
+    const list = byEmail.get(k) ?? []
+    if (!list.some((x) => x.id === c.id)) list.push({ id: c.id, clientId: c.clientId })
+    byEmail.set(k, list)
   }
   const participants: { contactId: string; clientId: string | null; role: "sender" | "recipient" }[] = []
   for (const [list, role] of [[senders, "sender"], [recipients, "recipient"]] as const) {

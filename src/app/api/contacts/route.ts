@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ contact })
     }
     // Standalone «Контакты» page: server-paginated, alphabetical listing.
-    const hasFeedParams = ["q", "status", "clientId", "limit", "offset", "cf"].some(
+    const hasFeedParams = ["q", "status", "clientId", "limit", "offset", "cf", "includeFormer"].some(
       (k) => searchParams.has(k),
     )
     if (hasFeedParams) {
@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
         q: searchParams.get("q") ?? undefined,
         status: (searchParams.get("status") as EntityStatus | "all" | null) ?? undefined,
         clientId: searchParams.get("clientId") ?? undefined,
+        includeFormer: searchParams.get("includeFormer") === "1",
         customFilters: searchParams.get("cf"),
         limit: searchParams.get("limit")
           ? Number(searchParams.get("limit"))

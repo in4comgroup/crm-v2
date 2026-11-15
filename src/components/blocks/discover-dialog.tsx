@@ -146,7 +146,10 @@ export function DiscoverDialog({
 
         const ct: Record<string, boolean> = {}
         for (const cand of dp.contactCandidates)
-          ct[cand.email] = !cand.possibleDuplicate && cand.confidence !== "low"
+          ct[cand.email] =
+            !cand.possibleDuplicate &&
+            !cand.possibleMove &&
+            cand.confidence !== "low"
         setContactChecked(ct)
         setContactNameOverrides({})
 
@@ -753,6 +756,9 @@ function ContactRow({
 }) {
   const value =
     nameOverride !== undefined ? nameOverride : candidate.displayName
+  // P5 (docs/specs/clients-contacts/04 §4): same name as a contact of
+  // ANOTHER company — pre-unchecked; unchecked = a proposal, not a duplicate.
+  const possibleMove = candidate.possibleMove ?? null
   return (
     <div className="flex items-start gap-3 py-2 px-2">
       <Checkbox
@@ -784,6 +790,18 @@ function ContactRow({
           <Badge className="text-[10px] px-1 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
             Возможный дубликат: {candidate.possibleDuplicate.name}
           </Badge>
+        )}
+        {possibleMove && (
+          <div className="space-y-0.5">
+            <Badge className="text-[10px] px-1 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
+              Возможно, это {possibleMove.name} из {possibleMove.clientName}
+            </Badge>
+            {!checked && (
+              <div className="text-[11px] text-muted-foreground">
+                Не отмечено — предложим решение в карточке контакта
+              </div>
+            )}
+          </div>
         )}
       </div>
       {onBlock && <BlockCandidateButton onBlock={onBlock} />}

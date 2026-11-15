@@ -390,6 +390,12 @@ export async function extractSignalsForItem(
     subjects: pp.subjects,
     processKey: EXTRACTION_PROCESS,
   })
+  // Contact ↔ company links (docs/specs/clients-contacts/04 §4 P1): a
+  // CONTACT_LEAVING the parse-time rules may have missed. Never throws.
+  if (pp.instances.some((i) => i.code === "CONTACT_LEAVING")) {
+    const { scanItemForContactLinks } = await import("@/server/contact-links")
+    await scanItemForContactLinks(batch.orgId, row.id, { signalCodes: ["CONTACT_LEAVING"] })
+  }
   return {
     ...base,
     status: "done",

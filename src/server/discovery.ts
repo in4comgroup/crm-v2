@@ -23,6 +23,7 @@ import { getOwnOrgContext } from "@/server/identity/own-org"
 import { loadOrgBlocklist } from "@/server/blocklist"
 import { cleanPhone } from "@/server/parsers/_shared"
 import { randomUUID } from "crypto"
+import { loadContactAddressIndex, proposeFromDiscovery } from "@/server/contact-links"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -93,6 +94,18 @@ export type ContactCandidate = {
     contactId: string
     name: string
     email: string | null
+  } | null
+  /** P5 (docs/specs/clients-contacts/04 §4): the same name as an existing
+   *  contact of ANOTHER company, and the candidate's address belongs to a
+   *  known client Y (`toClientId`). Pre-unchecked; left unchecked, apply
+   *  writes a «Контакт сменил компанию?» proposal on that contact instead of
+   *  creating a duplicate. */
+  possibleMove?: {
+    contactId: string
+    name: string
+    clientId: string
+    clientName: string
+    toClientId: string | null
   } | null
 }
 
@@ -523,6 +536,44 @@ export async function previewDiscovery(opts?: {
       .map((c) => (c.email ?? "").trim().toLowerCase())
       .filter((e) => e.length > 0),
   )
+  // Extra addresses of one person (`contact_address`, docs/specs/clients-contacts/04
+  // §3.2) are known too — an old X address or a second company address never
+  // becomes a new contact.
+  const addressIndex = await loadContactAddressIndex(activeOrgId)
+  const liveContactIds = new Set(existingContacts.filter((c) => c.status !== "deleted").map((c) => c.id))
+  for (const [cid, list] of addressIndex.addressesByContact) {
+    if (!liveContactIds.has(cid)) continue
+    for (const a of list) if (a.kind === "email") existingContactEmails.add(a.value)
+  }
+  // P5: name key → live contacts WITH a company; domain → client ids.
+  const movedByNameKey = new Map<string, { id: string; name: string; clientId: string }[]>()
+  for (const c of existingContacts) {
+    if (c.status === "deleted" || c.status === "blocked" || !c.clientId) continue
+    for (const n of [c.name, c.nameNative, ...(c.aliases ?? [])]) {
+      const k = personMatchKey(n ?? "")
+      if (k.length < 2) continue
+      const arr = movedByNameKey.get(k) ?? []
+      if (!arr.some((x) => x.id === c.id)) arr.push({ id: c.id, name: c.name, clientId: c.clientId })
+      movedByNameKey.set(k, arr)
+    }
+  }
+  const clientIdsByDomain = new Map<string, Set<string>>()
+  const addDomain = (d: string, id: string) => {
+    if (!d || isFreemailDomain(d)) return
+    const set = clientIdsByDomain.get(d) ?? new Set<string>()
+    set.add(id)
+    clientIdsByDomain.set(d, set)
+  }
+  const clientNameById = new Map<string, string>()
+  for (const c of existingClients) {
+    if (c.status === "deleted" || c.status === "blocked") continue
+    clientNameById.set(c.id, c.name)
+    if (c.webUrl) addDomain(extractWebsiteDomain(c.webUrl), c.id)
+  }
+  for (const c of existingContacts) {
+    if (c.status === "deleted" || !c.clientId || !c.email) continue
+    addDomain(extractEmailDomain(c.email.trim().toLowerCase()), c.clientId)
+  }
 
   // ── 2. Aggregate companies + 3. participants in a single pass ───────
   type ClientBucket = {
@@ -885,6 +936,25 @@ export async function previewDiscovery(opts?: {
           }
         }
       }
+      // P5 — same name as a contact of ANOTHER company; the candidate's
+      // domain belongs to a known client Y ≠ X (name alone never proposes).
+      let possibleMove: ContactCandidate["possibleMove"] = null
+      if (!possibleDuplicate && domain && !isFreemailDomain(domain)) {
+        const ys = clientIdsByDomain.get(domain)
+        const toClientId = ys && ys.size === 1 ? [...ys][0] : null
+        for (const nm of candNames) {
+          const hits = movedByNameKey.get(nm) ?? []
+          if (hits.length !== 1 || !toClientId || hits[0].clientId === toClientId) continue
+          possibleMove = {
+            contactId: hits[0].id,
+            name: hits[0].name,
+            clientId: hits[0].clientId,
+            clientName: clientNameById.get(hits[0].clientId) ?? "—",
+            toClientId,
+          }
+          break
+        }
+      }
       // Confidence: a person at a real company domain, or one mentioned more
       // than once, is high; a single mention from a freemail address is
       // medium; a single freemail mention with no name is low.
@@ -905,6 +975,7 @@ export async function previewDiscovery(opts?: {
         occurrences,
         sampleSourceItemIds: Array.from(b.sourceItemIds).slice(0, 5),
         possibleDuplicate,
+        possibleMove,
       }
     })
     .sort(
@@ -1363,12 +1434,39 @@ export async function applyDiscovery(
       existingContactEmails.add(email)
     }
   }
+  // Extra addresses of live contacts (`contact_address`) are known too.
+  {
+    const liveIds = new Set(existingContacts.filter((c) => c.status !== "deleted").map((c) => c.id))
+    const addressIndex = await loadContactAddressIndex(activeOrgId)
+    for (const [cid, list] of addressIndex.addressesByContact) {
+      if (!liveIds.has(cid)) continue
+      for (const a of list) if (a.kind === "email") existingContactEmails.add(a.value)
+    }
+  }
   // An email owned by a LIVE contact is never a revive target.
   for (const e of existingContactEmails) deletedContactByEmail.delete(e)
 
   const selectedContactEmails = new Set(
     input.selectedContactEmails.map((e) => e.trim().toLowerCase()).filter(Boolean),
   )
+  // P5: unchecked «Возможно, это C из X» candidates → a pending proposal on C.
+  {
+    const moves = input.candidates.contacts.filter(
+      (c) => c.possibleMove && !selectedContactEmails.has(c.email) && !existingContactEmails.has(c.email),
+    )
+    if (moves.length > 0) {
+      await proposeFromDiscovery(
+        activeOrgId,
+        moves.map((c) => ({
+          contactId: c.possibleMove!.contactId,
+          fromClientId: c.possibleMove!.clientId,
+          toClientId: c.possibleMove!.toClientId ?? null,
+          email: c.email,
+          sampleItemId: c.sampleSourceItemIds[0] ?? null,
+        })),
+      ).catch((e) => console.error("[discovery] P5 proposals failed", e))
+    }
+  }
   const overrides = input.contactNameOverrides ?? {}
   // email → native-language name for this apply (lowercased keys).
   const nativeByEmail = new Map<string, string>()

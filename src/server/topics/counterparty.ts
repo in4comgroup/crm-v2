@@ -9,7 +9,11 @@
 //      contact by email, Telegram username (contact alias «@name») or name;
 //      client by a non-free-mail domain (client website / email, contacts'
 //      emails);
-//   3. a contact found without a client → its own client.
+//   3. a contact found without a client → its own client; a contact with
+//      several CURRENT companies (docs/specs/clients-contacts/04 §7) → the
+//      company of the peer's address (address row, else its domain), else
+//      the primary.
+// Contacts also match by their extra addresses (`contact_address`).
 // A unique hit is required at every step (ambiguous → not resolved). A
 // person without a company → contact only (R14). Nothing → nulls + the raw
 // string; the phase re-links later when discovery creates the client.
@@ -32,7 +36,16 @@ export type CounterpartyContact = {
   nameNative: string | null
   aliases: string[] | null
   email: string | null
+  /** Primary company (`contact.client_id`). */
   clientId: string | null
+  /** Every CURRENT company (primary first); absent = [clientId]. */
+  clientIds?: string[]
+  /** Extra email addresses (`contact_address`, lower-case) → the address's company. */
+  extraEmails?: { email: string; clientId: string | null }[]
+}
+
+function clientsOf(p: CounterpartyContact): string[] {
+  return p.clientIds ?? (p.clientId ? [p.clientId] : [])
 }
 
 export type CounterpartyIndex = {
@@ -77,11 +90,16 @@ export function buildCounterpartyIndex(
   }
   for (const p of contacts) {
     if (p.email) add(idx.contactsByEmail, p.email.trim().toLowerCase(), p.id)
+    for (const e of p.extraEmails ?? []) add(idx.contactsByEmail, e.email, p.id)
     for (const n of [p.name, p.nameNative ?? "", ...(p.aliases ?? [])]) {
       if (!n) continue
       const h = handleKey(n)
       if (h) add(idx.contactsByHandle, h, p.id)
       else add(idx.contactsByPersonKey, personMatchKey(n), p.id)
+    }
+    for (const e of p.extraEmails ?? []) {
+      const d = e.clientId ? extractEmailDomain(e.email) : ""
+      if (d && !isFreemailDomain(d)) add(idx.clientsByDomain, d, e.clientId!)
     }
     if (p.email && p.clientId) {
       const d = extractEmailDomain(p.email)
@@ -113,6 +131,23 @@ export type ResolvedCounterparty = {
   via: string[]
 }
 
+/** Company of a (multi-company) contact for this item: the peer's address. */
+export function pickContactClient(p: CounterpartyContact, peer: ItemPeer | null, idx: CounterpartyIndex): string | null {
+  const all = clientsOf(p)
+  if (all.length <= 1) return all[0] ?? p.clientId ?? null
+  const email = peer?.email?.trim().toLowerCase() ?? ""
+  if (email) {
+    const own = p.extraEmails?.find((e) => e.email === email)?.clientId
+    if (own && all.includes(own)) return own
+    const d = extractEmailDomain(email)
+    if (d && !isFreemailDomain(d)) {
+      const hits = [...(idx.clientsByDomain.get(d) ?? [])].filter((id) => all.includes(id))
+      if (hits.length === 1) return hits[0]
+    }
+  }
+  return p.clientId ?? all[0]
+}
+
 /** Match key of a raw counterparty string (company key, else person key). */
 export function counterpartyKey(raw: string): string {
   return companyMatchKey(raw) || personMatchKey(raw)
@@ -135,7 +170,7 @@ export function resolveCounterparty(
     const pc = unique(idx.contactsByPersonKey.get(personMatchKey(text)))
     if (pc) {
       const p = idx.contacts.get(pc)!
-      if (!clientId || !p.clientId || p.clientId === clientId) {
+      if (!clientId || clientsOf(p).length === 0 || clientsOf(p).includes(clientId)) {
         contactId = pc
         via.push("contact_name")
       }
@@ -156,15 +191,15 @@ export function resolveCounterparty(
     if (p && nothingYet) {
       contactId = p.id
       via.push("peer_contact")
-    } else if (p && clientId && !contactId && p.clientId === clientId) {
+    } else if (p && clientId && !contactId && clientsOf(p).includes(clientId)) {
       contactId = p.id
       via.push("peer_contact")
     }
     if (nothingYet && !clientId && peer.email) {
       const d = extractEmailDomain(peer.email)
       const c = d && !isFreemailDomain(d) ? unique(idx.clientsByDomain.get(d)) : null
-      const cc = contactId ? (idx.contacts.get(contactId)?.clientId ?? null) : null
-      if (c && (!cc || cc === c)) {
+      const cc = contactId ? clientsOf(idx.contacts.get(contactId)!) : []
+      if (c && (cc.length === 0 || cc.includes(c))) {
         clientId = c
         via.push("peer_domain")
       }
@@ -173,7 +208,8 @@ export function resolveCounterparty(
 
   // 3. Contact without client → its client.
   if (!clientId && contactId) {
-    const cc = idx.contacts.get(contactId)?.clientId ?? null
+    const p = idx.contacts.get(contactId)!
+    const cc = pickContactClient(p, peer, idx)
     if (cc) {
       clientId = cc
       via.push("contact_client")

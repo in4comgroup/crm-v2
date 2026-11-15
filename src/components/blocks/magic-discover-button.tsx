@@ -63,8 +63,15 @@ export function MagicDiscoverButton({
       const selectedClientKeys = preview.clientCandidates
         .filter((c) => !c.possibleDuplicate && c.confidence !== "low")
         .map((c) => c.normalisedKey)
+      // P5 (contact-company links): a possible move of a known contact is
+      // left for a person, like a possible duplicate.
       const selectedContactEmails = preview.contactCandidates
-        .filter((c) => !c.possibleDuplicate && c.confidence !== "low")
+        .filter(
+          (c) =>
+            !c.possibleDuplicate &&
+            !c.possibleMove &&
+            c.confidence !== "low",
+        )
         .map((c) => c.email)
       const selectedLinks = preview.linkProposals
         .filter((lp) => lp.confidence !== "low")

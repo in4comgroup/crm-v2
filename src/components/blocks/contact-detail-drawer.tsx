@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import {
   Sheet,
   SheetContent,
@@ -28,6 +28,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { ContactCompaniesBlock } from "@/components/blocks/contact-companies-block"
 
 // Дровер контакта — по образцу <ClientDetailDrawer>/<DealDetailDrawer>: клик
 // на строку/карточку контакта открывает его здесь, сразу со всеми полями в
@@ -35,7 +36,7 @@ import { Button } from "@/components/ui/button"
 // <ContactEditForm> целиком (те же поля/кнопка блокировки), а не дублирует
 // разметку формы — дровер лишь даёт ей выезжающую рамку с заголовком.
 export function ContactDetailDrawer({
-  contact,
+  contact: contactProp,
   open,
   onOpenChange,
   onChanged,
@@ -47,6 +48,25 @@ export function ContactDetailDrawer({
   onChanged: () => void
   canBlock?: boolean
 }) {
+  // «Компании» (docs/specs/clients-contacts/04): a link change can move the
+  // primary company (`contact.client_id`), so the drawer re-reads the contact
+  // after it — the header and the edit form then show the new primary and a
+  // later «Сохранить» does not write the old company back.
+  const [fresh, setFresh] = useState<ContactRow | null>(null)
+  const contact =
+    contactProp && fresh?.id === contactProp.id ? fresh : contactProp
+  const contactId = contactProp?.id
+  const handleLinksChanged = useCallback(() => {
+    onChanged()
+    if (!contactId) return
+    fetch(`/api/contacts?id=${encodeURIComponent(contactId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { contact?: ContactRow } | null) => {
+        if (d?.contact) setFresh(d.contact)
+      })
+      .catch(() => {})
+  }, [contactId, onChanged])
+
   // «Темы» (spec topics/01 §14): topics on this contact, including topics
   // with no company. Only when the org's topics mode is `on`; otherwise the
   // «Темы» tab is not shown.
@@ -106,6 +126,11 @@ export function ContactDetailDrawer({
       >
         <SheetHeader className="p-4 pb-3 border-b shrink-0">
           <SheetTitle>{contact.nameNative || contact.name}</SheetTitle>
+          {contact.clientName && (
+            <div className="text-xs text-muted-foreground truncate">
+              {contact.clientName}
+            </div>
+          )}
         </SheetHeader>
         <Tabs
           key={contact.id}
@@ -139,7 +164,14 @@ export function ContactDetailDrawer({
             </TabsList>
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto p-4">
-            <TabsContent value="info">{form}</TabsContent>
+            <TabsContent value="info" className="space-y-6">
+              {/* «Компании» — links over time, addresses, proposals (spec 04 §6). */}
+              <ContactCompaniesBlock
+                contactId={contact.id}
+                onChanged={handleLinksChanged}
+              />
+              <div className="border-t pt-4">{form}</div>
+            </TabsContent>
             <TabsContent
               value="fields"
               forceMount={fieldsMounted ? true : undefined}

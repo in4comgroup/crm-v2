@@ -18,6 +18,7 @@ import {
 import { listClientContent } from "@/server/client-content"
 import { listClients } from "@/server/clients"
 import { listContacts } from "@/server/contacts"
+import { loadContactCompanyHistoryText } from "@/server/contact-links"
 import { listDeals } from "@/server/deals"
 import { searchWeb } from "@/server/web-search"
 import { getOwnOrgContext } from "@/server/identity/own-org"
@@ -241,7 +242,7 @@ function buildSourceTools(organizationId: string | null) {
         // lines of the SHOWN fields, ≤ 400 chars each. Best effort too.
         const noText = () => new Map<string, string>()
         const shownDeals = matchedDeals.slice(0, ENTITY_CAP)
-        const [profiles, clientFields, contactFields, documents] = await Promise.all([
+        const [profiles, clientFields, contactFields, documents, companyHistory] = await Promise.all([
           loadClientProfileTexts(
             organizationId,
             shownClients.map((c) => c.id),
@@ -277,6 +278,15 @@ function buildSourceTools(organizationId: string | null) {
             console.error("[chat] documents failed", e)
             return new Map<string, ChatDocument[]>()
           }),
+          // Contact ↔ company links (spec clients-contacts/04 §6): current and
+          // former companies of a contact with link history.
+          loadContactCompanyHistoryText(
+            organizationId,
+            shownContacts.map((c) => c.id),
+          ).catch((e) => {
+            console.error("[chat] contact companies failed", e)
+            return noText()
+          }),
         ])
         const docsOf = (key: string) => {
           const list = documents.get(key)
@@ -307,6 +317,7 @@ function buildSourceTools(organizationId: string | null) {
             clientName: c.clientName,
             status: c.status,
             ...(fields ? { fields } : {}),
+            ...(companyHistory.get(c.id) ? { companies: companyHistory.get(c.id) } : {}),
             ...docsOf(`contact:${c.id}`),
           }
         })

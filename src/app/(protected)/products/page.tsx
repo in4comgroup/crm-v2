@@ -70,6 +70,10 @@ import type {
 import type { OrderRequestItemView } from "@/app/api/order-requests/route"
 import { parseQtyHint } from "@/lib/order-request"
 import { PageLoader } from "@/components/blocks/page-loader"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
+
+const PRODUCTS_TABS = ["catalog", "orders"] as const
+type ProductsTab = (typeof PRODUCTS_TABS)[number]
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 10
@@ -528,7 +532,12 @@ export default function ProductsPage() {
   // Controlled tab + order-builder session. The builder lives at the page
   // level so it survives tab switches and the catalog table can feed
   // products into it. Saving bumps the orders list + jumps to the Orders tab.
-  const [tab, setTab] = useState("catalog")
+  // Remembered per browser; `?tab=` deep link wins. The restore runs in the
+  // hook's mount effect, BEFORE the deep-link effects below (?openOrder= /
+  // ?assembleRequest=), so their `setTab("catalog")` still wins.
+  const [tab, setTab] = usePersistentTab<ProductsTab>("products", "catalog", {
+    allowed: PRODUCTS_TABS,
+  })
   const [ordersRefresh, setOrdersRefresh] = useState(0)
   const builder = useOrderBuilder({
     onSaved: () => {
@@ -742,7 +751,7 @@ export default function ProductsPage() {
         toast.error("Не удалось запустить мастер")
       }
     },
-    [builder, applyItemToFilters, cardPrefill],
+    [builder, applyItemToFilters, cardPrefill, setTab],
   )
 
   // Stamp the current item's outcome and advance, or end the walkthrough.
@@ -937,7 +946,11 @@ export default function ProductsPage() {
       </div>
 
       <div className="w-full">
-        <Tabs value={tab} onValueChange={setTab} className="w-full">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as ProductsTab)}
+          className="w-full"
+        >
           {/* One "New order" entry point (both tabs). The dialog branches on
               whether a client request was pasted: empty → manual builder;
               filled → LLM split + assembly wizard. «Новый заказ» — слева,

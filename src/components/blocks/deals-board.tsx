@@ -96,6 +96,9 @@ import {
   type SortMode,
   type TerminalSortMode,
 } from "./deals-kanban/store"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
+
+const OWNER_FILTERS = ["all", "mine"] as const satisfies readonly OwnerFilter[]
 
 type OverData = { type?: "card" | "column"; stageId?: string; dealId?: string }
 
@@ -222,7 +225,11 @@ export function DealsBoard({
   const router = useRouter()
   const { data: board, loading: boardLoading, refetch: refetchBoard } =
     useBoardIntel()
-  const [filter, setFilter] = useState<OwnerFilter>("all")
+  // «Все / Мои» — remembered per browser (no URL param).
+  const [filter, setFilter] = usePersistentTab<OwnerFilter>("deals.filter", "all", {
+    allowed: OWNER_FILTERS,
+    urlParam: false,
+  })
   // Мультивыбор клиентов (пусто = все). Заменил и поиск по названию, и селект.
   const [clientFilters, setClientFilters] = useState<string[]>([])
   // «Не состоялись» (бывший чекбокс «Удалённые») — раскрывает проигранные

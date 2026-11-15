@@ -36,11 +36,13 @@ import {
   defaultChartRange,
   type ChartScale,
 } from "@/lib/ai-usage-chart"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 const ALL = "__all__"
 
 type Period = "7d" | "30d" | "this_month" | "last_month" | "custom"
 type Group = "process" | "model" | "user"
+const GROUPS = ["process", "model", "user"] as const satisfies readonly Group[]
 type Row = AccountAiUsageResponse["byProcess"][number]
 type SortKey = "label" | "calls" | "errors" | "tokens" | "cost" | "avgCost"
 
@@ -99,7 +101,11 @@ export function AccountAiUsage() {
   const [model, setModel] = useState(ALL)
   const [userId, setUserId] = useState(ALL)
   const [status, setStatus] = useState(ALL)
-  const [stack, setStack] = useState<Group>("process")
+  // Chart stack + table grouping are remembered per browser (no URL param).
+  const [stack, setStack] = usePersistentTab<Group>("account.aiUsage.stack", "process", {
+    allowed: GROUPS,
+    urlParam: false,
+  })
   const [scale, setScale] = useState<ChartScale>("day")
   // null = the default chart range for the scale (day → the page period).
   const [chartRange, setChartRange] = useState<{ from: string; to: string } | null>(null)
@@ -107,7 +113,10 @@ export function AccountAiUsage() {
   const [chartLoading, setChartLoading] = useState(true)
   const [chartError, setChartError] = useState<string | null>(null)
   const chartSeq = useRef(0)
-  const [group, setGroup] = useState<Group>("process")
+  const [group, setGroup] = usePersistentTab<Group>("account.aiUsage.group", "process", {
+    allowed: GROUPS,
+    urlParam: false,
+  })
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "cost", dir: "desc" })
 
   const [data, setData] = useState<AccountAiUsageResponse | null>(null)

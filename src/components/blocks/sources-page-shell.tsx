@@ -14,6 +14,9 @@ import { useProcessRun } from "@/components/blocks/use-process-run"
 import { WorkflowStatistics } from "@/components/blocks/workflow-statistics"
 import { AnalysisExclusionsSection } from "@/components/blocks/analysis-exclusions-section"
 import type { SourceSummary } from "@/server/sources"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
+
+type SourcesTab = "org" | "stored" | "stats" | "manage"
 
 // Local-date "YYYY-MM-DD" for `<input type="date">` (the default processing
 // period is today → today).
@@ -68,9 +71,24 @@ export function SourcesPageShell({
   // that tab's content stand alone. Admin/owner still see the real tab set.
   const tabCount = 1 + Number(showStored) + Number(showStats) + Number(isOrgOwner)
   const showTabs = tabCount > 1
+  // Remembered per browser; `?tab=` deep link wins. Only the tabs this viewer
+  // can see are allowed — a stored hidden tab falls back to "org".
+  const allowedTabs: SourcesTab[] = [
+    "org",
+    ...(showStored ? (["stored"] as const) : []),
+    ...(showStats ? (["stats"] as const) : []),
+    ...(isOrgOwner ? (["manage"] as const) : []),
+  ]
+  const [tab, setTab] = usePersistentTab<SourcesTab>("sources", "org", {
+    allowed: allowedTabs,
+  })
 
   return (
-    <Tabs defaultValue="org" className="space-y-6">
+    <Tabs
+      value={tab}
+      onValueChange={(v) => setTab(v as SourcesTab)}
+      className="space-y-6"
+    >
       {showTabs && (
         <TabsList>
           <TabsTrigger value="org">Источники организации</TabsTrigger>

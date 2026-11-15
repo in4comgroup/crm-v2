@@ -48,6 +48,7 @@ import {
 } from "@/components/blocks/custom-field-filters"
 import { encodeCustomFilters, type CustomFieldFilter } from "@/lib/custom-fields"
 import { LINK_RELATION_LABELS, type LinkRelation } from "@/lib/contact-links"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 // «+N»: other CURRENT companies of a contact (docs/specs/clients-contacts/04
 // §6); the primary one stays `clientId` / `clientName`.
@@ -76,6 +77,7 @@ function OtherCompaniesBadge({ items }: { items: ContactRow["otherCompanies"] })
 }
 
 type ContactView = "cards" | "table"
+const CONTACT_VIEWS = ["cards", "table"] as const
 
 const ALL = "__all__"
 const NO_CLIENT = "__none__"
@@ -102,7 +104,11 @@ export default function ContactsPage() {
   const companyFilterActive = clientFilter !== ALL && clientFilter !== NO_CLIENT
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([])
   const [editingContact, setEditingContact] = useState<ContactRow | null>(null)
-  const [view, setView] = useState<ContactView>("table")
+  // Remembered per browser (no URL param).
+  const [view, setView] = usePersistentTab<ContactView>("contacts.view", "table", {
+    allowed: CONTACT_VIEWS,
+    urlParam: false,
+  })
   const cardsViewTip = useAnchorTooltip()
   const tableViewTip = useAnchorTooltip()
   const fieldsTip = useAnchorTooltip()

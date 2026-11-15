@@ -45,10 +45,12 @@ import { TaskDetailDrawer } from "@/components/blocks/task-detail-drawer"
 import { TaskTimeline } from "@/components/blocks/task-timeline"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { isOpenDealStatus } from "@/lib/deal-funnel"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 const PAGE_SIZE = 6
 
 type TaskView = "cards" | "table"
+const TASK_VIEWS = ["cards", "table"] as const
 
 const STATUSES: TaskStatus[] = ["todo", "in_progress", "done", "closed"]
 
@@ -298,7 +300,11 @@ function TasksPageContent() {
     [tasks, openTaskId],
   )
 
-  const [view, setView] = useState<TaskView>("cards")
+  // Remembered per browser (no URL param).
+  const [view, setView] = usePersistentTab<TaskView>("tasks.view", "cards", {
+    allowed: TASK_VIEWS,
+    urlParam: false,
+  })
   const cardsViewTip = useAnchorTooltip()
   const tableViewTip = useAnchorTooltip()
   // Отличаем «реально пусто» от «запрос не выполнился» (сеть/БД) — иначе

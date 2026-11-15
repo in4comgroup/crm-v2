@@ -11,10 +11,10 @@
 | Forms | React Hook Form + Zod 4 | |
 | Auth | better-auth 1.5 | Email OTP only; plugins `emailOTP`, `organization`, `admin`, `apiKey`, `nextCookies`. |
 | Database | Neon Postgres (serverless HTTP driver) + Drizzle ORM 0.45 | Schema in `src/db/schema.ts`, client in `src/db/drizzle.ts`. No transactions on the HTTP driver. |
-| Object storage | S3-compatible via `@aws-sdk/client-s3`, Cloudflare R2 today | Parsed Markdown and user avatars. Provider-neutral layer `src/server/storage` (generic S3 core + provider registry, `STORAGE_PROVIDER`); spec `docs/specs/s3-r2/`. |
+| Object storage | S3-compatible via `@aws-sdk/client-s3`, Cloudflare R2 today | Parsed Markdown, original document files and user avatars. Provider-neutral layer `src/server/storage` (generic S3 core + provider registry, `STORAGE_PROVIDER`); spec `docs/specs/s3-r2/`. |
 | LLM | Vercel AI SDK v6 (`ai`) through the Vercel AI Gateway | Only through the AI layer `src/server/ai` (`aiGenerateText` / `aiStreamText` with a process key). Model per process is chosen on `/settings` «Процессы ИИ» (defaults: Gemini 2.5 Flash for parsing, Gemini 3.1 Flash Lite elsewhere). Every call is recorded with tokens and exact cost (`ai_usage_event`). Spec `docs/specs/models/`. |
 | AI UI | ai-elements, streamdown, json-render (`@json-render/*`) | Chat rendering and structured AI output. |
-| Background jobs | Vercel Workflow SDK (`workflow`) + Vercel Cron | Daily workflow: AI model catalog sync + usage cost check, then source sync → parse → upload. Hourly workflow: topics engine (`runTopicsPipeline`; needs Vercel Pro). |
+| Background jobs | Vercel Workflow SDK (`workflow`) + Vercel Cron | Daily workflow: AI model catalog sync + usage cost check, then source sync → parse → upload. Hourly workflow: topics engine (`runTopicsPipeline`; needs Vercel Pro). Hourly route (no workflow): notification checks for every org (`runNotificationChecks`). |
 | Data viz / tables | Recharts 3 (shadcn charts), @tanstack/react-table, @dnd-kit (kanban) | |
 | Integrations | Nylas SDK v8, imapflow + mailparser, node-ical, googleapis, grammY (Telegram), Resend | |
 | File parsing | mammoth (.docx), jszip + @xmldom/xmldom (.pptx), ExcelJS (price-list export) | PDF, image, audio, video go to Gemini as file parts. |
@@ -34,6 +34,7 @@ Node-only packages `imapflow`, `mailparser`, `node-ical`, `exceljs` are listed i
 | `src/app/o/[token]` | Public, token is the authorization | Guest order review and confirmation. |
 | `src/app/api/webhooks/telegram/[sourceId]` | Public, path id + secret header are the authorization | Telegram bot webhook: private chats and groups, text, voice notes and files (parsed as attachments; spec `docs/specs/telegram/`). |
 | `src/app/api/cron/daily` | Bearer `CRON_SECRET`, required in every environment | Starts the daily pipeline workflow. |
+| `src/app/api/cron/topics`, `api/cron/notifications` | Same Bearer `CRON_SECRET` | Hourly topics run; hourly notification checks + clean-up of expired notifications. |
 | `src/app/api/invitations/[id]`, `api/invitations/check` | Public | Invitation lookup and "has pending invite" check. |
 | `src/app/api/**` (all other routes) | Session required; most need an active org | JSON API used by the UI. |
 

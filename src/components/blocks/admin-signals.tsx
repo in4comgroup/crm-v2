@@ -54,6 +54,7 @@ import {
   type SaveResult,
   type SignalsContextValue,
 } from "@/components/blocks/admin-signals-shared"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 type OrgState = { id: string; data: SignalsOrgResponse | null; error: string | null }
 
@@ -69,6 +70,17 @@ function filenameFrom(disposition: string | null): string | null {
   return plain ? plain[1] : null
 }
 
+const SIGNALS_TABS = [
+  "codes",
+  "packs",
+  "attributes",
+  "relations",
+  "risks",
+  "templates",
+  "org",
+] as const
+type SignalsTab = (typeof SIGNALS_TABS)[number]
+
 export function AdminSignals() {
   const [registry, setRegistry] = useState<SignalsRegistryResponse | null>(null)
   const [regError, setRegError] = useState<string | null>(null)
@@ -76,7 +88,11 @@ export function AdminSignals() {
   const [orgId, setOrgId] = useState<string | null>(null)
   const [orgState, setOrgState] = useState<OrgState | null>(null)
   const [filters, setFilters] = useState<CodeFilters>(EMPTY_FILTERS)
-  const [tab, setTab] = useState("codes")
+  // Remembered per browser; no URL param (`?tab=` belongs to /settings).
+  const [tab, setTab] = usePersistentTab<SignalsTab>("settings.signals", "codes", {
+    allowed: SIGNALS_TABS,
+    urlParam: false,
+  })
   const [editor, setEditor] = useState<{ isNew: boolean; code: string | null }>({ isNew: false, code: null })
   const [historyOpen, setHistoryOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -345,7 +361,7 @@ export function AdminSignals() {
           </p>
         )}
 
-        <Tabs value={tab} onValueChange={setTab}>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as SignalsTab)}>
           <TabsList>
             <TabsTrigger value="codes">Коды</TabsTrigger>
             <TabsTrigger value="packs">Пакеты и блоки</TabsTrigger>

@@ -17,9 +17,27 @@ import { AdminSignals } from "@/components/blocks/admin-signals"
 import { AdminTopicsTesting } from "@/components/blocks/admin-topics-testing"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
+
+const SETTINGS_TABS = [
+  "users",
+  "organizations",
+  "sources",
+  "models",
+  "ai-processes",
+  "ai-usage",
+  "topics",
+  "signals",
+  "testing",
+] as const
+type SettingsTab = (typeof SETTINGS_TABS)[number]
 
 export default function SettingsPage() {
   const { data: session, isPending } = authClient.useSession()
+  // Remembered per browser; `?tab=` deep link wins (all tabs are shown to every admin).
+  const [tab, setTab] = usePersistentTab<SettingsTab>("settings", "users", {
+    allowed: SETTINGS_TABS,
+  })
 
   if (isPending) {
     return (
@@ -47,7 +65,11 @@ export default function SettingsPage() {
       </div>
 
       <div className="w-full">
-        <Tabs defaultValue="users" className="w-full">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as SettingsTab)}
+          className="w-full"
+        >
           <TabsList>
             <TabsTrigger value="users">Пользователи</TabsTrigger>
             <TabsTrigger value="organizations">Организации</TabsTrigger>

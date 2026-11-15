@@ -83,7 +83,7 @@ Names only. Values live in `.env` locally and in Vercel project settings.
 
 | Variable | Meaning |
 | --- | --- |
-| `CRON_SECRET` | Base64 of 32 random bytes; `/api/cron/daily` requires `Authorization: Bearer <value>` in every environment; unset = every call rejected |
+| `CRON_SECRET` | Base64 of 32 random bytes; every `/api/cron/*` route (daily, topics, notifications) requires `Authorization: Bearer <value>` in every environment; unset = every call rejected |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Optional fallback bot for a Telegram source with no stored credentials (both required) |
 
 ### Not read by the application code
@@ -138,7 +138,7 @@ load them on every product query. They exist only in migration `0002`.
 
 **Reference data vs tenant data:** platform reference data (source templates,
 system funnel stages) is in migration `0004`; there are no system rules today (the `rule` table is kept as a data record only).
-Migration `0028_cards_contract_old_columns` drops `source_item.card_analysis_scanned_at` and `source_item.deal_analysis_scanned_at`; the latest migration is `0028`.
+Migration `0028_cards_contract_old_columns` drops `source_item.card_analysis_scanned_at` and `source_item.deal_analysis_scanned_at`. The latest migration is `0041` (2026-11-15: `0039` contact ↔ company links, `0040` notifications, `0041` drops `notification_read_state`); all are applied on the test DB.
 Tenant data (organizations, users, companies, products, org-owned stages and
 rules) is never in migrations. The team's old scripts (`scripts/`), reference
 specs (`refs/`) and catalog loader (`data_migration/`) remain git-ignored and
@@ -150,9 +150,12 @@ are not needed to build a DB.
 - `next.config.ts` wraps the config with `withWorkflow()` (Vercel Workflow SDK).
   Routes under `src/app/.well-known/workflow/` are generated at build and
   git-ignored.
-- `vercel.ts` (replaces `vercel.json`) declares two crons: `/api/cron/daily`
-  at `0 3 * * *` (03:00 UTC) and `/api/cron/topics` hourly (`0 * * * *`, topics
-  engine — spec `docs/specs/topics/`). **A cron more often than daily needs the
+- `vercel.ts` (replaces `vercel.json`) declares three crons: `/api/cron/daily`
+  at `0 3 * * *` (03:00 UTC), `/api/cron/topics` hourly (`0 * * * *`, topics
+  engine — spec `docs/specs/topics/`) and `/api/cron/notifications` hourly
+  (`15 * * * *`, notification checks for every org — spec
+  `docs/specs/notifications/`); all three are mirrored in
+  `src/server/orchestration/config.ts`. **A cron more often than daily needs the
   Vercel Pro plan; a Hobby deployment with it is rejected.** The daily one is
   at `0 3 * * *` (03:00 UTC). The same expression is in
   `src/server/orchestration/config.ts`; change both together. Set
@@ -166,9 +169,13 @@ are not needed to build a DB.
   `NEXT_PUBLIC_APP_URL` needs a new deployment.
 - `NEXT_PUBLIC_APP_URL` must be the public HTTPS origin in production, or the
   Telegram webhook is not registered automatically when credentials are saved.
+- One-time steps per deployment are listed in `docs/todo/README.md` →
+  «Deployment checklist» (Telegram privacy mode + webhook re-registration, own
+  Telegram names, a real Telegram file test, the notifications cron).
 - Add any new production origin to `trustedOrigins` in `src/lib/auth.ts`.
 - Long-running routes set `maxDuration` (up to 300 s: parse, process, uploads,
-  teardown, admin pipeline run).
+  teardown, admin pipeline run, the Telegram webhook and fetch — files are
+  parsed right after a message —, the cron routes).
 - Seed data must exist before new orgs are created: the org-creation hook
   creates default sources from `source_template` rows; with no templates the
   new org gets no sources (the error is logged, not raised).
@@ -185,7 +192,9 @@ are not needed to build a DB.
 - `R2_PUBLIC_URL` is the S3 endpoint of the account, not a public bucket URL and
   not `<endpoint>/<bucket>`. The bucket name comes from `R2_BUCKET_NAME`.
 - Keys: parsed Markdown `org_<orgId>/source_<sourceId>/item_<itemId>.md`;
-  avatars `avatars/user_<userId>`.
+  original document files `org_<orgId>/files/<itemId>/<name>` (≤ 50 MB; mail,
+  Google Chat, Telegram attachments, Drive, uploads); avatars
+  `avatars/user_<userId>`.
 - After a successful upload the Markdown is removed from
   `source_item.parsed_markdown`; R2 becomes the only copy. Losing the bucket
   loses parsed content (items can be re-parsed only where raw data is still at
@@ -217,8 +226,9 @@ are not needed to build a DB.
 - Outbound email is platform-only; no "send from the org's mailbox" (#17).
 - Contact identification when the body signer differs from the envelope sender
   is not solved (#19).
-- Telegram: text DMs only; no attachments, groups, rate limit, or webhook health
-  view (#20).
+- Telegram: files above 20 MB cannot be fetched by a bot (listed only); group
+  authors with unknown Telegram names are not discovery candidates; no rate
+  limit, edit / delete handling, or webhook health view (#20).
 - Product backlog: company event feed, home page as a dashboard, selectable
   sales methodology (#21).
 - Companies feed sorts up to 500 rows in the browser; needs server-side sorting

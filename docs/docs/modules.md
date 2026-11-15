@@ -40,7 +40,7 @@ and one table «Материалы источников» with a «Разбор�
 | `imap` (email) | Remote sync, envelope only; body fetched at parse | `{ host, port, secure, user, password }`; no env fallback | Yes |
 | `gchat` | Remote sync | service-account JSON + impersonated user; no fallback | Yes |
 | `gdrive` (Drive, Meet recordings) | Remote sync | service-account JSON; no fallback | Yes |
-| `telegram` | Webhook push; manual `getUpdates` fetch (dev) | `{ botToken, webhookSecret }`; env fallback | Parse/upload only |
+| `telegram` | Webhook push (private chats and groups: text, voice notes, files ≤ 20 MB); manual `getUpdates` fetch (dev) | `{ botToken, webhookSecret }`; env fallback | Parse/upload only |
 | `dropoff` | Browser upload, parsed at upload time | none | No |
 | `whatsapp` | Browser folder upload of a chat export | none | No |
 | `aichat` | "Save chat" from the AI chat panel | none | No |
@@ -52,7 +52,11 @@ Adding a provider = enum value + metadata entry in `src/lib/sources/providers.ts
 **Parsing.** `parseSourceItem(id)` in `src/server/parse-source-item.ts`
 dispatches by provider to `src/server/parsers/*` (text/email, imap, chat, drive,
 pdf, image, audio, video, office, whatsapp, telegram, dropoff). Attachments
-become child rows; a video yields an extra `derived_audio` child. Email
+become child rows (also Telegram files: downloaded by `file_id` and parsed by
+the same attachment path; spec `docs/specs/telegram/`); a video yields an
+extra `derived_audio` child. A message is marked complete only after its
+attachments are parsed, because attachment text feeds signal extraction for
+every source. Email
 calendar invites (.ics) are folded into the parent email. Decorative inline
 images (logos, tracking pixels) are skipped. Each parse also writes
 **own-org attribution** (`own_org` / `external` / `unknown`), using sender
@@ -82,6 +86,10 @@ owners, `api/webhooks/telegram/[sourceId]`.
   chat items cannot be re-parsed (raw bytes are not kept).
 - A provider 404/410 marks the item `skipped`, not `failed`. A per-item error
   never stops a batch.
+- Telegram: the bot replies (Russian) only in private chats, never in groups;
+  in groups it needs privacy mode off (BotFather `/setprivacy`), shown in the
+  source settings «Группы». Group messages of our staff take the group's
+  client as counterparty.
 - New orgs get sources from `is_default` templates (Files Drop Off, AI Chat);
   owners add other sources with «Добавить источник» (Add source) from visible templates.
 
@@ -474,7 +482,10 @@ source reset.
   model / user — always cost WITH the platform markup, never the gateway cost or
   markup %; the card «Месячный лимит ИИ»; `api/account/ai-usage`, specs
   `docs/specs/models/05-…` §7 and `08-monthly-limit.md`) and tab «Уведомления»
-  (notification categories; topics email choices in mode `on`). Owner banners on `/account`: incomplete org profile,
+  (notification categories; topics email choices in mode `on`) and, for owners /
+  admins, «Проверка эталона» (golden-set review, was the page `/review`). The
+  page remembers its open tab; every page with tabs / views does (per browser),
+  and the sidebar remembers open / closed (cookie). Owner banners on `/account`: incomplete org profile,
   AI monthly limit ≥ 70 % (info) / ≥ 90 % / used up, daily AI budget used up.
 - Invitations: owner invites by email → email with
   `/accept-invitation/<id>` → invitee signs in with an OTP sent to the invited

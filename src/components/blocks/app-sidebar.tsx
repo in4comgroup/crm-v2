@@ -11,7 +11,6 @@ import {
   ListChecks,
   Package,
   SquareKanban,
-  ClipboardCheck,
 } from "lucide-react"
 import {
   Sidebar,
@@ -108,15 +107,11 @@ function footerLinkClass(active: boolean) {
 export function AppSidebar({
   session,
   orgLogo = null,
-  canReviewGolden = false,
 }: {
   session: AuthSession
   // Loaded server-side (not from the session) because logos are large base64
   // data URLs that would overflow the session cookie. See (protected)/layout.tsx.
   orgLogo?: string | null
-  // Org owner / admin of the ACTIVE org → «Проверка эталона» (/review).
-  // Resolved server-side in (protected)/layout.tsx; the API checks again.
-  canReviewGolden?: boolean
 }) {
   const pathname = usePathname()
 
@@ -234,16 +229,6 @@ export function AppSidebar({
             </SidebarMenuItem>
           ))}
 
-          {canReviewGolden && (
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <Link href="/review" className={footerLinkClass(pathname === "/review")}>
-                  <ClipboardCheck className="size-4 mr-2 shrink-0" />
-                  <span className="text-sm">Проверка эталона</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          )}
 
           {isAdmin && (
             <SidebarMenuItem>

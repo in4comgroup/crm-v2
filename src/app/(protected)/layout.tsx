@@ -2,8 +2,8 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/blocks/app-sidebar"
 import { getServerSession } from "@/lib/get-session"
 import { getOrganizationLogo } from "@/server/organizations"
-import { canReviewGoldenSet } from "@/server/topics/golden-review"
 import { redirect } from "next/navigation"
+import { cookies } from "next/headers"
 import { PanelProvider } from "@/lib/chat-panel-context"
 import { GlobalChatProvider } from "@/lib/global-chat-context"
 import { AiChatPanel } from "@/components/blocks/global-ai-chat"
@@ -20,14 +20,18 @@ export default async function DashboardLayout({
   // session — it's a large base64 data URL and would overflow the session
   // cookie (431 Request Header Fields Too Large). See src/lib/auth.ts note.
   const orgId = session.session.activeOrganizationId
-  const [orgLogo, canReviewGolden] = await Promise.all([
+  const [orgLogo, cookieStore] = await Promise.all([
     orgId ? getOrganizationLogo(orgId) : Promise.resolve(null),
-    // «Проверка эталона» in the sidebar: org owner / admin of the active org.
-    orgId ? canReviewGoldenSet() : Promise.resolve(false),
+    cookies(),
   ])
+  // The sidebar remembers open / closed: shadcn's SidebarProvider writes the
+  // `sidebar_state` cookie on every toggle; reading it here makes a reload /
+  // a new page start in the same state (no cookie = open).
+  const sidebarOpen = cookieStore.get("sidebar_state")?.value !== "false"
 
   return (
     <SidebarProvider
+      defaultOpen={sidebarOpen}
       style={
         // Ширина развёрнутого сайдбара — впритык к контенту. НЕ используем
         // max-content: у shadcn пустой gap-спейсер (sidebar-gap) тогда даёт
@@ -37,7 +41,7 @@ export default async function DashboardLayout({
         { "--sidebar-width": "13rem" } as React.CSSProperties
       }
     >
-      <AppSidebar session={session} orgLogo={orgLogo} canReviewGolden={canReviewGolden} />
+      <AppSidebar session={session} orgLogo={orgLogo} />
 
       <div className="relative flex-1 flex flex-col min-w-0">
         {/* Атмосфера лендинга (сетка + свечения, globals.css) — фон всего

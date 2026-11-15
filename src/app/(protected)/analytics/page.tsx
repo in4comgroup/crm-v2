@@ -22,6 +22,7 @@ import { TabClients } from "@/components/blocks/analytics/tab-clients"
 import { TabOrders } from "@/components/blocks/analytics/tab-orders"
 import { TabProducts } from "@/components/blocks/analytics/tab-products"
 import type { SalesAnalytics } from "@/server/analytics"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 // Lazily loaded — and it MUST stay that way. The assistant pulls the whole chat
 // stack behind it (@ai-sdk/react, ai-elements, Streamdown → Shiki + mermaid +
 // katex). Imported eagerly it added ~1.6 GB to this page's dev compile, taking
@@ -91,7 +92,22 @@ const formatDay = (d: Date) =>
     timeZone: "UTC",
   })
 
+const ANALYTICS_TABS = [
+  "overview",
+  "time",
+  "sellers",
+  "clients",
+  "orders",
+  "products",
+  "assistant",
+] as const
+type AnalyticsTab = (typeof ANALYTICS_TABS)[number]
+
 export default function AnalyticsPage() {
+  // Remembered per browser; `?tab=` deep link wins.
+  const [tab, setTab] = usePersistentTab<AnalyticsTab>("analytics", "overview", {
+    allowed: ANALYTICS_TABS,
+  })
   const [bounds, setBounds] = useState<Bounds | null>(null)
   const [preset, setPreset] = useState<PresetKey>("all")
   const [data, setData] = useState<SalesAnalytics | null>(null)
@@ -185,7 +201,11 @@ export default function AnalyticsPage() {
       {loading && !data ? (
         <AnalyticsSkeleton />
       ) : data ? (
-        <Tabs defaultValue="overview" className="gap-4">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as AnalyticsTab)}
+          className="gap-4"
+        >
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3">
             <TabsList className="flex-wrap">
               <TabsTrigger value="overview">Обзор</TabsTrigger>

@@ -23,7 +23,6 @@ import {
   DIGEST_VISIBLE_ITEMS,
   TOPIC_TABS,
   TOPIC_TAB_LABELS_RU,
-  isTopicTab,
   splitDigest,
   splitWeek,
   type TopicCounts,
@@ -31,6 +30,7 @@ import {
   type TopicListResponse,
   type TopicTab,
 } from "@/lib/topics/topic-ui"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 const ANY = "__any__"
 
@@ -64,7 +64,12 @@ function Empty({ label }: { label: string }) {
 }
 
 export function TopicListsSection() {
-  const [tab, setTab] = useState<TopicTab>("now")
+  // Remembered per browser. The hook also reads the `?tab=` deep link (emails,
+  // topics phase 7) on mount — it wins over the stored tab. The hook's effect
+  // runs before the deep-link effect below, which then strips the URL.
+  const [tab, setTab] = usePersistentTab<TopicTab>("dashboard.topics", "now", {
+    allowed: TOPIC_TABS,
+  })
   const [mine, setMine] = useState(false)
   const [status, setStatus] = useState("live")
   const [list, setList] = useState(ANY)
@@ -79,12 +84,12 @@ export function TopicListsSection() {
   const req = useRef(0)
 
   // Deep links (topics phase 7 emails): `?topic=<id>` opens the topic drawer,
-  // `?tab=now|digest|week|all` picks the tab. Read once, then removed from the URL.
+  // `?tab=now|digest|week|all` picks the tab (applied by usePersistentTab
+  // above). Read once, then removed from the URL.
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search)
     const topicId = qs.get("topic")
     const tabParam = qs.get("tab")
-    if (tabParam && isTopicTab(tabParam)) setTab(tabParam)
     if (topicId) setDrawerId(topicId)
     if (topicId || tabParam) {
       qs.delete("topic")

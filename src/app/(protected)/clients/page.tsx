@@ -76,11 +76,21 @@ import {
   type ClientSizeBand,
 } from "@/lib/identity/client-profile"
 import { MARKET_ROLES, MARKET_ROLE_LABELS_RU } from "@/lib/identity/org-profile"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 const ALL = "__all__"
 const TAB_ALL: ClientFeedTab = "all"
 
 type ClientView = "cards" | "table"
+const CLIENT_VIEWS = ["cards", "table"] as const
+const CLIENT_FEED_TABS = [
+  "all",
+  "customers",
+  "potential",
+  "supplier",
+  "partner",
+  "unclassified",
+] as const satisfies readonly ClientFeedTab[]
 
 // `deleted`/`blocked` are hidden under the default "All statuses" view; pick
 // either explicitly to view/restore.
@@ -127,7 +137,12 @@ function TotalCapNote({ shown, total }: { shown: number; total: number }) {
 }
 
 export default function ClientsPage() {
-  const [tab, setTab] = useState<ClientFeedTab>("all")
+  // Remembered per browser; `?tab=` deep link wins. The feed effect below
+  // depends on `tab`, so a restored tab loads exactly like a pick; the
+  // request id (`reqIdRef`) drops the first "all" response if it lands late.
+  const [tab, setTab] = usePersistentTab<ClientFeedTab>("clients.tab", "all", {
+    allowed: CLIENT_FEED_TABS,
+  })
   const [statusFilter, setStatusFilter] = useState<string>(ALL)
   // «Ответственный»: all | mine | handover | <member user id> — server-side.
   const [responsibleFilter, setResponsibleFilter] = useState<string>(RESPONSIBLE_FILTER_ALL)
@@ -183,7 +198,10 @@ export default function ClientsPage() {
   // выводим из живого `rows`, чтобы дровер не устарел после refreshAll.
   const [openClientId, setOpenClientId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [view, setView] = useState<ClientView>("cards")
+  const [view, setView] = usePersistentTab<ClientView>("clients.view", "cards", {
+    allowed: CLIENT_VIEWS,
+    urlParam: false,
+  })
   const cardsViewTip = useAnchorTooltip()
   const tableViewTip = useAnchorTooltip()
   const blocklistTip = useAnchorTooltip()

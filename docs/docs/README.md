@@ -1,6 +1,6 @@
 # System documentation — salesdaily CRM
 
-Last updated: 2026-11-13
+Last updated: 2026-11-15
 
 ## Purpose
 
@@ -48,5 +48,5 @@ Related material:
 When this documentation and the code disagree, the code wins. The documents
 were checked against `src/db/schema.ts`, `src/app/**`, `src/server/**`,
 `src/lib/auth.ts`, `src/components/blocks/app-sidebar.tsx`, `package.json`,
-`next.config.ts` and `vercel.ts` on the date above. Items that could not be
+`next.config.ts` and `vercel.ts` on the date above (2026-11-15 update: contact ↔ company links, Telegram files and groups, attachment text in signal extraction, notifications, «Проверка эталона» on `/account`, remembered sidebar / tabs). Items that could not be
 checked are marked "to verify".

@@ -18,6 +18,8 @@ import { AccountNotificationPrefs } from "@/components/blocks/account-notificati
 import { OrgProfileTab } from "@/components/blocks/org-profile-tab"
 import { OrgProfileBanner } from "@/components/blocks/org-profile-banner"
 import { AiLimitBanner } from "@/components/blocks/ai-limit-banner"
+import { GoldenReviewList } from "@/components/blocks/golden-review-list"
+import { initialTabFromBrowser, writeStoredTab } from "@/lib/use-persistent-tab"
 
 type User = {
   id: string
@@ -58,6 +60,8 @@ export default function AccountPage() {
   const openTab = (v: string) => {
     if (v === "org-profile") setProfileVisited(true)
     setTab(v)
+    // The page remembers its open tab (2026-11-15; src/lib/use-persistent-tab.ts).
+    writeStoredTab("account", v)
   }
 
   //console.log("User session in settings page:", session)
@@ -82,17 +86,6 @@ export default function AccountPage() {
         ])
         const on = topicsState?.visible === true
         setTopicsOn(on)
-        const wantTab = new URLSearchParams(window.location.search).get("tab")
-        if (wantTab === "notifications") {
-          setTab("notifications")
-        } else if (wantTab === "org-profile") {
-          setProfileVisited(true)
-          setTab("org-profile")
-        } else if (wantTab === "ai-usage" || wantTab === "members") {
-          // Links from notifications (docs/specs/notifications). The tabs
-          // themselves are shown only to the roles that may see them.
-          setTab(wantTab)
-        }
         const org: Organization | null = orgRes.organization ?? null
         let role: string | null = null
         if (org?.id && activeMember.data?.organizationId === org.id) {
@@ -110,6 +103,21 @@ export default function AccountPage() {
         }
         setOrganization(org)
         setMemberRole(role)
+        // Open tab: `?tab=` (links from notifications, digests, banners) wins,
+        // else the tab the user had open last time — only a tab this role
+        // sees (members / ai-usage: owner; review: owner / admin).
+        const allowed = [
+          "info",
+          "org-profile",
+          "notifications",
+          ...(role === "owner" ? ["members", "ai-usage"] : []),
+          ...(role === "owner" || role === "admin" ? ["review"] : []),
+        ]
+        const want = initialTabFromBrowser("account", { allowed })
+        if (want) {
+          if (want === "org-profile") setProfileVisited(true)
+          setTab(want)
+        }
       } catch (e) {
         console.error("Failed to fetch organization:", e)
       } finally {
@@ -139,6 +147,7 @@ export default function AccountPage() {
   }
 
   const isOwner = memberRole === "owner"
+  const canReview = memberRole === "owner" || memberRole === "admin"
 
   return (
     <div className="flex flex-col gap-4 p-4 min-h-screen">
@@ -170,6 +179,7 @@ export default function AccountPage() {
           )}
           {isOwner && <TabsTrigger value="ai-usage">Использование ИИ</TabsTrigger>}
           <TabsTrigger value="notifications">Уведомления</TabsTrigger>
+          {canReview && <TabsTrigger value="review">Проверка эталона</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="info" className="flex flex-col gap-4">
@@ -241,6 +251,20 @@ export default function AccountPage() {
           <AccountNotificationPrefs />
           {topicsOn && <AccountTopicDelivery />}
         </TabsContent>
+
+        {/* «Проверка эталона» (golden-set review, was the page /review):
+            org owner / admin of the active org; /api/topics/golden checks
+            the role on every call. Mounted only when opened. */}
+        {canReview && (
+          <TabsContent value="review" className="flex flex-col gap-4">
+            <p className="max-w-4xl text-sm text-muted-foreground">
+              Эталонный набор сообщений организации. Для каждого сообщения отметьте ожидаемые сигналы
+              (или «Сигналов нет») и темы сообщения, затем «Сохранить и отметить «Проверен»». По
+              проверенным сообщениям измеряется качество извлечения сигналов и группировки по темам.
+            </p>
+            <GoldenReviewList />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   )

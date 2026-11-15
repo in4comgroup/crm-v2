@@ -28,6 +28,10 @@ typing as possible:
 - It **reports** on sales (booked orders) and answers analytics questions in
   natural language.
 - An **AI chat panel** on every page searches the CRM and the web.
+- It **notifies** each person in the bell («Уведомления»): task reminders,
+  deal risks, topics that need attention, AI limits and process errors (owners).
+- It **keeps people over time**: a contact can move to another company or work
+  for two; the system proposes the change from the mail and a person decides.
 
 The UI language is Russian. Code, database names and these docs are English.
 
@@ -37,7 +41,7 @@ The UI language is Russian. Code, database names and these docs are English.
 | --- | --- | --- |
 | Org member | `member.role = member` | Day-to-day work: companies, contacts, deals, orders, tasks, cards, sources processing |
 | Org admin | `member.role = admin` | Same as member in most modules (most modules treat all org roles equally) |
-| Org owner | `member.role = owner` | Also manages members/invitations, organization profile, org sources (credentials, auto-parse), discovery blocklist, own-org identity registry |
+| Org owner | `member.role = owner` | Also manages members/invitations, organization profile, org sources (credentials, auto-parse), discovery blocklist, own-org identity registry, custom fields, the deal funnel; the only receiver of AI usage / billing / company profile / process notifications; reviews the golden set («Проверка эталона», also org admins) |
 | Platform admin | `user.role = admin` | Everything in «Настройки» (Settings): all users and orgs, source templates, all sources, source teardown (one «Источники» tab), pipeline run + stats |
 | Guest (client) | Holder of an order link token | Reviews, adjusts quantities and confirms one order at `/o/[token]`, no account |
 
@@ -94,7 +98,8 @@ Step by step:
 | Sources & parsing | Connect channels, ingest items, LLM-parse to Markdown, store in R2 | `/sources` «Источники» |
 | Discovery | Find companies, contacts, links in parsed items; blocklist; own-org identity | `/clients` (dialog) |
 | Cards | Topic cards from the topics engine; read-only history of old Custom-rule cards | `/dashboard` «Домашняя» |
-| Companies & contacts | Company and person records, web lookup and batch web enrichment | `/clients` «Компании», `/contacts` «Контакты» |
+| Companies & contacts | Company and person records, web lookup and batch web enrichment, custom fields, company profile, contact ↔ company links over time (current / former, two companies, «Контакт сменил компанию?», merge) | `/clients` «Компании», `/contacts` «Контакты» |
+| Documents | Files of companies, contacts, deals, tasks, orders: originals stored, linked automatically and by hand | «Документы» tab in each drawer |
 | Deals | Kanban sales funnel, deal journal, deal bridge from topics | `/deals` «Сделки» |
 | Products / catalog | Read-only product catalog with hybrid search and price-list export | `/products` tab «Каталог товаров» |
 | Orders | Order builder, per-client discount, guest confirmation link, order from request | `/products` tab «Заказы» |
@@ -102,9 +107,9 @@ Step by step:
 | Analytics | Sales reporting over booked orders + an analytics AI assistant | `/analytics` «Аналитика» |
 | Global search | Cross-entity search box in every page header | header |
 | AI chat panel | Chat over CRM data and the web, on every page | header button |
-| Notifications | Bell in the header with recent events | header |
+| Notifications | Bell in the header: stored notifications per user, categories, important / info, hourly checks (tasks, AI limits, profile, sources) | header |
 | Admin tools | Users, orgs, templates, sources, source teardown; AI models registry, model per AI process + model rules, AI usage statistics + markup + daily AI budget; topics engine operations «Темы» (modes, runs, CRM checks, delivery), the signals registry «Сигналы», and «Тесты и отладка» (signal review, topic debug, golden set, eval) | `/settings` «Настройки» |
-| Profile & organization | User profile, org profile, members, invitations, AI usage with markup (owners) | `/profile`, `/account` |
+| Profile & organization | User profile, org profile, members, invitations, AI usage with markup (owners), notification settings, «Проверка эталона» (golden-set review, owners / admins) | `/profile`, `/account` |
 
 ## Navigation (sidebar)
 
@@ -117,9 +122,12 @@ Bottom block: user profile (`/profile`), organization (`/account`),
 «Источники» (Sources, `/sources`), «Настройки»
 (Settings, `/settings`, platform admins only), «Выйти» (Sign out).
 
+The sidebar remembers open / closed (cookie), and every page reopens on the
+tab / view the user had open last (per browser; a `?tab=` link wins).
+
 Routes that exist but are not in the sidebar: `/clients/[id]` (company page,
 reached from global search), `/cards/[id]` (card detail, reached from global
-search), `/cards` and `/docs` (empty placeholder pages).
+search), `/cards` and `/docs` (empty placeholder pages), `/review` (redirects to `/account?tab=review`).
 
 ## Glossary
 
@@ -138,7 +146,9 @@ search), `/cards` and `/docs` (empty placeholder pages).
 | Blocklist | «Список блокировки» | Org dictionary of companies/people/domains/emails that discovery must ignore. |
 | Own-org identity | «Своя организация» | Extra names, websites and addresses that mean "this is us, not a client". |
 | Company / client | «Компания» | A `client` row. The UI says "company"; the code says "client". |
-| Contact | «Контакт» | A person, optionally linked to one company. |
+| Contact | «Контакт» | A person with current and former companies («Компании»: one primary = `contact.client_id`, others e.g. «Консультант»), and extra addresses («Адреса»: old / second email, phone, Telegram). |
+| Contact change proposal | «Контакт сменил компанию?» | A proposal from the sources (farewell, new address, same name at another client, two companies in 60 days) that a person decides: «Перешёл», «Работает с обеими», «Это другой человек», «Не сейчас». |
+| Notification | «Уведомление» | A stored message for one person in the bell: category, «Важное» / «Информация», read / hidden, «уже не актуально» when the condition is gone. |
 | Rule | «Правило» | A stored LLM prompt (`rule` table). No UI edits it any more; old cards still reference it. |
 | Card | «Карточка» | One LLM-made signal: priority, category, analysis, recommendation. |
 | Deal | «Сделка» | A sales opportunity for one company, placed on a funnel stage. |

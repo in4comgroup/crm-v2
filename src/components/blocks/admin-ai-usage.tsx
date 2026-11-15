@@ -52,6 +52,7 @@ import {
   defaultChartRange,
   type ChartScale,
 } from "@/lib/ai-usage-chart"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 const ALL = "__all__"
 // The daily run is "late" after 26 h (24 h + slack for the cron window).
@@ -60,6 +61,8 @@ const SYSTEM_ORG = "system"
 
 type Period = "7d" | "30d" | "this_month" | "last_month" | "custom"
 type Group = "org" | "process" | "model"
+const GROUPS = ["org", "process", "model"] as const satisfies readonly Group[]
+const STACKS = ["process", "model"] as const
 type Row = AdminAiUsageResponse["byOrg"][number]
 type SortKey = "label" | "calls" | "errors" | "tokens" | "cost" | "avgCost"
 
@@ -117,7 +120,11 @@ export function AdminAiUsage() {
   const [processKey, setProcessKey] = useState(ALL)
   const [model, setModel] = useState(ALL)
   const [status, setStatus] = useState(ALL)
-  const [stack, setStack] = useState<"process" | "model">("process")
+  // Chart stack + table grouping are remembered per browser (no URL param).
+  const [stack, setStack] = usePersistentTab<"process" | "model">("settings.aiUsage.stack", "process", {
+    allowed: STACKS,
+    urlParam: false,
+  })
   // Chart scale and range. `chartRange` null = the default for the scale
   // (day → the page period, month → 12 months, year → 5 years).
   const [scale, setScale] = useState<ChartScale>("day")
@@ -126,7 +133,10 @@ export function AdminAiUsage() {
   const [chartLoading, setChartLoading] = useState(true)
   const [chartError, setChartError] = useState<string | null>(null)
   const chartSeq = useRef(0)
-  const [group, setGroup] = useState<Group>("process")
+  const [group, setGroup] = usePersistentTab<Group>("settings.aiUsage.group", "process", {
+    allowed: GROUPS,
+    urlParam: false,
+  })
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "cost", dir: "desc" })
 
   const [data, setData] = useState<AdminAiUsageResponse | null>(null)

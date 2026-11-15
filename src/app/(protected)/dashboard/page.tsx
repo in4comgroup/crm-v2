@@ -27,6 +27,7 @@ import {
 import { PageLoader } from "@/components/blocks/page-loader"
 import { TopicListsSection } from "@/components/blocks/topic-lists-section"
 import { OrgProfileBanner } from "@/components/blocks/org-profile-banner"
+import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 function isoDateNDaysAgo(days: number): string {
   const d = new Date()
@@ -40,13 +41,21 @@ function todayIso(): string {
 
 type PeriodPreset = "day" | "week" | "all"
 
+const DASHBOARD_VIEWS = ["topics", "history"] as const
+
 export default function DashboardPage() {
   // Topics UI (phase 6, spec topics/01 §14): only when the org's topics mode
   // is `on`. null = not known yet. In `off` / `shadow` the page shows only
   // the read-only history of old cards: Custom-rule card generation was
   // removed for every org in plan phase 12.
   const [topicsOn, setTopicsOn] = useState<boolean | null>(null)
-  const [view, setView] = useState<"topics" | "history">("topics")
+  // Remembered per browser. No URL reading: `?tab=` belongs to the topic
+  // lists below (TopicListsSection).
+  const [view, setView] = usePersistentTab<"topics" | "history">(
+    "dashboard.view",
+    "topics",
+    { allowed: DASHBOARD_VIEWS, urlParam: false },
+  )
   useEffect(() => {
     let cancelled = false
     fetch("/api/topics?state=1")

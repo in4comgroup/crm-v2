@@ -1,6 +1,6 @@
 # Custom fields of companies and contacts
 
-Status: **built 2026-11-15** (Q1–Q12, see [02-open-questions.md](02-open-questions.md) § Decisions): C1–C3 + AI use. Questions: [02-open-questions.md](02-open-questions.md). Plan: [03-development-plan.md](03-development-plan.md).
+Status: **built 2026-11-15** (Q1–Q12, see [02-open-questions.md](02-open-questions.md) § Decisions): C1–C3 + AI use + list columns / filters (§3.3, §3.5). Questions: [02-open-questions.md](02-open-questions.md). Plan: [03-development-plan.md](03-development-plan.md).
 
 ## 1. Goal
 

@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation"
 import { lastActivityHint } from "@/lib/deal-activity"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { DocumentsPanel } from "@/components/blocks/documents-panel"
 import {
   HoverCard,
   HoverCardContent,
@@ -571,6 +572,9 @@ export function DealDetailDrawer({
                 <TabsTrigger value="contacts" className="flex-none">
                   Контакты
                 </TabsTrigger>
+                <TabsTrigger value="documents" className="flex-none">
+                  Документы
+                </TabsTrigger>
                 {relatedTopics.visible && (
                   <TabsTrigger value="topics" className="flex-none">
                     Темы
@@ -958,6 +962,12 @@ export function DealDetailDrawer({
 
           <TabsContent value="contacts" className="py-4 text-sm">
             <DealContactsRoles dealId={deal.id} clientId={deal.clientId} />
+          </TabsContent>
+
+          {/* «Документы» (docs/specs/attachments §6): mounted while the tab is
+              open; no <form>, only type="button" — never submits this form. */}
+          <TabsContent value="documents" className="py-4 text-sm">
+            <DocumentsPanel entityType="deal" entityId={deal.id} />
           </TabsContent>
 
           <TabsContent value="tasks" className="py-4 space-y-2 text-sm">

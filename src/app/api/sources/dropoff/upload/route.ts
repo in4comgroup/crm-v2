@@ -20,6 +20,10 @@ import {
 } from "@/server/parsers/dropoff"
 import { getOwnOrgContext } from "@/server/identity/own-org"
 import { buildOwnOrgPromptLine, parserAiContext } from "@/server/parsers/_shared"
+import {
+  autoLinkDocumentsOfItems,
+  storeRootOriginal,
+} from "@/server/documents-ingest"
 
 // Video transcription dominates wall-clock — match the per-item Parse
 // route's ceiling so the longest path fits.
@@ -33,8 +37,10 @@ type UploadResult =
 // inline (PDF / image / audio / video / office) and inserted as a
 // `source_item` row directly into the Processed bucket — no Pending row
 // is ever created, since for drop-off "uploaded" and "ready to parse"
-// happen in the same request. Re-parse is unsupported (we discard the
-// raw bytes); the user re-uploads instead.
+// happen in the same request. Since documents D1 the original bytes are
+// stored too (`source_item.file_*`, ≤ 50 MB) and the automatic document
+// links run (docs/specs/attachments §4); a stored row can be re-parsed by
+// the normal pipeline (`parseSourceItem` → drop-off branch).
 export async function POST(request: NextRequest) {
   const session = await getServerSession()
   const activeOrgId = session?.session.activeOrganizationId
@@ -139,6 +145,16 @@ export async function POST(request: NextRequest) {
           parsedMarkdown: extra.markdown,
         })
         childCount++
+      }
+
+      // Documents: keep the original + automatic links (best effort — both
+      // never throw; a failed store leaves the parsed row as it is).
+      if (dropoffSource.organizationId) {
+        await storeRootOriginal(dropoffSource.organizationId, rootId, buffer, {
+          name: fileName,
+          mime: parsed.mediaType,
+        })
+        await autoLinkDocumentsOfItems(dropoffSource.organizationId, [rootId])
       }
 
       results.push({ fileName, ok: true, itemId: rootId, childCount })

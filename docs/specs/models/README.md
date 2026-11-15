@@ -8,7 +8,7 @@ Status: **P1–P4 implemented** (2026-11-13): registry, catalog sync,
 call sites migrated, ESLint boundaries, «Процессы ИИ» tab; usage ledger with
 exact gateway cost, «Использование ИИ» tab, manual price + cost sync; global
 markup, owner usage tab on `/account`, model policy (ZDR / no training /
-vendors). Follow-ups: [06 §4](06-rollout-and-questions.md). All questions
+vendors). 2026-11-15: the owner tab shows the admin views for its own org (cost with markup, model names — 05 §7) and the monthly AI limit per org ([08](08-monthly-limit.md), default $20). Follow-ups: [06 §4](06-rollout-and-questions.md). All questions
 (Q1–Q8) decided by the product owner on 2026-11-13 (see
 [06-rollout-and-questions.md](06-rollout-and-questions.md)).
 

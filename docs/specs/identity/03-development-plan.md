@@ -1,6 +1,6 @@
 # Identity — development plan
 
-Status: **draft, 2026-11-14.** Estimates for one developer with AI assistance, in working days. Order = dependencies. Spec: [01-specification.md](01-specification.md) · Questions: [02-open-questions.md](02-open-questions.md).
+Status: **I1–I6 built 2026-11-14 / 15** (see the status sections below); I7 later. Estimates for one developer with AI assistance, in working days. Order = dependencies. Spec: [01-specification.md](01-specification.md) · Questions: [02-open-questions.md](02-open-questions.md).
 
 | Phase | Name | Days | Output | Depends on |
 |---|---|---|---|---|

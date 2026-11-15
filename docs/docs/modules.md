@@ -130,11 +130,12 @@ accepted cards into tasks or orders. Custom-rule card generation and the
 **Pages.** `/dashboard` «Домашняя» (Home): in topics mode `on` = topic lists plus
 the tab «История карточек» (old Custom-rule cards, read-only); in `off` /
 `shadow` = only the read-only history of old cards, no generation. Card kinds:
-topic, `deal_proposal`, `stage_confirmation`. `/cards/[id]`: card detail
+topic, `deal_proposal`, `stage_confirmation`, `deal_link` («К какой сделке
+относится тема?» — the topic's company has 2+ open deals; spec topics/10). `/cards/[id]`: card detail
 (reached from global search). `/cards` is an empty placeholder.
 
 **Main API.** `api/cards`: GET list or `?id=`, PUT `action:
-accept|reject|deal_execute`, DELETE. No manual create, no generic update.
+accept|reject|deal_execute` (`deal_link`: + `dealId`), DELETE. No manual create, no generic update.
 
 **Server modules.** `cards.ts`; topic cards in `src/server/topics/cards/`.
 
@@ -157,21 +158,34 @@ accept|reject|deal_execute`, DELETE. No manual create, no generic update.
 filter («Все компании», «Клиенты», «Потенциальные», «Поставщики», «Партнёры»,
 «Не определено»), status filter, «Ответственный» filter (all / «Мои» / «Ждут
 решения владельца» / each member), sort «Сначала новые / Сначала критичные»,
-discovery, «Обогатить» (enrich), blocklist, Magic, card/table toggle. Clicking a
-company opens the company drawer (tabs «Общая информация», «Задачи»,
-«Контакты», «Материалы»). `/clients/[id]` is an older full company page, still
-reached from global search. `/contacts` «Контакты»: alphabetical,
-server-paginated (25 per page), card/table views, contact drawer.
+discovery, «Обогатить» (enrich), blocklist, Magic, card/table toggle, profile
+filters «Отрасль» / «Роль» / «Размер», «Фильтр по полям» (custom fields) and,
+for the owner, «Настроить поля». Clicking a company opens the company drawer
+(tabs «Общая информация» (form, «Профиль компании», «Ответственный»), «Поля»,
+«Документы», «Задачи», «Контакты», «Материалы компании», «Темы» in topics mode
+`on`). `/clients/[id]` is an older full company page (cards incl. «Поля» and
+«Документы»), still reached from global search. `/contacts` «Контакты»:
+alphabetical, server-paginated (25 per page), card/table views (custom field
+columns + «Фильтр по полям»; owner: «Настроить поля»), contact drawer (tabs
+«Общая информация», «Поля», «Документы», «Темы»).
 
 **Main API.** `api/clients` (GET feed / `?id=` / `?responsibleOptions=1`, POST,
 PUT), `api/clients/[id]/responsible` (PUT: owner assigns / handover to owner),
 `api/clients/[id]/content` (company materials), `api/clients/[id]/lookup`
 (web lookup, 60 s), `api/clients/enrich/{pending,review}`,
-`api/clients/[id]/enrich` and `/enrich/resolve`; `api/contacts`.
+`api/clients/[id]/enrich` and `/enrich/resolve`; `api/clients/[id]/profile`
+(«Профиль компании»: view / save / confirm / proposals / «Заполнить из
+интернета»); `api/contacts`; `api/custom-fields*` + `api/custom-values`
+(custom fields; feed filters `?cf=` on `api/clients` / `api/contacts`);
+`api/documents*` (documents of every entity, see "Documents" below).
 
 **Server modules.** `clients.ts` (incl. `lookupClientOnWeb`,
 `enrichClientFromWeb`, `resolveEnrichment`), `contacts.ts`, `client-content.ts`,
-`client-activity.ts`, `client-responsible.ts`, `web-search.ts`.
+`client-activity.ts`, `client-responsible.ts`, `web-search.ts`,
+`identity/client-profile.ts` + `identity/client-enrichment.ts` (client
+profiles, spec identity I5 / I6), `custom-fields.ts` (+ `client-type-field.ts`,
+the converted «Тип клиента» read by analytics and a stage-rule guard),
+`documents.ts` / `documents-ingest.ts`.
 
 **Key rules.**
 - Tab classification: «Клиенты» = has an active deal on a stage with
@@ -186,6 +200,13 @@ PUT), `api/clients/[id]/responsible` (PUT: owner assigns / handover to owner),
 - "Company materials" match source items by the company's name, address,
   website and contacts against `metadata_json` text (R2-uploaded items only).
 - Per-client discount lives in `customFields.discount` and is used by orders.
+  `client.custom_fields` keeps only system keys (`discount`, `companyKind`);
+  org-defined fields live in `custom_values` (definitions in `custom_field`,
+  owner manages, every member edits; spec `docs/specs/clients-contacts/`).
+- «Профиль компании» (what the client does): edited by the responsible member
+  and the owner; web enrichment fills EMPTY fields as «Из интернета —
+  проверьте» and turns a different value into a proposal; never overwrites a
+  manual value.
 - «Ответственный» (Responsible): one human member per company, default = the
   creator. Only an org owner sets it (any human, not banned member). The
   responsible member who is not an owner can only «Передать владельцу»; the
@@ -218,6 +239,12 @@ helpers `src/lib/deal-board.ts`, `deal-funnel.ts`, `kanban-move.ts`.
 - Manual order inside a column uses a fractional index (`deal.position`).
 - Stage settings: an org can rename and hide stages and add a pre-pipeline
   stage; the first save copies the system stages into org-owned rows.
+- «Текущее состояние» (`deal.state_text`) is written only from topics linked
+  to the deal. Business topics of a company are linked automatically to its
+  ONLY open deal; with 2+ open deals a `deal_link` card asks the user (spec
+  `docs/specs/topics/10-deal-status-from-topics.md`). A deal with no linked
+  topic says so and offers «Связать тему»; the old discovery text is never
+  shown as the status. Deal drawer tabs include «Документы».
 - Deals are created and moved by the topics deal bridge (deal proposals and
   stage confirmations; every write is journaled in `deal_activity`). Removed in
   phase 12: name-based LLM deal discovery (`deals-discovery.ts`, `generateDeals`,
@@ -281,6 +308,7 @@ revokes links), `order-requests.ts`; `src/lib/order-link-token.ts`,
   products manually. Only price limits from the LLM are used as filters.
 - An optional "stock only" check in the builder blocks out-of-stock adds (UI
   only, no reservation).
+- A saved order has a «Документы» section in the builder panel.
 
 ## Tasks
 
@@ -295,6 +323,32 @@ timeline below. Deep link `?openTask=<id>`.
 
 **Key rules.** Assignee must be an org member; contact must belong to the chosen
 company; `dueDate` is required (defaults to creation time); `closed` = archive.
+The task drawer has tabs «Задача» / «Документы».
+
+## Documents (attachments)
+
+**Purpose.** Files (PDF, images, audio, video, Office, …) of companies,
+contacts, deals, tasks and orders (spec `docs/specs/attachments/`).
+
+**UI.** «Документы» tab / section in every entity view: upload (≤ 10 files ×
+50 MB), list with summary and link chips («авто» + reason), «Открыть» (new
+browser tab, safe types only), «Скачать», «Текст», «Привязать ещё»,
+«Отвязать», «Подтвердить», «Удалить файл» (uploads; uploader or owner).
+
+**Main API.** `api/documents` (list), `api/documents/upload`,
+`api/documents/[itemId]` (DELETE), `/links`, `/links/[linkId]`, `/file`.
+
+**Server modules.** `documents.ts`, `documents-ingest.ts`, `documents-chat.ts`;
+contract `src/lib/documents.ts`.
+
+**Key rules.**
+- A document is a file `source_item` (attachment, Drive file, drop-off file,
+  derived audio); decorative inline images are not documents.
+- The original is stored (≤ 50 MB) at parse / upload; WhatsApp files are not.
+- `document_link` is many-to-many. Automatic links (no AI): message
+  participants → contact + company; the message's topic → company / contact /
+  deal; exact company names in the file → company; the company's only open deal
+  → deal. A person's «Отвязать» is final for that link.
 
 ## Analytics
 
@@ -348,14 +402,14 @@ Visible only to platform admins (`user.role === 'admin'`). Tabs:
 | Tab | What it does | API / server |
 | --- | --- | --- |
 | «Пользователи» (Users) | List users, role, ban, edit memberships in any org (reconcile, last-owner guard) | `api/admin/user-organizations`; better-auth admin plugin; `admin-organizations.ts` |
-| «Организации» (Organizations) | Edit any org | `api/admin/organizations` |
+| «Организации» (Organizations) | Edit any org; column «Профиль» (org profile completeness «N из 6») | `api/admin/organizations` |
 | «Источники» (Sources) | One tab, three blocks. «Шаблоны источников» (Source templates): CRUD of source templates (`api/admin/templates`, `templates.ts`). «Источники» (Sources): create/edit any source, credentials, config, auto-parse; filter by organization («Системные» = no owner org) (`api/admin/sources` (+ `/config`, `/credentials`), `admin-sources.ts`). «Сброс источника» (Source reset, bottom): teardown: hard delete selected threads of a source plus the cards, companies, contacts, deals, tasks and orders that only they produced; typed confirmation; audited in `teardown_log`. All admin tables on `/settings` use the shared pager `table-pager.tsx` (10 / 25 / 50, default 10) | `api/admin/templates`, `api/admin/sources`, `api/admin/teardown/{sources,preview,execute}`, `templates.ts`, `admin-sources.ts`, `teardown.ts` |
 | «Модели» (Models) | Read-only AI model registry: every model of each AI gateway with prices and capabilities; filters (gateway, type, vendor, capabilities, search, available only), sortable, server-paginated with the shared pager `table-pager.tsx` (10 / 25 / 50, default 10), detail drawer (full pricing, price history, data source per field); «Синхронизировать» (Sync) button. Spec: `docs/specs/models/02-model-registry.md` | `api/admin/ai/models`, `api/admin/ai/catalog/sync`; `src/server/ai/{registry,catalog}` |
 | «Процессы ИИ» (AI processes) | The model of every place that calls AI (21 processes, grouped; old `ai_usage_event` rows keep the raw key of removed processes and the usage page shows it when the label is unknown): primary + up to 3 fallbacks, picked only from compatible models (capabilities, vendor web-search tool), cheapest first; for the AI chat also the list users may pick from; reset to default; warnings when a chosen model became unavailable; «≈ $ / 1 000 вызовов» and 30-day usage per process; «Правила выбора моделей» (ZDR only, no training only, allowed vendors — a save that would leave a process without a compliant model is refused). Changes apply within a minute, no deploy. Spec: `docs/specs/models/03-processes-and-model-selection.md` | `api/admin/ai/processes`; `src/server/ai/registry/assignments.ts` |
-| «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost chart stacked by process or model with its own scale («По дням» / «По месяцам» / «По годам») and range «с … по …» (the range replaces only the page period; the other filters apply), breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history). Spec: `docs/specs/models/04-usage-and-cost.md` | `api/admin/ai/usage`; `src/server/ai/usage.ts`, `usage-stats.ts` |
-| «Темы» (Topics) | Operations of the topics engine: topics mode per org (off / shadow / on), hourly run history + «Запустить сейчас», «Проверки CRM» (CRM checks + watchdogs, preview, switches), «Рассылка» (email digests). Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
+| «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost chart stacked by process or model with its own scale («По дням» / «По месяцам» / «По годам») and range «с … по …» (the range replaces only the page period; the other filters apply), breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history), block «Лимиты ИИ по организациям» (daily budget in gateway cost + MONTHLY limit in end-user cost, default $20; defaults + per-org overrides, spend today / this month). Specs: `docs/specs/models/04-usage-and-cost.md`, `07-daily-budget.md`, `08-monthly-limit.md` | `api/admin/ai/usage`; `src/server/ai/usage.ts`, `usage-stats.ts` |
+| «Темы» (Topics) | Operations of the topics engine: topics mode per org (off / shadow / on; switching to shadow / on is refused until the org profile minimum is complete — admin override with a reason; columns «Профиль» and «Профиль в промптах» = `identity.promptContext`), hourly run history + «Запустить сейчас», «Проверки CRM» (CRM checks + watchdogs, preview, switches), «Рассылка» (email digests). Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
 | «Сигналы» (Signals) | Signals registry: table with filters, full code editor (all fields, validated, versioned), per-org pack activation / overrides / stage rules / risk guards (preset mechanism kept, no presets defined — one generic set for every org, R22), attributes, relations, risk types, rule templates, history, Markdown export | `api/admin/signals*`; `src/server/signals/` |
-| «Тесты и отладка» (Tests and debugging) | Quality checks and debugging of the topics engine, apart from operations («Темы») and the registry («Сигналы»): «Сигналы сообщений» (signal review of scanned items + «Извлечь заново»), «Темы (отладка)» (topic debug + actions), «Эталонный набор» (golden set), «Оценка извлечения (eval)» (eval / model spike, stored metrics, quality gate; grouping eval). Component `admin-topics-testing.tsx` | `api/admin/topics/{signals,topics,golden,spike}` |
+| «Тесты и отладка» (Tests and debugging) | Quality checks and debugging of the topics engine, apart from operations («Темы») and the registry («Сигналы»): «Сигналы сообщений» (signal review of scanned items + «Извлечь заново»), «Темы (отладка)» (topic debug + actions), «Эталонный набор» (golden set), «Оценка извлечения (eval)» (eval / model spike with the option «С профилем организации», stored metrics, quality gate; grouping eval). Component `admin-topics-testing.tsx` | `api/admin/topics/{signals,topics,golden,spike}` |
 
 Also admin-only: `POST /api/admin/pipeline/run`, `GET /api/admin/pipeline/stats`.
 The model catalog also refreshes daily, as phase 0 of the daily pipeline.
@@ -370,11 +424,16 @@ source reset.
   Platform admins can change their own email; it becomes verified at the next
   OTP sign-in.
 - `/account` (title = org name): tab «Информация об организации» (owner edits
-  profile fields, logo, «Своя организация» identity registry), tab
-  «Участники» (Members — owners only: roles, remove, invite) and tab
-  «Использование ИИ» (AI usage — owners only: calls and cost WITH the platform
-  markup per function and per user; never the gateway cost, markup % or model
-  ids; `api/account/ai-usage`, spec `docs/specs/models/05-markup-and-end-user-cost.md`).
+  the org record and logo), tab «Профиль организации» (who «we» are and what we
+  do — identity registry, business profile, completeness «N из 6»; owner edits,
+  members read; spec `docs/specs/identity/`), tab «Участники» (Members — owners
+  only: roles, remove, invite), tab «Использование ИИ» (AI usage — owners only:
+  the admin views for the org — period, filters, KPIs, cost chart, by function /
+  model / user — always cost WITH the platform markup, never the gateway cost or
+  markup %; the card «Месячный лимит ИИ»; `api/account/ai-usage`, specs
+  `docs/specs/models/05-…` §7 and `08-monthly-limit.md`) and tab «Уведомления»
+  (topics email choices). Owner banners on `/account`: incomplete org profile,
+  AI monthly limit ≥ 80 % / used up, daily AI budget used up.
 - Invitations: owner invites by email → email with
   `/accept-invitation/<id>` → invitee signs in with an OTP sent to the invited
   address → accepts → active org is set. `/sign-up` blocks self sign-up when the

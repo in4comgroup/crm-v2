@@ -48,6 +48,8 @@ import {
 } from "@/components/ui/table"
 import {
   Ban,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Link2,
   Loader,
@@ -61,6 +63,7 @@ import {
   X,
 } from "lucide-react"
 import type { OrderStatus } from "@/db/schema"
+import { DocumentsPanel } from "@/components/blocks/documents-panel"
 import type { OrderClientOption, OrderDetail } from "@/app/api/orders/route"
 import type { OrderLinkMeta } from "@/server/order-links"
 import {
@@ -760,6 +763,33 @@ function LinkMetaStrip({ link }: { link: OrderLinkMeta | null }) {
 }
 
 // ── Sticky order panel (rendered atop the Catalog tab while active) ───
+// Collapsible «Документы» block of the order card. Mounted lazily: the list
+// loads only while the block is expanded.
+function OrderDocumentsSection({ orderId }: { orderId: string }) {
+  const [openFor, setOpenFor] = useState<string | null>(null)
+  const open = openFor === orderId
+  return (
+    <div className="border-t pt-3">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="-ml-2"
+        onClick={() => setOpenFor(open ? null : orderId)}
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        Документы
+      </Button>
+      {open && (
+        <div className="pt-2">
+          <DocumentsPanel entityType="order" entityId={orderId} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
   const [sendDialog, setSendDialog] = useState<{
     orderId: string
@@ -1203,6 +1233,12 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
                   )}
                 </div>
               </div>
+
+              {/* «Документы» of a saved order (docs/specs/attachments §6):
+                  collapsed by default, the panel mounts on the first open. */}
+              {mode === "edit" && builder.orderId && (
+                <OrderDocumentsSection orderId={builder.orderId} />
+              )}
             </>
           )}
         </CardContent>

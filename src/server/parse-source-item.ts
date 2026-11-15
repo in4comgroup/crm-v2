@@ -50,6 +50,12 @@ import { parseChatMessage, type ChatAttachmentRef } from "@/server/parsers/chat"
 import { parseWhatsAppGroup } from "@/server/parsers/whatsapp"
 import { parseTelegramMessage } from "@/server/parsers/telegram"
 import { parseDriveFile } from "@/server/parsers/drive"
+import {
+  parseDropoffFile,
+  UnsupportedDropoffTypeError,
+} from "@/server/parsers/dropoff"
+import { getObject } from "@/server/storage"
+import { DOCUMENT_MAX_BYTES } from "@/lib/documents"
 import { parsePdfBytes, PdfTooLargeError } from "@/server/parsers/pdf"
 import {
   parseImageBytes,
@@ -105,9 +111,12 @@ import type {
 
 // Resets a root row to 'pending' and deletes its children (cascade
 // handles grandchildren — `parent_source_item_id` has onDelete cascade).
-// The next Parse call starts from a clean slate. R2 objects from a prior
-// upload stay in the bucket; a follow-up Upload overwrites under the
-// same key.
+// The next Parse call starts from a clean slate. The root's own storage
+// object is overwritten under the same key by the next Upload, and its
+// stored original file (`file_*`, documents) is kept. The children's stored
+// objects (original files + markdown) are deleted first — the recreated
+// children get new ids — and the links a person made on them are carried
+// over to the new children (docs/specs/attachments).
 export async function reparseSourceItem(
   itemId: string,
   opts: { actorUserId?: string | null } = {},
@@ -117,8 +126,11 @@ export async function reparseSourceItem(
       id: sourceItem.id,
       parentSourceItemId: sourceItem.parentSourceItemId,
       organizationId: sourceItem.organizationId,
+      provider: source.provider,
+      fileStatus: sourceItem.fileStatus,
     })
     .from(sourceItem)
+    .innerJoin(source, eq(source.id, sourceItem.sourceId))
     .where(eq(sourceItem.id, itemId))
     .limit(1)
   const row = rows[0]
@@ -127,6 +139,20 @@ export async function reparseSourceItem(
     throw new Error(
       "Re-parse is only supported on root rows; child rows are recreated by re-parsing their parent",
     )
+  }
+  // A drop-off row is re-parsed from its stored original; without one the
+  // reset would only lose the parsed text (the bytes were never kept).
+  if (row.provider === "dropoff" && row.fileStatus !== "stored") {
+    throw new Error(
+      "Drop-off file has no stored original — upload the file again to analyse it",
+    )
+  }
+
+  // Documents: delete the children's stored objects, keep their manual /
+  // removed links for the next parse (best effort, never throws).
+  if (row.organizationId) {
+    const { carryDocumentLinksForReparse } = await import("@/server/documents-ingest")
+    await carryDocumentLinksForReparse(row.organizationId, itemId)
   }
 
   // Delete children directly. Cascade on the FK handles any grandchildren
@@ -293,39 +319,19 @@ export async function parseSourceItem(
     .where(eq(sourceItem.id, itemId))
 
   try {
-    switch (ctx.provider) {
-      case "nylas":
-        return await parseNylasItem(ctx)
-      case "imap":
-        return await parseImapItem(ctx)
-      case "gchat":
-        return await parseGoogleChatItem(ctx)
-      case "gdrive":
-        return await parseGoogleDriveItem(ctx)
-      case "whatsapp":
-        return await parseWhatsAppItem(ctx)
-      case "telegram":
-        return await parseTelegramItem(ctx)
-      case "dropoff":
-        // Drop-off files are browser-session only and don't have parent
-        // rows in source_item yet. Fail loud so a
-        // future caller doesn't silently no-op.
-        throw new Error(
-          "Drop-off items are not yet persisted as source_item rows; parse via the dropoff dialog instead",
-        )
-      case "aichat":
-        // AI-chat sessions arrive pre-parsed at save time (Save Chat button
-        // on /dashboard runs `saveChatSession()` which inserts the row
-        // with parseStatus='complete' and analysis already on metadata_json).
-        // The unified parse pipeline has nothing to re-run for them.
-        throw new Error(
-          "AI-chat session items are saved pre-parsed via the dashboard Save Chat button; nothing to re-parse",
-        )
-      default: {
-        const _exhaustive: never = ctx.provider
-        throw new Error(`Unsupported provider: ${_exhaustive}`)
+    const result = await dispatchParse(ctx)
+    // Documents (docs/specs/attachments §4): automatic links of the item
+    // (when a document) and of the document children this parse inserted.
+    // Best effort — never changes the parse result.
+    if (ctx.organizationId && result.parentStatus === "complete") {
+      try {
+        const { autoLinkAfterParse } = await import("@/server/documents-ingest")
+        await autoLinkAfterParse(ctx.organizationId, itemId)
+      } catch (err) {
+        console.error(`[parse] document links of ${itemId} failed:`, err)
       }
     }
+    return result
   } catch (err) {
     // Three skip-vs-fail outcomes:
     //   • Junk filter (Nylas only): the LLM classified the email as
@@ -362,6 +368,40 @@ export async function parseSourceItem(
       childSkipped: 0,
       childFailed: 0,
       parentParseError: reason,
+    }
+  }
+}
+
+function dispatchParse(ctx: ParseContext): Promise<ParseResult> {
+  switch (ctx.provider) {
+    case "nylas":
+      return parseNylasItem(ctx)
+    case "imap":
+      return parseImapItem(ctx)
+    case "gchat":
+      return parseGoogleChatItem(ctx)
+    case "gdrive":
+      return parseGoogleDriveItem(ctx)
+    case "whatsapp":
+      return parseWhatsAppItem(ctx)
+    case "telegram":
+      return parseTelegramItem(ctx)
+    case "dropoff":
+      // Drop-off rows with a stored original (uploads in an entity view,
+      // org-level drop-off since documents D1) parse like any other file;
+      // old rows without bytes cannot be re-parsed (see parseDropoffItem).
+      return parseDropoffItem(ctx)
+    case "aichat":
+      // AI-chat sessions arrive pre-parsed at save time (Save Chat button
+      // on /dashboard runs `saveChatSession()` which inserts the row
+      // with parseStatus='complete' and analysis already on metadata_json).
+      // The unified parse pipeline has nothing to re-run for them.
+      throw new Error(
+        "AI-chat session items are saved pre-parsed via the dashboard Save Chat button; nothing to re-parse",
+      )
+    default: {
+      const _exhaustive: never = ctx.provider
+      throw new Error(`Unsupported provider: ${_exhaustive}`)
     }
   }
 }
@@ -560,13 +600,29 @@ async function parseNylasAttachment(
 
   const kind = detectAttachmentKind(ref.contentType, ref.filename)
   if (!kind) {
-    await insertSkippedChild({
+    const childId = await insertSkippedChild({
       ctx,
       externalId: attSourceId,
       externalType: "attachment",
       meta,
       reason: "unsupported type",
     })
+    // Documents (Q1): a file the parsers cannot read (spreadsheet, archive,
+    // …) is still a document — keep its original. Inline (cid:) parts of an
+    // unsupported type are mail chrome (GIF logos …), never stored. Best
+    // effort: a failed download only leaves the file for the lazy re-fetch.
+    if (!ref.isInline && ref.size <= DOCUMENT_MAX_BYTES) {
+      try {
+        const buffer = await getNylasClient(creds).attachments.downloadBytes({
+          identifier: creds.grantId,
+          attachmentId: ref.attachmentId,
+          queryParams: { messageId: ctx.externalId },
+        })
+        await storeChildOriginal(ctx, childId, new Uint8Array(buffer), meta)
+      } catch (err) {
+        console.error(`[parse] downloading unsupported attachment ${attSourceId} failed:`, err)
+      }
+    }
     return { inserted: 0, skipped: 1, failed: 0 }
   }
 
@@ -767,13 +823,15 @@ async function parseImapAttachment(
 
   const kind = detectAttachmentKind(att.contentType, att.filename)
   if (!kind) {
-    await insertSkippedChild({
+    const childId = await insertSkippedChild({
       ctx,
       externalId: attSourceId,
       externalType: "attachment",
       meta,
       reason: "unsupported type",
     })
+    // Documents (Q1): still a document — keep its original (bytes in hand).
+    await storeChildOriginal(ctx, childId, att.bytes, meta)
     return { inserted: 0, skipped: 1, failed: 0 }
   }
 
@@ -842,13 +900,20 @@ async function parseChatAttachment(
 
   const kind = detectAttachmentKind(ref.contentType, ref.filename)
   if (!kind) {
-    await insertSkippedChild({
+    const childId = await insertSkippedChild({
       ctx,
       externalId: attSourceId,
       externalType: "attachment",
       meta,
       reason: "unsupported type",
     })
+    // Documents (Q1): still a document — keep its original. Best effort.
+    try {
+      const raw = await downloadChatAttachmentBytes(creds, ref.resourceName)
+      await storeChildOriginal(ctx, childId, raw, { ...meta, byteSize: raw.byteLength })
+    } catch (err) {
+      console.error(`[parse] downloading unsupported attachment ${attSourceId} failed:`, err)
+    }
     return { inserted: 0, skipped: 1, failed: 0 }
   }
 
@@ -885,6 +950,115 @@ async function parseChatAttachment(
     externalType: "attachment",
     meta,
   })
+}
+
+// ── Drop-off (files with a stored original) ──────────────────────────
+
+// A drop-off file whose original is in storage (`file_status = 'stored'`:
+// uploads in an entity view, org-level drop-off since documents D1) parses
+// like the upload route does: the stored bytes → `parseDropoffFile` → this
+// row + the video's audio track as a child. That makes Re-parse work for
+// them. Old rows without bytes cannot be parsed again (the user uploads the
+// file again). A file above a parser cap / of an unsupported type is kept
+// (stored, downloadable) and marked `skipped` with the reason.
+async function parseDropoffItem(ctx: ParseContext): Promise<ParseResult> {
+  const [row] = await db
+    .select({
+      filename: sourceItem.filename,
+      mimeType: sourceItem.mimeType,
+      fileKey: sourceItem.fileKey,
+      fileStatus: sourceItem.fileStatus,
+      fileMime: sourceItem.fileMime,
+      createdAt: sourceItem.createdAt,
+    })
+    .from(sourceItem)
+    .where(eq(sourceItem.id, ctx.itemId))
+  if (!row || row.fileStatus !== "stored" || !row.fileKey) {
+    throw new Error(
+      "Drop-off file has no stored original — upload the file again to analyse it",
+    )
+  }
+  const obj = await getObject(row.fileKey)
+  if (!obj) throw new Error("Drop-off file: the stored original is missing in storage")
+
+  const meta = ctx.metadataJson
+  const dropoffId =
+    typeof meta.dropoffId === "string" && meta.dropoffId
+      ? meta.dropoffId
+      : ctx.externalId.replace(/^dropoff:/, "")
+  const fileName = row.filename ?? "untitled"
+  const mediaType = row.mimeType || row.fileMime || obj.contentType || "application/octet-stream"
+  let parsed: Awaited<ReturnType<typeof parseDropoffFile>>
+  try {
+    parsed = await parseDropoffFile({
+      bytes: obj.bytes,
+      fileName,
+      mediaType,
+      dropoffId,
+      description: typeof meta.description === "string" ? meta.description : "",
+      userName: typeof meta.userName === "string" ? meta.userName : undefined,
+      uploadedAt: (ctx.sourceCreatedAt ?? row.createdAt).toISOString(),
+    }, ctx.ai)
+  } catch (err) {
+    const tooLarge =
+      err instanceof PdfTooLargeError ||
+      err instanceof ImageTooLargeError ||
+      err instanceof AudioTooLargeError ||
+      err instanceof VideoTooLargeError ||
+      err instanceof OfficeTooLargeError
+    const unsupported =
+      err instanceof UnsupportedDropoffTypeError ||
+      err instanceof UnsupportedImageTypeError ||
+      err instanceof UnsupportedAudioTypeError ||
+      err instanceof UnsupportedVideoTypeError ||
+      err instanceof UnsupportedOfficeTypeError
+    if (!tooLarge && !unsupported) throw err
+    const reason = tooLarge ? `too large (${(err as Error).message})` : "unsupported type"
+    await db
+      .update(sourceItem)
+      .set({ parseStatus: "skipped", parseError: reason, parsedAt: new Date() })
+      .where(eq(sourceItem.id, ctx.itemId))
+    return {
+      parentStatus: "skipped",
+      parentMarkdownBytes: 0,
+      childInserted: 0,
+      childSkipped: 0,
+      childFailed: 0,
+      parentParseError: reason,
+    }
+  }
+
+  const first = parsed.blocks[0]
+  if (!first) throw new Error("Drop-off parser returned no blocks")
+  await markParsed(ctx, first.markdown, first.analysis, first.parserModel)
+
+  // Extra blocks become children — currently only video → audio.
+  let inserted = 0
+  for (let i = 1; i < parsed.blocks.length; i++) {
+    const extra = parsed.blocks[i]
+    await insertParsedChild({
+      ctx,
+      externalId: extra.sourceId,
+      externalType: extra.kind === "video_audio" ? "derived_audio" : "attachment",
+      meta: {
+        fileName,
+        contentType: extra.kind === "video_audio" ? "audio/mp4" : parsed.mediaType,
+        byteSize: 0,
+      },
+      markdown: extra.markdown,
+      analysis: extra.analysis,
+      parserModel: extra.parserModel,
+    })
+    inserted++
+  }
+
+  return {
+    parentStatus: "complete",
+    parentMarkdownBytes: byteLengthOf(first.markdown),
+    childInserted: inserted,
+    childSkipped: 0,
+    childFailed: 0,
+  }
 }
 
 // ── WhatsApp (chat-group rows) ────────────────────────────────────────
@@ -1065,7 +1239,17 @@ async function parseTelegramVoiceItem(
 
 async function parseGoogleDriveItem(ctx: ParseContext): Promise<ParseResult> {
   const creds = getGdriveCredentials(ctx.sourceId, ctx.credentialsRef)
-  const parsed = await parseDriveFile(ctx.externalId, creds, ctx.ai)
+  const orgId = ctx.organizationId
+  const parsed = await parseDriveFile(ctx.externalId, creds, ctx.ai, {
+    // Documents (Q1): the file's original, stored before the parse so a file
+    // above a parser cap is kept too. Never changes the parse result.
+    onOriginal: orgId
+      ? async (o) => {
+          const { storeRootOriginal } = await import("@/server/documents-ingest")
+          await storeRootOriginal(orgId, ctx.itemId, o.bytes, { name: o.name, mime: o.mime })
+        }
+      : undefined,
+  })
   // First block is the body (the file itself); video files emit a
   // second block (audio transcript) that becomes a child.
   if (parsed.blocks.length === 0) {
@@ -1133,9 +1317,33 @@ type RunAttachmentInput = {
   isInlineImage?: boolean
 }
 
+// Parse one attachment into its child row(s), then — documents (Q1,
+// docs/specs/attachments §3.2) — store its original bytes on the child,
+// whatever the parse outcome (parsed, skipped as too large / unsupported,
+// failed): the file is a document either way. Never for a decorative inline
+// image (not a document, Q2) or WhatsApp (Q13). Storing never changes the
+// parse result.
 async function runAttachmentParser(
   input: RunAttachmentInput,
 ): Promise<ChildOutcome> {
+  const r = await parseAttachmentChild(input)
+  if (!r.decorative) {
+    await storeChildOriginal(input.ctx, r.childId, input.bytes, input.meta)
+  }
+  return { inserted: r.inserted, skipped: r.skipped, failed: r.failed }
+}
+
+type AttachmentChildResult = ChildOutcome & {
+  // The attachment's own child row (the video row for a video; its audio
+  // track is a grandchild).
+  childId: string | null
+  // Skipped as a decorative inline image (logo / banner / pixel).
+  decorative: boolean
+}
+
+async function parseAttachmentChild(
+  input: RunAttachmentInput,
+): Promise<AttachmentChildResult> {
   const { ctx, kind, bytes, attSourceId, externalType, meta } = input
   const commonInput = {
     sourceId: attSourceId,
@@ -1145,6 +1353,13 @@ async function runAttachmentParser(
     sourceCreatedAt: isoOrNull(ctx.sourceCreatedAt),
     sourceReceivedAt: isoOrNull(ctx.sourceCreatedAt),
   }
+  const parsedOne = (childId: string): AttachmentChildResult => ({
+    inserted: 1,
+    skipped: 0,
+    failed: 0,
+    childId,
+    decorative: false,
+  })
 
   try {
     if (kind === "pdf") {
@@ -1153,16 +1368,17 @@ async function runAttachmentParser(
         bytes,
         fileName: meta.fileName,
       }, ctx.ai)
-      await insertParsedChild({
-        ctx,
-        externalId: attSourceId,
-        externalType,
-        meta,
-        markdown: r.markdown,
-        analysis: r.analysis,
-        parserModel: r.parserModel,
-      })
-      return { inserted: 1, skipped: 0, failed: 0 }
+      return parsedOne(
+        await insertParsedChild({
+          ctx,
+          externalId: attSourceId,
+          externalType,
+          meta,
+          markdown: r.markdown,
+          analysis: r.analysis,
+          parserModel: r.parserModel,
+        }),
+      )
     }
     if (kind === "audio") {
       const r = await parseAudioBytes({
@@ -1171,16 +1387,17 @@ async function runAttachmentParser(
         fileName: meta.fileName,
         mediaType: resolveMediaType(meta.contentType, "audio/mpeg"),
       }, ctx.ai)
-      await insertParsedChild({
-        ctx,
-        externalId: attSourceId,
-        externalType,
-        meta,
-        markdown: r.markdown,
-        analysis: r.analysis,
-        parserModel: r.parserModel,
-      })
-      return { inserted: 1, skipped: 0, failed: 0 }
+      return parsedOne(
+        await insertParsedChild({
+          ctx,
+          externalId: attSourceId,
+          externalType,
+          meta,
+          markdown: r.markdown,
+          analysis: r.analysis,
+          parserModel: r.parserModel,
+        }),
+      )
     }
     if (kind === "video") {
       const audioSourceId = `${attSourceId}:audio`
@@ -1219,19 +1436,19 @@ async function runAttachmentParser(
         parserModel: r.parserModel,
         parentSourceItemIdOverride: videoChildId,
       })
-      return { inserted: 2, skipped: 0, failed: 0 }
+      return { inserted: 2, skipped: 0, failed: 0, childId: videoChildId, decorative: false }
     }
     if (kind === "office") {
       const format = detectOfficeFormat(meta.contentType, meta.fileName)
       if (!format) {
-        await insertSkippedChild({
+        const childId = await insertSkippedChild({
           ctx,
           externalId: attSourceId,
           externalType,
           meta,
           reason: "unsupported type",
         })
-        return { inserted: 0, skipped: 1, failed: 0 }
+        return { inserted: 0, skipped: 1, failed: 0, childId, decorative: false }
       }
       const r = await parseOfficeBytes({
         ...commonInput,
@@ -1244,16 +1461,17 @@ async function runAttachmentParser(
             : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ),
       }, ctx.ai)
-      await insertParsedChild({
-        ctx,
-        externalId: attSourceId,
-        externalType,
-        meta,
-        markdown: r.markdown,
-        analysis: r.analysis,
-        parserModel: r.parserModel,
-      })
-      return { inserted: 1, skipped: 0, failed: 0 }
+      return parsedOne(
+        await insertParsedChild({
+          ctx,
+          externalId: attSourceId,
+          externalType,
+          meta,
+          markdown: r.markdown,
+          analysis: r.analysis,
+          parserModel: r.parserModel,
+        }),
+      )
     }
     // image — inline (cid:) images get the decorative pre-filter; explicit
     // attachments are treated as intentional content and parsed as-is.
@@ -1263,14 +1481,14 @@ async function runAttachmentParser(
         PARSER_CONFIG.image.decorative,
       )
       if (triage.skip) {
-        await insertSkippedChild({
+        const childId = await insertSkippedChild({
           ctx,
           externalId: attSourceId,
           externalType,
           meta,
           reason: triage.reason,
         })
-        return { inserted: 0, skipped: 1, failed: 0 }
+        return { inserted: 0, skipped: 1, failed: 0, childId, decorative: true }
       }
     }
     const r = await parseImageBytes({
@@ -1283,33 +1501,56 @@ async function runAttachmentParser(
       ),
     }, ctx.ai)
     if (input.isInlineImage && r.decorative) {
-      await insertSkippedChild({
+      const childId = await insertSkippedChild({
         ctx,
         externalId: attSourceId,
         externalType,
         meta,
         reason: "decorative image (logo/banner/icon)",
       })
-      return { inserted: 0, skipped: 1, failed: 0 }
+      return { inserted: 0, skipped: 1, failed: 0, childId, decorative: true }
     }
-    await insertParsedChild({
-      ctx,
-      externalId: attSourceId,
-      externalType,
-      meta,
-      markdown: r.markdown,
-      analysis: r.analysis,
-      parserModel: r.parserModel,
-    })
-    return { inserted: 1, skipped: 0, failed: 0 }
+    return parsedOne(
+      await insertParsedChild({
+        ctx,
+        externalId: attSourceId,
+        externalType,
+        meta,
+        markdown: r.markdown,
+        analysis: r.analysis,
+        parserModel: r.parserModel,
+      }),
+    )
   } catch (err) {
-    return classifyAndInsertChildError({
+    const r = await classifyAndInsertChildError({
       ctx,
       externalId: attSourceId,
       externalType,
       meta,
       err,
     })
+    return { ...r, decorative: false }
+  }
+}
+
+// Documents: store the original bytes of an attachment child (Q1). Never
+// throws; a no-op without an organization and for WhatsApp (Q13 — its files
+// are listed without bytes).
+async function storeChildOriginal(
+  ctx: ParseContext,
+  childId: string | null,
+  bytes: Uint8Array,
+  meta: AttachmentMeta,
+): Promise<void> {
+  if (!childId || !ctx.organizationId || ctx.provider === "whatsapp") return
+  try {
+    const { storeDocumentOriginal } = await import("@/server/documents-ingest")
+    await storeDocumentOriginal(ctx.organizationId, childId, bytes, {
+      name: meta.fileName,
+      mime: meta.contentType,
+    })
+  } catch (err) {
+    console.error(`[parse] storing the original of ${childId} failed:`, err)
   }
 }
 
@@ -1319,7 +1560,7 @@ async function classifyAndInsertChildError(args: {
   externalType: SourceItemKind
   meta: AttachmentMeta
   err: unknown
-}): Promise<ChildOutcome> {
+}): Promise<ChildOutcome & { childId: string }> {
   const { err } = args
   if (
     err instanceof PdfTooLargeError ||
@@ -1328,11 +1569,11 @@ async function classifyAndInsertChildError(args: {
     err instanceof VideoTooLargeError ||
     err instanceof OfficeTooLargeError
   ) {
-    await insertSkippedChild({
+    const childId = await insertSkippedChild({
       ...args,
       reason: `too large (${err.message})`,
     })
-    return { inserted: 0, skipped: 1, failed: 0 }
+    return { inserted: 0, skipped: 1, failed: 0, childId }
   }
   if (
     err instanceof UnsupportedImageTypeError ||
@@ -1340,14 +1581,14 @@ async function classifyAndInsertChildError(args: {
     err instanceof UnsupportedVideoTypeError ||
     err instanceof UnsupportedOfficeTypeError
   ) {
-    await insertSkippedChild({ ...args, reason: "unsupported type" })
-    return { inserted: 0, skipped: 1, failed: 0 }
+    const childId = await insertSkippedChild({ ...args, reason: "unsupported type" })
+    return { inserted: 0, skipped: 1, failed: 0, childId }
   }
-  await insertFailedChild({
+  const childId = await insertFailedChild({
     ...args,
     reason: err instanceof Error ? err.message : String(err),
   })
-  return { inserted: 0, skipped: 0, failed: 1 }
+  return { inserted: 0, skipped: 0, failed: 1, childId }
 }
 
 // ── DB writes ────────────────────────────────────────────────────────
@@ -1440,7 +1681,7 @@ async function insertParsedChild(args: {
   const cleaned = filterAnalysisOwnOrg(args.analysis, args.ctx.ownOrg)
   // Children are synthesized rows — they have no provider sync metadata to
   // preserve, so we write the analysis as the entire metadata_json.
-  await db
+  const inserted = await db
     .insert(sourceItem)
     .values({
       id,
@@ -1479,7 +1720,10 @@ async function insertParsedChild(args: {
         metadataJson: sql`COALESCE(${sourceItem.metadataJson}, '{}'::jsonb) || ${JSON.stringify(cleaned)}::jsonb`,
       },
     })
-  return id
+    .returning({ id: sourceItem.id })
+  // On a conflict (same source + external id) the existing row is updated
+  // and keeps its id — return that one, not the unused fresh uuid.
+  return inserted[0]?.id ?? id
 }
 
 async function insertSkippedChild(args: {
@@ -1488,8 +1732,8 @@ async function insertSkippedChild(args: {
   externalType: SourceItemKind
   meta: AttachmentMeta
   reason: string
-}): Promise<void> {
-  await insertChildWithStatus(args, "skipped", args.reason)
+}): Promise<string> {
+  return insertChildWithStatus(args, "skipped", args.reason)
 }
 
 async function insertFailedChild(args: {
@@ -1498,8 +1742,8 @@ async function insertFailedChild(args: {
   externalType: SourceItemKind
   meta: AttachmentMeta
   reason: string
-}): Promise<void> {
-  await insertChildWithStatus(args, "failed", args.reason)
+}): Promise<string> {
+  return insertChildWithStatus(args, "failed", args.reason)
 }
 
 async function insertChildWithStatus(
@@ -1511,10 +1755,10 @@ async function insertChildWithStatus(
   },
   status: ParseStatus,
   reason: string,
-): Promise<void> {
+): Promise<string> {
   const id = randomUUID()
   const now = new Date()
-  await db
+  const inserted = await db
     .insert(sourceItem)
     .values({
       id,
@@ -1541,6 +1785,8 @@ async function insertChildWithStatus(
         parseError: reason,
       },
     })
+    .returning({ id: sourceItem.id })
+  return inserted[0]?.id ?? id
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

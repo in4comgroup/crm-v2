@@ -117,6 +117,22 @@ export type DriveBlock = {
   parserModel: string | null
 }
 
+/**
+ * The file's bytes as the parser saw them — the stored original of a
+ * document (docs/specs/attachments §3.2). Google-native files are the same
+ * export the parser reads: Docs → Markdown, Sheets → CSV, Slides → .pptx.
+ */
+export type DriveOriginal = { bytes: Uint8Array; mime: string; name: string }
+
+export type ParseDriveOptions = {
+  /**
+   * Called once with the file's bytes right after they are fetched, BEFORE
+   * the parse (so a file above a parser cap is still kept). Errors are
+   * swallowed — storing the original must never change the parse result.
+   */
+  onOriginal?: (original: DriveOriginal) => Promise<void>
+}
+
 export type ParsedDriveFile = {
   blocks: DriveBlock[]
   fileName: string
@@ -144,6 +160,7 @@ export async function parseDriveFile(
   fileId: string,
   creds: GdriveCredentials,
   ai: ParserAiContext,
+  opts: ParseDriveOptions = {},
 ): Promise<ParsedDriveFile> {
   const drive = getDriveClient(creds)
 
@@ -182,6 +199,7 @@ export async function parseDriveFile(
     webViewUrls,
     nowIso,
     ai,
+    onOriginal: opts.onOriginal,
   }
 
   // Dispatch.
@@ -223,6 +241,16 @@ type DriveCtx = {
   nowIso: string
   // Org / user the model calls are for.
   ai: ParserAiContext
+  onOriginal?: ParseDriveOptions["onOriginal"]
+}
+
+async function emitOriginal(ctx: DriveCtx, original: DriveOriginal): Promise<void> {
+  if (!ctx.onOriginal) return
+  try {
+    await ctx.onOriginal(original)
+  } catch (err) {
+    console.error(`[drive] storing the original of ${ctx.fileId} failed:`, err)
+  }
 }
 
 // ── Google Docs ──────────────────────────────────────────────────────
@@ -238,6 +266,11 @@ async function parseGoogleDoc(
   // Google's export returns the markdown as a string in `response.data`.
   const contentMarkdown =
     typeof res.data === "string" ? res.data : String(res.data ?? "")
+  await emitOriginal(ctx, {
+    bytes: new TextEncoder().encode(contentMarkdown),
+    mime: "text/markdown; charset=utf-8",
+    name: `${ctx.fileName}.md`,
+  })
 
   const { analysis, parserModel } = await runMetadataExtraction(ctx.ai, {
     context: `Filename: ${ctx.fileName}\nSource: Google Doc (exported as Markdown by Google's API)`,
@@ -283,6 +316,11 @@ async function parseGoogleSheet(
     { responseType: "text" },
   )
   const csv = typeof res.data === "string" ? res.data : String(res.data ?? "")
+  await emitOriginal(ctx, {
+    bytes: new TextEncoder().encode(csv),
+    mime: "text/csv; charset=utf-8",
+    name: `${ctx.fileName}.csv`,
+  })
 
   const { headers, rows, totalDataRows } = parseCsvPreview(
     csv,
@@ -334,6 +372,7 @@ async function parseGoogleSlides(
     { responseType: "arraybuffer" },
   )
   const bytes = new Uint8Array(res.data as unknown as ArrayBuffer)
+  await emitOriginal(ctx, { bytes, mime: PPTX_MIME, name: `${ctx.fileName}.pptx` })
 
   const result = await parseOfficeBytes({
     bytes,
@@ -372,6 +411,7 @@ async function parseNonGoogleFile(
     { responseType: "arraybuffer" },
   )
   const bytes = new Uint8Array(res.data as unknown as ArrayBuffer)
+  await emitOriginal(ctx, { bytes, mime: mimeType, name: ctx.fileName })
 
   const commonInput = {
     sourceId: ctx.sourceId,
@@ -492,6 +532,46 @@ async function parseNonGoogleFile(
       parserModel: result.parserModel,
     },
   ]
+}
+
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+/**
+ * Fetch the original bytes of one Drive file WITHOUT parsing it (documents
+ * layer: lazy re-fetch + backfill, docs/specs/attachments). Same exports as
+ * the parser (Docs → Markdown, Sheets → CSV, Slides → .pptx); any other file
+ * is downloaded as is. Returns `null` for non-files (folders, forms,
+ * shortcuts, drawings) and `{ tooLarge }` when Drive reports a size above
+ * `maxBytes` (nothing downloaded). Provider errors are thrown.
+ */
+export async function fetchDriveOriginal(
+  fileId: string,
+  creds: GdriveCredentials,
+  maxBytes: number,
+): Promise<DriveOriginal | { tooLarge: true; size: number; mime: string } | null> {
+  const drive = getDriveClient(creds)
+  const { data: meta } = await drive.files.get({
+    fileId,
+    fields: "id,name,mimeType,size",
+    supportsAllDrives: true,
+  })
+  const name = meta.name ?? "untitled"
+  const mime = meta.mimeType ?? "application/octet-stream"
+  const exportAs = async (exportMime: string, storedMime: string, ext: string): Promise<DriveOriginal> => {
+    const res = await drive.files.export({ fileId, mimeType: exportMime }, { responseType: "arraybuffer" })
+    return { bytes: new Uint8Array(res.data as unknown as ArrayBuffer), mime: storedMime, name: `${name}.${ext}` }
+  }
+  if (mime === GOOGLE_DOCS_MIME) return exportAs("text/markdown", "text/markdown; charset=utf-8", "md")
+  if (mime === GOOGLE_SHEETS_MIME) return exportAs("text/csv", "text/csv; charset=utf-8", "csv")
+  if (mime === GOOGLE_SLIDES_MIME) return exportAs(PPTX_MIME, PPTX_MIME, "pptx")
+  if (mime.startsWith("application/vnd.google-apps.")) return null
+  const size = Number(meta.size ?? 0)
+  if (size > maxBytes) return { tooLarge: true, size, mime }
+  const res = await drive.files.get(
+    { fileId, alt: "media", supportsAllDrives: true },
+    { responseType: "arraybuffer" },
+  )
+  return { bytes: new Uint8Array(res.data as unknown as ArrayBuffer), mime, name }
 }
 
 function detectNonGoogleKind(

@@ -23,6 +23,7 @@ import { searchWeb } from "@/server/web-search"
 import { getOwnOrgContext } from "@/server/identity/own-org"
 import { loadClientProfileTexts } from "@/server/identity/client-profile-context"
 import { loadCustomValuesText } from "@/server/custom-fields"
+import { loadEntityDocumentsForChat, type ChatDocument } from "@/server/documents-chat"
 import { aiStreamText } from "@/server/ai/runtime"
 import {
   entitySearchScore,
@@ -239,7 +240,8 @@ function buildSourceTools(organizationId: string | null) {
         // Custom fields (spec clients-contacts Q11): «Название: значение»
         // lines of the SHOWN fields, ≤ 400 chars each. Best effort too.
         const noText = () => new Map<string, string>()
-        const [profiles, clientFields, contactFields] = await Promise.all([
+        const shownDeals = matchedDeals.slice(0, ENTITY_CAP)
+        const [profiles, clientFields, contactFields, documents] = await Promise.all([
           loadClientProfileTexts(
             organizationId,
             shownClients.map((c) => c.id),
@@ -265,7 +267,21 @@ function buildSourceTools(organizationId: string | null) {
             console.error("[chat] contact custom fields failed", e)
             return noText()
           }),
+          // Documents (spec attachments §9): ≤ 5 linked files per entity
+          // (a company also gets its contacts' and deals' files). Best effort.
+          loadEntityDocumentsForChat(organizationId, [
+            ...shownClients.map((c) => ({ entityType: "client" as const, entityId: c.id })),
+            ...shownContacts.map((c) => ({ entityType: "contact" as const, entityId: c.id })),
+            ...shownDeals.map((d) => ({ entityType: "deal" as const, entityId: d.id })),
+          ]).catch((e) => {
+            console.error("[chat] documents failed", e)
+            return new Map<string, ChatDocument[]>()
+          }),
         ])
+        const docsOf = (key: string) => {
+          const list = documents.get(key)
+          return list?.length ? { documents: list } : {}
+        }
         const clients = shownClients.map((c) => {
           const profile = profiles.get(c.id)?.summary ?? ""
           const fields = clientFields.get(c.id) ?? ""
@@ -278,6 +294,7 @@ function buildSourceTools(organizationId: string | null) {
             status: c.status,
             ...(profile ? { profile } : {}),
             ...(fields ? { fields } : {}),
+            ...docsOf(`client:${c.id}`),
           }
         })
         const contacts = shownContacts.map((c) => {
@@ -290,9 +307,10 @@ function buildSourceTools(organizationId: string | null) {
             clientName: c.clientName,
             status: c.status,
             ...(fields ? { fields } : {}),
+            ...docsOf(`contact:${c.id}`),
           }
         })
-        const deals = matchedDeals.slice(0, ENTITY_CAP).map((d) => ({
+        const deals = shownDeals.map((d) => ({
           id: d.id,
           name: d.name,
           funnelStageName: d.funnelStageName,
@@ -300,6 +318,7 @@ function buildSourceTools(organizationId: string | null) {
           value: d.value,
           currency: d.currency,
           status: d.status,
+          ...docsOf(`deal:${d.id}`),
         }))
         const sources = Array.from(sourceById.values()).slice(0, SOURCE_CAP)
 

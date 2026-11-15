@@ -45,6 +45,7 @@ import { CustomFieldsPanel } from "@/components/blocks/custom-fields-tab"
 import type { ClientRow, ClientRevenueSummary } from "@/app/api/clients/route"
 import type { DealRow } from "@/app/api/deals/route"
 import type { SourceSummary } from "@/server/sources"
+import { DocumentsPanel } from "@/components/blocks/documents-panel"
 
 const PHASE_COLOR: Record<string, string> = {
   awareness: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
@@ -264,6 +265,17 @@ export function ClientDetailShell({
         </CardHeader>
         <CardContent>
           <CustomFieldsPanel entity="client" entityId={detail.id} />
+        </CardContent>
+      </Card>
+
+      {/* «Документы» (docs/specs/attachments §6): files linked to the company
+          (+ its contacts and deals by default, Q11). */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Документы</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <DocumentsPanel entityType="client" entityId={detail.id} />
         </CardContent>
       </Card>
 

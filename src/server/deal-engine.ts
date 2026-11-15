@@ -399,7 +399,21 @@ export async function createAgentDeal(
     )
   }
   await db.batch(asBatch(ops))
+  if (input.topicId) await linkTopicDocumentsToDeal(orgId, input.topicId)
   return { id }
+}
+
+/**
+ * Documents (docs/specs/attachments §4 A2): a topic got a deal → the
+ * documents of its items link to that deal. Best effort, never throws.
+ */
+async function linkTopicDocumentsToDeal(orgId: string, topicId: string): Promise<void> {
+  try {
+    const { autoLinkDocumentsOfTopics } = await import("@/server/documents-ingest")
+    await autoLinkDocumentsOfTopics(orgId, [topicId])
+  } catch (err) {
+    console.error(`[deal-engine] document links of topic ${topicId} failed:`, err)
+  }
 }
 
 /** Links a topic to an existing deal of the org (journaled on the deal). */
@@ -436,6 +450,7 @@ export async function linkTopicToDeal(
       ),
     ]),
   )
+  await linkTopicDocumentsToDeal(orgId, topicId)
 }
 
 // ── Stage moves ───────────────────────────────────────────────────────────

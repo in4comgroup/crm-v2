@@ -77,42 +77,7 @@ export async function parseImapMessage(
 ): Promise<ParsedImapEmail> {
   const { externalId, mailbox, namespacedSourceId, creds, ai } = args
 
-  const sep = externalId.indexOf(":")
-  const uidValidityStr = sep >= 0 ? externalId.slice(0, sep) : ""
-  const uid = Number.parseInt(sep >= 0 ? externalId.slice(sep + 1) : "", 10)
-  if (!uidValidityStr || !Number.isFinite(uid)) {
-    throw new ImapMessageMissingError(`malformed external id "${externalId}"`)
-  }
-
-  const client = buildImapClient(creds)
-  let rawSource: Buffer
-  await client.connect()
-  try {
-    const mb = await client.mailboxOpen(mailbox, { readOnly: true })
-    if (mb.uidValidity.toString() !== uidValidityStr) {
-      // The mailbox was renumbered since sync — our stored UID may now point
-      // at a different message. Skip rather than risk parsing the wrong one.
-      throw new ImapMessageMissingError(
-        `UIDVALIDITY changed (stored ${uidValidityStr}, now ${mb.uidValidity})`,
-      )
-    }
-    const msg = await client.fetchOne(
-      String(uid),
-      { source: true },
-      { uid: true },
-    )
-    if (!msg || !msg.source) {
-      throw new ImapMessageMissingError(`uid ${uid} not found in ${mailbox}`)
-    }
-    rawSource = msg.source
-  } finally {
-    try {
-      await client.logout()
-    } catch {
-      // best-effort
-    }
-  }
-
+  const rawSource = await fetchImapMessageSource(creds, mailbox, externalId)
   const mail = await simpleParser(rawSource)
 
   const subject = mail.subject ?? "(no subject)"
@@ -145,20 +110,7 @@ export async function parseImapMessage(
     calendarEvent,
   })
 
-  // Real file attachments only. `related` attachments are inline (cid:)
-  // images that mailparser has already converted to data: URIs inside the
-  // HTML body, so they're picked up by extractBodyDataUriImages below —
-  // including them here too would double-parse. The `.ics` is excluded
-  // (already folded into the parent).
-  const attachments: ImapAttachment[] = mail.attachments
-    .filter((a) => !a.related)
-    .filter((a) => !isIcsAttachment(a.contentType, a.filename))
-    .filter((a) => Buffer.isBuffer(a.content) && a.content.byteLength > 0)
-    .map((a) => ({
-      filename: a.filename ?? "unknown",
-      contentType: a.contentType ?? "application/octet-stream",
-      bytes: new Uint8Array(a.content as Buffer),
-    }))
+  const attachments = imapFileAttachments(mail)
 
   const bodyInlineImages = extractBodyDataUriImages(bodyHtml)
 
@@ -171,6 +123,76 @@ export async function parseImapMessage(
     sourceCreatedAt,
     threadId,
   }
+}
+
+/**
+ * Fetch the raw RFC822 source of one message. Reconnects, RE-VERIFIES
+ * UIDVALIDITY (a server renumber invalidates every stored UID) and throws
+ * `ImapMessageMissingError` for a malformed id, a renumbered mailbox or a
+ * since-deleted message. Shared by the parser and the documents layer (lazy
+ * re-fetch of an attachment's original bytes, docs/specs/attachments).
+ */
+export async function fetchImapMessageSource(
+  creds: ImapCredentials,
+  mailbox: string,
+  externalId: string,
+): Promise<Buffer> {
+  const sep = externalId.indexOf(":")
+  const uidValidityStr = sep >= 0 ? externalId.slice(0, sep) : ""
+  const uid = Number.parseInt(sep >= 0 ? externalId.slice(sep + 1) : "", 10)
+  if (!uidValidityStr || !Number.isFinite(uid)) {
+    throw new ImapMessageMissingError(`malformed external id "${externalId}"`)
+  }
+
+  const client = buildImapClient(creds)
+  await client.connect()
+  try {
+    const mb = await client.mailboxOpen(mailbox, { readOnly: true })
+    if (mb.uidValidity.toString() !== uidValidityStr) {
+      // The mailbox was renumbered since sync — our stored UID may now point
+      // at a different message. Skip rather than risk parsing the wrong one.
+      throw new ImapMessageMissingError(
+        `UIDVALIDITY changed (stored ${uidValidityStr}, now ${mb.uidValidity})`,
+      )
+    }
+    const msg = await client.fetchOne(
+      String(uid),
+      { source: true },
+      { uid: true },
+    )
+    if (!msg || !msg.source) {
+      throw new ImapMessageMissingError(`uid ${uid} not found in ${mailbox}`)
+    }
+    return msg.source
+  } finally {
+    try {
+      await client.logout()
+    } catch {
+      // best-effort
+    }
+  }
+}
+
+/**
+ * Real file attachments of a parsed message, in the order the parser numbers
+ * them (`imap-att:<externalId>:<index>`). `related` attachments are inline
+ * (cid:) images that mailparser has already converted to data: URIs inside
+ * the HTML body, so they're picked up by extractBodyDataUriImages — including
+ * them here too would double-parse. The `.ics` is excluded (already folded
+ * into the parent). Keep this the ONE definition: the index is the identity.
+ */
+export function imapFileAttachments(
+  mail: Awaited<ReturnType<typeof simpleParser>>,
+): ImapAttachment[] {
+  return mail.attachments
+    .filter((a) => !a.related)
+    .filter((a) => !isIcsAttachment(a.contentType, a.filename))
+    .filter((a) => Buffer.isBuffer(a.content) && a.content.byteLength > 0)
+    .map((a) => ({
+      filename: a.filename ?? "unknown",
+      contentType: a.contentType ?? "application/octet-stream",
+      bytes: new Uint8Array(a.content as Buffer),
+    }))
 }
 
 // Decode the first iCalendar attachment carried by the message. mailparser

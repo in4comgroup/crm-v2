@@ -157,7 +157,9 @@ type Resolved = {
   // Ordered newest-first.
   threads: ThreadInfo[]
   sourceItemIds: Set<string>
-  r2KeyByItem: Map<string, string>
+  // Storage keys per item: the parsed-markdown object and, for documents,
+  // the stored original file (docs/specs/attachments §3.2).
+  r2KeyByItem: Map<string, string[]>
   clients: EntityProducers[]
   contacts: EntityProducers[]
   // Every link of every topic that has an item of this source (topics engine,
@@ -201,6 +203,7 @@ async function resolve(sourceId: string): Promise<Resolved> {
       sourceId: sourceItem.sourceId,
       parentSourceItemId: sourceItem.parentSourceItemId,
       markdownR2Key: sourceItem.markdownR2Key,
+      fileKey: sourceItem.fileKey,
       metadataJson: sourceItem.metadataJson,
       externalId: sourceItem.externalId,
       sourceCreatedAt: sourceItem.sourceCreatedAt,
@@ -211,14 +214,15 @@ async function resolve(sourceId: string): Promise<Resolved> {
 
   // 3. This source's items + group them into threads (parent + children).
   const sourceItemIds = new Set<string>()
-  const r2KeyByItem = new Map<string, string>()
+  const r2KeyByItem = new Map<string, string[]>()
   // root id → ThreadInfo (built first for parents, then children attached).
   const threadById = new Map<string, ThreadInfo>()
   // child item id → its root id, for attaching children whose parent we've seen.
   const ourItems = items.filter((it) => it.sourceId === sourceId)
   for (const it of ourItems) {
     sourceItemIds.add(it.id)
-    if (it.markdownR2Key) r2KeyByItem.set(it.id, it.markdownR2Key)
+    const keys = [it.markdownR2Key, it.fileKey].filter((k): k is string => !!k)
+    if (keys.length > 0) r2KeyByItem.set(it.id, keys)
   }
   // Parents (roots): no parentSourceItemId. Children attach to their root; a
   // child whose parent isn't in this source (shouldn't happen) becomes its own
@@ -692,8 +696,7 @@ export async function executeSourceTeardown(input: {
   for (const t of selectedThreads) {
     for (const id of t.itemIds) {
       selectedItemIds.add(id)
-      const key = r.r2KeyByItem.get(id)
-      if (key) selectedR2Keys.push(key)
+      for (const key of r.r2KeyByItem.get(id) ?? []) selectedR2Keys.push(key)
     }
     for (const c of t.cardIds) selectedCardIds.push(c)
   }

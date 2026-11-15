@@ -1,6 +1,6 @@
 # Custom fields — open questions
 
-Status: **answered 2026-11-15** (product owner). Answer «as recommended» or give a different decision; decisions go to § Decisions and into [01-custom-fields.md](01-custom-fields.md).
+Status: **answered 2026-11-15** (product owner; Q7 changed later the same day — built). Decisions go to § Decisions and into [01-custom-fields.md](01-custom-fields.md).
 
 | # | Question | Options | Recommendation |
 |---|---|---|---|

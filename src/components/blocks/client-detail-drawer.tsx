@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { DocumentsPanel } from "@/components/blocks/documents-panel"
 import {
   HoverCard,
   HoverCardContent,
@@ -513,6 +514,9 @@ export function ClientDetailDrawer({
                 <TabsTrigger value="fields" className="flex-none">
                   Поля
                 </TabsTrigger>
+                <TabsTrigger value="documents" className="flex-none">
+                  Документы
+                </TabsTrigger>
                 <TabsTrigger value="tasks" className="flex-none">
                   Задачи
                   {tasks.length > 0 && (
@@ -857,6 +861,14 @@ export function ClientDetailDrawer({
                   onChanged={onChanged}
                 />
               )}
+            </TabsContent>
+
+            {/* «Документы» (docs/specs/attachments §6): mounted only while the
+                tab is open (Radix unmounts inactive content). The panel has
+                no <form> and only type="button" buttons, so it never submits
+                this drawer's form. */}
+            <TabsContent value="documents" className="pt-3 text-sm">
+              <DocumentsPanel entityType="client" entityId={client.id} />
             </TabsContent>
 
             <TabsContent value="tasks" className="py-4 space-y-2 text-sm">

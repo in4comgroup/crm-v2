@@ -390,6 +390,7 @@ async function listContentByTerms(
         r2UploadedAt: sourceItem.r2UploadedAt,
         markdownR2Key: sourceItem.markdownR2Key,
         markdownR2SizeBytes: sourceItem.markdownR2SizeBytes,
+        fileStatus: sourceItem.fileStatus,
       })
       .from(sourceItem)
       .innerJoin(source, eq(source.id, sourceItem.sourceId))

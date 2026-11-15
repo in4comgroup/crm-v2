@@ -1,5 +1,6 @@
 "use server"
 
+import { after } from "next/server"
 import { db } from "@/db/drizzle"
 import { client, contact, sourceItem, type EntityStatus } from "@/db/schema"
 import { scheduleEnrichOnCreate } from "@/server/identity/client-enrichment"
@@ -1606,6 +1607,27 @@ export async function applyDiscovery(
     session.user.id,
     createdClients.map((c) => c.id),
   )
+
+  // Documents (docs/specs/attachments §4, A1 / A3): links by message
+  // participants and named companies need the contacts / companies to
+  // exist — recompute the org's document links (links only, no provider
+  // calls) after the response. Best effort.
+  if (createdClients.length + revivedClients.length + createdContacts.length + revivedContacts.length > 0) {
+    const orgForDocs = activeOrgId
+    after(async () => {
+      try {
+        const { backfillDocuments } = await import("@/server/documents-ingest")
+        let afterId: string | null = null
+        for (let round = 0; round < 10; round++) {
+          const r = await backfillDocuments(orgForDocs, { storeFiles: false, limit: 200, afterId })
+          if (!r.nextAfterId) break
+          afterId = r.nextAfterId
+        }
+      } catch (e) {
+        console.error("[discovery] document links refresh failed:", e)
+      }
+    })
+  }
 
   return {
     clientsCreated: createdClients.length,

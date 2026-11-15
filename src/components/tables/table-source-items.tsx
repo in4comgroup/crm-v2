@@ -48,6 +48,8 @@ type SourceItemListResponse = {
 }
 
 type SourceItemRow = {
+  /** Original file status (docs/specs/attachments); only drop-off re-parse reads it. */
+  fileStatus?: string | null
   id: string
   sourceId: string
   sourceName: string
@@ -785,7 +787,10 @@ function RowActions({
   const ps = row.parseStatus
   const rs = row.r2UploadStatus
   const canReparse =
-    isRoot && getProvider(row.sourceProvider).capabilities.hasRawBytesPersisted
+    isRoot &&
+    (getProvider(row.sourceProvider).capabilities.hasRawBytesPersisted ||
+      // Drop-off rows whose original file is stored (docs/specs/attachments) can be parsed again.
+      (row.sourceProvider === "dropoff" && row.fileStatus === "stored"))
   const canShow = ps === "complete"
   const canExtractSignals = !!onExtractSignals && isRoot && ps === "complete"
   // Needs work = not yet parsed, OR parsed-but-unshipped.

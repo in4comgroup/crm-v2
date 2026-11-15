@@ -257,6 +257,9 @@ export type SourceItemRow = {
   r2UploadedAt: Date | null
   markdownR2Key: string | null
   markdownR2SizeBytes: number | null
+  // Documents (docs/specs/attachments §3.2): stored original status
+  // (`stored` → a drop-off row can be re-parsed from storage).
+  fileStatus?: string | null
 }
 
 export type SourceItemListResult = {
@@ -350,6 +353,7 @@ export async function listSourceItems(
         r2UploadedAt: sourceItem.r2UploadedAt,
         markdownR2Key: sourceItem.markdownR2Key,
         markdownR2SizeBytes: sourceItem.markdownR2SizeBytes,
+        fileStatus: sourceItem.fileStatus,
       })
       .from(sourceItem)
       .innerJoin(source, eq(source.id, sourceItem.sourceId))
@@ -505,6 +509,7 @@ export async function listOrgStoredContent(
         r2UploadedAt: sourceItem.r2UploadedAt,
         markdownR2Key: sourceItem.markdownR2Key,
         markdownR2SizeBytes: sourceItem.markdownR2SizeBytes,
+        fileStatus: sourceItem.fileStatus,
       })
       .from(sourceItem)
       .innerJoin(source, eq(source.id, sourceItem.sourceId))

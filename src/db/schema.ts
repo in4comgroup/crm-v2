@@ -1775,6 +1775,17 @@ export const sourceItem = pgTable(
     // `src/app/AGENTS.md`. Stable across re-parses (overwrite in place).
     markdownR2Key: text("markdown_r2_key"),
     markdownR2SizeBytes: bigint("markdown_r2_size_bytes", { mode: "number" }),
+    // ── Original file of a DOCUMENT (docs/specs/attachments §3.2) ──
+    // Object key in storage (`org_<orgId>/files/<itemId>/<name>`); written
+    // when the item is parsed or uploaded. `file_status`: stored | not_stored
+    // | too_large | failed (text validated in code); null = not a document /
+    // not processed yet.
+    fileKey: text("file_key"),
+    fileSizeBytes: bigint("file_size_bytes", { mode: "number" }),
+    fileMime: text("file_mime"),
+    fileSha256: text("file_sha256"),
+    fileStoredAt: timestamp("file_stored_at"),
+    fileStatus: text("file_status"),
     // Stamped by `applyDiscovery` after the unified discover-from-sources
     // flow has considered this row (whether or not it contributed a
     // client / contact / link candidate). Default eligibility filter is
@@ -1832,6 +1843,8 @@ export const sourceItem = pgTable(
     index("source_item_sourceId_idx").on(table.sourceId),
     index("source_item_organizationId_idx").on(table.organizationId),
     index("source_item_parentSourceItemId_idx").on(table.parentSourceItemId),
+    // Upload dedupe by content (docs/specs/attachments §3.2).
+    index("source_item_org_file_sha_idx").on(table.organizationId, table.fileSha256),
     index("source_item_threadExternalId_idx").on(table.threadExternalId),
     // Listing query: org's items ordered by provider creation time.
     index("source_item_org_sourceCreatedAt_idx").on(
@@ -3693,6 +3706,37 @@ export const clientProfileProposal = pgTable(
   (table) => [
     index("client_profile_proposal_client_idx").on(table.clientId, table.status),
     index("client_profile_proposal_org_idx").on(table.organizationId, table.status),
+  ],
+)
+
+// ── Documents (docs/specs/attachments §3.3) ───────────────────────────────
+// Many-to-many: a document (file `source_item`) ↔ company / contact / deal /
+// task / order. `entity_type` / `origin` / `confidence` are text validated in
+// code (src/lib/documents.ts). A person's «Отвязать» keeps the row with
+// `removed_at`, so the automatic step never adds the same link again.
+export const documentLink = pgTable(
+  "document_link",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    sourceItemId: text("source_item_id")
+      .notNull()
+      .references(() => sourceItem.id, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    origin: text("origin").notNull(),
+    confidence: text("confidence").notNull().default("high"),
+    reason: text("reason"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    removedAt: timestamp("removed_at"),
+    removedByUserId: text("removed_by_user_id").references(() => user.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    uniqueIndex("document_link_item_entity_uq").on(table.sourceItemId, table.entityType, table.entityId),
+    index("document_link_entity_idx").on(table.organizationId, table.entityType, table.entityId),
   ],
 )
 

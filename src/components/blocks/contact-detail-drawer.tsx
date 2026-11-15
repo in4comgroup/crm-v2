@@ -8,6 +8,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { DocumentsPanel } from "@/components/blocks/documents-panel"
 import { ContactEditForm } from "@/components/forms/form-contact-edit"
 import {
   RelatedTopicsList,
@@ -122,6 +123,9 @@ export function ContactDetailDrawer({
               <TabsTrigger value="fields" className="flex-none">
                 Поля
               </TabsTrigger>
+              <TabsTrigger value="documents" className="flex-none">
+                Документы
+              </TabsTrigger>
               {relatedTopics.visible && (
                 <TabsTrigger value="topics" className="flex-none">
                   Темы
@@ -149,6 +153,10 @@ export function ContactDetailDrawer({
                   onChanged={onChanged}
                 />
               )}
+            </TabsContent>
+            {/* «Документы» (docs/specs/attachments §6): mounted while the tab is open. */}
+            <TabsContent value="documents" className="text-sm">
+              <DocumentsPanel entityType="contact" entityId={contact.id} />
             </TabsContent>
             {relatedTopics.visible && (
               <TabsContent value="topics" className="text-sm">

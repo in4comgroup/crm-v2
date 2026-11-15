@@ -576,6 +576,17 @@ export async function persistItemResolution(args: {
     t.isNew = false
     t.dirty = false
   }
+  // Documents (docs/specs/attachments §4 A2): the item is now on a topic →
+  // its documents (the item itself or its attachments) may link to the
+  // topic's company / contact / deal. Best effort, outside the batch.
+  if (links.length > 0) {
+    try {
+      const { autoLinkDocumentsOfItems } = await import("@/server/documents-ingest")
+      await autoLinkDocumentsOfItems(orgId, [item.itemId])
+    } catch (err) {
+      console.error(`[topics] document links of ${item.itemId} failed:`, err)
+    }
+  }
 }
 
 function itemStatusOp(orgId: string, itemId: string, status: TopicItemStatus, reason: string | null) {
@@ -721,7 +732,20 @@ export async function relinkUnresolvedTopics(
   }
   if (ops.length === 0) return 0
   await db.batch(asBatch([...ops, db.insert(topicEvent).values(eventRows(orgId, events, { actor: "agent", userId: actorUserId }))]))
+  // Documents (docs/specs/attachments §4 A2): the topics' items' documents
+  // may now link to the company / contact. Best effort, after the batch.
+  await linkTopicDocuments(orgId, events.map((e) => e.topicId))
   return ops.length
+}
+
+/** Documents A2 hook: recompute auto links of the topics' documents. Never throws. */
+async function linkTopicDocuments(orgId: string, topicIds: string[]): Promise<void> {
+  try {
+    const { autoLinkDocumentsOfTopics } = await import("@/server/documents-ingest")
+    await autoLinkDocumentsOfTopics(orgId, topicIds)
+  } catch (err) {
+    console.error("[topics] document links failed:", err)
+  }
 }
 
 // ── User / admin actions (no UI yet; the caller checks the session) ───────

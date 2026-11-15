@@ -103,9 +103,14 @@ export async function loadCounterpartyIndex(orgId: string): Promise<Counterparty
     clients,
     contacts.map((p) => {
       const linked = extra.currentLinkClients.get(p.id) ?? []
-      const emails = (extra.addressesByContact.get(p.id) ?? []).filter((a) => a.kind === "email")
+      const addrs = extra.addressesByContact.get(p.id) ?? []
+      const emails = addrs.filter((a) => a.kind === "email")
+      // Telegram names from «Адреса» (docs/specs/telegram Q14) join the
+      // aliases as «@handle» — the index matches handles from aliases.
+      const handles = addrs.filter((a) => a.kind === "telegram").map((a) => `@${a.value}`)
       return {
         ...p,
+        aliases: handles.length ? [...(p.aliases ?? []), ...handles] : p.aliases,
         clientIds: [...new Set([...(p.clientId ? [p.clientId] : []), ...linked])],
         extraEmails: emails.map((a) => ({ email: a.value, clientId: a.clientId })),
       }
@@ -174,10 +179,17 @@ function firstAddr(v: unknown): Addr | null {
 /** The other side of the item: sender of an inbound item, first recipient of ours. */
 export function itemPeer(metadataJson: unknown, direction: SignalDirection): ItemPeer | null {
   const m = (metadataJson ?? {}) as Record<string, unknown>
-  const tg = (m.telegram ?? null) as { from?: { firstName?: string; lastName?: string; username?: string } } | null
+  type TgUser = { firstName?: string; lastName?: string; username?: string }
+  const tg = (m.telegram ?? null) as { from?: TgUser; groupPeer?: TgUser } | null
   if (tg?.from && direction !== "outbound") {
     const name = [tg.from.firstName, tg.from.lastName].filter(Boolean).join(" ") || null
     return { email: null, name, handle: tg.from.username ?? null }
+  }
+  // Our message in a Telegram GROUP: the client side of the group
+  // (`groupPeer`, stamped at parse — docs/specs/telegram §6 G5).
+  if (tg?.groupPeer && direction === "outbound") {
+    const name = [tg.groupPeer.firstName, tg.groupPeer.lastName].filter(Boolean).join(" ") || null
+    return { email: null, name, handle: tg.groupPeer.username ?? null }
   }
   const a = firstAddr(direction === "outbound" ? m.to : m.from)
   if (!a) return null

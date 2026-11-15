@@ -32,7 +32,7 @@ Node-only packages `imapflow`, `mailparser`, `node-ical`, `exceljs` are listed i
 | `src/app/accept-invitation/[id]` | Public | Invitation acceptance. Deliberately outside `(auth)` so a signed-in user is not redirected away. |
 | `src/app/(protected)/` | Session required (checked in `layout.tsx`, redirect to `/sign-in`) | All product pages. The layout mounts the sidebar and the global AI chat panel once. |
 | `src/app/o/[token]` | Public, token is the authorization | Guest order review and confirmation. |
-| `src/app/api/webhooks/telegram/[sourceId]` | Public, path id + secret header are the authorization | Telegram bot webhook. |
+| `src/app/api/webhooks/telegram/[sourceId]` | Public, path id + secret header are the authorization | Telegram bot webhook: private chats and groups, text, voice notes and files (parsed as attachments; spec `docs/specs/telegram/`). |
 | `src/app/api/cron/daily` | Bearer `CRON_SECRET`, required in every environment | Starts the daily pipeline workflow. |
 | `src/app/api/invitations/[id]`, `api/invitations/check` | Public | Invitation lookup and "has pending invite" check. |
 | `src/app/api/**` (all other routes) | Session required; most need an active org | JSON API used by the UI. |

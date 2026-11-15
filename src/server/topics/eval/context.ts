@@ -64,7 +64,17 @@ const EVIDENCE_MAX = 300
 export function postprocessForEval(
   output: NormalizedExtraction | null,
   ctx: ScoringContext,
-  item: { text: string; date: Date | null; orgAttribution: string | null },
+  item: {
+    text: string
+    /**
+     * The author's own text (message without quoted history + attachment
+     * blocks, `buildSignalItemText`). Omitted = computed from `text` (an
+     * item without attachments).
+     */
+    ownText?: string | null
+    date: Date | null
+    orgAttribution: string | null
+  },
 ): EvalPostStored {
   if (!output) {
     // two_pass with no block chosen: a valid empty result.
@@ -79,10 +89,14 @@ export function postprocessForEval(
       dropped: [],
     }
   }
-  const split = splitQuotedHistory(item.text)
+  let ownText = item.ownText
+  if (ownText === undefined) {
+    const split = splitQuotedHistory(item.text)
+    ownText = split.own.trim() ? split.own : null
+  }
   const pp = postprocessExtraction(output, ctx, {
     text: item.text,
-    ownText: split.own.trim() ? split.own : null,
+    ownText,
     date: item.date,
     orgAttribution: item.orgAttribution,
   })

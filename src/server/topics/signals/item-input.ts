@@ -1,11 +1,13 @@
 import "server-only"
 
-import { and, eq, inArray } from "drizzle-orm"
+import { and, asc, eq, inArray, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { source, sourceItem } from "@/db/schema"
 import { detectForward, extractEmailAddress } from "@/lib/ru-mail"
 import { getTextObject } from "@/server/storage"
 import type { ExtractionEnvelope } from "@/server/topics/prompt/extraction"
+import { buildSignalItemText, type AttachmentText, type SignalItemText } from "./attachment-blocks"
+import { messageContent } from "./evidence"
 
 // Input of one signal extraction: the item row, its markdown and the
 // envelope (spec topics/01 §5.1). Shared by the engine, the golden set and
@@ -245,4 +247,100 @@ export function envelopeFromItem(item: {
     forwardedBy,
     originalAuthor,
   }
+}
+
+// ── Attachments (spec telegram/01 §4.6) ────────────────────────────────────
+
+type ChildRow = {
+  id: string
+  parentSourceItemId: string | null
+  externalId: string
+  externalType: string
+  name: string | null
+  parsedMarkdown: string | null
+  markdownR2Key: string | null
+}
+
+async function childText(row: ChildRow): Promise<string> {
+  const md = await itemMarkdown(row)
+  return md ? messageContent(md) : ""
+}
+
+/**
+ * Parsed attachment texts of one ROOT item, in the order they were stored
+ * (`created_at`, then external id). Rule:
+ * - direct children of the root (`parent_source_item_id = root`) with
+ *   `parse_status = complete` — skipped / failed children (decorative inline
+ *   images, unsupported or oversized files) are left out by that status;
+ * - never a `derived_audio` row as its own file: it is the audio track of a
+ *   video. A video file's text = its transcript (the `derived_audio` row with
+ *   external id `<video external id>:audio` — a grandchild for mail / Google
+ *   Chat / Telegram, a sibling for WhatsApp archives) when that transcript
+ *   is not empty, else the video's own text (the visual description);
+ * - content = the child's `## Content` (`messageContent`); name = `filename`,
+ *   else a file name in the child's metadata.
+ * Org-explicit; a read error of one child's markdown leaves that child empty.
+ */
+export async function loadAttachmentTexts(orgId: string, rootId: string): Promise<AttachmentText[]> {
+  const cols = {
+    id: sourceItem.id,
+    parentSourceItemId: sourceItem.parentSourceItemId,
+    externalId: sourceItem.externalId,
+    externalType: sourceItem.externalType,
+    name: sql<string | null>`coalesce(${sourceItem.filename}, ${sourceItem.metadataJson}->>'fileName', ${sourceItem.metadataJson}->>'filename')`,
+    parsedMarkdown: sourceItem.parsedMarkdown,
+    markdownR2Key: sourceItem.markdownR2Key,
+  }
+  const children: ChildRow[] = await db
+    .select(cols)
+    .from(sourceItem)
+    .where(
+      and(
+        eq(sourceItem.organizationId, orgId),
+        eq(sourceItem.parentSourceItemId, rootId),
+        eq(sourceItem.parseStatus, "complete"),
+      ),
+    )
+    .orderBy(asc(sourceItem.createdAt), asc(sourceItem.externalId))
+  if (children.length === 0) return []
+
+  const files = children.filter((c) => c.externalType !== "derived_audio")
+  if (files.length === 0) return []
+  // Audio tracks: siblings already loaded + grandchildren under the files.
+  const audio = new Map<string, ChildRow>()
+  for (const c of children) if (c.externalType === "derived_audio") audio.set(c.externalId, c)
+  const grand: ChildRow[] = await db
+    .select(cols)
+    .from(sourceItem)
+    .where(
+      and(
+        eq(sourceItem.organizationId, orgId),
+        inArray(sourceItem.parentSourceItemId, files.map((f) => f.id)),
+        eq(sourceItem.externalType, "derived_audio"),
+        eq(sourceItem.parseStatus, "complete"),
+      ),
+    )
+  for (const g of grand) audio.set(g.externalId, g)
+
+  return mapPool(files, 4, async (f): Promise<AttachmentText> => {
+    const track = audio.get(`${f.externalId}:audio`)
+    const transcript = track ? (await childText(track)).trim() : ""
+    const content = transcript || (await childText(f))
+    return { name: f.name ?? "", content }
+  })
+}
+
+/**
+ * The extraction input of one item from its root markdown + its parsed
+ * attachments (spec §4.6): the engine, the golden set and the eval runners
+ * all build it here, so evals measure the real behaviour.
+ */
+export async function loadSignalItemText(
+  orgId: string,
+  rootId: string | null,
+  rootMarkdown: string | null,
+): Promise<SignalItemText> {
+  const message = rootMarkdown ? messageContent(rootMarkdown) : ""
+  const files = rootId ? await loadAttachmentTexts(orgId, rootId) : []
+  return buildSignalItemText(message, files)
 }

@@ -1,7 +1,7 @@
 import "server-only"
 
 import { randomUUID } from "node:crypto"
-import { eq, sql } from "drizzle-orm"
+import { and, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import {
   signalInstance,
@@ -101,6 +101,13 @@ import {
   getTelegramCredentials,
 } from "@/server/providers/credentials"
 import { downloadTelegramFile } from "@/lib/telegram"
+import {
+  fileOnlyMessageText,
+  isTooLargeForBot,
+  readTelegramFileRefs,
+  telegramFileExternalId,
+  type TelegramFileRef,
+} from "@/lib/telegram-files"
 import { imapProviderConfigSchema } from "@/server/providers/handlers"
 import type {
   GchatCredentials,
@@ -266,11 +273,13 @@ type ParseContext = {
   // source of `ownOrg`, the attribution identity, `allInternal` and the
   // parser prompts' «this is us» line. Null for a row with no organization.
   ownCtx: OwnOrgContext | null
-  // The parent's org-attribution verdict, computed by `markParsed` and read by
-  // `insertParsedChild` so children inherit it (an attachment of our own email
-  // is ours). Mutated in-place during the parent's `markParsed`; children are
-  // always inserted afterwards, so it's set by the time they read it.
+  // The parent's org-attribution verdict, read by `insertParsedChild` so
+  // children inherit it (an attachment of our own email is ours). Set by
+  // `primeOrgAttribution` BEFORE the children when the root is marked
+  // complete after them (mail, Google Chat, Telegram files — docs/specs/
+  // telegram §4.6), else by `markParsed`.
   orgAttributionValue?: OrgAttribution
+  primedAttribution?: OrgAttributionResult
   // Who every model call of this parse is for: the item's organization +
   // the signed-in user on manual paths (null for cron / webhook).
   ai: ParserAiContext
@@ -555,9 +564,8 @@ async function parseNylasItem(ctx: ParseContext): Promise<ParseResult> {
   const creds = getNylasCredentials(ctx.sourceId, ctx.credentialsRef)
   const parsed = await parseEmailMessage(ctx.externalId, creds, ctx.ai)
 
-  // Parent row → complete with markdown.
-  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
+  await primeOrgAttribution(ctx, parsed.markdown)
   let inserted = 0
   let skipped = 0
   let failed = 0
@@ -580,6 +588,11 @@ async function parseNylasItem(ctx: ParseContext): Promise<ParseResult> {
     skipped += result.skipped
     failed += result.failed
   }
+
+  // Parent row → complete with markdown AFTER its attachments: their text
+  // feeds signal extraction (docs/specs/telegram §4.6), so a run must never
+  // see a complete root whose children are still missing.
+  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
   return {
     parentStatus: "complete",
@@ -780,9 +793,8 @@ async function parseImapItem(ctx: ParseContext): Promise<ParseResult> {
     ai: ctx.ai,
   })
 
-  // Parent row → complete with markdown.
-  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
+  await primeOrgAttribution(ctx, parsed.markdown)
   let inserted = 0
   let skipped = 0
   let failed = 0
@@ -803,6 +815,11 @@ async function parseImapItem(ctx: ParseContext): Promise<ParseResult> {
     skipped += result.skipped
     failed += result.failed
   }
+
+  // Parent row → complete with markdown AFTER its attachments: their text
+  // feeds signal extraction (docs/specs/telegram §4.6), so a run must never
+  // see a complete root whose children are still missing.
+  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
 
   return {
     parentStatus: "complete",
@@ -869,8 +886,7 @@ async function parseGoogleChatItem(ctx: ParseContext): Promise<ParseResult> {
   // sync stores the same in externalId.
   const parsed = await parseChatMessage(ctx.externalId, creds, ctx.ai)
 
-  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
-
+  await primeOrgAttribution(ctx, parsed.markdown)
   let inserted = 0
   let skipped = 0
   let failed = 0
@@ -880,6 +896,11 @@ async function parseGoogleChatItem(ctx: ParseContext): Promise<ParseResult> {
     skipped += result.skipped
     failed += result.failed
   }
+  // Parent row → complete with markdown AFTER its attachments: their text
+  // feeds signal extraction (docs/specs/telegram §4.6), so a run must never
+  // see a complete root whose children are still missing.
+  await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
+
   return {
     parentStatus: "complete",
     parentMarkdownBytes: byteLengthOf(parsed.markdown),
@@ -1128,7 +1149,10 @@ async function parseTelegramItem(ctx: ParseContext): Promise<ParseResult> {
     return await parseTelegramVoiceItem(ctx, media)
   }
 
-  const rawText = typeof meta.rawText === "string" ? meta.rawText : ""
+  const files = readTelegramFileRefs(meta)
+  // A file message without a caption → «Файл: <name>» so the root parses.
+  const rawText =
+    (typeof meta.rawText === "string" ? meta.rawText : "") || (files.length > 0 ? fileOnlyMessageText(files) : "")
   if (!rawText) {
     throw new Error(
       "Telegram message row is missing metadata_json.rawText — re-ingest the message",
@@ -1150,15 +1174,129 @@ async function parseTelegramItem(ctx: ParseContext): Promise<ParseResult> {
       : null,
   }, ctx.ai)
 
+  // Files (docs/specs/telegram §4.2): the children are inserted BEFORE the
+  // root is marked complete, so a signal run never sees a complete root
+  // whose files are not parsed yet (their text feeds extraction, Q8). Same
+  // attachment path as mail / Google Chat; they inherit the root's
+  // attribution (primed first).
+  await primeOrgAttribution(ctx, parsed.markdown)
+  let childInserted = 0
+  let childSkipped = 0
+  let childFailed = 0
+  if (files.length > 0) {
+    const tg = (meta.telegram ?? {}) as Record<string, unknown>
+    const chatId = typeof tg.chatId === "number" || typeof tg.chatId === "string" ? tg.chatId : ctx.threadExternalId ?? "chat"
+    const messageId = typeof tg.messageId === "number" || typeof tg.messageId === "string" ? tg.messageId : ctx.externalId
+    const creds = getTelegramCredentials(ctx.sourceId, ctx.credentialsRef)
+    for (let i = 0; i < files.length; i++) {
+      const r = await parseTelegramFile(ctx, creds.botToken, files[i], telegramFileExternalId(chatId, messageId, i))
+      childInserted += r.inserted
+      childSkipped += r.skipped
+      childFailed += r.failed
+    }
+  }
+
   await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
+  await stampTelegramGroupPeer(ctx)
 
   return {
     parentStatus: "complete",
     parentMarkdownBytes: byteLengthOf(parsed.markdown),
-    childInserted: 0,
-    childSkipped: 0,
-    childFailed: 0,
+    childInserted,
+    childSkipped,
+    childFailed,
   }
+}
+
+// G5 (docs/specs/telegram §6): in a GROUP, a message of ours has no
+// recipient — its counterparty is the client side of the group. Stamp
+// `metadata_json.telegram.groupPeer` = the author of the latest earlier
+// non-own message of the same chat (≤ 7 days), so the topics matcher uses it
+// like the first recipient of an outbound mail. Best effort.
+async function stampTelegramGroupPeer(ctx: ParseContext): Promise<void> {
+  try {
+    const tg = (ctx.metadataJson.telegram ?? {}) as Record<string, unknown>
+    if (tg.chatType !== "group" && tg.chatType !== "supergroup") return
+    const [self] = await db
+      .select({ attribution: sourceItem.orgAttribution, at: sourceItem.sourceCreatedAt })
+      .from(sourceItem)
+      .where(eq(sourceItem.id, ctx.itemId))
+    if (!self || self.attribution !== "own_org" || !ctx.threadExternalId) return
+    const at = self.at ?? new Date()
+    const [prev] = await db
+      .select({ meta: sourceItem.metadataJson })
+      .from(sourceItem)
+      .where(
+        and(
+          eq(sourceItem.sourceId, ctx.sourceId),
+          eq(sourceItem.threadExternalId, ctx.threadExternalId),
+          isNull(sourceItem.parentSourceItemId),
+          ne(sourceItem.id, ctx.itemId),
+          ne(sourceItem.orgAttribution, "own_org"),
+          lte(sourceItem.sourceCreatedAt, at),
+          gte(sourceItem.sourceCreatedAt, new Date(at.getTime() - 7 * 86_400_000)),
+        ),
+      )
+      .orderBy(desc(sourceItem.sourceCreatedAt))
+      .limit(1)
+    const from = ((prev?.meta as Record<string, unknown> | undefined)?.telegram as Record<string, unknown> | undefined)?.from
+    if (!from || typeof from !== "object") return
+    await db
+      .update(sourceItem)
+      .set({ metadataJson: sql`jsonb_set(${sourceItem.metadataJson}, '{telegram,groupPeer}', ${JSON.stringify(from)}::jsonb, true)` })
+      .where(eq(sourceItem.id, ctx.itemId))
+  } catch (err) {
+    console.warn(`[parse] telegram group peer of ${ctx.itemId} failed:`, err)
+  }
+}
+
+// One Telegram file → a child attachment (docs/specs/telegram §4.2). A file
+// above the 20 MB bot limit is listed (`too_large`, not downloadable, Q6);
+// otherwise downloaded by `file_id` and handed to `runAttachmentParser`
+// (parsed child + stored original; unsupported type / above a parser cap =
+// stored + skipped with the reason, exactly as for mail). A download error =
+// a failed child (re-parse retries; `file_id` stays valid for this bot).
+async function parseTelegramFile(
+  ctx: ParseContext,
+  botToken: string,
+  file: TelegramFileRef,
+  attSourceId: string,
+): Promise<ChildOutcome> {
+  const meta: AttachmentMeta = { fileName: file.fileName, contentType: file.mimeType, byteSize: file.fileSize ?? 0 }
+  if (isTooLargeForBot(file)) {
+    const childId = await insertSkippedChild({
+      ctx,
+      externalId: attSourceId,
+      externalType: "attachment",
+      meta,
+      reason: "больше 20 МБ — Telegram не отдаёт такие файлы боту",
+    })
+    await db.update(sourceItem).set({ fileStatus: "too_large", fileSizeBytes: file.fileSize }).where(eq(sourceItem.id, childId))
+    return { inserted: 0, skipped: 1, failed: 0 }
+  }
+  let bytes: Uint8Array
+  try {
+    bytes = (await downloadTelegramFile(botToken, file.fileId)).bytes
+  } catch (err) {
+    await insertFailedChild({
+      ctx,
+      externalId: attSourceId,
+      externalType: "attachment",
+      meta,
+      reason: err instanceof Error ? err.message : String(err),
+    })
+    return { inserted: 0, skipped: 0, failed: 1 }
+  }
+  meta.byteSize = bytes.byteLength
+  const kind = detectAttachmentKind(file.mimeType, file.fileName)
+  if (!kind) {
+    // Not a parser type (xlsx, zip, HEIC …): kept as a document (Q1 of the
+    // documents spec) — listed and downloadable, «формат не поддерживается».
+    const childId = await insertSkippedChild({ ctx, externalId: attSourceId, externalType: "attachment", meta, reason: "unsupported type" })
+    await storeChildOriginal(ctx, childId, bytes, meta)
+    return { inserted: 0, skipped: 1, failed: 0 }
+  }
+  return runAttachmentParser({ ctx, kind, bytes, attSourceId, externalType: "attachment", meta })
 }
 
 // The voice/audio descriptor ingest stamps onto a Telegram row's
@@ -1600,6 +1738,13 @@ async function classifyAndInsertChildError(args: {
 // Parents only — classify authorship (refs/org-attribution.md). Bails to
 // `unknown` with no org. The deterministic path short-circuits for email/chat
 // with a resolvable sender; only ambiguous documents reach the LLM judge.
+/** The root's attribution computed BEFORE its children are inserted (they inherit it). */
+async function primeOrgAttribution(ctx: ParseContext, markdown: string): Promise<void> {
+  const a = await computeOrgAttribution(ctx, markdown)
+  ctx.primedAttribution = a
+  ctx.orgAttributionValue = a.value
+}
+
 async function computeOrgAttribution(
   ctx: ParseContext,
   markdown: string,
@@ -1647,7 +1792,7 @@ async function markParsed(
   metadataPatch?: Record<string, unknown>,
 ): Promise<void> {
   const cleaned = filterAnalysisOwnOrg(analysis, ctx.ownOrg)
-  const attribution = await computeOrgAttribution(ctx, markdown)
+  const attribution = ctx.primedAttribution ?? (await computeOrgAttribution(ctx, markdown))
   // Children created after this read inherit the verdict via ctx.
   ctx.orgAttributionValue = attribution.value
   // Merge the LLM analysis (+ the attribution evidence) into the existing

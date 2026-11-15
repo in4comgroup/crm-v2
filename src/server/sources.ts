@@ -313,6 +313,7 @@ export async function updateOwnerOrgSourceProviderConfig(
     .select({
       id: source.id,
       provider: source.provider,
+      providerConfig: source.providerConfig,
       ownerOrganizationId: source.ownerOrganizationId,
     })
     .from(source)
@@ -332,10 +333,11 @@ export async function updateOwnerOrgSourceProviderConfig(
     )
   }
   const validated = handler.providerConfigSchema.parse(plainProviderConfig)
+  const { mergeServerManagedConfig } = await import("@/server/providers/handlers")
 
   await db
     .update(source)
-    .set({ providerConfig: validated })
+    .set({ providerConfig: mergeServerManagedConfig(row.provider, row.providerConfig, validated as Record<string, unknown>) })
     .where(eq(source.id, sourceId))
 }
 

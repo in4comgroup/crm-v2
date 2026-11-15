@@ -395,6 +395,7 @@ function TelegramFields({
           форме «Учётные данные».
         </p>
       </div>
+      <TelegramGroupsInfo config={initialConfig} />
       <DialogFooter>
         <Button variant="ghost" type="button" onClick={onClose} disabled={busy}>
           Отмена
@@ -403,6 +404,39 @@ function TelegramFields({
           {busy ? "Сохранение…" : "Сохранить"}
         </Button>
       </DialogFooter>
+    </div>
+  )
+}
+
+// Groups (docs/specs/telegram §6 G1 / G7): whether the bot reads every group
+// message (privacy mode off) and the groups it is in. Written by the server
+// (`provider_config.telegramBot` / `telegramGroups`), read-only here.
+function TelegramGroupsInfo({ config }: { config: Record<string, unknown> }) {
+  const bot = (config.telegramBot ?? null) as { canReadAllGroupMessages?: boolean; checkedAt?: string } | null
+  const groups = Object.entries((config.telegramGroups ?? {}) as Record<string, { title?: string | null; status?: string }>)
+  const active = groups.filter(([, g]) => g.status === "member" || g.status === "administrator")
+  return (
+    <div className="space-y-2 rounded-md border p-3 text-sm">
+      <div className="font-medium">Группы</div>
+      {bot == null ? (
+        <p className="text-xs text-muted-foreground">
+          Настройки бота ещё не проверены — сохраните учётные данные бота ещё раз (или получите сообщения кнопкой Telegram на странице «Источники»).
+        </p>
+      ) : bot.canReadAllGroupMessages ? (
+        <p className="text-xs text-emerald-700 dark:text-emerald-400">Бот читает все сообщения групп.</p>
+      ) : (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          Бот видит в группах только команды, ответы ему и @упоминания. Чтобы он читал всю переписку: в @BotFather
+          → /setprivacy → выберите бота → Disable, затем удалите бота из группы и добавьте снова (или сделайте его
+          администратором группы).
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {active.length > 0
+          ? `Бот в группах: ${active.map(([id, g]) => g.title || id).join(", ")}.`
+          : "Бот пока не добавлен ни в одну группу."}{" "}
+        Бот не отвечает в группах; сообщения и файлы разбираются как в личных чатах.
+      </p>
     </div>
   )
 }

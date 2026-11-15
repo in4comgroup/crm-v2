@@ -12,7 +12,8 @@ import {
 // This is the on-demand counterpart to the webhook push — primarily for
 // local dev / before a public webhook is reachable. A `getUpdates` long
 // poll plus N upserts finishes quickly; keep modest headroom.
-export const maxDuration = 120
+// File messages (docs/specs/telegram) are parsed inline after the pull.
+export const maxDuration = 300
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession()

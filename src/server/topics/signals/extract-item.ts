@@ -5,7 +5,6 @@ import { eq, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { organization, signalInstance, sourceItem, sourceItemSubject } from "@/db/schema"
 import type { AnalysisExclusionEntry } from "@/lib/analysis-exclusion-match"
-import { splitQuotedHistory } from "@/lib/ru-mail"
 import {
   type SignalBand,
   type SignalFacts,
@@ -23,13 +22,14 @@ import { getCurrentVersion, getEffectiveSignals, getRegistry } from "@/server/si
 import { loadPromptCodes, type PromptCodeSet } from "@/server/topics/prompt/extraction"
 import { EXTRACTION_PROCESS, runExtraction } from "@/server/topics/prompt/run-extraction"
 import { counterpartyLineForItem, loadExtractionCounterparties, type ExtractionCounterparties } from "./counterparty-line"
-import { messageContent } from "./evidence"
+import { isEmptySignalItem } from "./attachment-blocks"
 import { runGates, type BlocklistGuard } from "./gates"
 import {
   envelopeFromItem,
   itemHeaders,
   itemMarkdown,
   loadSignalItemRows,
+  loadSignalItemText,
   senderEmail,
   senderName,
   storedAllInternal,
@@ -247,9 +247,12 @@ export async function extractSignalsForItem(
   if (row.parentSourceItemId) return skip("not_root")
   if (row.parseStatus !== "complete") return skip("not_parsed", row.parseStatus)
 
-  const markdown = await itemMarkdown(row)
-  const text = markdown ? messageContent(markdown) : ""
-  if (!text.trim()) return skip("no_text")
+  // Message text + one block per parsed attachment (spec telegram/01 §4.6).
+  // `text` is the message alone (gates, forward detection); `input.text` is
+  // what the model sees and where evidence must be found.
+  const input = await loadSignalItemText(batch.orgId, row.id, await itemMarkdown(row))
+  if (isEmptySignalItem(input)) return skip("no_text")
+  const text = input.messageText
 
   const itemDate = row.sourceCreatedAt ?? row.createdAt
   const envelope = envelopeFromItem(row, text)
@@ -332,7 +335,7 @@ export async function extractSignalsForItem(
   try {
     run = await runExtraction({
       orgId: batch.orgId,
-      text,
+      text: input.text,
       envelope,
       promptSet: batch.promptSet,
       successors: batch.scoring.successors,
@@ -352,10 +355,10 @@ export async function extractSignalsForItem(
     return skip("no_text", "no block")
   }
 
-  const split = splitQuotedHistory(text)
   const pp = postprocessExtraction(run.output, batch.scoring, {
-    text,
-    ownText: split.own.trim() ? split.own : null,
+    text: input.text,
+    // Own text = message without quoted history + the attachment blocks.
+    ownText: input.ownText,
     date: itemDate,
     orgAttribution: row.orgAttribution,
     allInternal: envelope.allInternal === true,

@@ -233,6 +233,27 @@ export type TelegramProviderConfig = z.infer<
   typeof telegramProviderConfigSchema
 >
 
+// Keys of `provider_config` written by the SERVER (not by the settings form):
+// a form save must keep them (it used to drop the fetch cursor).
+const SERVER_MANAGED_CONFIG_KEYS: Partial<Record<string, readonly string[]>> = {
+  // fetch cursor; groups the bot is in (G7); bot info / privacy check (G1) —
+  // docs/specs/telegram §6
+  telegram: ["telegramOffset", "telegramGroups", "telegramBot"],
+}
+
+/** The validated form config + the server-managed keys of the existing config. */
+export function mergeServerManagedConfig(
+  provider: string,
+  existing: unknown,
+  validated: Record<string, unknown>,
+): Record<string, unknown> {
+  const keys = SERVER_MANAGED_CONFIG_KEYS[provider] ?? []
+  const old = (existing ?? {}) as Record<string, unknown>
+  const kept: Record<string, unknown> = {}
+  for (const k of keys) if (old[k] !== undefined) kept[k] = old[k]
+  return { ...validated, ...kept }
+}
+
 export type ProviderConfigSchema = z.ZodType | null
 
 export type ProviderHandler = {

@@ -34,4 +34,4 @@ Status: **answered 2026-11-15** (product owner).
 | Q10 | (a) keep «Материалы компании» |
 | Q11 | (a) switch «Включая контакты и сделки» (default on) |
 | Q12 | (a) one-time backfill of links + bytes where the provider still has them |
-| Q13 | **Changed:** WhatsApp unchanged (no bytes stored — its files are listed, download unavailable); Telegram files = the separate Telegram task later (Telegram is a future file source; the model already covers it) |
+| Q13 | **Changed:** WhatsApp unchanged (no bytes stored — its files are listed, download unavailable); Telegram files = the separate Telegram task later (built 2026-11-15: [telegram/](../telegram/README.md), originals stored, re-fetch by `file_id`) (Telegram is a future file source; the model already covers it) |

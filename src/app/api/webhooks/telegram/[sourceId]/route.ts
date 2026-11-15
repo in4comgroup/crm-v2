@@ -23,7 +23,9 @@ import {
 // makes retries idempotent.
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 60
+// A file message parses right after the ack (`after()`): a 20 MB PDF / video
+// needs more than 60 s (docs/specs/telegram Q10).
+export const maxDuration = 300
 
 export async function POST(
   request: NextRequest,

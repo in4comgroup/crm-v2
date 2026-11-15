@@ -7,7 +7,7 @@ import { AiBudgetExceededError } from "@/server/ai/budget"
 import { loadPromptCodes, type ExtractionVariant } from "@/server/topics/prompt/extraction"
 import { counterpartyLineForItem } from "@/server/topics/signals/counterparty-line"
 import { EXTRACTION_PROCESS, runExtraction } from "@/server/topics/prompt/run-extraction"
-import { messageContent } from "@/server/topics/signals/evidence"
+import { isEmptySignalItem } from "@/server/topics/signals/attachment-blocks"
 import { loadSignalBatchContext } from "@/server/topics/signals/extract-item"
 import { runGates } from "@/server/topics/signals/gates"
 import {
@@ -15,6 +15,7 @@ import {
   itemHeaders,
   itemMarkdown,
   loadSignalItemRows,
+  loadSignalItemText,
   mapPool,
   senderEmail,
   senderName,
@@ -163,9 +164,10 @@ export async function runSampleBatch(
       if (!row) return { ...base, ok: false, error: "Сообщение не найдено", score: null, band: null }
       const started = Date.now()
       try {
-        const markdown = await itemMarkdown(row)
-        const text = markdown ? messageContent(markdown) : ""
-        if (!text.trim()) return { ...base, gated: "no_text" }
+        // Same input as the engine: message + attachment blocks (§4.6).
+        const input = await loadSignalItemText(orgId, row.id, await itemMarkdown(row))
+        if (isEmptySignalItem(input)) return { ...base, gated: "no_text" }
+        const text = input.messageText
         const envelope = envelopeFromItem(row, text)
         envelope.orgName = batch.orgName
         envelope.counterpartyLine = await counterpartyLineForItem(batch.counterparties, row, envelope)
@@ -192,7 +194,7 @@ export async function runSampleBatch(
         }
         const extraction = await runExtraction({
           orgId,
-          text,
+          text: input.text,
           envelope,
           variant: run.config.variant,
           promptSet,
@@ -200,7 +202,8 @@ export async function runSampleBatch(
           ref: { evalRunId: run.id, sourceItemId: id },
         })
         const post = postprocessForEval(extraction.output, ctx.scoring, {
-          text,
+          text: input.text,
+          ownText: input.ownText,
           date: itemDate,
           orgAttribution: row.orgAttribution,
         })

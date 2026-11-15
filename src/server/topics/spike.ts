@@ -288,6 +288,7 @@ async function runGoldenBatch(
           })
           const post: EvalPostStored = postprocessForEval(run.output, ctx!.scoring, {
             text: item.text,
+            ownText: item.ownText,
             date: item.date,
             orgAttribution: item.orgAttribution,
           })

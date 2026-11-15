@@ -14,9 +14,11 @@ import type { Update } from "grammy/types"
 // is usable immediately without `bot.init()` (init only fetches `getMe`,
 // which we don't need for Phase 1 DM ingestion).
 
-// Phase 1 only consumes `message` updates (DM text). Phase 2/3 widen this
-// to `edited_message` / `callback_query` for attachments + group actions.
-const ALLOWED_UPDATES = ["message"] as const
+// `message` = private chats AND groups (text, voice, files — docs/specs/telegram);
+// `my_chat_member` = the bot added to / removed from a group (G7). A change
+// here reaches a deployed bot only when its webhook is registered again
+// (saving the source credentials does that).
+const ALLOWED_UPDATES = ["message", "my_chat_member"] as const
 
 function botApi(botToken: string) {
   return new Bot(botToken).api
@@ -124,4 +126,17 @@ export async function downloadTelegramFile(
   }
   const bytes = Buffer.from(await res.arrayBuffer())
   return { bytes, filePath }
+}
+
+// G1: can the bot read every message of a group? False = privacy mode is on
+// (BotFather → /setprivacy → Disable, then add the bot to the group again).
+export async function getTelegramBotInfo(
+  botToken: string,
+): Promise<{ username: string | null; canReadAllGroupMessages: boolean; canJoinGroups: boolean }> {
+  const me = await botApi(botToken).getMe()
+  return {
+    username: me.username ?? null,
+    canReadAllGroupMessages: !!me.can_read_all_group_messages,
+    canJoinGroups: !!me.can_join_groups,
+  }
 }

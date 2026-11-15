@@ -11,7 +11,7 @@
 import "server-only"
 
 import { timingSafeEqual } from "node:crypto"
-import { and, count, desc, eq, isNull, lte, ne } from "drizzle-orm"
+import { and, count, desc, eq, isNull, lte, ne, sql } from "drizzle-orm"
 import type { Message, MessageOrigin, Update } from "grammy/types"
 import { db } from "@/db/drizzle"
 import { source, sourceItem } from "@/db/schema"
@@ -25,6 +25,7 @@ import {
   matchAnalysisExclusion,
 } from "@/lib/analysis-exclusion-match"
 import {
+  getTelegramBotInfo,
   getTelegramUpdates,
   isTelegramWebhookConflict,
   sendTelegramAck,
@@ -33,6 +34,15 @@ import {
   telegramWebhookUrl,
 } from "@/lib/telegram"
 import { decideTelegramWindow, parseTelegramThreadKey } from "@/lib/thread-key"
+import {
+  extractTelegramFiles,
+  isGroupChat,
+  isReadableChat,
+  isTooLargeForBot,
+  telegramAckText,
+  telegramTooLargeText,
+  type TelegramAckKind,
+} from "@/lib/telegram-files"
 
 // Resolved per-request context for a telegram webhook delivery. Loaded
 // strictly by `grant`-style path id — never trusts anything in the update
@@ -107,9 +117,14 @@ type PersistResult =
       itemId: string
       inserted: boolean
       chatId: number
-      // "voice" → media item that still needs transcription; "text" → body
-      // already in hand. Drives the wording of the chat acknowledgement.
-      kind: "text" | "voice"
+      isGroup: boolean
+      mediaGroupId: string | null
+      // "voice" → transcribed at parse; "file" → files parsed as attachments
+      // at parse; "text" → body already in hand. Drives the chat reply.
+      kind: TelegramAckKind
+      files: number
+      /** Files above Telegram's 20 MB bot limit (names) — the sender is told. */
+      tooLarge: string[]
     }
   | { outcome: "ignored" }
 
@@ -225,37 +240,23 @@ function forwardOriginMetadata(message: Message): TelegramForwardOrigin | null {
   }
 }
 
-// A voice memo (`message.voice`, Opus-in-Ogg) or an audio file
-// (`message.audio`, usually mp3/m4a). Both carry a stable `file_id` we
-// re-resolve to bytes at parse time. `message.caption` (if any) rides along
-// as text context for the transcript. Returns the media descriptor we persist
-// into `metadata_json.telegram.media`, or null when the message has no audio.
-function extractTelegramAudio(
+// A voice note (`message.voice`, Opus-in-Ogg) — a dictated message. The
+// bot gets the FILE (Telegram gives bots no transcript); we transcribe it at
+// parse time and the transcript becomes the message text (Q4). Audio FILES
+// (`message.audio`) are attachments now (Q3, `extractTelegramFiles`).
+function extractTelegramVoice(
   message: Message,
-): { kind: "voice" | "audio"; fileId: string; mimeType: string; fileName: string; duration: number; fileSize: number | null } | null {
-  if (message.voice) {
-    const v = message.voice
-    return {
-      kind: "voice",
-      fileId: v.file_id,
-      mimeType: v.mime_type ?? "audio/ogg",
-      fileName: `voice-${message.message_id}.ogg`,
-      duration: v.duration,
-      fileSize: v.file_size ?? null,
-    }
+): { kind: "voice"; fileId: string; mimeType: string; fileName: string; duration: number; fileSize: number | null } | null {
+  if (!message.voice) return null
+  const v = message.voice
+  return {
+    kind: "voice",
+    fileId: v.file_id,
+    mimeType: v.mime_type ?? "audio/ogg",
+    fileName: `voice-${message.message_id}.ogg`,
+    duration: v.duration,
+    fileSize: v.file_size ?? null,
   }
-  if (message.audio) {
-    const a = message.audio
-    return {
-      kind: "audio",
-      fileId: a.file_id,
-      mimeType: a.mime_type ?? "audio/mpeg",
-      fileName: a.file_name ?? `audio-${message.message_id}.mp3`,
-      duration: a.duration,
-      fileSize: a.file_size ?? null,
-    }
-  }
-  return null
 }
 
 // Thread key `tg:<chat_id>:<window>` (spec topics/01 §6.1). The window is
@@ -326,34 +327,54 @@ export async function resolveTelegramThreadKey(
 }
 
 // Persist one update into a source_item. Pure persistence — NO secret
-// verification, NO ack (callers own those). Scope: direct-message TEXT and
-// VOICE/AUDIO; group messages (Phase 3) are ignored. Voice/audio rows store
-// the Telegram `file_id` (re-resolved to bytes at parse time) under
-// `metadata_json.telegram.media` and are transcribed by `parseTelegramItem`.
-// Idempotency rides on `upsertSourceItem`'s UNIQUE(source_id, external_id)
-// where external_id = `<chat_id>:<msg_id>`, so a re-delivered / re-pulled
-// update updates the row instead of duping.
+// verification, NO ack (callers own those). Scope (docs/specs/telegram):
+// private chats AND groups / supergroups (Q15; channels never), text, voice
+// notes (transcribed at parse, the transcript = the message text) and FILES
+// (document / photo / video / video note / audio file — Q1, Q3): the files
+// are stored as refs in `metadata_json.telegram.attachments` and become
+// parsed child attachments at parse time (`parseTelegramItem`); the caption
+// is the message text. Idempotency rides on `upsertSourceItem`'s
+// UNIQUE(source_id, external_id) where external_id = `<chat_id>:<msg_id>`,
+// so a re-delivered / re-pulled update updates the row instead of duping.
 async function persistTelegramMessage(
   scope: { sourceId: string; organizationId: string | null },
   update: Update,
 ): Promise<PersistResult> {
+  // Bot added to / removed from a group (G7): remembered on the source.
+  if (update.my_chat_member) {
+    await recordChatMembership(scope.sourceId, update.my_chat_member)
+    return { outcome: "ignored" }
+  }
   const message = update.message
   if (!message) return { outcome: "ignored" }
-  if (message.chat.type !== "private") return { outcome: "ignored" }
+  if (!isReadableChat(message.chat.type)) return { outcome: "ignored" }
+  // Messages of other bots in a group are not client content.
+  if (message.from?.is_bot) return { outcome: "ignored" }
 
+  // Group → supergroup migration (G7): the chat id changes; an exclusion of
+  // the old id is carried to the new one.
+  if (message.migrate_to_chat_id && scope.organizationId) {
+    await carryChatExclusion(scope.organizationId, message.chat.id, message.migrate_to_chat_id)
+    return { outcome: "ignored" }
+  }
   // Drop Telegram service/system messages (joins, leaves, pins, title/photo
   // changes, migrations, auto-delete timer) — no client signal in them.
   if (isServiceMessage(message)) return { outcome: "ignored" }
 
   const senderName = resolveSenderName(message)
+  const isGroup = isGroupChat(message.chat.type)
+  const chatTitle =
+    "title" in message.chat && typeof message.chat.title === "string" ? message.chat.title : null
   const telegramMeta = {
     updateId: update.update_id,
     messageId: message.message_id,
     chatId: message.chat.id,
     chatType: message.chat.type,
+    ...(chatTitle ? { chatTitle } : {}),
     date: message.date,
     from: senderMetadata(message),
     forwardOrigin: forwardOriginMetadata(message),
+    ...(message.media_group_id ? { mediaGroupId: message.media_group_id } : {}),
   }
 
   // «Исключения из анализа»: a message from an excluded chat / user (incl. a
@@ -395,12 +416,17 @@ async function persistTelegramMessage(
       sourceCreatedAt,
       externalId,
     )
+  const common = {
+    chatId: message.chat.id,
+    isGroup,
+    mediaGroupId: message.media_group_id ?? null,
+  }
 
-  // Voice / audio: persist the file reference + any caption. Transcription
+  // Voice note: persist the file reference + any caption. Transcription
   // happens at parse time (`parseTelegramItem` downloads the bytes via the
   // stored `file_id` and runs them through the audio parser).
-  const audio = extractTelegramAudio(message)
-  if (audio) {
+  const voice = extractTelegramVoice(message)
+  if (voice) {
     const caption = message.caption?.trim() ?? ""
     const { id, inserted } = await upsertSourceItem({
       ...baseUpsert,
@@ -412,24 +438,19 @@ async function persistTelegramMessage(
         rawText: caption,
         text: caption,
         senders: [senderName],
-        telegram: { ...telegramMeta, media: audio },
+        telegram: { ...telegramMeta, media: voice },
       },
     })
-    return {
-      outcome: "ingested",
-      itemId: id,
-      inserted,
-      chatId: message.chat.id,
-      kind: "voice",
-    }
+    return { outcome: "ingested", itemId: id, inserted, kind: "voice", files: 0, tooLarge: [], ...common }
   }
 
-  const text = message.text?.trim()
-  if (!text) return { outcome: "ignored" }
+  const files = extractTelegramFiles(message)
+  const text = (message.text ?? message.caption ?? "").trim()
+  if (!text && files.length === 0) return { outcome: "ignored" }
 
   // Drop bot commands (anything starting with "/": /start, /help, /settings, …)
   // — these drive the bot, they aren't messages from a client.
-  if (isBotCommand(text)) return { outcome: "ignored" }
+  if (files.length === 0 && isBotCommand(text)) return { outcome: "ignored" }
 
   const { id, inserted } = await upsertSourceItem({
     ...baseUpsert,
@@ -437,11 +458,12 @@ async function persistTelegramMessage(
     metadataJson: {
       provider: "telegram",
       // `rawText` is the body the parser reads (mirrors WhatsApp) — no
-      // remote API to re-fetch from, the message text lives in our DB.
+      // remote API to re-fetch from, the message text lives in our DB. For a
+      // file message it is the caption (may be empty).
       rawText: text,
       text,
       senders: [senderName],
-      telegram: telegramMeta,
+      telegram: files.length > 0 ? { ...telegramMeta, attachments: files } : telegramMeta,
     },
   })
 
@@ -449,8 +471,60 @@ async function persistTelegramMessage(
     outcome: "ingested",
     itemId: id,
     inserted,
-    chatId: message.chat.id,
-    kind: "text",
+    kind: files.length > 0 ? "file" : "text",
+    files: files.length,
+    tooLarge: files.filter(isTooLargeForBot).map((f) => f.fileName),
+    ...common,
+  }
+}
+
+// G7: the bot's membership in a group, remembered on the source
+// (`provider_config.telegramGroups[chatId] = { title, status, at }`) so the
+// source settings can list the connected groups. Best effort.
+async function recordChatMembership(
+  sourceId: string,
+  m: NonNullable<Update["my_chat_member"]>,
+): Promise<void> {
+  try {
+    if (!isGroupChat(m.chat.type)) return
+    const [row] = await db
+      .select({ providerConfig: source.providerConfig })
+      .from(source)
+      .where(eq(source.id, sourceId))
+    const cfg = (row?.providerConfig as Record<string, unknown> | null) ?? {}
+    const groups = { ...((cfg.telegramGroups as Record<string, unknown> | undefined) ?? {}) }
+    groups[String(m.chat.id)] = {
+      title: "title" in m.chat ? m.chat.title : null,
+      status: m.new_chat_member.status,
+      at: new Date(m.date * 1000).toISOString(),
+    }
+    await db.update(source).set({ providerConfig: { ...cfg, telegramGroups: groups } }).where(eq(source.id, sourceId))
+  } catch (err) {
+    console.warn(`[telegram] membership record failed for source ${sourceId}:`, err)
+  }
+}
+
+// G7: a group became a supergroup (new chat id). An exclusion of the old
+// chat id is copied to the new one (by the org's system actor). Best effort.
+async function carryChatExclusion(orgId: string, oldChatId: number, newChatId: number): Promise<void> {
+  try {
+    const exclusions = await loadAnalysisExclusions(orgId)
+    const excluded = matchAnalysisExclusion(
+      exclusions,
+      exclusionProbeFromItem({ provider: "telegram", metadataJson: { telegram: { chatId: oldChatId } }, threadExternalId: String(oldChatId) }),
+    )
+    if (!excluded) return
+    const { ensureSystemActor } = await import("@/server/topics/system-actor")
+    const { addAnalysisExclusion } = await import("@/server/analysis-exclusions")
+    await addAnalysisExclusion({
+      orgId,
+      userId: await ensureSystemActor(orgId),
+      kind: "chat",
+      value: String(newChatId),
+      note: `Группа перенесена (было ${oldChatId})`,
+    })
+  } catch (err) {
+    console.warn(`[telegram] carrying the exclusion of chat ${oldChatId} failed:`, err)
   }
 }
 
@@ -497,14 +571,27 @@ export async function parseAndUploadTelegramItem(
   }
 }
 
-// Chat acknowledgement wording. Voice messages take a beat to transcribe, so
-// we signal that explicitly rather than implying the text is already readable.
-function ackMessage(kind: "text" | "voice", inserted: boolean): string {
-  if (!inserted) return "✅ Already received — thanks."
-  if (kind === "voice") {
-    return "🎙️ Voice message received — transcribing and adding it to your business OS sources."
-  }
-  return "✅ Received — added to your business OS sources for processing."
+// Another message of the same album (media group) was stored before → no
+// second reply.
+async function albumSeenBefore(
+  ctx: TelegramWebhookContext,
+  chatId: number,
+  mediaGroupId: string,
+  itemId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: sourceItem.id })
+    .from(sourceItem)
+    .where(
+      and(
+        eq(sourceItem.sourceId, ctx.sourceId),
+        eq(sourceItem.threadExternalId, String(chatId)),
+        ne(sourceItem.id, itemId),
+        sql`${sourceItem.metadataJson}->'telegram'->>'mediaGroupId' = ${mediaGroupId}`,
+      ),
+    )
+    .limit(1)
+  return !!row
 }
 
 export type TelegramIngestResult =
@@ -528,12 +615,20 @@ export async function ingestTelegramUpdate(
   )
   if (result.outcome === "ignored") return { ok: true, outcome: "ignored" }
 
+  // Replies only in a private chat (G3: never spam a client's group), one per
+  // album (Q9), plus the 20 MB notice (Q6). Russian (Q7).
   try {
-    await sendTelegramAck(
-      ctx.botToken,
-      result.chatId,
-      ackMessage(result.kind, result.inserted),
-    )
+    if (!result.isGroup) {
+      const firstOfAlbum =
+        !result.mediaGroupId ||
+        !(await albumSeenBefore(ctx, result.chatId, result.mediaGroupId, result.itemId))
+      if (result.tooLarge.length > 0 && result.inserted) {
+        await sendTelegramAck(ctx.botToken, result.chatId, telegramTooLargeText(result.tooLarge))
+      }
+      if (firstOfAlbum) {
+        await sendTelegramAck(ctx.botToken, result.chatId, telegramAckText(result.kind, result.inserted, result.files))
+      }
+    }
   } catch (err) {
     console.warn(
       `[telegram] ack failed for source ${ctx.sourceId} chat ${result.chatId}:`,
@@ -590,7 +685,9 @@ export async function fetchTelegramUpdates(
   }
 
   const { botToken } = getTelegramCredentials(sourceId, row.credentialsRef)
-  const cfg = (row.providerConfig as Record<string, unknown> | null) ?? {}
+  await refreshTelegramBotInfo(sourceId, botToken)
+  const [fresh] = await db.select({ providerConfig: source.providerConfig }).from(source).where(eq(source.id, sourceId))
+  const cfg = (fresh?.providerConfig as Record<string, unknown> | null) ?? {}
   let offset =
     typeof cfg.telegramOffset === "number" ? cfg.telegramOffset : undefined
 
@@ -664,6 +761,7 @@ export async function registerTelegramWebhookForSource(
       `Cannot register webhook: source ${sourceId} is not an active telegram source`,
     )
   }
+  await refreshTelegramBotInfo(sourceId, ctx.botToken)
   const origin = telegramAppOrigin()
   if (!origin) {
     console.warn(
@@ -678,4 +776,22 @@ export async function registerTelegramWebhookForSource(
     secretToken: ctx.webhookSecret,
   })
   return { registered: true, url }
+}
+
+// G1 (docs/specs/telegram §6): `getMe` → `provider_config.telegramBot =
+// { username, canReadAllGroupMessages, canJoinGroups, checkedAt }`. False
+// `canReadAllGroupMessages` = privacy mode on: in groups the bot sees only
+// commands, replies and @mentions. Shown in the source settings. Best effort.
+export async function refreshTelegramBotInfo(sourceId: string, botToken: string): Promise<void> {
+  try {
+    const info = await getTelegramBotInfo(botToken)
+    const [row] = await db.select({ providerConfig: source.providerConfig }).from(source).where(eq(source.id, sourceId))
+    const cfg = (row?.providerConfig as Record<string, unknown> | null) ?? {}
+    await db
+      .update(source)
+      .set({ providerConfig: { ...cfg, telegramBot: { ...info, checkedAt: new Date().toISOString() } } })
+      .where(eq(source.id, sourceId))
+  } catch (err) {
+    console.warn(`[telegram] getMe failed for source ${sourceId}:`, err)
+  }
 }

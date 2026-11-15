@@ -20,6 +20,8 @@ import { db } from "@/db/drizzle"
 import { documentLink, source, sourceItem, topicItem } from "@/db/schema"
 import { DOCUMENT_ITEM_KINDS, DOCUMENT_MAX_BYTES, type FileStatus } from "@/lib/documents"
 import { getNylasClient } from "@/lib/nylas"
+import { downloadTelegramFile } from "@/lib/telegram"
+import { isTooLargeForBot, readTelegramFileRefs } from "@/lib/telegram-files"
 import { downloadChatAttachmentBytes, getChatClient } from "@/lib/google-chat"
 import { computeAutoLinks, isDecorativeSkip, notDecorativeSql, storeDocumentFile } from "@/server/documents"
 import { fetchDriveOriginal } from "@/server/parsers/drive"
@@ -35,6 +37,7 @@ import {
   getGdriveCredentials,
   getImapCredentials,
   getNylasCredentials,
+  getTelegramCredentials,
 } from "@/server/providers/credentials"
 import { imapProviderConfigSchema } from "@/server/providers/handlers"
 import { deleteObjects } from "@/server/storage"
@@ -249,6 +252,20 @@ async function fetchOriginal(
       if (!original) return "not_stored"
       if ("tooLarge" in original) return "too_large"
       return { bytes: original.bytes, name: original.name, mime: original.mime }
+    }
+    case "telegram": {
+      // `tg-att:<chatId>:<messageId>:<index>` → `telegram.attachments[index]`
+      // of the parent message; `file_id` stays valid for this bot
+      // (docs/specs/telegram §4.3). Above 20 MB the bot cannot fetch it.
+      const tail = row.externalId.startsWith("tg-att:") ? row.externalId.split(":").pop() : ""
+      const index = tail && /^\d+$/.test(tail) ? Number(tail) : -1
+      if (row.kind !== "attachment" || !(index >= 0)) return "not_stored"
+      const ref = readTelegramFileRefs((parent?.meta ?? {}) as Record<string, unknown>)[index]
+      if (!ref) throw new OriginalGoneError(`attachment ${index} not found`)
+      if (isTooLargeForBot(ref)) return "too_large"
+      const { botToken } = getTelegramCredentials(row.sourceId, row.credentialsRef)
+      const { bytes } = await downloadTelegramFile(botToken, ref.fileId)
+      return { bytes: new Uint8Array(bytes), name: ref.fileName, mime: ref.mimeType }
     }
     default:
       return "not_stored"

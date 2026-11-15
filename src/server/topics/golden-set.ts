@@ -16,8 +16,8 @@ import { loadEngineTopicsBySourceItem } from "@/server/topics/eval/grouping"
 import type { ExtractionEnvelope } from "@/server/topics/prompt/extraction"
 import { loadPromptCodes } from "@/server/topics/prompt/extraction"
 import { runExtraction } from "@/server/topics/prompt/run-extraction"
-import { messageContent } from "@/server/topics/signals/evidence"
-import { envelopeFromItem, itemMarkdown, mapPool } from "@/server/topics/signals/item-input"
+import { isEmptySignalItem } from "@/server/topics/signals/attachment-blocks"
+import { envelopeFromItem, itemMarkdown, loadSignalItemText, mapPool } from "@/server/topics/signals/item-input"
 import {
   counterpartyLineForItem,
   loadExtractionCounterparties,
@@ -85,7 +85,10 @@ export class GoldenSetError extends Error {
 export type GoldenWorkItem = {
   id: string
   synthetic: boolean
+  /** What the model sees: message + attachment blocks (spec telegram/01 §4.6). */
   text: string
+  /** The author's own text for the quoted-history check (`buildSignalItemText`). */
+  ownText: string | null
   envelope: ExtractionEnvelope
   /** Parse-time authorship (null for synthetic items) and item date — for post-processing. */
   orgAttribution: string | null
@@ -111,6 +114,7 @@ export async function loadGoldenWorkItems(
     .select({
       id: topicsGoldenItem.id,
       synthetic: topicsGoldenItem.synthetic,
+      sourceItemId: topicsGoldenItem.sourceItemId,
       text: topicsGoldenItem.text,
       createdAt: topicsGoldenItem.createdAt,
       provider: source.provider,
@@ -127,11 +131,12 @@ export async function loadGoldenWorkItems(
     .where(and(eq(topicsGoldenItem.organizationId, orgId), inArray(topicsGoldenItem.id, ids)))
   const out = await mapPool(rows, 5, async (r): Promise<GoldenWorkItem | null> => {
     const raw = r.text ?? (await itemMarkdown(r))
-    const text = raw ? messageContent(raw) : null
-    if (!text?.trim()) return null
+    // Same input as the engine: real items get their parsed attachments.
+    const input = await loadSignalItemText(orgId, r.synthetic ? null : r.sourceItemId, raw)
+    if (isEmptySignalItem(input)) return null
     const envelope: ExtractionEnvelope = r.synthetic
       ? { synthetic: true, date: r.createdAt.toISOString() }
-      : envelopeFromItem(r, text)
+      : envelopeFromItem(r, input.messageText)
     envelope.orgName = org?.name ?? null
     if (!r.synthetic && opts.counterparties) {
       envelope.counterpartyLine = await counterpartyLineForItem(opts.counterparties, r, envelope)
@@ -139,7 +144,8 @@ export async function loadGoldenWorkItems(
     return {
       id: r.id,
       synthetic: r.synthetic,
-      text,
+      text: input.text,
+      ownText: input.ownText,
       envelope,
       orgAttribution: r.synthetic ? null : r.orgAttribution,
       date: r.synthetic ? r.createdAt : (r.sourceCreatedAt ?? r.createdAt),
@@ -386,7 +392,11 @@ export async function listGoldenItems(
 export type GoldenItemDetail = GoldenListRow & {
   organizationId: string
   text: string
-  /** The message the model judges (`## Content` of the markdown; synthetic = the text). */
+  /**
+   * The text the model judges: `## Content` of the markdown + the blocks
+   * «### Вложение: …» of the source item's parsed attachments (spec
+   * telegram/01 §4.6); synthetic = the text.
+   */
   contentText: string
   /** inbound / outbound / internal when known (signal run, else authorship). */
   direction: GoldenDirection | null
@@ -448,7 +458,9 @@ export async function getGoldenItem(id: string, orgId?: string): Promise<GoldenI
     ...(r.synthetic ? { direction: null, directionSource: null } : directionOf(signalDirection, orgAttribution)),
     from: envelope?.from ?? null,
     text,
-    contentText: r.synthetic ? text : messageContent(text),
+    contentText: r.synthetic
+      ? text
+      : (await loadSignalItemText(r.organizationId, r.sourceItemId, text)).text,
     textPreview: text.slice(0, 300),
     textChars: text.length,
     itemDate: (r.itemDate ?? (r.synthetic ? r.createdAt : null))?.toISOString() ?? null,

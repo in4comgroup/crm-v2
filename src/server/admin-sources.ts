@@ -216,7 +216,7 @@ export async function updateAdminSourceProviderConfig(
   await requireAdmin()
 
   const rows = await db
-    .select({ id: source.id, provider: source.provider })
+    .select({ id: source.id, provider: source.provider, providerConfig: source.providerConfig })
     .from(source)
     .where(eq(source.id, sourceId))
     .limit(1)
@@ -231,10 +231,11 @@ export async function updateAdminSourceProviderConfig(
     )
   }
   const validated = handler.providerConfigSchema.parse(plainProviderConfig)
+  const { mergeServerManagedConfig } = await import("@/server/providers/handlers")
 
   await db
     .update(source)
-    .set({ providerConfig: validated })
+    .set({ providerConfig: mergeServerManagedConfig(row.provider, row.providerConfig, validated as Record<string, unknown>) })
     .where(eq(source.id, sourceId))
 }
 

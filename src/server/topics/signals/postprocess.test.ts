@@ -7,6 +7,7 @@ import type {
 } from "@/lib/signals/types"
 import { scoreToBand } from "@/lib/signals/extraction-types"
 import type { NormalizedExtraction } from "@/server/topics/prompt/extraction"
+import { buildSignalItemText } from "./attachment-blocks"
 import { evidenceInText, messageContent } from "./evidence"
 import { runGates } from "./gates"
 import {
@@ -498,5 +499,44 @@ describe("runGates", () => {
   it("applies only exclusions and blocklist to chats", () => {
     const tg = { ...base, provider: "telegram", subject: "Автоответ", from: "noreply", fromEmail: null }
     expect(runGates(tg, deps()).kind).toBe("llm")
+  })
+})
+
+describe("evidence from attachment blocks (spec telegram/01 §4.6)", () => {
+  const FILE = {
+    name: "заявка.pdf",
+    content: "Заявка на поставку\n\nПросим выставить счёт на 40 коробок товара А.",
+  }
+
+  it("accepts a quote from an attachment of a message with quoted history", () => {
+    const message = "Добрый день, заявка во вложении.\n\nОт: Иван\nОтправлено: 1 ноября\nПришлите КП на корпоратив"
+    const input = buildSignalItemText(message, [FILE])
+    // The block is in the model text and in the author's own text…
+    expect(input.text).toContain("### Вложение: заявка.pdf")
+    expect(input.ownText).toContain("Просим выставить счёт на 40 коробок")
+    // …but the quoted history is not.
+    expect(input.ownText).not.toContain("Пришлите КП")
+    const r = postprocessExtraction(
+      out([
+        { code: "ORDER_REQUESTED", evidence: "Просим выставить счёт на 40 коробок товара А" },
+        { code: "SALES_OFFER_REQUESTED", evidence: "Пришлите КП на корпоратив" },
+      ]),
+      ctx(),
+      { ...ITEM, text: input.text, ownText: input.ownText },
+    )
+    expect(r.instances.map((i) => i.code)).toEqual(["ORDER_REQUESTED"])
+    expect(r.dropped.map((d) => `${d.code}:${d.reason}`)).toEqual(["SALES_OFFER_REQUESTED:evidence_in_quote"])
+  })
+
+  it("accepts a quote from a file-only message (no message text)", () => {
+    const input = buildSignalItemText("", [FILE])
+    expect(input.ownText).toBeNull()
+    expect(evidenceInText("просим выставить счёт на 40 коробок", input.text)).toBe(true)
+    const r = postprocessExtraction(
+      out([{ code: "ORDER_REQUESTED", evidence: "Просим выставить счёт на 40 коробок товара А" }]),
+      ctx(),
+      { ...ITEM, text: input.text, ownText: input.ownText },
+    )
+    expect(r.instances.map((i) => i.code)).toEqual(["ORDER_REQUESTED"])
   })
 })

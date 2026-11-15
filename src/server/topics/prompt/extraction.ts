@@ -33,8 +33,9 @@ export const EXTRACTION_LIMITS = {
   subjects: 6,
   amounts: 5,
   deadlines: 5,
-  /** Item text sent to the model (characters). */
-  itemChars: 24_000,
+  /** Item text sent to the model (characters): message ≤ 24,000 (cut in
+   *  `buildSignalItemText`) + attachment blocks ≤ 15,000 + headings. */
+  itemChars: 40_000,
 } as const
 
 /** One code as the prompt needs it (registry row + effective values). */
@@ -229,6 +230,7 @@ const INSTRUCTIONS = `Ты — аналитик деловой переписк�
 8. Номера документов и названия товаров копируй точно, как в тексте.
 9. Сообщение может быть на любом языке (русский, английский, французский, итальянский …). Признаки в списке — подсказки, а не языковой фильтр. Evidence копируй на языке оригинала; matter и what пиши по-русски.
 10. confidence: high — событие названо прямо; medium — ясно из контекста; low — возможно, но неоднозначно.
+11. Блоки «Вложение: …» после текста сообщения — файлы, которые прислал автор; сигналы из них считаются сигналами автора; цитируй текст файла в evidence.
 
 ПОЛЯ ОТВЕТА
 - signals[]: code, evidence (дословная цитата), confidence, subjectIndex (индекс в subjects[]; -1 = относится ко всем).

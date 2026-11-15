@@ -228,6 +228,33 @@ function emailsOf(v: unknown): string[] {
   return out
 }
 
+/** Telegram author handle of a message (forward → original author), lower-case, no «@». */
+function telegramAuthorHandle(meta: Record<string, unknown>): string | null {
+  const tg = (meta.telegram ?? null) as Record<string, unknown> | null
+  if (!tg) return null
+  const origin = (tg.forwardOrigin ?? null) as { type?: string; user?: { username?: string | null } } | null
+  const raw = origin ? (origin.type === "user" ? origin.user?.username : null) : (tg.from as { username?: string | null } | null)?.username
+  const h = (raw ?? "").trim().replace(/^@/, "").toLowerCase()
+  return h || null
+}
+
+/** The ONE live contact with this Telegram name (alias «@name» or «Адреса» → Telegram). */
+async function contactByTelegramHandle(orgId: string, handle: string): Promise<{ id: string; clientId: string | null } | null> {
+  const rows = await db
+    .select({ id: contact.id, clientId: contact.clientId })
+    .from(contact)
+    .where(
+      and(
+        eq(contact.organizationId, orgId),
+        sql`${contact.status} not in ('deleted', 'blocked')`,
+        sql`(EXISTS (SELECT 1 FROM unnest(${contact.aliases}) a WHERE lower(a) = ${"@" + handle})
+          OR EXISTS (SELECT 1 FROM contact_address ca WHERE ca.contact_id = ${contact.id} AND ca.kind = 'telegram' AND ca.value = ${handle}))`,
+      ),
+    )
+    .limit(2)
+  return rows.length === 1 ? rows[0] : null
+}
+
 function stringsOf(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : []
 }
@@ -314,6 +341,16 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
     for (const e of list) {
       const hits = byEmail.get(e) ?? []
       if (hits.length === 1) participants.push({ contactId: hits[0].id, clientId: hits[0].clientId, role })
+    }
+  }
+  // Telegram (docs/specs/telegram §4.3, Q11 / Q14): the author by Telegram
+  // name — for a forward the ORIGINAL author; our member (the «us» registry)
+  // never; a contact by alias «@name» or «Адреса» → Telegram (unique hit).
+  const tgHandle = telegramAuthorHandle(pm)
+  if (tgHandle && !own.identity.staffTelegram.includes(tgHandle)) {
+    const hit = await contactByTelegramHandle(orgId, tgHandle)
+    if (hit && !participants.some((p) => p.contactId === hit.id)) {
+      participants.push({ contactId: hit.id, clientId: hit.clientId, role: "sender" })
     }
   }
 
@@ -568,7 +605,8 @@ export async function listDocuments(
       }))
       .filter((l) => l.entityLabel !== "—")
     const fileStatus = (i.fileStatus as FileStatus | null) ?? null
-    const providerRefetch = provider === "nylas" || provider === "gchat" || provider === "gdrive" || provider === "imap"
+    const providerRefetch =
+      provider === "nylas" || provider === "gchat" || provider === "gdrive" || provider === "imap" || provider === "telegram"
     return {
       id: i.id,
       name: i.filename ?? "Без названия",

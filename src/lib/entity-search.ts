@@ -12,12 +12,12 @@
 // contact / deal names with a raw `name.toLowerCase().includes(q)`, which
 // fails in all the ways V2 was built to fix:
 //
-//   • cross-script     — «АСТ» never matches the stored «AST»
+//   • cross-script     — «Норлекс» never matches the stored «Norleks»
 //   • punctuation      — an em-dash query vs an en-dash stored name scores 0
 //   • word order       — "Богданов Евгений" vs "Евгений Богданов"
 //   • one wrong token  — the whole phrase is the needle, so a single extra
-//                        word ("AST Российская Алкогольная Компания" against
-//                        "AST – Российская Алкогольная Компания") blanks it
+//                        word ("Norleks Северная Торговая Компания" against
+//                        "Norleks – Северная Торговая Компания") blanks it
 //
 // This module ports the same pipeline to in-memory entity lists: those lists
 // are small (hundreds of rows per org) and already fully loaded by the
@@ -42,9 +42,9 @@ export const FIELD_WEIGHT = { name: 1, alias: 0.9, secondary: 0.7, weak: 0.5 }
  * transliterate Cyrillic → strip combining accents → lowercase → collapse
  * every non-alphanumeric run to one space.
  *
- *   "АСТ – Российская"     → "ast rossiyskaya"
- *   "AST — Российская"     → "ast rossiyskaya"   (dash variants collapse)
- *   "Jägermeister"         → "jagermeister"
+ *   "Норлекс – Северная"     → "ast severnaya"
+ *   "Norleks — Северная"     → "ast severnaya"   (dash variants collapse)
+ *   "Müllerwerk"         → "mullerwerk"
  */
 export function searchNormalise(raw: string | null | undefined): string {
   if (!raw) return ""
@@ -125,12 +125,11 @@ const MIN_PREFIX_LEN = 2
  * Does one query token hit any of a field's tokens?
  *
  * Prefix matching runs in ONE direction only — the query token must be a
- * prefix of a target token ("vekt" finds "vektor"), never the reverse. The
+ * prefix of a target token ("kva" finds "kvant"), never the reverse. The
  * reverse direction looks harmless and is not: Russian one-letter
  * prepositions normalise to single-character tokens, so «в» in a description
- * became a prefix of the query "vektor" and every deal whose text contained
- * «в» scored a full-coverage match. That put Finbridge Capital, MarketLine
- * and six others into the results for «Вектор».
+ * became a prefix of the query "kvant" and every deal whose text contained
+ * «в» scored a full-coverage match. That put Acme Capital, Globex Line * and six others into the results for «Квант».
  */
 function tokenHit(queryToken: string, targetTokens: string[]): boolean {
   return targetTokens.some(
@@ -175,7 +174,7 @@ export type SearchField = {
  *
  *   1. exact normalised equality                      → 1
  *   2. word-boundary containment, either direction        → 0.9
- *      (both directions on purpose: "AST" must find "AST – Российская …",
+ *      (both directions on purpose: "Norleks" must find "Norleks – Северная …",
  *      and the full stored name pasted back must find it too)
  *   3. token coverage (OR semantics, prefix-tolerant) → up to 0.8
  *      blended with the trigram fuzzy score
@@ -235,7 +234,7 @@ export function entityMatchesSearch(
  * query token must be present (as a token prefix) in some field, or the whole
  * query must be a substring of one.
  *
- * So «АСТ» finds «AST», «vektor» finds «Вектор», and an em-dash finds an
+ * So «Норлекс» finds «Norleks», «kvant» finds «Квант», and an em-dash finds an
  * en-dash — but a typo shows nothing rather than a surprising row.
  */
 export function entityMatchesFilter(

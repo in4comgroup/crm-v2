@@ -20,8 +20,8 @@ import {
 } from "./orders"
 
 const DAY = 86_400_000
-const NOW = new Date("2026-11-14T07:00:00Z") // 10:00 Moscow
-const cal = new WorkCalendar([], { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
+const NOW = new Date("2026-11-14T07:00:00Z") // 10:00 UTC+3
+const cal = new WorkCalendar([], { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" })
 
 const d = (s: string) => new Date(s.length === 10 ? `${s}T12:00:00Z` : s)
 const ago = (days: number) => new Date(NOW.getTime() - days * DAY)
@@ -278,15 +278,15 @@ describe("ACCOUNT_PRODUCT_NEW", () => {
   it("new product in an order of the last 2 days, history ≥ 183 days → one finding per order", () => {
     const c = cli("c1", [
       ord("o1", ago(200), { items: ["A"] }),
-      ord("o2", ago(1), { items: ["A", { productId: "B", productName: "Шабли", qty: 12 }] }),
+      ord("o2", ago(1), { items: ["A", { productId: "B", productName: "Товар А", qty: 12 }] }),
     ])
     const r = checkProductNew([c], env())
     expect(r.findings).toHaveLength(1)
     const f = r.findings[0]
     expect(f.conditionKey).toBe("order:o2")
     expect(f.matterRu).toBe("Новая позиция в заказе № o2")
-    expect(f.evidenceRu).toBe("заказ № o2 от 13.11.2026: впервые взяли Шабли (12 шт.)")
-    expect(f.facts.products).toEqual([{ productId: "B", productName: "Шабли", qty: 12 }])
+    expect(f.evidenceRu).toBe("заказ № o2 от 13.11.2026: впервые взяли Товар А (12 шт.)")
+    expect(f.facts.products).toEqual([{ productId: "B", productName: "Товар А", qty: 12 }])
     expect(r.clears).toHaveLength(0)
   })
 

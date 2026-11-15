@@ -1,6 +1,7 @@
 import "server-only"
 import { z } from "zod"
 import type { AntiCue } from "@/lib/signals/types"
+import { getTopicsOrgPrompt } from "@/server/identity/prompt-context"
 import { getCurrentVersion, getEffectiveSignals, getRegistry } from "@/server/signals/registry"
 import { evidenceInText } from "@/server/topics/signals/evidence"
 
@@ -72,6 +73,13 @@ export type PromptCodeSet = {
   attributes: PromptAttribute[]
   /** Non-retired registry codes (for validation of human answers). */
   knownCodes: string[]
+  /**
+   * Identity I4: the org profile is in the prompt (`identity.promptContext`,
+   * or forced by an eval run). False → the prompt is the pre-I4 text.
+   */
+  promptContext: boolean
+  /** «О нашей компании» block (static per org); "" when off or empty. */
+  orgCard: string
 }
 
 /** The org has no active signal code (no activation applied in «Сигналы»). */
@@ -87,12 +95,19 @@ export class SignalsNotEnabledError extends Error {
 /**
  * Prompt codes of one org from the effective registry. Throws
  * SignalsNotEnabledError when the org has no `inPrompt` code.
+ * `promptContext` forces the org profile block on / off (eval runs);
+ * omitted = the org setting `identity.promptContext`.
  */
-export async function loadPromptCodes(orgId: string, codeSet: ExtractionCodeSet): Promise<PromptCodeSet> {
-  const [registry, effective, taxonomyVersion] = await Promise.all([
+export async function loadPromptCodes(
+  orgId: string,
+  codeSet: ExtractionCodeSet,
+  opts: { promptContext?: boolean } = {},
+): Promise<PromptCodeSet> {
+  const [registry, effective, taxonomyVersion, orgPrompt] = await Promise.all([
     getRegistry(),
     getEffectiveSignals(orgId),
     getCurrentVersion(),
+    getTopicsOrgPrompt(orgId, opts.promptContext),
   ])
   const blockLabel = new Map(registry.blocks.map((b) => [b.code, b.labelRu]))
   const eff = new Map(effective.map((e) => [e.code, e]))
@@ -136,6 +151,8 @@ export async function loadPromptCodes(orgId: string, codeSet: ExtractionCodeSet)
     codes,
     attributes,
     knownCodes: registry.categories.filter((c) => !c.retiredAt).map((c) => c.code),
+    promptContext: orgPrompt !== null,
+    orgCard: orgPrompt?.card ?? "",
   }
 }
 
@@ -222,6 +239,18 @@ const INSTRUCTIONS = `Ты — аналитик деловой переписк�
 - direction: inbound (автор — внешний контрагент, пишет нам), outbound (автор — мы), internal (переписка внутри нашей компании). Подсказка «авторство» в конверте — результат автоматической проверки, она может ошибаться.
 - Если поле неизвестно — пустая строка "", -1 или пустой список. Не выдумывай значения.`
 
+/**
+ * Identity I4: how the model uses the «О нашей компании» block. Industry-
+ * neutral on purpose (no vertical examples). Only added with a non-empty card.
+ */
+export const ORG_CARD_RULES = `КАК ИСПОЛЬЗОВАТЬ БЛОК «О НАШЕЙ КОМПАНИИ»
+1. «Мы» — компания из этого блока. Строки «Роль», «Чем занимаемся» и «Продукты и услуги» говорят, что мы продаём; «Наши клиенты» — кому; «Кто продаёт нам» — наши поставщики.
+2. Мы — покупатель, когда автор из «Кто продаёт нам» (или любой другой продавец) предлагает НАМ свои товары, услуги, сервисы, условия или цены. Тогда клиентские коды (спрос, запрос КП, заказ) не ставятся — только коды поставщиков (правило 5).
+3. Спрос клиента — только интерес к НАШИМ продуктам и услугам или к тому, чем мы занимаемся. Если автор спрашивает о том, чего мы не продаём, это не спрос на наши продукты.
+4. Маркетинг продавца (рассылка, каталог, акция, новинки, прайс-лист, приглашение на вебинар или выставку), адресованный нам, — не спрос и не сигнал клиента, даже если в нём есть слова «предложение», «цена», «заказ».
+5. Слова из строки «Термины» понимай в указанном значении.
+6. Блок — контекст, а не доказательство: каждый код по-прежнему подтверждается цитатой из текста сообщения.`
+
 export type ExtractionPrompt = {
   system: string
   codes: string[]
@@ -240,13 +269,18 @@ export function buildExtractionSystemPrompt(
   codes: readonly PromptCode[] = set.codes,
 ): ExtractionPrompt {
   const codeBlock = buildCodeBlock(codes)
+  // Identity I4: the org block sits at the END of the static system prompt
+  // (per org, never per item), so the global prefix stays shared and the
+  // whole system prompt stays cacheable. Off / empty card → pre-I4 text.
+  const orgCard = set.promptContext ? (set.orgCard ?? "").trim() : ""
+  const orgBlock = orgCard ? `\n\n${orgCard}\n\n${ORG_CARD_RULES}` : ""
   const system = `${INSTRUCTIONS}
 
 АТРИБУТЫ (модификаторы тона и эмоции)
 ${attributeBlock(set.attributes)}
 
 КОДЫ СИГНАЛОВ
-${codeBlock}`
+${codeBlock}${orgBlock}`
   return {
     system,
     codes: codes.map((c) => c.code),
@@ -294,8 +328,15 @@ export type ExtractionEnvelope = {
   cc?: string | null
   /** Parse-time authorship verdict: own_org | external | unknown. */
   orgAttribution?: string | null
+  /** Identity spec Q9: author and every recipient are our staff. */
+  allInternal?: boolean | null
   /** Our organisation's name. */
   orgName?: string | null
+  /**
+   * Identity I4 (only with `identity.promptContext`): «Контрагент: <name> —
+   * <отрасль>, <роль>» of the item's known client; null / "" = no line.
+   */
+  counterpartyLine?: string | null
   forwardedBy?: string | null
   originalAuthor?: string | null
   synthetic?: boolean
@@ -307,6 +348,7 @@ export function buildItemPrompt(envelope: ExtractionEnvelope, text: string): str
     if (v && v.trim()) env.push(`${label}: ${v.trim()}`)
   }
   add("Наша компания", envelope.orgName)
+  if (envelope.counterpartyLine && envelope.counterpartyLine.trim()) env.push(envelope.counterpartyLine.trim())
   add("Канал", [envelope.provider, envelope.kind].filter(Boolean).join(" / "))
   add("Дата сообщения", envelope.date)
   add("Тема", envelope.subject)
@@ -316,6 +358,7 @@ export function buildItemPrompt(envelope: ExtractionEnvelope, text: string): str
   add("Переслал (наш сотрудник)", envelope.forwardedBy)
   add("Исходный автор", envelope.originalAuthor)
   add("Авторство (автопроверка)", envelope.orgAttribution)
+  if (envelope.allInternal) env.push("Внутренняя переписка (все участники — наши сотрудники)")
   if (envelope.synthetic) env.push("Тестовое сообщение: да")
   let body = text
   if (body.length > EXTRACTION_LIMITS.itemChars) {

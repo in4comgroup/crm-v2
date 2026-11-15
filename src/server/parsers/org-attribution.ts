@@ -14,8 +14,8 @@ import { aiGenerateText } from "@/server/ai/runtime"
 import { z } from "zod"
 import { getProvider } from "@/lib/sources/providers"
 import type { SourceProvider } from "@/db/schema"
-import type { OrgIdentity } from "@/server/org-identity"
-import type { ParserAiContext } from "@/server/parsers/_shared"
+import { loadOrgStaffNames, type OrgIdentity } from "@/server/org-identity"
+import { parserCallContext, type ParserAiContext } from "@/server/parsers/_shared"
 import { loadOrgBlocklist } from "@/server/blocklist"
 import { addressMatchesText } from "@/lib/address-match"
 import {
@@ -33,6 +33,10 @@ export type OrgAttributionResult = {
   // Stable, searchable evidence tags (e.g. "sender_member_email", "org_url").
   matchedOn: string[]
   reason: string
+  // Identity spec I2 / Q9: the author AND every recipient (to / cc / bcc) are
+  // ours → internal mail, decided without the model. Set by the parse
+  // pipeline (`computeAllInternal`); absent on older items.
+  allInternal?: boolean
 }
 
 // ── 2.1 Author extraction (registry-driven) ──────────────────────────
@@ -59,10 +63,38 @@ export function extractAuthorEmails(
   return [...out]
 }
 
+/**
+ * The Telegram author's handle (no «@», lower-case) from
+ * `metadata_json.telegram`: for a forward the ORIGINAL author (`forwardOrigin`
+ * of type user; a hidden user / chat / channel origin has no handle → null),
+ * else the sender `from.username`. Null for every other provider.
+ */
+export function extractAuthorTelegramHandle(
+  metadataJson: Record<string, unknown> | null,
+): string | null {
+  const tg = (metadataJson ?? {}).telegram
+  if (!tg || typeof tg !== "object") return null
+  const t = tg as Record<string, unknown>
+  const origin = (t.forwardOrigin ?? t.forward_origin) as Record<string, unknown> | null | undefined
+  let handle: unknown = null
+  if (origin && typeof origin === "object") {
+    const u = origin.type === "user" ? (origin.user as Record<string, unknown> | null) : null
+    handle = u?.username ?? null
+  } else {
+    const from = t.from as Record<string, unknown> | null | undefined
+    handle = from?.username ?? null
+  }
+  if (typeof handle !== "string") return null
+  const h = handle.trim().replace(/^@/, "").toLowerCase()
+  return h || null
+}
+
 // ── 2.2 Deterministic classifier ─────────────────────────────────────
 // Strict priority order; first hit wins.
 export function classifyOrgAttribution(input: {
   authorEmails: string[]
+  /** Telegram author handle (`extractAuthorTelegramHandle`), if any. */
+  authorTelegram?: string | null
   contentHaystack: string
   orgIdentity: OrgIdentity | null
 }): OrgAttributionResult {
@@ -80,6 +112,42 @@ export function classifyOrgAttribution(input: {
         matchedOn: ["sender_member_email"],
         reason: `Sender ${e} is an organisation member`,
       }
+    }
+  }
+
+  // 1b. Author email is a staff member's extra address (registry `person`,
+  //     any domain — also free-mail) → ours, high.
+  for (const e of authorEmails) {
+    if (orgIdentity.staffEmails.has(e)) {
+      return {
+        value: "own_org",
+        confidence: "high",
+        matchedOn: ["sender_staff_address"],
+        reason: `Sender ${e} is a staff member's address`,
+      }
+    }
+  }
+
+  // 1c. Author email is one of our shared mailboxes (registry `mailbox`) → ours, high.
+  for (const e of authorEmails) {
+    if (orgIdentity.mailboxes.has(e)) {
+      return {
+        value: "own_org",
+        confidence: "high",
+        matchedOn: ["sender_mailbox"],
+        reason: `Sender ${e} is a shared mailbox of the organisation`,
+      }
+    }
+  }
+
+  // 1d. Telegram: the author's @handle is a staff handle → ours, high.
+  const tgHandle = (input.authorTelegram ?? "").trim().replace(/^@/, "").toLowerCase()
+  if (tgHandle && orgIdentity.staffTelegram.has(tgHandle)) {
+    return {
+      value: "own_org",
+      confidence: "high",
+      matchedOn: ["sender_staff_telegram"],
+      reason: `Telegram author @${tgHandle} is a staff member`,
     }
   }
 
@@ -169,38 +237,63 @@ CRUCIAL: merely MENTIONING the organisation is NOT authorship. A third-party pro
 
 When genuinely unsure, answer "unknown" — do not guess.`
 
+const JUDGE_MAX_MAILBOXES = 10
+const JUDGE_MAX_STAFF_NAMES = 40
+
+/**
+ * The judge's user prompt (PURE). Identity spec I4 (§3.6): besides the name,
+ * aliases, domains and addresses it lists the shared mailboxes and the staff
+ * names, so a document signed by one of our people or sent from a shared box
+ * is recognised as ours. Empty lists are left out.
+ */
+export function buildJudgePrompt(
+  orgIdentity: OrgIdentity,
+  staffNames: string[],
+  markdown: string,
+): string {
+  const content = markdown.slice(0, 8000)
+  const mailboxes = [...orgIdentity.mailboxes].slice(0, JUDGE_MAX_MAILBOXES)
+  const staff = staffNames.slice(0, JUDGE_MAX_STAFF_NAMES)
+  return [
+    `Owning organisation: ${orgIdentity.name ?? "(unknown name)"}${orgIdentity.url ? ` — ${orgIdentity.url}` : ""}`,
+    // Owner-curated registry context: the org may trade under more than one
+    // name and sit at more than one address, and the judge can only apply
+    // the "who produced this" test if it recognises those forms as us.
+    orgIdentity.nameAliases.length > 0
+      ? `Also known as: ${orgIdentity.nameAliases.join(", ")}`
+      : "",
+    `Its owned email domains: ${orgIdentity.emailDomains.join(", ") || "(none known)"}`,
+    mailboxes.length > 0 ? `Its shared mailboxes: ${mailboxes.join(", ")}` : "",
+    staff.length > 0
+      ? `Its staff (people who work for the organisation): ${staff.join(", ")}`
+      : "",
+    orgIdentity.addressLabels.length > 0
+      ? `Its own postal address(es): ${orgIdentity.addressLabels.join(" | ")}`
+      : "",
+    "--- BEGIN DOCUMENT ---",
+    content || "(empty)",
+    "--- END DOCUMENT ---",
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
 // Returns null (abstain) on any error so the deterministic verdict stands.
 async function judgeOrgAuthorship(
   ai: ParserAiContext,
   orgIdentity: OrgIdentity,
   markdown: string,
 ): Promise<OrgAttributionResult | null> {
-  const content = markdown.slice(0, 8000)
   try {
+    // Staff names are read only here — the judge runs on the ambiguous
+    // document tail, never on mail / chat with a resolvable sender.
+    const staffNames = await loadOrgStaffNames(orgIdentity.organizationId).catch(() => [])
     const { output } = await aiGenerateText({
       process: "parsing.org_attribution",
-      ...ai,
+      ...parserCallContext(ai),
       output: Output.object({ schema: judgeSchema }),
       system: JUDGE_SYSTEM,
-      prompt: [
-        `Owning organisation: ${orgIdentity.name ?? "(unknown name)"}${orgIdentity.url ? ` — ${orgIdentity.url}` : ""}`,
-        // Owner-curated registry context: the org may trade under more than one
-        // name and sit at more than one address, and the judge can only apply
-        // the "who produced this" test if it recognises those forms as us.
-        orgIdentity.nameAliases.length > 0
-          ? `Also known as: ${orgIdentity.nameAliases.join(", ")}`
-          : "",
-        `Its owned email domains: ${orgIdentity.emailDomains.join(", ") || "(none known)"}`,
-        orgIdentity.addressLabels.length > 0
-          ? `Its own postal address(es): ${orgIdentity.addressLabels.join(" | ")}`
-          : "",
-        "",
-        "--- BEGIN DOCUMENT ---",
-        content || "(empty)",
-        "--- END DOCUMENT ---",
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      prompt: buildJudgePrompt(orgIdentity, staffNames, markdown),
     })
     return {
       value: output.verdict,
@@ -216,6 +309,7 @@ async function judgeOrgAuthorship(
 // ── 2.4 Orchestrator — the single entry point the pipeline calls ─────
 export async function resolveOrgAttribution(input: {
   authorEmails: string[]
+  authorTelegram?: string | null
   contentHaystack: string
   orgIdentity: OrgIdentity | null
   organizationId?: string | null

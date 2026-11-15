@@ -8,13 +8,13 @@ const entry = (n: number, p: Partial<DigestEntry> = {}): DigestEntry => ({
   company: `Компания ${n}`,
   deadline: null,
   overdue: false,
-  link: `https://app.example.ru/dashboard?topic=t${n}`,
+  link: `https://app.example.com/dashboard?topic=t${n}`,
   ...p,
 })
 
 const model = (p: Partial<DigestModel> = {}): DigestModel => ({
   kind: "morning_digest",
-  orgName: "IN4COM",
+  orgName: "Globex",
   userName: "Мария",
   dateLabel: "понедельник, 16 ноября",
   sections: [
@@ -23,12 +23,12 @@ const model = (p: Partial<DigestModel> = {}): DigestModel => ({
       title: "Сводка",
       entries: [2, 3, 4, 5, 6, 7, 8].map((n) => entry(n)),
       visible: 5,
-      moreLink: "https://app.example.ru/dashboard?tab=digest",
+      moreLink: "https://app.example.com/dashboard?tab=digest",
     },
   ],
-  dashboardUrl: "https://app.example.ru/dashboard",
-  settingsUrl: "https://app.example.ru/account?tab=notifications",
-  timeZone: "Europe/Moscow",
+  dashboardUrl: "https://app.example.com/dashboard",
+  settingsUrl: "https://app.example.com/account?tab=notifications",
+  timeZone: "Etc/GMT-3",
   ...p,
 })
 
@@ -53,22 +53,22 @@ describe("delivery renderer", () => {
     expect(r.html).toContain("Тема 6")
     expect(r.html).not.toContain("Тема 7<")
     expect(r.html).toContain("Ещё 2 →")
-    expect(r.html).toContain('href="https://app.example.ru/dashboard?topic=t1"')
+    expect(r.html).toContain('href="https://app.example.com/dashboard?topic=t1"')
     expect(r.html).toContain("срок 17 ноября")
     expect(r.html).toContain("Напоминание 1 из 3")
     expect(r.html).toContain("Почему сейчас:")
     expect(r.html).toContain("Настроить уведомления")
-    expect(r.html).toContain("https://app.example.ru/account?tab=notifications")
+    expect(r.html).toContain("https://app.example.com/account?tab=notifications")
     expect(r.text).toContain("СВОДКА (7)")
-    expect(r.text).toContain("Ещё 2: https://app.example.ru/dashboard?tab=digest")
-    expect(r.text).toContain("Настроить уведомления: https://app.example.ru/account?tab=notifications")
+    expect(r.text).toContain("Ещё 2: https://app.example.com/dashboard?tab=digest")
+    expect(r.text).toContain("Настроить уведомления: https://app.example.com/account?tab=notifications")
     expect(r.text).not.toContain("<")
   })
 
   it("escapes user text and drops non-http links", () => {
     const r = renderDigest(
       model({
-        orgName: 'ООО "Ромашка" <script>',
+        orgName: 'ООО "Норлекс" <script>',
         userName: "<b>Иван</b>",
         sections: [
           {
@@ -84,7 +84,7 @@ describe("delivery renderer", () => {
     expect(r.html).toContain("&lt;img src=x onerror=alert(1)&gt;")
     expect(r.html).toContain("A &amp; B")
     expect(r.html).toContain("&#39;x&#39;")
-    expect(r.html).toContain("ООО &quot;Ромашка&quot; &lt;script&gt;")
+    expect(r.html).toContain("ООО &quot;Норлекс&quot; &lt;script&gt;")
     expect(r.html).not.toContain("javascript:")
     expect(escapeHtml(`<a href="x">&</a>`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;")
   })
@@ -111,7 +111,7 @@ describe("delivery renderer", () => {
   })
 
   it("deadline format: date only and datetime in the org time zone", () => {
-    expect(formatDeadlineRu("2026-11-20", "Europe/Moscow")).toBe("20 ноября")
-    expect(formatDeadlineRu("2026-11-20T07:00:00.000Z", "Europe/Moscow")).toBe("20 ноября, 10:00")
+    expect(formatDeadlineRu("2026-11-20", "Etc/GMT-3")).toBe("20 ноября")
+    expect(formatDeadlineRu("2026-11-20T07:00:00.000Z", "Etc/GMT-3")).toBe("20 ноября, 10:00")
   })
 })

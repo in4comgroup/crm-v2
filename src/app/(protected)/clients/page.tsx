@@ -59,6 +59,13 @@ import {
   RESPONSIBLE_FILTER_MINE,
 } from "@/lib/client-responsible"
 
+import {
+  CLIENT_SIZE_BANDS,
+  CLIENT_SIZE_LABELS_RU,
+  type ClientSizeBand,
+} from "@/lib/identity/client-profile"
+import { MARKET_ROLES, MARKET_ROLE_LABELS_RU } from "@/lib/identity/org-profile"
+
 const ALL = "__all__"
 const TAB_ALL: ClientFeedTab = "all"
 
@@ -114,6 +121,22 @@ export default function ClientsPage() {
   // «Ответственный»: all | mine | handover | <member user id> — server-side.
   const [responsibleFilter, setResponsibleFilter] = useState<string>(RESPONSIBLE_FILTER_ALL)
   const responsibleOptions = useResponsibleOptions()
+  // «Профиль компании» filters (identity I5) — server-side, like «Ответственный».
+  const [industryFilter, setIndustryFilter] = useState<string>(ALL)
+  const [roleFilter, setRoleFilter] = useState<string>(ALL)
+  const [sizeFilter, setSizeFilter] = useState<string>(ALL)
+  const [industries, setIndustries] = useState<{ code: string; label: string }[]>([])
+  useEffect(() => {
+    fetch("/api/clients?profileOptions=1")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIndustries(d?.industries ?? []))
+      .catch(() => setIndustries([]))
+  }, [])
+  const industryLabels = useMemo(
+    () => Object.fromEntries(industries.map((i) => [i.code, i.label])) as Record<string, string>,
+    [industries],
+  )
+  const profileFiltered = industryFilter !== ALL || roleFilter !== ALL || sizeFilter !== ALL
   // Порядок ленты. Живёт на уровне страницы, поэтому не сбрасывается при
   // переключении карточки/таблица (обе раскладки показывают одни и те же rows).
   // Сортировка — на клиенте над уже загруженной вкладкой: переключение
@@ -169,6 +192,9 @@ export default function ClientsPage() {
       if (responsibleFilter !== RESPONSIBLE_FILTER_ALL) {
         params.set("responsible", responsibleFilter)
       }
+      if (industryFilter !== ALL) params.set("industry", industryFilter)
+      if (roleFilter !== ALL) params.set("role", roleFilter)
+      if (sizeFilter !== ALL) params.set("size", sizeFilter)
       const res = await fetch(`/api/clients?${params.toString()}`)
       if (reqIdRef.current !== reqId) return
       if (!res.ok) {
@@ -186,7 +212,7 @@ export default function ClientsPage() {
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [tab, statusFilter, responsibleFilter])
+  }, [tab, statusFilter, responsibleFilter, industryFilter, roleFilter, sizeFilter])
 
   const sortedRows = useMemo(
     () => sortClientFeed(rows, sort, taskSummary),
@@ -199,7 +225,7 @@ export default function ClientsPage() {
     setRows([])
     void loadPage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, statusFilter, responsibleFilter])
+  }, [tab, statusFilter, responsibleFilter, industryFilter, roleFilter, sizeFilter])
 
   const loadExtras = useCallback(async () => {
     const [revRes, dealsRes, tasksRes] = await Promise.all([
@@ -386,6 +412,48 @@ export default function ClientsPage() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={industryFilter} onValueChange={setIndustryFilter}>
+            <SelectTrigger size="sm" className="w-fit max-w-56" aria-label="Отрасль">
+              <SelectValue placeholder="Отрасль" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Отрасль: все</SelectItem>
+              <SelectItem value="none">Отрасль не указана</SelectItem>
+              {industries.map((i) => (
+                <SelectItem key={i.code} value={i.code}>
+                  {i.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={roleFilter} onValueChange={setRoleFilter}>
+            <SelectTrigger size="sm" className="w-fit" aria-label="Роль">
+              <SelectValue placeholder="Роль" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Роль: все</SelectItem>
+              <SelectItem value="none">Роль не указана</SelectItem>
+              {MARKET_ROLES.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {MARKET_ROLE_LABELS_RU[r]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={sizeFilter} onValueChange={setSizeFilter}>
+            <SelectTrigger size="sm" className="w-fit" aria-label="Размер">
+              <SelectValue placeholder="Размер" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Размер: все</SelectItem>
+              <SelectItem value="none">Размер не указан</SelectItem>
+              {CLIENT_SIZE_BANDS.map((b) => (
+                <SelectItem key={b} value={b}>
+                  {CLIENT_SIZE_LABELS_RU[b]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Tabs
             value={sort}
             onValueChange={(v) => setSort(v as ClientFeedSort)}
@@ -395,13 +463,16 @@ export default function ClientsPage() {
               <TabsTrigger value="critical">Сначала критичные</TabsTrigger>
             </TabsList>
           </Tabs>
-          {(statusFilter !== ALL || responsibleFilter !== RESPONSIBLE_FILTER_ALL) && (
+          {(statusFilter !== ALL || responsibleFilter !== RESPONSIBLE_FILTER_ALL || profileFiltered) && (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => {
                 setStatusFilter(ALL)
                 setResponsibleFilter(RESPONSIBLE_FILTER_ALL)
+                setIndustryFilter(ALL)
+                setRoleFilter(ALL)
+                setSizeFilter(ALL)
               }}
             >
               <X className="h-4 w-4 mr-1" />
@@ -506,6 +577,7 @@ export default function ClientsPage() {
                         <TableHead>Компания</TableHead>
                         <TableHead>Email</TableHead>
                         <TableHead>Телефон</TableHead>
+                        <TableHead>Отрасль</TableHead>
                         <TableHead>Выручка за 12 мес.</TableHead>
                         <TableHead>Дата создания</TableHead>
                         <TableHead>Кто создал</TableHead>
@@ -537,6 +609,17 @@ export default function ClientsPage() {
                             </TableCell>
                             <TableCell>{c.email ?? "—"}</TableCell>
                             <TableCell>{c.phone ?? "—"}</TableCell>
+                            <TableCell>
+                              {c.profileTags?.industryCode
+                                ? (industryLabels[c.profileTags.industryCode] ?? "—")
+                                : "—"}
+                              {c.profileTags?.sizeBand && (
+                                <div className="text-xs text-muted-foreground">
+                                  {CLIENT_SIZE_LABELS_RU[c.profileTags.sizeBand as ClientSizeBand] ?? ""}
+                                  {c.profileTags.pointsOfSale ? ` · ${c.profileTags.pointsOfSale} точек` : ""}
+                                </div>
+                              )}
+                            </TableCell>
                             <TableCell>
                               {rev && rev.revenue > 0
                                 ? `${Math.round(rev.revenue).toLocaleString("ru-RU")} · ${rev.orders} зак.`

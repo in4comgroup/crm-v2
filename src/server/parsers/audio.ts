@@ -15,6 +15,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 
 export const audioSegmentSchema = z.object({
@@ -145,13 +147,16 @@ export async function parseAudioBytes(
 
   const result = await aiGenerateText({
     process: "parsing.audio",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: audioAnalysisSchema }),
-    system: `You are a precise audio parsing assistant. Transcribe the provided recording faithfully, diarise it by speaker, and extract structured metadata. Keep speaker labels stable across segments. Do not invent content that is not present in the audio.
+    system: withOwnOrgLine(
+      `You are a precise audio parsing assistant. Transcribe the provided recording faithfully, diarise it by speaker, and extract structured metadata. Keep speaker labels stable across segments. Do not invent content that is not present in the audio.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For audio specifically: the 'author/sender' is each of the SPEAKERS — don't include them in mentionedPeople. Only emit third parties referenced by the speakers (e.g. "John from Acme said yesterday…" → John). When inferring organization from a speaker's affiliation, only do so if the audio itself makes the speaker's company unambiguous (someone introduces themselves with affiliation, or a recipient addresses them by company).`,
+      ai,
+    ),
     messages: [
       {
         role: "user",

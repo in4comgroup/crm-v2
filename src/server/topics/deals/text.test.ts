@@ -16,10 +16,10 @@ const base: DealCardProposal = {
   reasonRu: "уверенность ниже порога автосоздания",
   reasonCode: "medium_confidence",
   clientId: "c1",
-  clientName: "Ромашка",
+  clientName: "Норлекс",
   contactId: null,
   contactName: null,
-  dealName: "Ромашка — запрос КП",
+  dealName: "Норлекс — запрос КП",
   dealTypeId: "t1",
   dealTypeCode: "new_location",
   dealTypeLabelRu: "Новый клиент / новая точка",
@@ -33,7 +33,7 @@ const base: DealCardProposal = {
 describe("dealCardText", () => {
   it("proposal headline names the company and the type", () => {
     const t = dealCardText("deal_proposal", base)
-    expect(t.headline).toBe("Ромашка — новая возможность: Новый клиент / новая точка")
+    expect(t.headline).toBe("Норлекс — новая возможность: Новый клиент / новая точка")
     expect(t.analysis).toContain("«Пришлите, пожалуйста, КП»")
     expect(t.recommendation).toContain("«Квалификация»")
   })
@@ -45,7 +45,7 @@ describe("dealCardText", () => {
       stageLabelRu: "Предложение",
       fromStageLabelRu: "Квалификация",
     })
-    expect(t.headline).toBe("Ромашка — перевести сделку в «Предложение»?")
+    expect(t.headline).toBe("Норлекс — перевести сделку в «Предложение»?")
     expect(t.recommendation).toContain("«Квалификация» → «Предложение»")
   })
 

@@ -1,7 +1,7 @@
 "use client"
 
 // «Проверка эталона» (/review) — golden-set review for org owners / admins
-// of the ACTIVE org (IN4COM reviewers are org members, not platform admins).
+// of the ACTIVE org (Globex reviewers are org members, not platform admins).
 // Lists the org's golden items (filters: status, real / synthetic, with /
 // without suggestions) and opens the shared review editor
 // (golden-review-editor.tsx). API: /api/topics/golden (org from the session).

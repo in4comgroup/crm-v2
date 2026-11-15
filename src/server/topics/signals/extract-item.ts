@@ -14,12 +14,15 @@ import {
   type SignalSkipReason,
   type SignalSubject,
 } from "@/lib/signals/extraction-types"
+import { computeAllInternal } from "@/lib/identity/own-org-sets"
 import { AiBudgetExceededError } from "@/server/ai/budget"
+import { getOwnOrgContext } from "@/server/identity/own-org"
 import { loadAnalysisExclusions } from "@/server/analysis-exclusions"
 import { loadOrgBlocklist } from "@/server/blocklist"
 import { getCurrentVersion, getEffectiveSignals, getRegistry } from "@/server/signals/registry"
 import { loadPromptCodes, type PromptCodeSet } from "@/server/topics/prompt/extraction"
 import { EXTRACTION_PROCESS, runExtraction } from "@/server/topics/prompt/run-extraction"
+import { counterpartyLineForItem, loadExtractionCounterparties, type ExtractionCounterparties } from "./counterparty-line"
 import { messageContent } from "./evidence"
 import { runGates, type BlocklistGuard } from "./gates"
 import {
@@ -29,6 +32,7 @@ import {
   loadSignalItemRows,
   senderEmail,
   senderName,
+  storedAllInternal,
   type SignalItemRow,
 } from "./item-input"
 import {
@@ -59,18 +63,31 @@ export type SignalBatchContext = {
   promptSet: PromptCodeSet
   exclusions: AnalysisExclusionEntry[]
   blocklist: BlocklistGuard
+  /**
+   * Identity I4: client index for the envelope line «Контрагент: …»; null
+   * when the org profile is not in the prompt (`promptSet.promptContext`).
+   */
+  counterparties: ExtractionCounterparties | null
 }
 
-/** Throws SignalsNotEnabledError when the org has no active code. */
-export async function loadSignalBatchContext(orgId: string): Promise<SignalBatchContext> {
-  const promptSet = await loadPromptCodes(orgId, "live")
-  const [registry, effective, version, exclusions, blocklist, org] = await Promise.all([
+/**
+ * Throws SignalsNotEnabledError when the org has no active code.
+ * `promptContext` forces the org profile in / out of the prompt (eval runs);
+ * omitted = the org setting `identity.promptContext`.
+ */
+export async function loadSignalBatchContext(
+  orgId: string,
+  opts: { promptContext?: boolean } = {},
+): Promise<SignalBatchContext> {
+  const promptSet = await loadPromptCodes(orgId, "live", opts)
+  const [registry, effective, version, exclusions, blocklist, org, counterparties] = await Promise.all([
     getRegistry(),
     getEffectiveSignals(orgId),
     getCurrentVersion(),
     loadAnalysisExclusions(orgId),
     loadOrgBlocklist(orgId),
     db.select({ name: organization.name }).from(organization).where(eq(organization.id, orgId)),
+    promptSet.promptContext ? loadExtractionCounterparties(orgId) : Promise.resolve(null),
   ])
   return {
     orgId,
@@ -86,6 +103,7 @@ export async function loadSignalBatchContext(orgId: string): Promise<SignalBatch
     promptSet,
     exclusions,
     blocklist,
+    counterparties,
   }
 }
 
@@ -236,6 +254,20 @@ export async function extractSignalsForItem(
   const itemDate = row.sourceCreatedAt ?? row.createdAt
   const envelope = envelopeFromItem(row, text)
   envelope.orgName = batch.orgName
+  // Identity spec Q9: items parsed before the parse-time fact existed get it
+  // computed now from the stored addresses and the current «us» sets.
+  if (
+    storedAllInternal(row.metadataJson) === null &&
+    row.orgAttribution === "own_org" &&
+    !envelope.forwardedBy &&
+    !envelope.originalAuthor
+  ) {
+    const own = await getOwnOrgContext(batch.orgId)
+    envelope.allInternal = computeAllInternal(
+      row.metadataJson,
+      (e) => own.matchEmail(e) !== null,
+    )
+  }
   const fromEmail = senderEmail(row.metadataJson)
 
   // Gates 3–7.
@@ -292,6 +324,9 @@ export async function extractSignalsForItem(
     }
   }
 
+  // Identity I4: «Контрагент: …» of the item's known client (gated).
+  envelope.counterpartyLine = await counterpartyLineForItem(batch.counterparties, row, envelope)
+
   // The LLM call (gate 8 = the AI budget, checked by the runtime).
   let run: Awaited<ReturnType<typeof runExtraction>>
   try {
@@ -323,6 +358,7 @@ export async function extractSignalsForItem(
     ownText: split.own.trim() ? split.own : null,
     date: itemDate,
     orgAttribution: row.orgAttribution,
+    allInternal: envelope.allInternal === true,
   })
   const facts: SignalItemFacts = {
     facts: pp.facts,

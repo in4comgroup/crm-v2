@@ -483,7 +483,7 @@ export default function ClientEditDialog({
                   <FormControl>
                     <Input
                       {...field}
-                      placeholder="Другие написания через запятую (напр. AST, АСТ, AST INTER)"
+                      placeholder="Другие написания через запятую"
                     />
                   </FormControl>
                   <FormMessage />

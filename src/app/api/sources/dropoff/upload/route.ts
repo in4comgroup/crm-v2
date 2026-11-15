@@ -18,6 +18,8 @@ import {
   OfficeTooLargeError,
   UnsupportedOfficeTypeError,
 } from "@/server/parsers/dropoff"
+import { getOwnOrgContext } from "@/server/identity/own-org"
+import { buildOwnOrgPromptLine, parserAiContext } from "@/server/parsers/_shared"
 
 // Video transcription dominates wall-clock — match the per-item Parse
 // route's ceiling so the longest path fits.
@@ -85,7 +87,7 @@ export async function POST(request: NextRequest) {
         description,
         userName,
         uploadedAt: new Date().toISOString(),
-      }, { orgId: activeOrgId, userId: session.user.id })
+      }, parserAiContext(activeOrgId, session.user.id, buildOwnOrgPromptLine(await getOwnOrgContext(activeOrgId).catch(() => null))))
 
       const now = new Date()
       const rootId = randomUUID()

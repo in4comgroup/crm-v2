@@ -64,6 +64,13 @@ export type DealStateInput = {
   risks: DealStateRiskInput[]
   previousText: string | null
   today: string
+  /**
+   * Identity I4 (only with `identity.promptContext`): «Наша компания: <name>
+   * — <роли>». Absent / "" → the prompt is the pre-I4 text.
+   */
+  orgRoleLine?: string | null
+  /** Identity I4: «Профиль клиента «…»: …» of the deal's client ("" / null = none). */
+  clientProfile?: string | null
 }
 
 // ── Output ────────────────────────────────────────────────────────────────
@@ -111,11 +118,23 @@ function lines(xs: readonly string[], prefix = "  - "): string {
 export function buildDealStatePrompt(input: DealStateInput): string {
   const parts: string[] = []
   parts.push(`Сегодня: ${input.today}`)
+  const orgLine = (input.orgRoleLine ?? "").trim()
+  if (orgLine) {
+    parts.push(
+      [
+        "## Наша компания",
+        orgLine,
+        "«Мы» в тексте — эта компания. Не придумывай наших предложений, продуктов и обещаний, которых нет в источниках.",
+      ].join("\n"),
+    )
+  }
+  const clientProfile = (input.clientProfile ?? "").trim()
   parts.push(
     [
       "## Сделка",
       `Название: ${input.dealName}`,
       `Клиент: ${input.clientName}`,
+      clientProfile || null,
       `Стадия: ${input.stageName}`,
       `Статус: ${input.statusRu}${input.pausedUntil ? ` (пауза до ${input.pausedUntil})` : ""}`,
       input.dealTypeLabel ? `Тип: ${input.dealTypeLabel}` : null,

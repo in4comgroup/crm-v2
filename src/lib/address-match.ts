@@ -5,8 +5,8 @@
 // Motivation: the own-organisation registry lets an owner declare the org's
 // postal address(es) so a document that carries OUR address reads as ours
 // rather than as some new client's. Addresses are written a dozen ways —
-// "г. Москва, ул. Ленина, д. 5, оф. 301" / "Moscow, Lenina st. 5" /
-// "ул Ленина 5, Москва" — so exact string comparison is useless. We reduce
+// "г. Энск, ул. Примерная, д. 5, оф. 301" / "Springfield, Primernaya st. 5" /
+// "ул Примерная 5, Энск" — so exact string comparison is useless. We reduce
 // both sides to a token SET (transliterated, noise words dropped) and require
 // a strong overlap.
 //
@@ -40,7 +40,7 @@ const NOISE_TOKENS = new Set([
 
 // Noise markers whose FOLLOWING number is an interior locator (office, flat,
 // floor, room). Those are dropped with the marker: a letterhead prints
-// "ул. Ленина, д. 5, оф. 301" but an email signature usually stops at the
+// "ул. Примерная, д. 5, оф. 301" but an email signature usually stops at the
 // building, and requiring "301" would make the address never match.
 // The building / postal numbers that survive are the discriminating ones.
 const INTERIOR_NUMBER_MARKERS = new Set([
@@ -89,7 +89,7 @@ export function addressTokens(raw: string): string[] {
 
 /**
  * Canonical dedup key for one declared address: significant tokens, sorted, so
- * "Москва, Ленина 5" and "ул. Ленина 5, г. Москва" key identically. Used as
+ * "Энск, Примерная 5" and "ул. Примерная 5, г. Энск" key identically. Used as
  * the unique key of an `org_identity_entry` row.
  */
 export function addressMatchKey(raw: string): string {
@@ -102,7 +102,7 @@ export function addressMatchKey(raw: string): string {
  * Does `text` contain this address? Both sides are tokenised the same way;
  * a hit requires
  *   • at least ONE numeric token present when the address has any (the house
- *     or postal number — "Ленина 7" must not match "Ленина 5"), and
+ *     or postal number — "Примерная 7" must not match "Примерная 5"), and
  *   • at least MIN_ALPHA_HITS alphabetic tokens present, and
  *   • MIN_COVERAGE of the alphabetic tokens present.
  *
@@ -112,7 +112,7 @@ export function addressMatchKey(raw: string): string {
  * either way, and the alphabetic gates carry most of the weight.
  *
  * An address with fewer than MIN_ALPHA_HITS alphabetic tokens can never match
- * (too weak to be evidence) — returns false rather than firing on "Москва 5".
+ * (too weak to be evidence) — returns false rather than firing on "Энск 5".
  */
 export function addressMatchesText(addressKey: string, text: string): boolean {
   if (!addressKey || !text) return false

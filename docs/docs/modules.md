@@ -100,8 +100,9 @@ items» option, three sections (Companies / Contacts / Links), Apply or
 `api/blocklist/from-entity`; `api/org-identity`, `api/org-identity/[id]`.
 
 **Server modules.** `discovery.ts`, `blocklist.ts`, `org-identity.ts`
-(`loadOwnOrgIdentity` for discovery, `getOrgIdentity` for parse-time
-attribution), `org-identity-registry.ts`; pure helpers in
+(sync views of the one «us» resolver `getOwnOrgContext` in
+`identity/own-org.ts`: discovery + parse-time company stripping, and
+parse-time attribution), `org-identity-registry.ts`; pure helpers in
 `src/lib/translit-ru.ts`, `src/lib/company-canonical.ts`, `src/lib/address-match.ts`.
 
 **Key rules.**

@@ -17,6 +17,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 
 // ── Public types ──────────────────────────────────────────────────────
@@ -441,13 +443,16 @@ export async function parseWhatsAppGroup(
 ): Promise<ParsedWhatsAppGroup> {
   const result = await aiGenerateText({
     process: "parsing.chat_message",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: analysisSchema }),
-    system: `You are a precise WhatsApp chat parsing assistant. Extract structured metadata from a multi-message group transcript. Never fabricate facts — only return what is present in the conversation.
+    system: withOwnOrgLine(
+      `You are a precise WhatsApp chat parsing assistant. Extract structured metadata from a multi-message group transcript. Never fabricate facts — only return what is present in the conversation.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For WhatsApp specifically: the 'author/sender' is each of the conversation participants listed above; don't include them in mentionedPeople. Only emit third parties referenced inside the message bodies (e.g. someone shares 'John Donn (john.donn@acme.com) handles that'). When inferring organization from a participant's affiliation, only do so if the transcript itself makes their company unambiguous (someone introduces themselves with affiliation, or is addressed by company).`,
+      ai,
+    ),
     prompt: buildLlmPrompt({
       authors: input.authors,
       rawText: input.rawText,

@@ -47,7 +47,7 @@ export type AttentionParams = {
 }
 
 export const ATTENTION_DEFAULTS: AttentionParams = {
-  timeZone: "Europe/Moscow",
+  timeZone: "Europe/Vienna",
   workStart: "08:00",
   workEnd: "18:00",
   morningDigestTime: "07:30",

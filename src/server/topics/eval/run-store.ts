@@ -47,6 +47,12 @@ export type EvalRunConfig = {
   /** Sample runs: the fixed list of sampled source items. */
   sampleItemIds?: string[]
   sampleSize?: number
+  /**
+   * Identity I4: the org profile («О нашей компании» + «Контрагент: …») was
+   * in the extraction prompt for this run (forced at start, option «С
+   * профилем организации»). Runs from before I4 have no value = without.
+   */
+  promptContext?: boolean
 }
 
 export type EvalRunMetrics<R = unknown> = {
@@ -87,6 +93,7 @@ function toRow(r: {
       reviewCodes: Array.isArray(c.reviewCodes) ? c.reviewCodes : [],
       sampleItemIds: Array.isArray(c.sampleItemIds) ? c.sampleItemIds : undefined,
       sampleSize: typeof c.sampleSize === "number" ? c.sampleSize : undefined,
+      promptContext: c.promptContext === true,
     },
   }
 }

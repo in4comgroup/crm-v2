@@ -17,6 +17,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 
 const analysisSchema = z.object({
@@ -131,13 +133,16 @@ export async function parseChatMessage(
 
   const result = await aiGenerateText({
     process: "parsing.chat_message",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: analysisSchema }),
-    system: `You are a precise Google Chat message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.
+    system: withOwnOrgLine(
+      `You are a precise Google Chat message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For Chat specifically: the 'author/sender' is the message author shown above; don't include them in mentionedPeople. Channel members listed above are also captured elsewhere — don't include them either unless the body explicitly attributes them with an organization (e.g. quotes an email or names their company). When inferring organization from the author's affiliation, you can't always derive it from a Chat author — only emit a medium-confidence inferred org when the body text itself makes the author's company unambiguous.`,
+      ai,
+    ),
     prompt: buildLlmPrompt({ author, recipients, bodyText }),
   })
   const analysis = result.output

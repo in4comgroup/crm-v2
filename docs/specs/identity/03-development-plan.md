@@ -1,0 +1,88 @@
+# Identity — development plan
+
+Status: **draft, 2026-11-14.** Estimates for one developer with AI assistance, in working days. Order = dependencies. Spec: [01-specification.md](01-specification.md) · Questions: [02-open-questions.md](02-open-questions.md).
+
+| Phase | Name | Days | Output | Depends on |
+|---|---|---|---|---|
+| I1 | Own org profile — data + UI | 3 | `org_profile` + log, registry kinds `email_domain` / `mailbox` / `person`, industry reference list; `/account` «Профиль организации» (owner), `/profile` «Мои адреса для работы»; completeness function + banner; server-side owner check of the org update | Q1, Q2, Q8 |
+| I2 | One «us» resolver + deterministic use | 2 | `getOwnOrgContext` (one freemail list, member extra addresses, cache invalidation), attribution + discovery on it, internal detection `allInternal`, old loaders removed; unit tests | I1, Q9 |
+| I3 | Gate | 0.5 | Topics mode `shadow` / `on` refused until the minimum; admin override with reason; `/settings` column «Профиль»; runbook T8 / B5 updated | I1, Q4 |
+| I4 | Org profile in prompts | 2 + eval | promptCard in extraction (static part), matcher, card writer, deal state, parsers, attribution judge, AI chat, order split (hard-code removed); golden-set eval before / after | I2, golden set (topics O9) |
+| I5 | Client profile — manual | 2 | `client_profile` with provenance, block «Профиль компании» (responsible + owner), filters on the Companies page, client summary in card writer / deal state / extraction counterparty line | I1, Q3 |
+| I6 | Client profile — web enrichment | 2 | extract step returns profile fields; fill empty fields (unverified) / proposals; review in the drawer; batch; optional «on create» setting | I5, Q5, Q6 |
+| I7 | Later | — | profile proposals from our communication; ICP fit of potential clients; `ACCOUNT_CROSS_SELL_GAP`; analytics by industry | I6 |
+
+Total I1–I6 ≈ 11.5 days + eval time.
+
+Migrations (next free number at the time of writing: `0031`): I1 (org profile, log, registry enum values + `user_id` / `channel`, industry reference data), I5 (client profile, proposals). All through `pnpm db:generate` / `pnpm db:custom`, applied with `pnpm db:migrate`.
+
+Pilot step: after I1–I3, the IN4COM owner fills the profile (Q11); I4 ships only after the eval shows no drop in quality.
+
+## I1 — status: built 2026-11-14
+
+- **Data**: migration `0031_identity_org_profile` (applied on the test DB): `org_profile`, `org_profile_log`, `industry` (17 rows), `org_identity_kind` + `email_domain` / `mailbox` / `person`, `org_identity_entry.user_id` + `channel`.
+- **Contract / pure code**: `src/lib/identity/org-profile.ts` (schema, limits, labels, `profileCompleteness`), `src/lib/identity/org-profile-log.ts` (canonical form + change diff), `src/lib/identity/registry.ts` (normalisation per registry kind). Free-mail = ONE list in `src/lib/email-domain.ts` (`isFreemailDomain` / `isAnyFreemailDomain`). Unit tests: `registry.test.ts`, `org-profile-log.test.ts`.
+- **Server**: `src/server/identity/org-profile.ts` (view, owner-only save with one log row of changed fields, banner); `src/server/org-identity-registry.ts` (new kinds; org-level kinds = owner, `person` = the member for themselves or the owner; report-only matches; every write → `invalidateOwnOrgContext`). Org update owner-only server-side via `organizationHooks.beforeUpdateOrganization` (`src/lib/auth.ts`); org / member changes invalidate the «us» cache.
+- **API**: `GET|PUT /api/org-profile`, `GET /api/org-profile?banner=1`; `/api/org-identity` takes `userId` / `channel`, `GET ?mine=1`.
+- **UI**: `/account` → «Профиль организации» (groups A / B / C, completeness, history; the «Своя организация» dialog moved into group A and was deleted), `/profile` → «Мои адреса для работы», banner on `/dashboard` + `/account` (red for orgs in topics `shadow` / `on`).
+- **Live check** (test DB, IN4COM): owner save → 7 fields logged; member save → 403; unknown industry / bad role → 400; whitespace-only change → no write; mailbox / person (Telegram, email for another member by the owner) added; member → org-level kind 403, address for the owner 403, duplicate address of another member 409; view: `canManage` per role, 17 industries, 63 catalogue categories, 6 human members, completeness 6 / 6. Everything removed afterwards — IN4COM's `org_profile` is EMPTY (its owner fills it, Q11).
+- **Open in I1 scope**: platform admins do not get profile edit rights (spec §3.4 «support») — they edit org data via `/settings`; add when needed.
+
+## Status — I2 (built 2026-11-14)
+
+- **Resolver** `getOwnOrgContext(orgId)` (`src/server/identity/own-org.ts`): identity sets (pure `src/lib/identity/own-org-sets.ts`), profile + industry label, completeness, `promptCard` (pure `src/lib/identity/prompt-card.ts`, ≤ 1,500 chars, deterministic). 5-min cache per org; `invalidateOwnOrgContext` is called by the I1 write paths, the better-auth org / member hooks and the admin org / membership edits.
+- **One free-mail list**: `FREEMAIL_DOMAINS` in `src/lib/email-domain.ts` (global + RU / CIS); every `isFreemailDomain` reads it.
+- **Old loaders**: `loadOwnOrgIdentity` / `getOrgIdentity` are thin wrappers with the same shapes (not deleted yet — the I4 prompt work moves the callers to `getOwnOrgContext`); `invalidateOrgIdentity` = alias. Discovery: `isOwnEmail` — staff addresses / mailboxes never become contacts.
+- **Attribution**: new rules staff extra email (`sender_staff_address`), shared mailbox (`sender_mailbox`), Telegram staff handle (`sender_staff_telegram`; forwards use the original author). Own domains are free-mail guarded. **Member rule (2026-11-14, product owner):** an org with own domains counts only the members whose sign-in email is on an own domain (IN4COM: only `@in4comgroup.com`; the test user `boris@truffalo.ai` and private gmail accounts are not «us»); members' domains never become own domains; an org with «Нет своего домена» counts every member. The profile tab marks a member whose sign-in email does not count («адрес входа не считается нашим»); such a member can add a work address (the registry accepts a sign-in email as a `person` entry only when it does not count already). IN4COM follow-up (2026-11-15, product owner): the members with private gmail sign-in emails add them in «Мои адреса для работы» themselves, only if they work from them; the old items already parsed are NOT re-parsed (no backfill of `orgAttribution`).
+- **Internal detection (Q9)**: `metadata_json.orgAttribution.allInternal` at parse (author + every to / cc / bcc ours; never for forwards; no recipients → false). Signal extraction: `resolveDirection` → `internal` (overrides the model); envelope line «Внутренняя переписка (все участники — наши сотрудники)»; items parsed earlier get the fact computed at extraction. Gate 3 («own-org-only internal noise») stays a direction rule, not a skip — internal items keep their `internal_only` codes. The envelope line is a prompt change: run the golden-set eval before relying on it.
+- Tests: `own-org-sets.test.ts`, `prompt-card.test.ts`, `topics-gate.test.ts`, `parsers/org-attribution.test.ts`, `signals/envelope-internal.test.ts`, `postprocess.test.ts` (allInternal).
+
+## Status — I3 (built 2026-11-14)
+
+- Pure decision `decideTopicsModeChange` (`src/lib/identity/topics-gate.ts`); server `setTopicsModeGated` (`src/server/topics/mode.ts`); `PUT /api/admin/topics` → 409 `{ error, missing }` / override `{ reason ≥ 10 }` logged in `org_setting_log` as `topics.enabled.override`. `off` and the same mode always pass; running orgs keep running.
+- UI: «Темы» → «Режим тем по организациям» — column «Профиль», gate dialog «Включить без профиля»; `/settings` → «Организации» — column «Профиль».
+- Runbook `../topics/07-signals-go-live.md` (switches, T8, B5): the profile is enforced.
+- IN4COM (2026-11-14, live read-only check): mode `on`, profile 2 of 6 (missing: description, «Отрасль» + «Роль на рынке», products, customers) → keeps running; a new switch to `shadow` / `on` would be refused until the owner fills the profile (Q11).
+
+## Status — I4 (built 2026-11-15)
+
+**Ships for an org only after the golden-set eval** shows no drop in quality. The golden set is EMPTY today (topics O9), so no eval has run; every org keeps the switch off.
+
+- **Gated** — org setting `identity.promptContext` (default **off**; off = every topics prompt is byte-identical to the pre-I4 text). Platform admin switch «Профиль в промптах» in `/settings` → «Темы» → «Режим тем по организациям» (hint «Включать после оценки на эталоне»; `PUT /api/admin/topics { organizationId, promptContext }`; logged in `org_setting_log`). Loader `getTopicsOrgPrompt(orgId, force?)` (`src/server/identity/prompt-context.ts`); pure lines `src/lib/identity/prompt-org-lines.ts` (`orgRoleLine`, `orgProductsLine`).
+  - `topics.signal_extraction`: `promptCard` + `ORG_CARD_RULES` (we are the buyer when the author sells to us — «Кто продаёт нам»; demand only for OUR products / services; seller marketing is not demand; glossary; the card is context, never evidence) at the END of the static per-org system prompt (cache-friendly, never per item). Envelope line «Контрагент: <name> — <отрасль>, <роль>» when the item's client is known: item peer (sender of an inbound item / first recipient of ours) → `resolveCounterparty` over the counterparty index (same resolution the topic resolver uses) → `loadClientProfileTexts`; no line for internal items, forwards, unknown clients or clients without a profile (`src/server/topics/signals/counterparty-line.ts`).
+  - `topics.topic_match`: one line «Наша компания: <name> — <роли>» in the system prompt.
+  - `topics.card_writer`: block «НАША КОМПАНИЯ» (name + role, product names) + the topic client's «Профиль клиента» summary (with segment).
+  - `deals.state_summary`: «## Наша компания» (name + role) + the deal client's profile summary.
+- **Always on** (not covered by the topics eval):
+  - Email / chat / document parsers: the «this is us» line (name, other names, own domains) at the end of the system prompt (`buildOwnOrgPromptLine` / `withOwnOrgLine`, `src/server/parsers/_shared.ts`); the post-LLM stripping stays. Also on the drop-off / WhatsApp upload and AI-chat-save paths.
+  - Attribution judge (`parsing.org_attribution`): + shared mailboxes + staff names (human members, never «Агент»).
+  - AI chat: `promptCard` in the system prompt (section «The user's organization»); `searchEverything` clients carry their profile summary.
+  - Order split: the hard-coded vertical is gone; the seller is described by the profile's roles + product names, a neutral text when the profile is empty (§7.5). Prompt examples are made-up neutral names.
+  - Old loaders: `parse-source-item.ts` reads `getOwnOrgContext` once per parse; discovery reads it in preview + apply (2026-11-15). `loadOwnOrgIdentity` / `getOrgIdentity` / `invalidateOrgIdentity` are DELETED; the sync views `ownOrgIdentityFromContext` / `orgIdentityFromContext` stay.
+- **Eval option** «С профилем организации» on «Тесты и отладка» → «Оценка извлечения»: «По настройке организации» / «С профилем» / «Без профиля», fixed per run at start (`topics_eval_run.config.promptContext`, also on every result), shown as column «Профиль» in the run list and a badge in the report — run the same golden set with and without and compare precision / recall and the «we are the buyer» errors (§7.4) before switching an org on. No schema change.
+- Tests: `src/server/topics/prompt/extraction-org.test.ts`, `src/lib/identity/prompt-org-lines.test.ts`, `cards/prompt.test.ts`, `deal-state/state-text.test.ts` (off = unchanged, on = block present), `src/lib/order-request-prompt.test.ts`, `src/server/parsers/own-org-line.test.ts`, `parsers/org-attribution.test.ts`.
+- **Open**: (1) the golden set is empty — I4's gated part is untested on real data; (2) the always-on parser / chat / order changes ship without an eval (no eval exists for them); (3) the two-pass block classifier (`topics.signal_block_classifier`) does not get the card.
+
+## Status — I5 (built 2026-11-15)
+
+- **Data**: migration `0032` (`client_profile`, `client_profile_proposal`, applied on the test DB before this phase).
+- **Pure**: `src/lib/identity/client-profile.ts` (contract; `FieldMeta` gained `verifiedByUserId` / `verifiedAt` for «Подтвердить» and accepted proposals) + `src/lib/identity/client-profile-apply.ts` (canonical form, field slices, `manualSaveMeta`, `normalizeWebProfile`, `planWebProfileApply`, `webRefreshDue`). Tests: `client-profile.test.ts` (summary ≤ 400, verified first, unverified «(не проверено)», empty → "", counterparty line), `client-profile-apply.test.ts`.
+- **Server**: `src/server/identity/client-profile.ts` — view (values, provenance with names, derived segment, **derived relation built** via `deriveClientRelation`, industries, our product lines, pending proposals, `canEdit`), save (responsible member or org owner — Q3; changed fields only → `manual`, verified), confirm, accept / reject proposal, `applyWebProfileToClient`; tenant check on every client id.
+- **API**: `GET | PUT | POST /api/clients/[id]/profile`.
+- **UI**: `client-profile-block.tsx` in the company drawer («Общая информация», under «Ответственный») and on `/clients/[id]`; Companies page filters «Отрасль» / «Роль» / «Размер» + column «Отрасль» in the table view.
+- **Live check** (test DB, a temporary client, removed afterwards): owner save → 4 fields `manual` / verified; repeat save with spacing / case changes → no write; non-responsible member → 403; unknown industry → 400; fake web result through the apply rule → empty `geography` filled unverified, filled `description` / `products` → proposals, `low` size → proposal (not filled), equal industry → unchanged; a second identical run → nothing new; member confirm → 403, owner confirm → verified with confirmer; accept description → value + web provenance verified; reject products → rejected; deciding again → 409. Cleanup: 0 rows left.
+- **Open**: the prompt use of the summary (card writer / deal state / extraction counterparty line) is the separate prompt step on `client-profile-context.ts`; «Предложить правку» for other members stays out of scope (Q3).
+
+## Status — I6 (built 2026-11-15)
+
+- **Extract**: the web lookup moved to the org-explicit `src/server/identity/client-enrichment.ts` (`lookupClientOnWebForOrg`; the session wrappers in `src/server/clients.ts` keep their shapes). The research prompt also asks for the business profile; the extract schema returns per candidate `profile` = description, industry code (the `industry` codes + labels are in the prompt), market roles (`MARKET_ROLES`), ≤ 15 products / services, size band (+ points of sale), geography — each with confidence + source URL. Contact-field behaviour unchanged. Prompts are industry-neutral (no vertical / company examples).
+- **Apply rule** (pure `planWebProfileApply`, unit-tested): empty field → written `{ source: web, confidence, evidenceUrl, verified: false }`; filled field (manual or earlier web) → pending proposal (older pending of the field → superseded; identical value / identical pending → nothing). **Decision: `low` confidence = proposal only, never an auto-fill** (spec §4.3 note). Field confidence is capped by the candidate's match confidence. `web_enriched_at` stamped on every run.
+- **Triggers**: (a) «Заполнить из интернета» → `POST /api/clients/[id]/profile { action: enrich }` (responsible / owner, `maxDuration` 60; one candidate → apply, several → «ambiguous», nothing written); (b) the batch «Обогатить» (`api/clients/[id]/enrich`) applies the profile of an auto-applied candidate, the review queue applies the profile of the picked candidate; the worklist now also includes clients whose profile was never web-enriched; (c) on create — org setting `clients.enrichOnCreate` (default off): `createClient` and discovery apply (new clients only) → `after()`, ≤ 20 per call, 3 at a time, 240 s deadline, never blocks / fails the create; (d) refresh — automatic paths re-enrich only after 180 days (`webRefreshDue`), filled fields → proposals only. The manual button works any time.
+- **Budget**: `clients.enrichment_*` are `interactive` processes (the runtime does not stop them); the background on-create path checks `getOrgBudgetStatus` before each client and stops when the daily budget is used up.
+- **Setting control**: `/account` → «Профиль организации» → card «Профили компаний» → switch «Заполнять профиль новых компаний из интернета» («Расход ИИ на каждую новую компанию»); `GET | PUT /api/clients/enrich/settings`; org owner or platform admin (with that org active) switches it.
+- **Live check** (test DB, one real lookup on a temporary client with a public website, removed afterwards): 1 candidate, ~12 s, all six profile fields filled unverified with confidence + source URLs, no proposals; cleanup 0 rows.
+- **Open**: proposals from our own communication (§4.4, I7); the interactive «Поиск в интернете» dialog still applies contact fields only (its candidates now carry a profile that the dialog ignores).
+
+## Cleanup 2026-11-15 (product owner)
+
+- No old / vertical content: migration `0033_identity_remove_vertical_values` (applied on the test DB) deletes the industries «Алкоголь» (`alcohol`) and «HoReCa» (`horeca`) and removes the market role `horeca` from stored profiles (no profile used them); `MARKET_ROLES` lost `horeca`. 15 industries and 9 roles remain.

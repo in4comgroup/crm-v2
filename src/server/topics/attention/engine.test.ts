@@ -71,8 +71,8 @@ const CAL_DAYS = [
   { day: "2026-11-03", isWorking: true, isShort: true },
   { day: "2026-11-04", isWorking: false, isShort: false },
 ]
-const CAL = new WorkCalendar(CAL_DAYS, { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
-const PLAIN_CAL = new WorkCalendar([], { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
+const CAL = new WorkCalendar(CAL_DAYS, { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" })
+const PLAIN_CAL = new WorkCalendar([], { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" })
 const RELATIONS = [{ kind: "dampens", codeA: "PAYMENT_PROMISE", codeB: "INVOICE_OVERDUE" }]
 
 const msk = (s: string) => new Date(`${s.replace(" ", "T")}:00+03:00`)
@@ -623,7 +623,7 @@ describe("weekly review on a holiday Friday (06 §5.2 H5, §7.3 W1, one rule wit
       { day: "2027-01-07", isWorking: false, isShort: false },
       { day: "2027-01-08", isWorking: false, isShort: false },
     ],
-    { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" },
+    { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" },
   )
 
   it("H5: a dormant topic is shown until the review AFTER its first one (Wed 30.12 → Fri 15.01)", () => {
@@ -644,7 +644,7 @@ describe("weekly review on a holiday Friday (06 §5.2 H5, §7.3 W1, one rule wit
   it("W1 expiry is not before the first weekly review — the working day before a holiday Friday", () => {
     const p = mergeAttentionParams({ expiryDays: { W1: 1 } })
     const cal = new WorkCalendar([{ day: "2026-12-18", isWorking: false, isShort: false }], {
-      timeZone: "Europe/Moscow",
+      timeZone: "Etc/GMT-3",
       workStart: "08:00",
       workEnd: "18:00",
     })

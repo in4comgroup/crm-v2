@@ -17,6 +17,8 @@ import {
   listProductFilterOptions,
 } from "@/server/products"
 import { aiGenerateText } from "@/server/ai/runtime"
+import { getOwnOrgContext } from "@/server/identity/own-org"
+import { describeOrderIntakeSeller } from "@/lib/order-request-prompt"
 import type { OrderRequestItemFilters } from "@/lib/order-request"
 import { Output } from "ai"
 import { z } from "zod"
@@ -141,6 +143,8 @@ function asClosedVocab(values: string[]): string[] {
 
 function buildParsePrompt(opts: {
   rawText: string
+  /** `describeOrderIntakeSeller` of the org profile (neutral when empty). */
+  seller: string
   categories: string[]
   filterOptions: {
     type: string[]
@@ -151,26 +155,39 @@ function buildParsePrompt(opts: {
     countryName: string[]
   }
 }): string {
-  const list = (label: string, values: string[]) =>
-    values.length
-      ? `- ${label}: ${values.join(", ")}`
-      : `- ${label}: (not provided — use a searchPhrase instead)`
+  // Only attributes the org's catalog actually has are listed; the rest stay
+  // "" (the schema keys are fixed, the prompt says so below).
+  const lists = [
+    ["category", opts.categories],
+    ["type", opts.filterOptions.type],
+    ["color", opts.filterOptions.color],
+    ["sugar", opts.filterOptions.sugar],
+    ["aging", opts.filterOptions.aging],
+    ["bottleVolume", opts.filterOptions.bottleVolume],
+    ["countryName", opts.filterOptions.countryName],
+  ] as const
+  const listed = lists
+    .filter(([, values]) => values.length > 0)
+    .map(([label, values]) => `- ${label}: ${values.join(", ")}`)
 
+  // Identity spec I4 / §7.5: no hard-coded industry and no vertical
+  // examples — the seller comes from the org profile, every example below
+  // is a made-up neutral name.
   return [
-    "Below is a free-text product request from a client of a wine & spirits",
-    "distributor, written in informal Russian. Split it into individual",
-    "product intent items. Each item becomes one step in an order-assembly",
-    "wizard and may map to one or many catalog products.",
+    `Below is a free-text product request from a client of ${opts.seller},`,
+    "written in informal Russian. Split it into individual product intent",
+    "items. Each item becomes one step in an order-assembly wizard and may map",
+    "to one or many catalog products.",
     "",
     "For EACH intent decide a `mode`:",
-    '- "explicit": the client named a specific product/brand (often in',
-    "  Cyrillic transliteration, e.g. «Вильям лоусон», «Хосе куэрво»,",
-    "  «Мартини Россо», «Нонино»). Put a LATIN transliteration of the brand in",
-    "  `searchPhrase` (e.g. «Вильям лоусон» → \"William Lawson\", «Хосе куэрво»",
-    '  → "Jose Cuervo", «Нонино» → "Nonino"). Leave `filters` empty. Put the',
-    "  stated quantity in `quantityHint` verbatim (e.g. \"6\", \"15 л\", \"0,7\").",
-    '- "discovery": a vague or category-level ask (e.g. «все по Бурбону и',
-    "  Айла», «российские игристые», «красное полусухое до 1000»). Fill",
+    '- "explicit": the client named a specific product/brand/model (often in',
+    "  Cyrillic transliteration, e.g. «Норд Лайн», «Альфа Стандарт»). Put a",
+    "  LATIN transliteration of the brand in `searchPhrase` (e.g. «Норд Лайн»",
+    '  → "Nord Line", «Альфа Стандарт» → "Alfa Standard"). Leave `filters`',
+    "  empty. Put the stated quantity in `quantityHint` verbatim (e.g. \"6\",",
+    '  "15 шт", "2 уп").',
+    '- "discovery": a vague or category-level ask (e.g. «всё из новой',
+    "  линейки», «российского производства», «что-нибудь до 1000»). Fill",
     "  `filters` using ONLY the exact allowed values listed below; set",
     "  `priceMax`/`priceMin` from any stated price ceiling/floor in RUB. You",
     "  may also add a Russian `searchPhrase` for nuance not covered by",
@@ -180,33 +197,27 @@ function buildParsePrompt(opts: {
     "FIND the product in a catalog whose names MIX Russian and English. Matching",
     "is text-only and order-independent, so include each distinctive word in BOTH",
     "languages — the original word AND its English translation/transliteration.",
-    "Build them from the BRAND / PRODUCER / GRAPE / variant words and any",
-    "name-numbers (135, 12). Example: «Пино нуар дескомб» →",
-    '["Пино","нуар","Pinot","Noir","дескомб","Descombe"]; «хиога драй 135» →',
-    '["хиога","Hyoga","драй","Dry","135"].',
+    "Build them from the BRAND / PRODUCER / MODEL / variant words and any",
+    "name-numbers (135, 12). Example: «Норд стандарт 135» →",
+    '["Норд","Nord","стандарт","Standard","135"]; «альфа лайт 12» →',
+    '["альфа","Alfa","лайт","Light","12"].',
     "",
-    "CRITICAL — do NOT include the generic drink-KIND word in `searchTerms`",
-    "(вино/wine, игристое/sparkling, шампанское/champagne, джин/gin, водка/vodka,",
-    "виски/whisky, текила/tequila, ром/rum, коньяк/cognac, ликёр/liqueur, etc.).",
-    "Those words match almost every product of that kind and DROWN OUT the real",
-    "brand match. Also exclude greetings, quantities, and units (бут/л/шт).",
+    "CRITICAL — do NOT include the generic product-KIND word in `searchTerms`",
+    "(the noun that names the whole class of goods rather than this product —",
+    "for example a catalog category name below, or its translation). Such",
+    "words match almost every product of that kind and DROWN OUT the real",
+    "brand match. Also exclude greetings, quantities, and units (шт/уп/кг/л).",
     "Deduplicate.",
     "",
     "Allowed catalog values — filter values MUST be copied EXACTLY from these",
-    "lists (they are Russian, UPPERCASE for attributes). If nothing fits an",
-    "intent, leave that filter empty and rely on `searchPhrase`:",
-    list("category", opts.categories),
-    list("type", opts.filterOptions.type),
-    list("color", opts.filterOptions.color),
-    list("sugar", opts.filterOptions.sugar),
-    list("aging", opts.filterOptions.aging),
-    list("bottleVolume", opts.filterOptions.bottleVolume),
-    list("countryName", opts.filterOptions.countryName),
+    "lists. A filter that is not listed here, or where nothing fits an intent,",
+    "stays empty — rely on `searchPhrase` instead:",
+    ...(listed.length > 0 ? listed : ["- (no catalog attributes provided)"]),
     "",
     "Rules:",
     "- `label`: a short, descriptive name for the intent in the request's own",
-    "  language (e.g. «Рислинг, Германия», «Bombay Sapphire», «Игристое до 2000»)",
-    "  — NOT a bare category like «вино».",
+    "  language (e.g. «Норд Стандарт», «Российское производство до 2000»)",
+    "  — NOT a bare category word.",
     "- Ignore non-product content: greetings, names of people, venue logistics,",
     "  delivery windows, payment terms, jokes. Emit ONLY product intents.",
     "- One line / one named product = one item. Keep the client's order.",
@@ -314,10 +325,21 @@ export async function createAndParseOrderRequest(
   })
 
   try {
-    const [categories, filterOptions] = await Promise.all([
+    const [categories, filterOptions, ownCtx] = await Promise.all([
       listProductCategories(),
       listProductFilterOptions(),
+      // Identity spec I4: the seller description comes from the org profile.
+      getOwnOrgContext(activeOrgId).catch(() => null),
     ])
+    const seller = describeOrderIntakeSeller(
+      ownCtx?.exists
+        ? {
+            name: ownCtx.name,
+            marketRoles: ownCtx.profile.marketRoles,
+            products: ownCtx.profile.products,
+          }
+        : null,
+    )
 
     const { output } = await aiGenerateText({
       process: "orders.request_split",
@@ -332,13 +354,14 @@ export async function createAndParseOrderRequest(
       temperature: 0,
       output: Output.object({ schema: llmParseSchema }),
       system:
-        "You are a precise order-intake assistant for a wine & spirits " +
-        "distributor. You split one informal Russian client message into " +
+        "You are a precise order-intake assistant for a company that sells " +
+        "to business clients. You split one informal Russian client message into " +
         "structured product intent items. You never invent catalog filter " +
         "values — you only copy from the provided lists — and for named " +
         "brands you transliterate Cyrillic to a Latin search phrase.",
       prompt: buildParsePrompt({
         rawText: truncated,
+        seller,
         categories: asClosedVocab(categories),
         filterOptions: {
           type: asClosedVocab(filterOptions.type),

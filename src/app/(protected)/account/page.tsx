@@ -14,6 +14,8 @@ import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { AccountAiUsage } from "@/components/blocks/account-ai-usage"
 import { AccountTopicDelivery } from "@/components/blocks/account-topic-delivery"
+import { OrgProfileTab } from "@/components/blocks/org-profile-tab"
+import { OrgProfileBanner } from "@/components/blocks/org-profile-banner"
 
 type User = {
   id: string
@@ -44,6 +46,15 @@ export default function AccountPage() {
   // is `on`. `?tab=notifications` (link in the digest emails) opens it.
   const [topicsOn, setTopicsOn] = useState(false)
   const [tab, setTab] = useState("info")
+  // «Профиль организации» (identity I1): mounted on the first visit and then
+  // kept mounted (hidden), so unsaved edits survive a tab switch.
+  // `?tab=org-profile` (link in the banner on /dashboard) opens it.
+  const [profileVisited, setProfileVisited] = useState(false)
+  const [bannerKey, setBannerKey] = useState(0)
+  const openTab = (v: string) => {
+    if (v === "org-profile") setProfileVisited(true)
+    setTab(v)
+  }
 
   //console.log("User session in settings page:", session)
 
@@ -67,8 +78,12 @@ export default function AccountPage() {
         ])
         const on = topicsState?.visible === true
         setTopicsOn(on)
-        if (on && new URLSearchParams(window.location.search).get("tab") === "notifications") {
+        const wantTab = new URLSearchParams(window.location.search).get("tab")
+        if (on && wantTab === "notifications") {
           setTab("notifications")
+        } else if (wantTab === "org-profile") {
+          setProfileVisited(true)
+          setTab("org-profile")
         }
         const org: Organization | null = orgRes.organization ?? null
         let role: string | null = null
@@ -133,9 +148,14 @@ export default function AccountPage() {
         <PageHeaderActions />
       </div>
 
-      <Tabs value={tab} onValueChange={setTab} className="flex-1 gap-4">
+      {tab !== "org-profile" && (
+        <OrgProfileBanner refreshKey={bannerKey} onOpen={() => openTab("org-profile")} />
+      )}
+
+      <Tabs value={tab} onValueChange={openTab} className="flex-1 gap-4">
         <TabsList>
           <TabsTrigger value="info">Информация об организации</TabsTrigger>
+          <TabsTrigger value="org-profile">Профиль организации</TabsTrigger>
           {isOwner && user && (
             <TabsTrigger value="members">Участники</TabsTrigger>
           )}
@@ -147,9 +167,10 @@ export default function AccountPage() {
           <OrganizationInfoForm
             organization={organization}
             canEdit={isOwner}
-            onSaved={(patch) =>
+            onSaved={(patch) => {
               setOrganization((prev) => (prev ? { ...prev, ...patch } : prev))
-            }
+              setBannerKey((k) => k + 1)
+            }}
           />
 
           {SHOW_PREVIEW_API_KEYS && isOwner && (
@@ -167,6 +188,22 @@ export default function AccountPage() {
             </>
           )}
         </TabsContent>
+
+        {/* Any member reads; the owner edits (the API is the gate). */}
+        {profileVisited && (
+          <TabsContent value="org-profile" forceMount className="data-[state=inactive]:hidden">
+            <OrgProfileTab
+              reloadKey={[
+                organization.name,
+                organization.webUrl,
+                organization.address,
+                organization.email,
+              ].join("|")}
+              onOpenInfoTab={() => openTab("info")}
+              onChanged={() => setBannerKey((k) => k + 1)}
+            />
+          </TabsContent>
+        )}
 
         {isOwner && user && (
           <TabsContent value="members">

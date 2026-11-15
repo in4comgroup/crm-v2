@@ -12,6 +12,8 @@ import {
   type TopicCardMeta,
   type TopicCardText,
 } from "@/lib/topics/cards"
+import { loadClientProfileTexts } from "@/server/identity/client-profile-context"
+import { getTopicsOrgPrompt } from "@/server/identity/prompt-context"
 import { getRegistry } from "@/server/signals/registry"
 import { messageContent } from "@/server/topics/signals/evidence"
 import { itemMarkdown } from "@/server/topics/signals/item-input"
@@ -195,12 +197,18 @@ export async function buildCardInput(args: {
   book?: CodeBook
 }): Promise<CardBuild | null> {
   const { orgId, row, attention, current, now } = args
-  const [snapshot, book, registry] = await Promise.all([
+  const [snapshot, book, registry, orgPrompt] = await Promise.all([
     loadTopicSnapshot(orgId, row.id),
     args.book ? Promise.resolve(args.book) : loadCodeBook(orgId),
     getRegistry(),
+    // Identity I4: null unless `identity.promptContext` is on for the org.
+    getTopicsOrgPrompt(orgId),
   ])
   if (!snapshot) return null
+  const clientProfile =
+    orgPrompt && row.clientId
+      ? ((await loadClientProfileTexts(orgId, [row.clientId], { withSegment: true })).get(row.clientId)?.summary ?? "")
+      : ""
   const notes = new Map(registry.categories.map((c) => [c.code, c.cardNoteRu]))
   const meta = metaOf(current)
   const since = meta?.writtenAt ? new Date(meta.writtenAt) : null
@@ -351,6 +359,12 @@ export async function buildCardInput(args: {
     overdue: attention.overdue,
     current: ct,
     force: args.force,
+    ...(orgPrompt
+      ? {
+          org: { roleLine: orgPrompt.roleLine, productsLine: orgPrompt.productsLine },
+          clientProfile: clientProfile || null,
+        }
+      : {}),
   }
   return {
     input,

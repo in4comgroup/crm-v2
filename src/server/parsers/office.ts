@@ -18,6 +18,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 
 export type OfficeFormat = "docx" | "pptx"
@@ -137,13 +139,16 @@ export async function parseOfficeBytes(
   // ── Stage 2: model for cleanup + metadata ─────────────────────────
   const result = await aiGenerateText({
     process: "parsing.office",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: officeAnalysisSchema }),
-    system: `You are a precise document parsing assistant. Convert the provided pre-extracted document content into clean Markdown and extract structured metadata. Never fabricate facts that are not present in the input. Preserve the document's structure faithfully.
+    system: withOwnOrgLine(
+      `You are a precise document parsing assistant. Convert the provided pre-extracted document content into clean Markdown and extract structured metadata. Never fabricate facts that are not present in the input. Preserve the document's structure faithfully.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For Office documents specifically: the 'author/sender' is whoever you extract into the \`senders\` field (cover, byline, signature block, slide-deck author). Don't include them in mentionedPeople. Only emit third parties referenced in the document body. When inferring organization from the author's affiliation, only do so if the document itself states the author's company unambiguously (letterhead, slide template with company, signature with affiliation).`,
+      ai,
+    ),
     prompt: buildLlmPrompt({ format, fileName, extracted }),
   })
   const analysis = result.output

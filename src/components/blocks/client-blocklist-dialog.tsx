@@ -49,7 +49,7 @@ const KIND_OPTIONS: { value: BlocklistKind; label: string }[] = [
 ]
 
 const KIND_PLACEHOLDER: Record<BlocklistKind, string> = {
-  company: "напр. ООО АСТ",
+  company: "напр. ООО Норлекс",
   domain: "напр. example.com",
   email: "напр. noreply@example.com",
   person: "напр. Иван Петров",

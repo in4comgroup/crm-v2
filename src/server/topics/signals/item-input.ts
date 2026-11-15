@@ -183,6 +183,19 @@ export function itemHeaders(metadataJson: unknown): Record<string, string> | nul
   return Object.keys(out).length ? out : null
 }
 
+/**
+ * Identity spec Q9: the parse-time fact «author and every recipient are ours»
+ * (`metadata_json.orgAttribution.allInternal`). Null when the item was parsed
+ * before the fact existed.
+ */
+export function storedAllInternal(metadataJson: unknown): boolean | null {
+  const m = (metadataJson ?? {}) as Record<string, unknown>
+  const a = m.orgAttribution
+  if (!a || typeof a !== "object") return null
+  const v = (a as Record<string, unknown>).allInternal
+  return typeof v === "boolean" ? v : null
+}
+
 export function envelopeFromItem(item: {
   provider: string | null
   externalType: string | null
@@ -227,6 +240,8 @@ export function envelopeFromItem(item: {
     to: formatAddrs(m.to),
     cc: formatAddrs(m.cc),
     orgAttribution: item.orgAttribution,
+    // A forward is never «internal» (its author is the original sender).
+    allInternal: storedAllInternal(item.metadataJson) === true && !forwardedBy && !originalAuthor,
     forwardedBy,
     originalAuthor,
   }

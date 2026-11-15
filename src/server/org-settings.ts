@@ -69,6 +69,14 @@ export const ORG_SETTINGS = {
   // policy. null here AND on the platform = unknown → the condition is false.
   "deals.maxDeferralDays": { schema: z.number().int().min(0).max(3650).nullable(), default: null as number | null },
   "deals.maxCreditLimitRub": { schema: z.number().min(0).nullable(), default: null as number | null },
+  // Identity I4 (docs/specs/identity §3.6): put the «О нашей компании» block
+  // and the client profile summary into the TOPICS prompts (extraction,
+  // matcher, card writer, deal state). Default false — switched on per org by
+  // a platform admin after the golden-set eval shows no drop in quality.
+  "identity.promptContext": { schema: z.boolean(), default: false },
+  // Identity I6 (Q6): web enrichment of a NEW client right after create.
+  // Default false — expensive (AI + web search per client).
+  "clients.enrichOnCreate": { schema: z.boolean(), default: false },
 } as const
 
 export type OrgSettingKey = keyof typeof ORG_SETTINGS

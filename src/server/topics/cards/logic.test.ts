@@ -44,11 +44,11 @@ function att(p: Partial<TopicAttention> = {}): TopicAttention {
 }
 
 const TEXT: TopicCardText = {
-  headline: "Ромашка — отправить КП, чтобы не потерять заказ",
+  headline: "Норлекс — отправить КП, чтобы не потерять заказ",
   whyNow: "Клиент напомнил про КП на корпоратив",
   whatChanged: "Клиент напомнил",
   steps: ["Подготовить КП", "Отправить КП закупщику"],
-  taskTitle: "Отправить КП Ромашке",
+  taskTitle: "Отправить КП Норлексу",
 }
 
 describe("word limits", () => {
@@ -60,7 +60,7 @@ describe("word limits", () => {
 
   it("cleans list markers and quotes", () => {
     expect(trimWords("1. Позвонить клиенту", 10)).toBe("Позвонить клиенту")
-    expect(trimWords("«Ромашка — отправить КП»", 10)).toBe("Ромашка — отправить КП")
+    expect(trimWords("«Норлекс — отправить КП»", 10)).toBe("Норлекс — отправить КП")
   })
 
   it("applies the §9.1 limits", () => {

@@ -11,13 +11,13 @@ import { buildCounterpartyIndex, resolveCounterparty } from "./counterparty"
 
 const idx = buildCounterpartyIndex(
   [
-    { id: "c-ast", name: "AST – Российская Алкогольная Компания", aliases: ["АСТ"], webUrl: "https://www.ast.ru", email: null },
-    { id: "c-romashka", name: "ООО «Ромашка»", aliases: null, webUrl: null, email: "info@romashka.ru" },
-    { id: "c-dup1", name: "Вектор", aliases: null, webUrl: null, email: null },
-    { id: "c-dup2", name: "Vektor", aliases: null, webUrl: null, email: null },
+    { id: "c-acme", name: "Acme – Trading Company", aliases: ["Акме"], webUrl: "https://www.acme.example", email: null },
+    { id: "c-norlex", name: "ООО «Норлекс»", aliases: null, webUrl: null, email: "info@norlex.example" },
+    { id: "c-dup1", name: "Квант-Сервис", aliases: null, webUrl: null, email: null },
+    { id: "c-dup2", name: "Kvant-Servis", aliases: null, webUrl: null, email: null },
   ],
   [
-    { id: "p-anna", name: "Anna Sidorova", nameNative: "Анна Сидорова", aliases: null, email: "anna@ast.ru", clientId: "c-ast" },
+    { id: "p-anna", name: "Anna Sidorova", nameNative: "Анна Сидорова", aliases: null, email: "anna@acme.example", clientId: "c-acme" },
     { id: "p-ivan", name: "Иван Петров", nameNative: null, aliases: ["@ivan_buyer"], email: null, clientId: null },
     { id: "p-gmail", name: "Олег", nameNative: null, aliases: null, email: "oleg@gmail.com", clientId: null },
   ],
@@ -25,36 +25,36 @@ const idx = buildCounterpartyIndex(
 
 describe("counterparty resolution (spec §6.2 step 1)", () => {
   it("client by name across scripts and legal forms", () => {
-    expect(resolveCounterparty("ООО АСТ", null, idx)).toMatchObject({ clientId: "c-ast", contactId: null })
-    expect(resolveCounterparty("Ромашка", null, idx).clientId).toBe("c-romashka")
+    expect(resolveCounterparty("ООО Акме", null, idx)).toMatchObject({ clientId: "c-acme", contactId: null })
+    expect(resolveCounterparty("Норлекс", null, idx).clientId).toBe("c-norlex")
   })
 
   it("ambiguous name → not resolved", () => {
-    expect(resolveCounterparty("Вектор", null, idx).clientId).toBeNull()
+    expect(resolveCounterparty("Квант-Сервис", null, idx).clientId).toBeNull()
   })
 
   it("unknown string + known sender email → the sender's contact and client", () => {
-    const r = resolveCounterparty("какая-то фирма", { email: "anna@ast.ru", name: "Anna", handle: null }, idx)
-    expect(r).toMatchObject({ clientId: "c-ast", contactId: "p-anna" })
+    const r = resolveCounterparty("какая-то фирма", { email: "anna@acme.example", name: "Anna", handle: null }, idx)
+    expect(r).toMatchObject({ clientId: "c-acme", contactId: "p-anna" })
   })
 
   it("named client + peer of that client → contact added", () => {
-    expect(resolveCounterparty("AST", { email: "anna@ast.ru", name: null, handle: null }, idx)).toMatchObject({
-      clientId: "c-ast",
+    expect(resolveCounterparty("Acme", { email: "anna@acme.example", name: null, handle: null }, idx)).toMatchObject({
+      clientId: "c-acme",
       contactId: "p-anna",
     })
   })
 
   it("named client + peer of ANOTHER company → no contact", () => {
-    expect(resolveCounterparty("Ромашка", { email: "anna@ast.ru", name: null, handle: null }, idx)).toMatchObject({
-      clientId: "c-romashka",
+    expect(resolveCounterparty("Норлекс", { email: "anna@acme.example", name: null, handle: null }, idx)).toMatchObject({
+      clientId: "c-norlex",
       contactId: null,
     })
   })
 
   it("sender domain → client when no contact matches", () => {
-    expect(resolveCounterparty("", { email: "new.person@ast.ru", name: null, handle: null }, idx)).toMatchObject({
-      clientId: "c-ast",
+    expect(resolveCounterparty("", { email: "new.person@acme.example", name: null, handle: null }, idx)).toMatchObject({
+      clientId: "c-acme",
       contactId: null,
     })
   })
@@ -71,7 +71,7 @@ describe("counterparty resolution (spec §6.2 step 1)", () => {
   })
 
   it("person name in the subject (native script) → contact + its client", () => {
-    expect(resolveCounterparty("Сидорова Анна", null, idx)).toMatchObject({ clientId: "c-ast", contactId: "p-anna" })
+    expect(resolveCounterparty("Сидорова Анна", null, idx)).toMatchObject({ clientId: "c-acme", contactId: "p-anna" })
   })
 
   it("nothing known → nulls, raw key kept", () => {
@@ -104,14 +104,14 @@ describe("references and titles", () => {
   })
 
   it("short company name strips legal forms and quotes", () => {
-    expect(shortCompanyName("ООО «Ромашка»")).toBe("Ромашка")
-    expect(shortCompanyName('АО "Вектор"')).toBe("Вектор")
-    expect(shortCompanyName("IN4COM GmbH")).toBe("IN4COM")
+    expect(shortCompanyName("ООО «Норлекс»")).toBe("Норлекс")
+    expect(shortCompanyName('АО "Квант-Сервис"')).toBe("Квант-Сервис")
+    expect(shortCompanyName("Globex GmbH")).toBe("Globex")
     expect(shortCompanyName("ИП Иванов")).toBe("Иванов")
   })
 
   it("title: company — matter; contact-only; no counterparty", () => {
-    expect(buildTopicTitle({ companyName: "ООО «Ромашка»", matter: "счёт 124 за октябрь" })).toBe("Ромашка — счёт 124 за октябрь")
+    expect(buildTopicTitle({ companyName: "ООО «Норлекс»", matter: "счёт 124 за октябрь" })).toBe("Норлекс — счёт 124 за октябрь")
     expect(buildTopicTitle({ contactName: "Иван Петров", matter: "прайс" })).toBe("Иван Петров — прайс")
     expect(buildTopicTitle({ matter: "заказ" })).toBe("заказ")
     expect(buildTopicTitle({ counterpartyRaw: "ООО Альфа", matter: "" })).toBe("Альфа — без темы")

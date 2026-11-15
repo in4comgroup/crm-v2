@@ -26,6 +26,7 @@ import {
 } from "@/components/blocks/cards-feed-section"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { TopicListsSection } from "@/components/blocks/topic-lists-section"
+import { OrgProfileBanner } from "@/components/blocks/org-profile-banner"
 
 function isoDateNDaysAgo(days: number): string {
   const d = new Date()
@@ -168,6 +169,9 @@ export default function DashboardPage() {
           </div>
           <PageHeaderActions />
         </div>
+
+        {/* Owner only, while «Профиль организации» is incomplete (identity I1). */}
+        <OrgProfileBanner />
 
         {/* Filters of the read-only card history: priority / category,
             dates, period presets, rejected cards. */}

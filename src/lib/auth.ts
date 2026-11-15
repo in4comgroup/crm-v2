@@ -7,6 +7,7 @@ import { sendEmails } from "@/lib/email"
 import { organization, admin, emailOTP } from "better-auth/plugins"
 import { apiKey } from "@better-auth/api-key"
 import { nextCookies } from "better-auth/next-js"
+import { APIError } from "better-auth/api"
 import { getActiveOrganization } from "@/server/organizations"
 import {
   uniqueUsernameGenerator,
@@ -20,6 +21,15 @@ const config: Config = {
   separator: "-",
   length: 30,
   style: "lowerCase",
+}
+
+async function invalidateOwnOrg(organizationId: string): Promise<void> {
+  try {
+    const { invalidateOwnOrgContext } = await import("@/server/identity/own-org")
+    invalidateOwnOrgContext(organizationId)
+  } catch (err) {
+    console.error("[auth] invalidateOwnOrgContext failed:", err instanceof Error ? err.message : err)
+  }
 }
 
 export const auth = betterAuth({
@@ -180,6 +190,25 @@ export const auth = betterAuth({
             phone: { type: "string", input: true, required: false },
           },
         },
+      },
+      // Identity spec I1 §3.4: only the org OWNER edits the organization
+      // (better-auth's default access control also lets `admin`). The «us»
+      // resolver cache is dropped after every org / member change.
+      // (Lazy import — own-org.ts pulls the DB layer, avoid an import cycle.)
+      organizationHooks: {
+        beforeUpdateOrganization: async ({ member }) => {
+          if (member.role !== "owner") {
+            throw new APIError("FORBIDDEN", {
+              message: "Данные организации может менять только владелец",
+            })
+          }
+        },
+        afterUpdateOrganization: async ({ organization, member }) => {
+          await invalidateOwnOrg(organization?.id ?? member.organizationId)
+        },
+        afterAddMember: async ({ organization }) => invalidateOwnOrg(organization.id),
+        afterRemoveMember: async ({ organization }) => invalidateOwnOrg(organization.id),
+        afterAcceptInvitation: async ({ organization }) => invalidateOwnOrg(organization.id),
       },
       async sendInvitationEmail(data) {
         const appUrl =

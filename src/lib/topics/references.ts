@@ -79,7 +79,7 @@ const LEGAL_FORMS =
 /**
  * Short display name of a company: legal form and quotes removed, spacing
  * collapsed, original script and case kept.
- *   «ООО "Ромашка"» → «Ромашка»;  «АО «Вектор»» → «Вектор»;  «IN4COM GmbH» → «IN4COM»
+ *   «ООО "Норлекс"» → «Норлекс»;  «АО «Квант-Сервис»» → «Квант-Сервис»;  «Globex GmbH» → «Globex»
  */
 export function shortCompanyName(raw: string): string {
   let s = raw.replace(/["«»“”„']/g, " ")

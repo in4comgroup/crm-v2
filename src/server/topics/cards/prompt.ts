@@ -65,6 +65,13 @@ export type CardWriterInput = {
   } | null
   /** R17 / admin: the card must be rewritten (UPDATE), with this reason. */
   force: string | null
+  /**
+   * Identity I4 (only with `identity.promptContext`): our org name + role and
+   * our product names. Absent / null → the prompt is the pre-I4 text.
+   */
+  org?: { roleLine: string; productsLine: string } | null
+  /** Identity I4: «Профиль клиента «…»: …» of the topic's client ("" / null = none). */
+  clientProfile?: string | null
 }
 
 export type CardWriter = (input: CardWriterInput) => Promise<CardWriterOutput>
@@ -76,11 +83,11 @@ export const CARD_WRITER_SYSTEM = `Ты пишешь карточку для м�
 Пиши по-русски, коротко, деловым языком.
 
 Поля карточки:
-- headline — до ${L.headlineWords} слов, строго в форме «<Компания> — <наше действие>, <цель>». Например: «Ромашка — отправить КП на корпоратив, чтобы не потерять заказ».
+- headline — до ${L.headlineWords} слов, строго в форме «<Компания> — <наше действие>, <цель>». Например: «Норлекс — отправить КП на корпоратив, чтобы не потерять заказ».
 - whyNow — «Почему сейчас», до ${L.whyNowWords} слов: что произошло и почему нужно действовать.
 - whatChanged — «Что изменилось» с прошлой версии карточки, до ${L.whatChangedWords} слов. Пустая строка, если карточки ещё не было или по делу ничего не изменилось.
 - steps — от 1 до ${L.maxSteps} шагов, каждый до ${L.stepWords} слов, в повелительном наклонении («Отправить…», «Позвонить…»). Без нумерации в тексте.
-- taskTitle — название задачи до ${L.taskTitleWords} слов («Отправить КП Ромашке»).
+- taskTitle — название задачи до ${L.taskTitleWords} слов («Отправить КП Норлексу»).
 
 Правила:
 1. Только факты из входных данных. Не придумывай даты, суммы, номера, имена, сроки. Если даты нет — не пиши её.
@@ -108,10 +115,20 @@ export function buildCardWriterPrompt(input: CardWriterInput): string {
   const lines: string[] = []
   lines.push(`Сегодня: ${input.today}`)
   lines.push("")
+  const orgLines = [input.org?.roleLine ?? "", input.org?.productsLine ?? ""].map((l) => l.trim()).filter(Boolean)
+  if (orgLines.length) {
+    lines.push("НАША КОМПАНИЯ")
+    lines.push(...orgLines)
+    lines.push(
+      "Шаги — о наших продуктах и услугах; ничего сверх них не обещай. Если компания из темы продаёт нам, мы — покупатель.",
+    )
+    lines.push("")
+  }
   lines.push("ТЕМА")
   lines.push(`Название: ${t.title}`)
   lines.push(`Вопрос: ${t.matter || "—"}`)
   lines.push(`Компания: ${t.counterparty || "—"}`)
+  if (input.clientProfile && input.clientProfile.trim()) lines.push(input.clientProfile.trim())
   lines.push(`Статус: ${WAITING_RU[t.waiting]}`)
   if (t.leadCode) lines.push(`Главный сигнал: ${t.leadLabelRu ?? t.leadCode}${t.class ? ` (${CLASS_RU[t.class]})` : ""}`)
   if (t.leadNoteRu) lines.push(`Подсказка к карточке: ${t.leadNoteRu}`)

@@ -35,6 +35,7 @@ const INTERNAL_SEARCH_PROMPT = `## Internal search — the user's own records
 
 **Rules:**
 - The user sees the matched clients / contacts / deals / sources rendered as cards directly below your summary — each with its own "open detail" button — plus a count header. **Do NOT** enumerate every entity or paste source bodies in your prose, and **do NOT** emit json-render specs; just write the summary. The cards handle browsing.
+- A matched client may carry \`profile\` — its stored business profile (industry, role, what it does, size, needs). Use it to describe the client; it is CRM data, not a web result.
 - Never expose source/entity ids in the user-facing answer — they are internal.`
 
 // Web search — our own `searchWeb` function tool (src/server/web-search.ts).
@@ -59,11 +60,26 @@ You have ONE job: answer the question with whatever combination of tools it need
 - A question about a counterparty ("расскажи про клиента X") usually wants BOTH: call \`searchEverything\` first, then \`searchWeb\` with the name you confirmed internally. Label which part came from where — "в CRM: …", "в интернете: …".
 - Never claim you cannot look something up while you still hold an unused tool for it, and never write a fake tool call (a \`tool_code\` block, \`print(...)\`, or pseudo-code) into your answer. Either call the tool for real or say plainly that you do not have it.`
 
+// Identity spec I4 (§3.6 «AI chat»): the org's «О нашей компании» card
+// (`OwnOrgContext.promptCard`, Russian, deterministic, ≤ 1,500 chars) so the
+// answers know whose CRM this is and what the business does.
+function orgSection(orgCard: string): string {
+  return `## The user's organization
+
+The user works for this organization — it owns this CRM. "We" / "our" / "мы" / "наш" in a question mean this organization; it is never one of the clients.
+
+${orgCard}`
+}
+
 export function buildSystemPrompt(opts: {
   internal: boolean
   web: boolean
+  /** `promptCard` of the active org; empty / absent → no org section. */
+  orgCard?: string | null
 }): string {
   const parts = [BASE_PROMPT]
+  const orgCard = opts.orgCard?.trim()
+  if (orgCard) parts.push(orgSection(orgCard))
   if (opts.internal) parts.push(INTERNAL_SEARCH_PROMPT)
   if (opts.web) parts.push(WEB_SEARCH_PROMPT)
   if (opts.internal && opts.web) parts.push(UNIFIED_SEARCH_PROMPT)

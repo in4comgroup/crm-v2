@@ -9,7 +9,7 @@ import {
   type OrderLinkState,
 } from "./orders-link-plan"
 
-const TZ = "Europe/Moscow"
+const TZ = "Etc/GMT-3"
 const now = new Date("2026-11-14T12:00:00Z")
 const ORDER = "ord-1"
 

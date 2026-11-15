@@ -337,7 +337,7 @@ describe("resolver mechanics", () => {
       pool,
       item({
         date: "2026-11-10T09:00:00Z",
-        subjects: [subject({ clientId: "client-other", counterparty: "Вектор", counterpartyKey: "vektor", companyName: "Вектор" })],
+        subjects: [subject({ clientId: "client-other", counterparty: "Квант-Сервис", counterpartyKey: "kvant", companyName: "Квант-Сервис" })],
         instances: [inst("SALES_PRICE_REQUEST")],
       }),
       ctx(NEVER),

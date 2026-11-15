@@ -358,14 +358,12 @@ function HintsView({
           value={hints.address}
           onChange={set("address")}
           changed={false}
-          placeholder="Москва"
         />
         <FieldRow
           label="Телефон"
           value={hints.phone}
           onChange={set("phone")}
           changed={false}
-          placeholder="+7 495 123 4567"
         />
         <FieldRow
           label="Email"
@@ -564,7 +562,6 @@ function EditView({
           value={draft.phone}
           onChange={(v) => apply("phone", v)}
           changed={isChanged("phone")}
-          placeholder="+7 495 123 4567"
           suggestion={suggestion("phone")}
           onApplySuggestion={(v) => apply("phone", v)}
         />

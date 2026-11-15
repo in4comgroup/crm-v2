@@ -119,8 +119,8 @@ describe("prompt", () => {
   it("lists items with ids, risks with ids and the previous text", () => {
     const input: DealStateInput = {
       dealId: "d1",
-      dealName: "Ромашка — новая точка",
-      clientName: "Ромашка",
+      dealName: "Норлекс — новая точка",
+      clientName: "Норлекс",
       stageName: "Квалификация",
       statusRu: "активна",
       dealTypeLabel: "Новая точка",
@@ -129,7 +129,7 @@ describe("prompt", () => {
       topics: [
         {
           id: "t1",
-          title: "Ромашка — ассортимент",
+          title: "Норлекс — ассортимент",
           statusRu: "Открыта",
           waitingRu: "ждут нас",
           leadCodeLabel: "Запрошено КП",
@@ -140,7 +140,7 @@ describe("prompt", () => {
           lastEvents: [],
         },
       ],
-      items: [{ id: "a1", date: "2026-11-10 10:00", directionRu: "от клиента", topicTitle: "Ромашка — ассортимент", from: null, subject: "КП", excerpt: "Пришлите КП" }],
+      items: [{ id: "a1", date: "2026-11-10 10:00", directionRu: "от клиента", topicTitle: "Норлекс — ассортимент", from: null, subject: "КП", excerpt: "Пришлите КП" }],
       risks: [{ id: "r1", labelRu: "Решение откладывается", descriptionRu: "…", severity: 6, evidence: ["Пока не готовы"], sourceItemIds: ["a1"] }],
       previousText: null,
       today: "2026-11-14",
@@ -150,4 +150,33 @@ describe("prompt", () => {
     expect(p).toContain("### riskId: r1")
     expect(p).toContain("— (ещё нет)")
   })
+
+  it("identity I4: org line + client profile only when given; off = unchanged", () => {
+    const input: DealStateInput = {
+      dealId: "d1",
+      dealName: "Норлекс — поставка",
+      clientName: "Норлекс",
+      stageName: "Квалификация",
+      statusRu: "активна",
+      dealTypeLabel: null,
+      amount: null,
+      pausedUntil: null,
+      topics: [],
+      items: [],
+      risks: [],
+      previousText: null,
+      today: "2026-11-14",
+    }
+    const off = buildDealStatePrompt(input)
+    expect(off).not.toContain("## Наша компания")
+    expect(buildDealStatePrompt({ ...input, orgRoleLine: "", clientProfile: null })).toBe(off)
+    const on = buildDealStatePrompt({
+      ...input,
+      orgRoleLine: "Наша компания: Альфа — производитель.",
+      clientProfile: "Профиль клиента «Норлекс»: отрасль: розница",
+    })
+    expect(on).toContain("## Наша компания\nНаша компания: Альфа — производитель.")
+    expect(on).toContain("Клиент: Норлекс\nПрофиль клиента «Норлекс»: отрасль: розница")
+  })
 })
+

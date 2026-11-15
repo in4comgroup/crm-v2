@@ -14,20 +14,25 @@ import {
 } from "@/db/schema"
 import { detachSourceItemFromTopics } from "@/server/topics/topic-store"
 import {
+  buildOwnOrgPromptLine,
   parserAiContext,
   type MetadataAnalysis,
   type ParserAiContext,
 } from "@/server/parsers/_shared"
 import {
-  loadOwnOrgIdentity,
-  getOrgIdentity,
+  orgIdentityFromContext,
+  ownOrgIdentityFromContext,
   type OwnOrgIdentity,
 } from "@/server/org-identity"
 import {
   extractAuthorEmails,
+  extractAuthorTelegramHandle,
   resolveOrgAttribution,
   type OrgAttributionResult,
 } from "@/server/parsers/org-attribution"
+import { getOwnOrgContext, type OwnOrgContext } from "@/server/identity/own-org"
+import { computeAllInternal } from "@/lib/identity/own-org-sets"
+import { detectForward } from "@/lib/ru-mail"
 import { companyMatchKey } from "@/lib/translit-ru"
 import { extractWebsiteDomain } from "@/lib/email-domain"
 import { PARSER_CONFIG } from "@/lib/parser-config"
@@ -231,6 +236,10 @@ type ParseContext = {
   // consumers (discovery, cards, deals, chat search) never see the owner's own
   // org as if it were a client. No-op when the org profile has no website/email.
   ownOrg: OwnOrgIdentity
+  // The org's «us» context (identity spec §3.5), loaded ONCE per parse; the
+  // source of `ownOrg`, the attribution identity, `allInternal` and the
+  // parser prompts' «this is us» line. Null for a row with no organization.
+  ownCtx: OwnOrgContext | null
   // The parent's org-attribution verdict, computed by `markParsed` and read by
   // `insertParsedChild` so children inherit it (an attachment of our own email
   // is ours). Mutated in-place during the parent's `markParsed`; children are
@@ -417,6 +426,8 @@ async function loadParseContext(
     }
   })()
 
+  const ownCtx = row.organizationId ? await getOwnOrgContext(row.organizationId) : null
+
   const sourceSystemLabel = (() => {
     switch (row.provider) {
       case "nylas":
@@ -450,9 +461,12 @@ async function loadParseContext(
     sourceSystemLabel,
     metadataJson: (row.metadataJson as Record<string, unknown> | null) ?? {},
     credentialsRef: row.credentialsRef,
-    ownOrg: await loadOwnOrgIdentity(row.organizationId),
-    // A row without an organization (system source) is a system call.
-    ai: parserAiContext(row.organizationId, userId),
+    ownOrg: ownOrgIdentityFromContext(ownCtx),
+    ownCtx,
+    // A row without an organization (system source) is a system call. The
+    // context carries the «this is us — leave it out of companies» line
+    // (identity spec I4); "" for an org with no name and no own domain.
+    ai: parserAiContext(row.organizationId, userId, buildOwnOrgPromptLine(ownCtx)),
   }
 }
 
@@ -1348,10 +1362,12 @@ async function computeOrgAttribution(
   if (!ctx.organizationId) {
     return { value: "unknown", confidence: "low", matchedOn: [], reason: "No organization" }
   }
-  const orgIdentity = await getOrgIdentity(ctx.organizationId)
+  const ownCtx = ctx.ownCtx ?? (await getOwnOrgContext(ctx.organizationId))
+  const orgIdentity = orgIdentityFromContext(ownCtx)
   const authorEmails = extractAuthorEmails(ctx.metadataJson, ctx.provider)
-  return resolveOrgAttribution({
+  const result = await resolveOrgAttribution({
     authorEmails,
+    authorTelegram: extractAuthorTelegramHandle(ctx.metadataJson),
     contentHaystack: markdown,
     orgIdentity,
     organizationId: ctx.organizationId,
@@ -1359,6 +1375,19 @@ async function computeOrgAttribution(
     // never pay for the judge there.
     enableLlmJudge: ctx.provider !== "whatsapp",
   }, ctx.ai)
+  // Identity spec Q9: author AND every recipient ours → internal mail
+  // (stored as metadata_json.orgAttribution.allInternal; signal extraction
+  // then fixes the direction to `internal` without the model). A forward is
+  // never «internal»: its real author is the ORIGINAL sender (topics §5.3).
+  const subject = typeof ctx.metadataJson.subject === "string" ? ctx.metadataJson.subject : null
+  const allInternal =
+    result.value === "own_org" &&
+    !detectForward(markdown, subject).isForward &&
+    computeAllInternal(
+      ctx.metadataJson,
+      (e) => ownCtx.matchEmail(e) !== null,
+    )
+  return { ...result, allInternal }
 }
 
 async function markParsed(

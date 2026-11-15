@@ -2,7 +2,7 @@
 // matching. No DB, no server-only imports — safe to import anywhere.
 //
 // Motivation: the same company is routinely written both in Cyrillic and in
-// Latin within one thread — "АСТ" / "AST", "Вектор" / "Vektor". A plain
+// Latin within one thread — "Норлекс" / "Norleks", "Квант" / "Vektor". A plain
 // lowercase+strip key (normaliseCompanyName) keeps those as DISTINCT keys
 // ("аст" vs "ast"), so discovery proposes two clients for one real company.
 // Transliterating to a common Latin form before keying collapses them.
@@ -24,8 +24,8 @@ const RU_TO_LAT: Record<string, string> = {
  * Non-Cyrillic characters pass through unchanged. Case-folds to lowercase
  * (we only use the result as a match key). Returns the input lowercased when
  * it contains no Cyrillic.
- *   "АСТ"     → "ast"
- *   "Вектор"  → "vektor"
+ *   "Норлекс"     → "ast"
+ *   "Квант"  → "kvant"
  *   "Acme"    → "acme"
  */
 export function transliterateRu(input: string): string {
@@ -38,7 +38,7 @@ export function transliterateRu(input: string): string {
 }
 
 // Russian legal-entity forms, written as PREFIXES (unlike Western suffixes):
-// "ООО АСТ", "ЗАО Вектор". Stripped in transliterated form before the
+// "ООО Норлекс", "ЗАО Квант". Stripped in transliterated form before the
 // suffix-oriented `normaliseCompanyName` runs. Longer first.
 const RU_LEGAL_PREFIXES = ["oao", "pao", "zao", "ooo", "ip", "ao", "nko", "gup", "mup"]
 
@@ -46,7 +46,7 @@ const RU_LEGAL_PREFIXES = ["oao", "pao", "zao", "ooo", "ip", "ao", "nko", "gup",
  * Cross-script canonical key for company dedup. Transliterates Cyrillic to
  * Latin, strips Russian legal-form PREFIXES (ООО/ЗАО/…), THEN runs the normal
  * company normaliser (strips Western legal suffixes + punctuation, keeps
- * alphanumerics). So "АСТ", "AST", "ООО АСТ", "AST LLC" all collapse to "ast".
+ * alphanumerics). So "Норлекс", "Norleks", "ООО Норлекс", "Norleks LLC" all collapse to "ast".
  *
  * Use this instead of `normaliseCompanyName` wherever cross-script matching
  * matters (discovery dedup). Returns "" for pure-suffix garbage.

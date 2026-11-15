@@ -7,17 +7,92 @@ import { aiCallInfo } from "@/server/ai/runtime"
 // §6). `orgId` = the source item's organization; `userId` = the signed-in
 // user on manual paths (upload / parse / process / fetch routes), null on
 // cron and webhook paths. A call with no organization must say `systemCall`.
-export type ParserAiContext =
+//
+// `ownOrgLine` (identity spec I4, §3.6 «parsing.email / chat parsers»): the
+// short «this is us — leave it out of companies» line, built once per parse by
+// `buildOwnOrgPromptLine`. Parsers append it to their system prompt via
+// `withOwnOrgLine` and spread `parserCallContext(ai)` (never `ai` itself) into
+// the runtime, so the line never reaches the SDK as a call parameter.
+export type ParserAiContext = (
   | { orgId: string; userId: string | null; systemCall?: false }
   | { orgId: null; userId: string | null; systemCall: true }
+) & { ownOrgLine?: string }
 
 export function parserAiContext(
   orgId: string | null,
   userId: string | null,
+  ownOrgLine?: string,
 ): ParserAiContext {
+  const line = ownOrgLine?.trim() ? { ownOrgLine: ownOrgLine.trim() } : {}
   return orgId
-    ? { orgId, userId }
-    : { orgId: null, userId, systemCall: true }
+    ? { orgId, userId, ...line }
+    : { orgId: null, userId, systemCall: true, ...line }
+}
+
+/** The runtime call fields of a parser context (drops `ownOrgLine`). */
+export function parserCallContext(
+  ai: ParserAiContext,
+):
+  | { orgId: string; userId: string | null; systemCall?: false }
+  | { orgId: null; userId: string | null; systemCall: true } {
+  return ai.orgId
+    ? { orgId: ai.orgId, userId: ai.userId }
+    : { orgId: null, userId: ai.userId, systemCall: true }
+}
+
+/** Appends the context's «this is us» line to a parser system prompt. */
+export function withOwnOrgLine(system: string, ai: ParserAiContext): string {
+  const line = ai.ownOrgLine?.trim()
+  return line ? `${system}\n\n${line}` : system
+}
+
+const OWN_ORG_LINE_MAX_NAMES = 6
+const OWN_ORG_LINE_MAX_DOMAINS = 8
+
+/**
+ * Identity spec I4: the 1–2 line hint that tells a parser model which
+ * organization is the CRM owner, so its `companies` / `organizations` lists
+ * leave it out (the post-LLM `filterAnalysisOwnOrg` strip stays as the safety
+ * net). Deterministic; "" when the org has no name and no own domain.
+ * Pure — takes the plain fields of `OwnOrgContext`.
+ */
+export function buildOwnOrgPromptLine(
+  ctx: {
+    exists: boolean
+    name: string
+    identity: { nameLabels: string[]; ownDomains: string[] }
+  } | null,
+): string {
+  if (!ctx || !ctx.exists) return ""
+  const name = ctx.name.trim()
+  const nameKey = name.toLowerCase()
+  const seen = new Set<string>(nameKey ? [nameKey] : [])
+  const others: string[] = []
+  for (const raw of ctx.identity.nameLabels) {
+    const label = (raw ?? "").trim()
+    const key = label.toLowerCase()
+    if (!label || seen.has(key)) continue
+    seen.add(key)
+    others.push(label)
+    if (others.length >= OWN_ORG_LINE_MAX_NAMES) break
+  }
+  const domains = [...new Set(ctx.identity.ownDomains.map((d) => d.trim()).filter(Boolean))].slice(
+    0,
+    OWN_ORG_LINE_MAX_DOMAINS,
+  )
+  const primary = name || others.shift() || ""
+  if (!primary && domains.length === 0) return ""
+  const parts: string[] = []
+  if (primary) {
+    parts.push(
+      `Our own organization (the CRM owner) is "${primary}"${others.length > 0 ? ` (also known as: ${others.join(", ")})` : ""}.`,
+    )
+  }
+  if (domains.length > 0) parts.push(`Our domains: ${domains.join(", ")}.`)
+  parts.push(
+    "Never list our own organization in `companies` or `organizations` — list only the OTHER companies.",
+  )
+  return parts.join(" ")
 }
 
 // The model that actually answered a parser call (after any fallback) —
@@ -112,7 +187,7 @@ export const organizationDetailSchema = z.object({
   webUrl: z
     .string()
     .describe(
-      "The company's website if it is determinable from the body — e.g. a URL in the signature, or the sender's own email domain when the sender clearly belongs to this company (alice@ast-inter.ru, signing for АСТ → 'https://ast-inter.ru'). Empty string when you cannot tell. Never fabricate.",
+      "The company's website if it is determinable from the body — e.g. a URL in the signature, or the sender's own email domain when the sender clearly belongs to this company (alice@example-trade.com, signing for «Example Trade» → 'https://example-trade.com'). Empty string when you cannot tell. Never fabricate.",
     ),
 })
 
@@ -306,7 +381,7 @@ export function filterParticipantDetails(
 // Appended after the flat-companies instruction. Asks the model to also emit
 // one structured entry PER DISTINCT real-world company, folding spelling
 // variants together rather than listing them as separate companies.
-export const ORGANIZATIONS_PROMPT = `Also emit \`organizations\`: one entry per DISTINCT real-world company referenced in the message, with {name, aliases, webUrl}. This is the structured counterpart to the flat \`companies\` list — fold spelling variants of the SAME company into ONE entry (its other-script form, the form with/without legal type like ООО/LLC/GmbH, an abbreviation, or a brand visible in the email domain) and put the secondary spellings in \`aliases\`. Set \`webUrl\` from the signature, or from the sender's own email domain when the sender clearly belongs to that company (e.g. someone signing for "АСТ" from alice@ast-inter.ru → "https://ast-inter.ru"). Leave \`webUrl\` empty when you can't tell. Never fabricate a URL or an alias.`
+export const ORGANIZATIONS_PROMPT = `Also emit \`organizations\`: one entry per DISTINCT real-world company referenced in the message, with {name, aliases, webUrl}. This is the structured counterpart to the flat \`companies\` list — fold spelling variants of the SAME company into ONE entry (its other-script form, the form with/without legal type like ООО/LLC/GmbH, an abbreviation, or a brand visible in the email domain) and put the secondary spellings in \`aliases\`. Set \`webUrl\` from the signature, or from the sender's own email domain when the sender clearly belongs to that company (e.g. someone signing for "Example Trade" from alice@example-trade.com → "https://example-trade.com"). Leave \`webUrl\` empty when you can't tell. Never fabricate a URL or an alias.`
 
 // v1 persist filter for organizations: drop entries with no usable name,
 // dedup aliases (case-insensitive, excluding the name itself), trim the

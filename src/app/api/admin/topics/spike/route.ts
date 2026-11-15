@@ -34,7 +34,11 @@ export {
 //   GET ?runId=                     → { report } (live, from the results)
 //   GET ?runId=&stored=1            → { report, savedAt } (snapshot in topics_eval_run.metrics)
 //   POST { orgId, runId?, limit≤10, variant: single|two_pass, codeSet: live|review,
-//          input: golden|sample, sampleSize≤100 }
+//          input: golden|sample, sampleSize≤100, promptContext?: boolean }
+//                                   promptContext (identity I4, «С профилем
+//                                   организации») forces the org profile in /
+//                                   out of the prompt for a NEW run; omitted =
+//                                   the org setting `identity.promptContext`.
 //                                   → SpikeBatchResult (loop until done)
 //   POST { action: "save", runId }  → { report } (compute + store the snapshot)
 
@@ -114,6 +118,7 @@ export async function POST(request: NextRequest) {
       limit: typeof body.limit === "number" ? body.limit : undefined,
       variant: typeof body.variant === "string" ? (body.variant as ExtractionVariant) : undefined,
       codeSet: typeof body.codeSet === "string" ? (body.codeSet as ExtractionCodeSet) : undefined,
+      promptContext: typeof body.promptContext === "boolean" ? body.promptContext : undefined,
     })
     return NextResponse.json(result)
   } catch (error) {

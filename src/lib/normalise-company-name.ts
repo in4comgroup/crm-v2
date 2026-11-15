@@ -39,7 +39,7 @@ const LEGAL_SUFFIXES = [
 /**
  * Normalise a company name for dedup. Lowercase, drop common legal
  * suffixes (one or more), collapse all non-alphanumerics to nothing.
- * Examples: "IN4COM GmbH" / "in4com" / "IN4COM, Inc." → "in4com".
+ * Examples: "Globex GmbH" / "globex" / "Globex, Inc." → "globex".
  * Returns "" for pure-suffix garbage (e.g. just "GmbH"); callers
  * should drop empty results.
  */

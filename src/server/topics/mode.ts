@@ -1,12 +1,17 @@
 import "server-only"
 
+import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { organization, orgSetting, orgSettingLog } from "@/db/schema"
+import type { Completeness, CompletenessItem } from "@/lib/identity/org-profile"
+import { decideTopicsModeChange, type TopicsModeGateDecision } from "@/lib/identity/topics-gate"
+import { getOrgCompleteness } from "@/server/identity/own-org"
 import {
   getOrgSetting,
   listOrgSettingLog,
   listOrgsWithSetting,
+  setOrgSetting,
   type OrgSettingValue,
 } from "@/server/org-settings"
 
@@ -69,6 +74,10 @@ export type OrgTopicsModeRow = {
   slug: string | null
   mode: TopicsMode
   lastChange: TopicsModeChange | null
+  /** Identity profile minimum (identity spec §3.3): «N из 6» + missing items. */
+  profile: { done: number; total: number; complete: boolean; missing: CompletenessItem[] }
+  /** Identity I4 «Профиль в промптах» (`identity.promptContext`, default off). */
+  promptContext: boolean
 }
 
 function asMode(v: unknown): TopicsMode | null {
@@ -77,17 +86,22 @@ function asMode(v: unknown): TopicsMode | null {
 
 /** Every org with its topics mode and the last change (admin «Темы» tab). */
 export async function listOrgTopicsModes(): Promise<OrgTopicsModeRow[]> {
-  const [orgs, stored] = await Promise.all([
+  const [orgs, stored, promptStored] = await Promise.all([
     db
       .select({ id: organization.id, name: organization.name, slug: organization.slug })
       .from(organization)
       .orderBy(asc(organization.name)),
     listOrgsWithSetting("topics.enabled"),
+    listOrgsWithSetting("identity.promptContext"),
   ])
   const modes = new Map(stored.map((s) => [s.organizationId, s.value]))
+  const promptContext = new Map(promptStored.map((s) => [s.organizationId, s.value]))
   return Promise.all(
     orgs.map(async (o) => {
-      const [last] = await listOrgSettingLog(o.id, "topics.enabled", 1)
+      const [[last], completeness] = await Promise.all([
+        listOrgSettingLog(o.id, "topics.enabled", 1),
+        getOrgCompleteness(o.id),
+      ])
       return {
         organizationId: o.id,
         name: o.name,
@@ -101,9 +115,73 @@ export async function listOrgTopicsModes(): Promise<OrgTopicsModeRow[]> {
               to: asMode(last.newValue),
             }
           : null,
+        profile: profileSummary(completeness),
+        promptContext: promptContext.get(o.id) ?? false,
       }
     }),
   )
+}
+
+/**
+ * Identity I4 «Профиль в промптах»: put the org profile into the topics
+ * prompts of one org (platform admin; logged in `org_setting_log` like every
+ * org setting). Switch on only after the golden-set eval shows no drop.
+ */
+export async function setOrgPromptContext(organizationId: string, enabled: boolean, userId: string): Promise<boolean> {
+  return setOrgSetting(organizationId, "identity.promptContext", enabled, userId)
+}
+
+function profileSummary(c: Completeness): OrgTopicsModeRow["profile"] {
+  return { done: c.done, total: c.total, complete: c.complete, missing: c.missing }
+}
+
+// ── Gate (identity spec I3, §3.3, decision Q4) ────────────────────────────
+
+/** Key of the override rows in `org_setting_log` (next to `topics.enabled`). */
+export const TOPICS_MODE_OVERRIDE_LOG_KEY = "topics.enabled.override"
+
+export type SetTopicsModeResult =
+  | { ok: true; mode: TopicsMode; overridden: boolean }
+  | Extract<TopicsModeGateDecision, { ok: false }>
+
+/**
+ * Change an org's topics mode through the identity gate: `shadow` / `on`
+ * need the profile minimum, unless a platform admin gives an override reason
+ * (≥ 10 chars). An override is logged in `org_setting_log` under
+ * `topics.enabled.override` ({ from, to, reason, missing }) next to the mode
+ * change row. Switching to `off` and re-saving the same mode always pass.
+ * The CALLER checks that the user is a platform admin.
+ */
+export async function setTopicsModeGated(
+  organizationId: string,
+  mode: TopicsMode,
+  userId: string,
+  override?: { reason?: unknown } | null,
+): Promise<SetTopicsModeResult> {
+  // Fresh read (not the 60 s settings cache): «same mode» skips the gate.
+  const [stored] = await db
+    .select({ value: orgSetting.value })
+    .from(orgSetting)
+    .where(and(eq(orgSetting.organizationId, organizationId), eq(orgSetting.key, "topics.enabled")))
+  const from: TopicsMode = asMode(stored?.value) ?? "off"
+  const needsProfile = mode !== "off" && mode !== from
+  const completeness = needsProfile
+    ? await getOrgCompleteness(organizationId)
+    : { done: 0, total: 0, complete: true, missing: [] }
+  const decision = decideTopicsModeChange({ from, to: mode, completeness, override })
+  if (!decision.ok) return decision
+  const saved = await setOrgSetting(organizationId, "topics.enabled", mode, userId)
+  if (decision.overridden) {
+    await db.insert(orgSettingLog).values({
+      id: randomUUID(),
+      organizationId,
+      key: TOPICS_MODE_OVERRIDE_LOG_KEY,
+      oldValue: from,
+      newValue: { from, to: mode, reason: decision.reason, missing: completeness.missing },
+      changedByUserId: userId,
+    })
+  }
+  return { ok: true, mode: saved, overridden: decision.overridden }
 }
 
 /** Last change of one org's mode (for the PUT response). */

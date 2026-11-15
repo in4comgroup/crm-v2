@@ -3,17 +3,14 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Fingerprint } from "lucide-react"
 import type { InferSelectModel } from "drizzle-orm"
 import type { schema } from "@/db/schema"
 import { authClient } from "@/lib/auth-client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Button } from "@/components/ui/button"
 import { LoadingButton } from "@/components/blocks/loading-button"
 import { EditableAvatar } from "@/components/blocks/editable-avatar"
-import { OrgIdentityDialog } from "@/components/blocks/org-identity-dialog"
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard"
 import { blobToDataUrl, resizeImageToSquare } from "@/lib/image-resize"
 
@@ -228,22 +225,6 @@ export function OrganizationInfoForm({
               </div>
             ))}
 
-            {canEdit && (
-              // Own-organisation identity registry: extra names / websites /
-              // addresses used to recognise US during source parsing (see
-              // src/app/AGENTS.md). Owner-only.
-              <OrgIdentityDialog
-                trigger={
-                  <Button variant="outline" className="w-fit">
-                    <Fingerprint />
-                    Своя организация
-                  </Button>
-                }
-                organizationName={baseline.name}
-                organizationWebUrl={baseline.webUrl || null}
-                organizationAddress={baseline.address || null}
-              />
-            )}
           </div>
 
           {canEdit && (

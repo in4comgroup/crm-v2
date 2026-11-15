@@ -1,289 +1,143 @@
 import "server-only"
 
+// Sync views of the one «us» resolver `getOwnOrgContext`
+// (src/server/identity/own-org.ts) in the two older shapes the consumers
+// use: `ownOrgIdentityFromContext` (discovery + parse-time company
+// stripping) and `orgIdentityFromContext` (authorship attribution). The
+// callers load the context ONCE and map it here (identity I4; the async
+// loaders `loadOwnOrgIdentity` / `getOrgIdentity` were deleted 2026-11-15).
+// Plus `loadOrgStaffNames` (input of the attribution judge).
+
+import { and, asc, eq, or, isNull } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { organization, member, user, orgIdentityEntry } from "@/db/schema"
-import { eq } from "drizzle-orm"
-import { companyMatchKey } from "@/lib/translit-ru"
-import { addressMatchKey } from "@/lib/address-match"
-import {
-  domainMatches,
-  extractEmailDomain,
-  extractWebsiteDomain,
-  isFreemailDomain,
-} from "@/lib/email-domain"
+import { member, user } from "@/db/schema"
+import type { OwnOrgContext } from "@/server/identity/own-org"
+import { humanUsersOnly } from "@/server/topics/system-actor"
 
 /**
- * The owner-curated identity registry (`org_identity_entry`) read raw. BOTH
- * identity loaders below fold it in, so a synonym / extra website / address
- * added on /account takes effect everywhere at once: discovery candidate
- * filtering, parse-time company stripping, and authorship attribution.
- *
- * The `organization` profile columns stay the PRIMARY identity — this is
- * strictly additive.
- */
-async function loadRegistry(orgId: string): Promise<{
-  names: { label: string; matchKey: string }[]
-  websites: string[]
-  addressKeys: string[]
-  addressLabels: string[]
-}> {
-  const rows = await db
-    .select({
-      kind: orgIdentityEntry.kind,
-      matchKey: orgIdentityEntry.matchKey,
-      label: orgIdentityEntry.label,
-    })
-    .from(orgIdentityEntry)
-    .where(eq(orgIdentityEntry.organizationId, orgId))
-
-  const names: { label: string; matchKey: string }[] = []
-  const websites: string[] = []
-  const addressKeys: string[] = []
-  const addressLabels: string[] = []
-  for (const r of rows) {
-    if (!r.matchKey) continue
-    if (r.kind === "name") names.push({ label: r.label, matchKey: r.matchKey })
-    else if (r.kind === "website") websites.push(r.matchKey)
-    else if (r.kind === "address") {
-      addressKeys.push(r.matchKey)
-      addressLabels.push(r.label)
-    }
-  }
-  return { names, websites, addressKeys, addressLabels }
-}
-
-/**
- * The CRM owner's OWN identity — its website domain(s), contact-email domain,
- * and company-name match-keys — derived from the `organization` profile
- * (the `name` / `web_url` / `email` fields the operator fills in on `/account`
- * or `/settings`).
- *
- * Used to keep the owner's own company from being mistaken for a client. Emails
- * are usually addressed TO the owner's mailbox (e.g. `in4@in4comgroup.com`), so
- * the owner's domain is the single business domain in many threads — without
- * this guard the owner's own company surfaces as a client, its website gets
- * stamped onto whatever external company the thread is about, and its mailbox
- * shows up as a contact. Consumed by both parse-time metadata extraction
- * (`parseSourceItem`) and discovery (`previewDiscovery` / `applyDiscovery`).
+ * The CRM owner's OWN identity for discovery + parse-time company stripping:
+ * own domains, company match keys (names + domain-derived keys) and — since
+ * I2 — own email addresses (members, staff extra addresses, shared
+ * mailboxes), so a staff address on a free-mail domain never becomes a
+ * contact.
  */
 export type OwnOrgIdentity = {
   /** True when `domain` is (or is a sub/parent of) one of the owner's domains. */
   isOwnDomain: (domain: string) => boolean
   /** True when `key` is one of the owner's company match-keys. */
   isOwnCompanyKey: (key: string) => boolean
-  /** Whether the org profile carried any usable identity at all. */
+  /**
+   * True when the address is «us»: a member sign-in email, a staff extra
+   * email, a shared mailbox, or an address on an own domain.
+   */
+  isOwnEmail: (email: string) => boolean
+  /** Whether the org carried any usable identity at all. */
   hasIdentity: boolean
 }
 
-/** The label immediately before the TLD: "in4comgroup.com" → "in4comgroup". */
-function secondLevelLabel(domain: string): string {
-  const parts = domain.split(".").filter(Boolean)
-  if (parts.length < 2) return ""
-  return parts[parts.length - 2]
+const EMPTY_OWN_ORG: OwnOrgIdentity = {
+  hasIdentity: false,
+  isOwnDomain: () => false,
+  isOwnCompanyKey: () => false,
+  isOwnEmail: () => false,
 }
 
-export async function loadOwnOrgIdentity(
-  orgId: string | null,
-): Promise<OwnOrgIdentity> {
-  const domains = new Set<string>()
-  const companyKeys = new Set<string>()
-
-  if (orgId) {
-    const [rows, registry] = await Promise.all([
-      db
-        .select({
-          name: organization.name,
-          webUrl: organization.webUrl,
-          email: organization.email,
-        })
-        .from(organization)
-        .where(eq(organization.id, orgId))
-        .limit(1),
-      loadRegistry(orgId),
-    ])
-    const org = rows[0]
-    // Registry entries count even if the org profile row somehow went missing.
-    for (const d of registry.websites) domains.add(d)
-    for (const n of registry.names) companyKeys.add(n.matchKey)
-    if (org) {
-      const webDomain = org.webUrl ? extractWebsiteDomain(org.webUrl) : ""
-      if (webDomain) domains.add(webDomain)
-      const emailDomain = org.email ? extractEmailDomain(org.email) : ""
-      if (emailDomain) domains.add(emailDomain)
-
-      // Company keys: the org name itself, PLUS — for every own domain — both
-      // its second-level label AND the full domain string. The LLM frequently
-      // emits the owner's domain verbatim as a "company" (e.g. `in4comgroup.com`
-      // in metadata_json.companies); `companyMatchKey` keeps the TLD, so the
-      // full domain keys as `in4comgroupcom` while the display name "IN4COM"
-      // keys as `in4com` and the label as `in4comgroup` — all three must count
-      // as own, otherwise the owner's own company leaks in as a client candidate
-      // (which then steals webUrl inference + makes contact↔client links
-      // ambiguous, breaking auto-linking). See refs/discovery + the АСТ case.
-      const nameKey = companyMatchKey(org.name ?? "")
-      if (nameKey) companyKeys.add(nameKey)
-    }
-
-    // Runs for EVERY own domain — the org profile's and the registry's alike.
-    for (const d of domains) {
-      const labelKey = companyMatchKey(secondLevelLabel(d))
-      if (labelKey) companyKeys.add(labelKey)
-      const fullKey = companyMatchKey(d)
-      if (fullKey) companyKeys.add(fullKey)
-    }
-  }
-
+/** `OwnOrgIdentity` view of an already loaded context (no I/O). */
+export function ownOrgIdentityFromContext(ctx: OwnOrgContext | null): OwnOrgIdentity {
+  if (!ctx) return EMPTY_OWN_ORG
+  const keys = new Set(ctx.identity.companyKeys)
+  const id = ctx.identity
   return {
-    hasIdentity: domains.size > 0 || companyKeys.size > 0,
-    isOwnDomain: (domain: string) => {
-      if (!domain) return false
-      for (const own of domains) {
-        if (domain === own || domainMatches(domain, own)) return true
-      }
-      return false
-    },
-    isOwnCompanyKey: (key: string) => !!key && companyKeys.has(key),
+    hasIdentity:
+      id.ownDomains.length > 0 ||
+      keys.size > 0 ||
+      id.memberEmails.length + id.staffEmails.length + id.mailboxes.length > 0,
+    isOwnDomain: (domain: string) => ctx.isOwnDomain(domain),
+    isOwnCompanyKey: (key: string) => !!key && keys.has(key),
+    isOwnEmail: (email: string) => ctx.matchEmail(email) !== null,
   }
 }
 
 // ── Org identity for authorship attribution (refs/org-attribution.md) ──
 //
-// Distinct from OwnOrgIdentity above: this resolves WHO COUNTS AS "US" for the
-// parse-time author classifier — the org's human-member emails + the
-// non-freemail domains it owns. Same `organization` source as OwnOrgIdentity
-// (different consumer), but it also reads the `member` → `user` join, so it
-// gets its own ~5-min in-process memo: a batch parse of many items for one org
-// loads it once. `invalidateOrgIdentity(orgId)` drops the entry (wire it to
-// member/profile mutations to recognise a new teammate before the TTL).
+// Who counts as «us» for the parse-time author classifier
+// (src/server/parsers/org-attribution.ts).
 export type OrgIdentity = {
   organizationId: string
   name: string | null
   url: string | null
   address: string | null
-  // Non-freemail domains owned by the org (member domains + website + contact
-  // + every `website` entry in the identity registry).
+  // Owned mail domains: own domains (website, registry websites / email
+  // domains, org email domain) + the members' non-free-mail domains.
   emailDomains: string[]
   // Lowercased human-member emails (agent service accounts excluded).
   memberEmails: Set<string>
-  // ── Identity-registry additions (all owner-curated, all additive) ──
-  // Extra trading names / synonyms, as entered. Shown to the LLM judge so it
-  // recognises the org under a second brand.
+  // Staff extra emails (registry `person`, channel email) — any domain.
+  staffEmails: Set<string>
+  // Shared mailboxes (registry `mailbox`) — exact addresses.
+  mailboxes: Set<string>
+  // Staff Telegram handles (no «@», lower-case).
+  staffTelegram: Set<string>
+  // Extra trading names / synonyms, as entered (judge prompt).
   nameAliases: string[]
-  // Every own website host: the profile's `web_url` + registry `website`
-  // entries. Rule 4 of the classifier scans the content for ANY of these.
+  // Every own website host: `web_url` + registry `website` (rule 4).
   webDomains: string[]
-  // Normalised address match keys: the profile's `address` + registry
-  // `address` entries. Matched against document text by `addressMatchesText`.
+  // Address match keys (`organization.address` + registry `address`).
   addressKeys: string[]
   // The same addresses as entered, for the judge prompt.
   addressLabels: string[]
 }
 
-const IDENTITY_TTL_MS = 5 * 60 * 1000
-const identityCache = new Map<
-  string,
-  { value: OrgIdentity | null; expires: number }
->()
-
-export function invalidateOrgIdentity(orgId: string): void {
-  identityCache.delete(orgId)
+/** `OrgIdentity` view of an already loaded context (no I/O); null = no org. */
+export function orgIdentityFromContext(ctx: OwnOrgContext | null): OrgIdentity | null {
+  if (!ctx || !ctx.exists) return null
+  const id = ctx.identity
+  return {
+    organizationId: ctx.organizationId,
+    name: ctx.name || null,
+    url: ctx.org.webUrl,
+    address: ctx.org.address,
+    emailDomains: [...id.ownDomains],
+    memberEmails: new Set(id.memberEmails),
+    staffEmails: new Set(id.staffEmails),
+    mailboxes: new Set(id.mailboxes),
+    staffTelegram: new Set(id.staffTelegram),
+    nameAliases: id.nameLabels.slice(ctx.name ? 1 : 0),
+    webDomains: id.webDomains,
+    addressKeys: id.addressKeys,
+    addressLabels: id.addressLabels,
+  }
 }
 
-export async function getOrgIdentity(
-  orgId: string,
-): Promise<OrgIdentity | null> {
-  const now = Date.now()
-  const cached = identityCache.get(orgId)
-  if (cached && cached.expires > now) return cached.value
+const STAFF_NAMES_MAX = 40
 
-  const orgRows = await db
-    .select({
-      id: organization.id,
-      name: organization.name,
-      webUrl: organization.webUrl,
-      email: organization.email,
-      address: organization.address,
-    })
-    .from(organization)
-    .where(eq(organization.id, orgId))
-    .limit(1)
-  const org = orgRows[0]
-  if (!org) {
-    identityCache.set(orgId, { value: null, expires: now + IDENTITY_TTL_MS })
-    return null
+/**
+ * Display names of the org's human members (identity spec I4: input of the
+ * `parsing.org_attribution` judge). Never the system actor «Агент»
+ * (`humanUsersOnly()`), never banned users. Org-explicit, no session; read
+ * only when the judge actually runs.
+ */
+export async function loadOrgStaffNames(orgId: string): Promise<string[]> {
+  const rows = await db
+    .select({ name: user.name })
+    .from(member)
+    .innerJoin(user, eq(user.id, member.userId))
+    .where(
+      and(
+        eq(member.organizationId, orgId),
+        humanUsersOnly(),
+        or(isNull(user.banned), eq(user.banned, false)),
+      ),
+    )
+    .orderBy(asc(member.createdAt))
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const r of rows) {
+    const name = (r.name ?? "").trim()
+    if (!name || seen.has(name.toLowerCase())) continue
+    seen.add(name.toLowerCase())
+    out.push(name)
+    if (out.length >= STAFF_NAMES_MAX) break
   }
-
-  // Member emails — every member → user email, lowercased. Synthetic agent
-  // service accounts (`user.role === 'agent'`) are excluded so their address
-  // never reads as "us".
-  const [memberRows, registry] = await Promise.all([
-    db
-      .select({ email: user.email, role: user.role })
-      .from(member)
-      .innerJoin(user, eq(user.id, member.userId))
-      .where(eq(member.organizationId, orgId)),
-    loadRegistry(orgId),
-  ])
-
-  const memberEmails = new Set<string>()
-  const emailDomains = new Set<string>()
-  for (const m of memberRows) {
-    if (m.role === "agent") continue
-    const email = (m.email ?? "").trim().toLowerCase()
-    if (!email || !email.includes("@")) continue
-    memberEmails.add(email)
-    const domain = extractEmailDomain(email)
-    // A member on @gmail.com must NOT contribute gmail.com as an owned domain.
-    if (domain && !isFreemailDomain(domain)) emailDomains.add(domain)
-  }
-
-  // Plus the org website host + declared contact-email domain (freemail-guarded).
-  const webDomains = new Set<string>()
-  const webDomain = org.webUrl ? extractWebsiteDomain(org.webUrl) : ""
-  if (webDomain && !isFreemailDomain(webDomain)) {
-    emailDomains.add(webDomain)
-    webDomains.add(webDomain)
-  }
-  const contactDomain = org.email ? extractEmailDomain(org.email) : ""
-  if (contactDomain && !isFreemailDomain(contactDomain)) {
-    emailDomains.add(contactDomain)
-  }
-
-  // Plus every registry `website` entry — a second brand's domain is as much
-  // "us" as the profile one, both for authorship and for owned-domain checks.
-  for (const d of registry.websites) {
-    if (!d || isFreemailDomain(d)) continue
-    emailDomains.add(d)
-    webDomains.add(d)
-  }
-
-  // Addresses: the profile column + registry entries, normalised to match keys.
-  const addressKeys = new Set<string>()
-  const addressLabels: string[] = []
-  const profileAddressKey = org.address ? addressMatchKey(org.address) : ""
-  if (profileAddressKey) {
-    addressKeys.add(profileAddressKey)
-    addressLabels.push(org.address as string)
-  }
-  for (let i = 0; i < registry.addressKeys.length; i++) {
-    const k = registry.addressKeys[i]
-    if (!k || addressKeys.has(k)) continue
-    addressKeys.add(k)
-    addressLabels.push(registry.addressLabels[i])
-  }
-
-  const value: OrgIdentity = {
-    organizationId: org.id,
-    name: org.name ?? null,
-    url: org.webUrl ?? null,
-    address: org.address ?? null,
-    emailDomains: [...emailDomains],
-    memberEmails,
-    nameAliases: registry.names.map((n) => n.label),
-    webDomains: [...webDomains],
-    addressKeys: [...addressKeys],
-    addressLabels,
-  }
-  identityCache.set(orgId, { value, expires: now + IDENTITY_TTL_MS })
-  return value
+  return out
 }

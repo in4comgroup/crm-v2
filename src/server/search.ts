@@ -31,9 +31,9 @@ const MIN_QUERY_LENGTH = 2
 // ── Normalised, fuzzy matching (Search V2 pipeline) ─────────────────
 //
 // This search used to be `ILIKE '%' || q || '%'` on the raw columns, which
-// fails the way every raw-substring search over this data fails: «АСТ» never
-// finds the stored «AST – Российская Алкогольная Компания», «НТехЛаб» never
-// finds «NTechLab», and a query typed with an em-dash never finds a name
+// fails the way every raw-substring search over this data fails: «Норлекс» never
+// finds the stored «Norleks – Северная Торговая Компания», «НорлексЛаб» never
+// finds «Norleks Lab», and a query typed with an em-dash never finds a name
 // stored with an en-dash. Measured on real org data, four of six realistic
 // queries returned nothing at all.
 //

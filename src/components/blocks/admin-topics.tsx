@@ -12,6 +12,17 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -30,9 +41,13 @@ import { formatDateTime } from "@/components/blocks/admin-ai-models"
 import { AdminTopicsChecks } from "@/components/blocks/admin-topics-checks"
 import { AdminTopicsDelivery } from "@/components/blocks/admin-topics-delivery"
 import type {
+  AdminTopicsModeGateError,
   AdminTopicsModeUpdateResponse,
   AdminTopicsOrgsResponse,
+  AdminTopicsPromptContextResponse,
 } from "@/app/api/admin/topics/route"
+import { COMPLETENESS_LABELS_RU, type CompletenessItem } from "@/lib/identity/org-profile"
+import { TOPICS_GATE_OVERRIDE_MIN_REASON } from "@/lib/identity/topics-gate"
 import type {
   AdminTopicsRunNowResponse,
   AdminTopicsRunsResponse,
@@ -153,10 +168,41 @@ function OrgOutcomeBlock({ org }: { org: OrgOutcome }) {
   )
 }
 
+function ProfileBadge({ profile }: { profile: OrgRow["profile"] }) {
+  if (profile.complete) {
+    return (
+      <Badge variant="outline" className="border-emerald-300 font-normal text-emerald-700 dark:text-emerald-400">
+        Заполнен
+      </Badge>
+    )
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="border-amber-300 font-normal text-amber-700 dark:text-amber-400"
+      title={`Не хватает: ${profile.missing.map((m) => COMPLETENESS_LABELS_RU[m]).join("; ")}`}
+    >
+      {profile.done} из {profile.total}
+    </Badge>
+  )
+}
+
 export function AdminTopics() {
   const [orgs, setOrgs] = useState<OrgRow[] | null>(null)
   const [orgsError, setOrgsError] = useState<string | null>(null)
   const [savingOrgId, setSavingOrgId] = useState<string | null>(null)
+  const [savingPromptOrgId, setSavingPromptOrgId] = useState<string | null>(null)
+  // Identity gate (identity spec I3): a 409 opens this dialog with the
+  // missing profile items and the «Включить без профиля» override.
+  const [gate, setGate] = useState<{
+    org: OrgRow
+    mode: Mode
+    error: string
+    missing: CompletenessItem[]
+  } | null>(null)
+  const [overrideReason, setOverrideReason] = useState("")
+  const [overrideError, setOverrideError] = useState<string | null>(null)
+  const [overriding, setOverriding] = useState(false)
 
   const [runs, setRuns] = useState<RunRow[] | null>(null)
   const [runsError, setRunsError] = useState<string | null>(null)
@@ -196,6 +242,19 @@ export function AdminTopics() {
     void loadRuns()
   }, [loadOrgs, loadRuns])
 
+  const applySaved = (org: OrgRow, saved: AdminTopicsModeUpdateResponse) => {
+    setOrgs((prev) =>
+      prev?.map((o) =>
+        o.organizationId === saved.organizationId
+          ? { ...o, mode: saved.mode, lastChange: saved.lastChange }
+          : o,
+      ) ?? prev,
+    )
+    toast.success(
+      `«${org.name}»: режим «${MODE_LABEL[saved.mode]}»${saved.overridden ? " (без профиля)" : ""}`,
+    )
+  }
+
   const saveMode = async (org: OrgRow, mode: Mode) => {
     if (mode === org.mode) return
     setSavingOrgId(org.organizationId)
@@ -206,20 +265,77 @@ export function AdminTopics() {
         body: JSON.stringify({ organizationId: org.organizationId, mode }),
       })
       const data = await res.json()
+      if (res.status === 409) {
+        const g = data as AdminTopicsModeGateError
+        setOverrideReason("")
+        setOverrideError(null)
+        setGate({ org, mode, error: g.error, missing: g.missing ?? [] })
+        return
+      }
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
-      const saved = data as AdminTopicsModeUpdateResponse
-      setOrgs((prev) =>
-        prev?.map((o) =>
-          o.organizationId === saved.organizationId
-            ? { ...o, mode: saved.mode, lastChange: saved.lastChange }
-            : o,
-        ) ?? prev,
-      )
-      toast.success(`«${org.name}»: режим «${MODE_LABEL[saved.mode]}»`)
+      applySaved(org, data as AdminTopicsModeUpdateResponse)
     } catch (e) {
       toast.error(`Не удалось сохранить режим: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSavingOrgId(null)
+    }
+  }
+
+  // Identity I4 «Профиль в промптах» (`identity.promptContext`).
+  const savePromptContext = async (org: OrgRow, promptContext: boolean) => {
+    setSavingPromptOrgId(org.organizationId)
+    try {
+      const res = await fetch("/api/admin/topics", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId: org.organizationId, promptContext }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
+      const saved = data as AdminTopicsPromptContextResponse
+      setOrgs((prev) =>
+        prev?.map((o) =>
+          o.organizationId === saved.organizationId ? { ...o, promptContext: saved.promptContext } : o,
+        ) ?? prev,
+      )
+      toast.success(`«${org.name}»: профиль в промптах ${saved.promptContext ? "включён" : "выключен"}`)
+    } catch (e) {
+      toast.error(`Не удалось сохранить: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSavingPromptOrgId(null)
+    }
+  }
+
+  const saveWithOverride = async () => {
+    if (!gate) return
+    const reason = overrideReason.trim()
+    if (reason.length < TOPICS_GATE_OVERRIDE_MIN_REASON) {
+      setOverrideError(`Причина — не короче ${TOPICS_GATE_OVERRIDE_MIN_REASON} символов.`)
+      return
+    }
+    setOverriding(true)
+    setOverrideError(null)
+    try {
+      const res = await fetch("/api/admin/topics", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId: gate.org.organizationId,
+          mode: gate.mode,
+          override: { reason },
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setOverrideError(data?.error ?? `HTTP ${res.status}`)
+        return
+      }
+      applySaved(gate.org, data as AdminTopicsModeUpdateResponse)
+      setGate(null)
+    } catch (e) {
+      setOverrideError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setOverriding(false)
     }
   }
 
@@ -263,7 +379,9 @@ export function AdminTopics() {
           <h2 className="text-base font-medium">Режим тем по организациям</h2>
           <p className="text-sm text-muted-foreground">
             Выключено — движок не работает. Тень — движок обрабатывает данные каждый час, но
-            пользователи их не видят. Включено — темы видны организации.
+            пользователи их не видят. Включено — темы видны организации. «Профиль в промптах» —
+            профиль организации и профиль клиента в промптах тем (извлечение сигналов, сопоставление
+            тем, карточки, состояние сделки).
           </p>
         </div>
         <Card className="py-0">
@@ -272,25 +390,27 @@ export function AdminTopics() {
               <TableRow>
                 <TableHead>Организация</TableHead>
                 <TableHead className="w-48">Режим</TableHead>
+                <TableHead className="w-32">Профиль</TableHead>
+                <TableHead className="w-44">Профиль в промптах</TableHead>
                 <TableHead>Последнее изменение</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {orgsError ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="py-10 text-center text-red-500">
+                  <TableCell colSpan={5} className="py-10 text-center text-red-500">
                     Не удалось загрузить организации: {orgsError}
                   </TableCell>
                 </TableRow>
               ) : !orgs ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="py-10 text-center">
+                  <TableCell colSpan={5} className="py-10 text-center">
                     <Loader className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
                   </TableCell>
                 </TableRow>
               ) : orgs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
                     Организаций нет.
                   </TableCell>
                 </TableRow>
@@ -326,6 +446,23 @@ export function AdminTopics() {
                       <div className="mt-1 text-xs text-muted-foreground">{MODE_HINT[o.mode]}</div>
                     </TableCell>
                     <TableCell className="text-sm">
+                      <ProfileBadge profile={o.profile} />
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={o.promptContext}
+                          onCheckedChange={(v) => void savePromptContext(o, v)}
+                          disabled={savingPromptOrgId === o.organizationId}
+                          aria-label={`Профиль в промптах: ${o.name}`}
+                        />
+                        {savingPromptOrgId === o.organizationId && (
+                          <Loader className="h-4 w-4 animate-spin text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">Включать после оценки на эталоне</div>
+                    </TableCell>
+                    <TableCell className="text-sm">
                       {o.lastChange ? (
                         <>
                           <div>
@@ -346,6 +483,61 @@ export function AdminTopics() {
           </Table>
         </Card>
       </section>
+
+      <Dialog open={!!gate} onOpenChange={(open) => !open && !overriding && setGate(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Профиль организации не заполнен</DialogTitle>
+            <DialogDescription>
+              {gate
+                ? `«${gate.org.name}» нельзя перевести в режим «${MODE_LABEL[gate.mode]}»: без профиля ИИ не отличает внутреннюю переписку от внешней. Владелец заполняет профиль на /account → «Профиль организации».`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          {gate && (
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="mb-1 text-sm font-medium">Не хватает:</div>
+                <ul className="list-disc space-y-0.5 pl-5 text-sm">
+                  {gate.missing.map((m) => (
+                    <li key={m}>{COMPLETENESS_LABELS_RU[m]}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="topics-gate-reason">Причина включения без профиля</Label>
+                <Textarea
+                  id="topics-gate-reason"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="Например: тестовая организация, проверка движка"
+                  rows={3}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Не короче {TOPICS_GATE_OVERRIDE_MIN_REASON} символов. Причина записывается в журнал
+                  изменений режима.
+                </p>
+                {overrideError && (
+                  <p className="text-sm text-red-600 dark:text-red-400">{overrideError}</p>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGate(null)} disabled={overriding}>
+              Отмена
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void saveWithOverride()}
+              disabled={overriding || overrideReason.trim().length < TOPICS_GATE_OVERRIDE_MIN_REASON}
+            >
+              {overriding && <Loader className="h-4 w-4 animate-spin" />}
+              Включить без профиля
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Runs ──────────────────────────────────────────────────── */}
       <section className="flex flex-col gap-3">

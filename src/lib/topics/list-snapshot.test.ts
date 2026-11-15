@@ -161,7 +161,7 @@ function entry(id: string, list: TopicList, p: Partial<TopicEntry["attention"] &
     status: "open",
     subState: "none",
     clientId: null,
-    clientName: "ООО Ромашка",
+    clientName: "ООО Норлекс",
     contactId: null,
     contactName: null,
     dealId: null,
@@ -223,7 +223,7 @@ describe("emails use the frozen lists (userLists = viewerLists + routing)", () =
       orgName: "Org",
       userName: null,
       localDay: "2026-11-16",
-      timeZone: "Europe/Moscow",
+      timeZone: "Etc/GMT-3",
       links: deliveryLinks("https://app.example"),
       digestVisibleItems: 1,
     }

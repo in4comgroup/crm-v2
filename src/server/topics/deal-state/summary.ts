@@ -24,6 +24,8 @@ import type { DealStateDecision } from "@/lib/topics/deal-state"
 import { TOPIC_STATUS_LABELS_RU, TOPIC_SUB_STATE_LABELS_RU, isTopicStatus, type TopicSubState } from "@/lib/topics/types"
 import { aiCallInfo, aiGenerateText } from "@/server/ai/runtime"
 import { getOrgFunnel, outcomeStage } from "@/server/deal-engine"
+import { loadClientProfileTexts } from "@/server/identity/client-profile-context"
+import { getTopicsOrgPrompt } from "@/server/identity/prompt-context"
 import { messageContent } from "@/server/topics/signals/evidence"
 import { itemMarkdown } from "@/server/topics/signals/item-input"
 import { loadCodeBook } from "@/server/topics/topic-store"
@@ -157,6 +159,7 @@ export async function loadDealStateInput(orgId: string, dealId: string, now: Dat
       stageId: deal.funnelStageId,
       stageName: dealFunnelStage.name,
       stageDisplayName: dealFunnelStage.displayName,
+      clientId: deal.clientId,
       clientName: client.name,
       typeLabel: dealType.labelRu,
       value: deal.value,
@@ -302,7 +305,15 @@ export async function loadDealStateInput(orgId: string, dealId: string, now: Dat
   const evidenceById = new Map(trig.map((t) => [t.id, t.evidence]))
   const typeBy = new Map(types.map((t) => [t.code, t]))
 
+  // Identity I4: org role + the client's profile, only with `identity.promptContext`.
+  const orgPrompt = await getTopicsOrgPrompt(orgId)
+  const clientProfile =
+    orgPrompt && d.clientId
+      ? ((await loadClientProfileTexts(orgId, [d.clientId], { withSegment: true })).get(d.clientId)?.summary ?? "")
+      : ""
+
   const input: DealStateInput = {
+    ...(orgPrompt ? { orgRoleLine: orgPrompt.roleLine || null, clientProfile: clientProfile || null } : {}),
     dealId,
     dealName: d.name,
     clientName: d.clientName ?? "—",

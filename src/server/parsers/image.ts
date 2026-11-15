@@ -15,6 +15,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 
 const imageAnalysisSchema = z.object({
@@ -132,13 +134,16 @@ export async function parseImageBytes(
 
   const result = await aiGenerateText({
     process: "parsing.image",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: imageAnalysisSchema }),
-    system: `You are a precise image parsing assistant. Extract structured metadata and convert the provided image into clean Markdown. For text-heavy images perform OCR faithfully; for photos/diagrams give a detailed description. Never fabricate facts that are not visible in the image.
+    system: withOwnOrgLine(
+      `You are a precise image parsing assistant. Extract structured metadata and convert the provided image into clean Markdown. For text-heavy images perform OCR faithfully; for photos/diagrams give a detailed description. Never fabricate facts that are not visible in the image.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For images specifically: the 'author/sender' is whoever you extract into the \`senders\` field (signature, byline, watermark). Don't include them in mentionedPeople. Only emit third parties visibly named in the image. Business cards / name plates / labelled photos with an organization shown are explicit attribution — confidence='high'. When inferring organization from the document's author, only do so if the image itself states the author's company unambiguously.`,
+      ai,
+    ),
     messages: [
       {
         role: "user",

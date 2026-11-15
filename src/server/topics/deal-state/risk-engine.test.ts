@@ -223,8 +223,8 @@ describe("helpers", () => {
   })
   it("product match: equal or contained word prefix (≥ 4 chars)", () => {
     expect(productsMatch(["Артикул 4410"], ["артикул 4410"])).toBe(true)
-    expect(productsMatch(["Вино Шардоне 0,75"], ["шардоне"])).toBe(true)
-    expect(productsMatch(["Вино"], ["Пиво"])).toBe(false)
+    expect(productsMatch(["Товар Б 0,75"], ["товар б"])).toBe(true)
+    expect(productsMatch(["Товар"], ["Услуга"])).toBe(false)
     expect(productsMatch(["ab"], ["ab cd"])).toBe(false)
   })
   it("one postponement mentioned twice within 24 h counts once; a new date + step does not count", () => {
@@ -422,14 +422,14 @@ describe("conditions", () => {
     expect(evaluateDealRisks(renewal)).toEqual([])
   })
   it("NO_STOCK_FOR_DEAL: org + SKU scope, product must match the deal's topics, stock evidence needed", () => {
-    const topics = topicsOf({ products: ["Шардоне 0,75"] }, { dealId: null, clientId: "c9", products: [] })
-    const delay = inst("SUPPLIER_DELIVERY_DELAY", 2, { topicId: "t2", products: ["Шардоне 0,75"] })
+    const topics = topicsOf({ products: ["Товар Б 0,75"] }, { dealId: null, clientId: "c9", products: [] })
+    const delay = inst("SUPPLIER_DELIVERY_DELAY", 2, { topicId: "t2", products: ["Товар Б 0,75"] })
     expect(evaluateDealRisks(input({ topics, instances: [delay] }))).toEqual([
       expect.objectContaining({ kind: "activate", riskType: "NO_STOCK_FOR_DEAL", topicId: "t2" }),
     ])
-    const other = inst("SUPPLIER_DELIVERY_DELAY", 2, { topicId: "t2", products: ["Пиво"] })
+    const other = inst("SUPPLIER_DELIVERY_DELAY", 2, { topicId: "t2", products: ["Услуга"] })
     expect(evaluateDealRisks(input({ topics, instances: [other] }))).toEqual([])
-    const ask = inst("STOCK_AVAILABILITY_REQUEST", 2, { topicId: "t2", products: ["Шардоне 0,75"] })
+    const ask = inst("STOCK_AVAILABILITY_REQUEST", 2, { topicId: "t2", products: ["Товар Б 0,75"] })
     expect(evaluateDealRisks(input({ topics, instances: [ask] }))).toEqual([])
     const reply = item("t2", 1, { direction: "outbound", outOfStockCue: true })
     expect(evaluateDealRisks(input({ topics, instances: [ask], items: [reply] }))).toEqual([

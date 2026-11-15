@@ -11,6 +11,7 @@ import { LoadingButton } from "@/components/blocks/loading-button"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { EditableAvatar } from "@/components/blocks/editable-avatar"
+import { MyWorkAddresses } from "@/components/blocks/my-work-addresses"
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard"
 import { resizeImageToSquare } from "@/lib/image-resize"
 import { isValidEmail } from "@/lib/orders-format"
@@ -256,6 +257,9 @@ function ProfileForm({ user, onSaved }: { user: User; onSaved: () => void }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Identity I1: the member's own extra addresses in the active org. */}
+      <MyWorkAddresses />
 
       {dialog}
     </div>

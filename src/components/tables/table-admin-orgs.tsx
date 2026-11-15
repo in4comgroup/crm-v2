@@ -108,13 +108,14 @@ export function TableAdminOrgs() {
                 <TableHead>Участники</TableHead>
                 <TableHead>Владелец</TableHead>
                 <TableHead>Email владельца</TableHead>
+                <TableHead>Профиль</TableHead>
                 <TableHead>Действия</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {orgs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-gray-500">
+                  <TableCell colSpan={7} className="text-center text-gray-500">
                     Организации не найдены
                   </TableCell>
                 </TableRow>
@@ -134,6 +135,15 @@ export function TableAdminOrgs() {
                     <TableCell>
                       {org.ownerEmail || (
                         <span className="text-gray-400">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {org.profileComplete ? (
+                        <span className="text-emerald-700 dark:text-emerald-400">Заполнен</span>
+                      ) : (
+                        <span className="text-amber-700 dark:text-amber-400">
+                          {org.profileDone} из {org.profileTotal}
+                        </span>
                       )}
                     </TableCell>
                     <TableCell>

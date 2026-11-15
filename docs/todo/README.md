@@ -2,7 +2,7 @@
 
 Work that is decided but **not scheduled**. Each item names its source in the specs. When an item is scheduled, move it into the spec folder of its topic (`docs/specs/<topic>/`) and delete it here.
 
-Last update: 2026-11-14.
+Last update: 2026-11-15.
 
 ## Topics engine (`docs/specs/topics/`)
 
@@ -22,3 +22,10 @@ Last update: 2026-11-14.
 | O2 | Contact groups | Alumni, expert club, contractors as contact groups | Spec 01 §1.2 |
 | O3 | Pipeline import from spreadsheets | Import deals / pipeline from XLSX / Google Sheets | Spec 01 §1.2 |
 | O4 | Finance integration (1С) | Invoices, payments, debts from 1С as system-of-record data (would feed INVOICE_* codes and the CLIENT_DEBT risk) | Spec 01 §1.2 |
+
+## Tests and commercial setup
+
+| # | Item | What | Source | Notes |
+|---|---|---|---|---|
+| C1 | **Decide the work calendar** | All orgs use ONE work calendar today: the Russian state holidays 2026–2027 (`work_calendar_day`, migration `0020`; exceptions only — a year with no rows = plain Mon–Fri). It drives the «Сейчас» / «Сводка» / «Неделя» lists, deadlines, card expiry, digests and the Friday review (`src/lib/topics/attention-calendar.ts`). This is old content. Options: (a) keep the Russian calendar for every org; (b) a calendar per country chosen per org (org setting + rows per country); (c) remove it — every org uses plain Mon–Fri. Recommendation: (b), built when the first org outside Russia starts | Topics spec 06 §6 (calendar), plan phase 4 | Decide before the tests with real orgs and before the commercial setup. The default time zone is already Europe/Vienna (2026-11-15) |
+| C2 | **Generic product catalog** | The products module is built for ONE catalog shape: drinks (attributes `sugar`, `aging`, `bottleVolume`, `color`, `region`, `countryName`, `appelacion`, `rating`, `awards`; Search V2 generated columns `is_drink` / `is_gift` / `region_norm` in `migrations/0002`; analytics product slices by country / region / colour / type / sugar; price-list export region → colour → vendor; order-from-request split fields + the drink stop-word list in `src/server/order-requests.ts`). This shape came with the old code. Rebuild it generic: catalog attributes defined per org (name, type, filterable, sort), filters / search / analytics / export / order split read that definition. IN4COM's 16,815 SKUs keep working through an attribute definition for their data | Product owner, 2026-11-15 (cleanup of old content) | Separate spec `docs/specs/catalog/` first. Until then the module stays as it is |

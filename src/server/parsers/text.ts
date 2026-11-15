@@ -32,6 +32,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 
 // Set of "junk" categories the parser drops before the email reaches the
@@ -384,9 +386,9 @@ export async function analyzeAndAssembleEmail(
 
   const result = await aiGenerateText({
     process: "parsing.email",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: analysisSchema }),
-    system: SYSTEM_PROMPT,
+    system: withOwnOrgLine(SYSTEM_PROMPT, ai),
     prompt: buildLlmPrompt({
       subject,
       senders,

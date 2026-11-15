@@ -51,7 +51,7 @@ export async function loadChecksParams(orgId: string): Promise<ChecksParams> {
   return mergeChecksParams(platform, org)
 }
 
-async function loadOrgCalendar(orgId: string): Promise<WorkCalendar> {
+export async function loadOrgCalendar(orgId: string): Promise<WorkCalendar> {
   const [ap, days] = await Promise.all([loadAttentionParams(orgId), loadCalendarDays()])
   return new WorkCalendar(days, { timeZone: ap.timeZone, workStart: ap.workStart, workEnd: ap.workEnd })
 }

@@ -5,6 +5,7 @@ import { organization, member, user } from "@/db/schema"
 import { eq, count, and, like, inArray } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
+import { getOrgCompleteness, invalidateOwnOrgContext } from "@/server/identity/own-org"
 
 // Org-level roles (mirrors the `role` pgEnum). Used to validate admin-supplied
 // role values before they touch the DB.
@@ -32,6 +33,10 @@ export type AdminOrg = {
   memberCount: number
   ownerName: string | null
   ownerEmail: string | null
+  /** Identity profile minimum (identity spec §3.3): done of total («N из 6»). */
+  profileDone: number
+  profileTotal: number
+  profileComplete: boolean
 }
 
 export type UserOrgInfo = {
@@ -97,6 +102,8 @@ export async function getAdminOrganizations(
         )
         .limit(1)
 
+      const completeness = await getOrgCompleteness(org.id)
+
       return {
         id: org.id,
         name: org.name,
@@ -111,6 +118,9 @@ export async function getAdminOrganizations(
         memberCount: memberCount[0]?.count ?? 0,
         ownerName: owner[0]?.userName ?? null,
         ownerEmail: owner[0]?.userEmail ?? null,
+        profileDone: completeness.done,
+        profileTotal: completeness.total,
+        profileComplete: completeness.complete,
       }
     }),
   )
@@ -148,6 +158,8 @@ export async function updateAdminOrganization(
       phone: data.phone?.trim() || null,
     })
     .where(eq(organization.id, organizationId))
+  // Identity spec I1: the «us» resolver reads name / web_url / email / address.
+  invalidateOwnOrgContext(organizationId)
 }
 
 export async function getAdminUserOrganizations() {
@@ -286,6 +298,7 @@ export async function setUserOrganizations(
     if (desiredByOrg.has(c.organizationId)) continue
     if (c.role === "owner") await assertNotLastOwner(c.organizationId)
     await db.delete(member).where(eq(member.id, c.id))
+    invalidateOwnOrgContext(c.organizationId)
   }
 
   // Adds + role updates.
@@ -299,6 +312,7 @@ export async function setUserOrganizations(
         role,
         createdAt: new Date(),
       })
+      invalidateOwnOrgContext(organizationId)
     } else if (existing.role !== role) {
       if (existing.role === "owner" && role !== "owner") {
         await assertNotLastOwner(organizationId)

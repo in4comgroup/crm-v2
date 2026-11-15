@@ -21,8 +21,8 @@ import {
 import type { OrderClientInput, OrderInput } from "./orders"
 
 const DAY = 86_400_000
-const NOW = new Date("2026-11-14T07:00:00Z") // 10:00 Moscow
-const cal = new WorkCalendar([], { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
+const NOW = new Date("2026-11-14T07:00:00Z") // 10:00 UTC+3
+const cal = new WorkCalendar([], { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" })
 const ago = (days: number) => new Date(NOW.getTime() - days * DAY)
 
 function env(existing: OpenProcessInstance[] = [], params: Partial<ChecksParams> = {}): CrmCheckEnv {
@@ -145,7 +145,7 @@ describe("checkMeetingOverdue", () => {
 // ── Catalogue ─────────────────────────────────────────────────────────────
 
 function prod(id: string, p: Partial<CatalogueProduct> = {}): CatalogueProduct {
-  return { id, name: `Вино ${id}`, price: 1000, status: "active", totalStock: 10, vintage: "2020", ...p }
+  return { id, name: `Товар ${id}`, price: 1000, status: "active", totalStock: 10, vintage: "2020", ...p }
 }
 
 function state(pr: CatalogueProduct, p: Partial<WatchState> = {}): WatchState {
@@ -170,7 +170,7 @@ describe("checkPriceChange", () => {
   })
 
   it("one finding per day: ≥ threshold, or any change of a bought SKU; small unbought change skipped", () => {
-    const a = prod("a", { price: 1290, name: "Шабли" })
+    const a = prod("a", { price: 1290, name: "Товар А" })
     const b = prod("b", { price: 1020 }) // +2 %, bought → in
     const c = prod("c", { price: 1010 }) // +1 %, not bought → out
     const d = prod("d", { price: 900, status: "deleted" }) // inactive → out
@@ -183,7 +183,7 @@ describe("checkPriceChange", () => {
     expect(r.findings).toHaveLength(1)
     const f = r.findings[0]
     expect(f).toMatchObject({ code: "INTERNAL_PRICE_CHANGE", conditionKey: "catalog:prices:2026-11-14", topicId: null, clientId: null, companyName: null, matterRu: "Изменились цены каталога" })
-    expect(f.evidenceRu).toBe("изменились цены 2 позиций: Вино b 1 000 → 1 020 ₽ (+2 %, брали 3 клиента); Шабли 1 200 → 1 290 ₽ (+7,5 %)")
+    expect(f.evidenceRu).toBe("изменились цены 2 позиций: Товар b 1 000 → 1 020 ₽ (+2 %, брали 3 клиента); Товар А 1 200 → 1 290 ₽ (+7,5 %)")
     expect((f.facts.changes as unknown[]).length).toBe(2)
     expect(r.skipped.small_change).toBe(1)
   })

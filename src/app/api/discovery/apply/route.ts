@@ -3,6 +3,11 @@ import { applyDiscovery, type ApplyDiscoveryInput } from "@/server/discovery"
 
 export type { ApplyDiscoveryResult } from "@/server/discovery"
 
+// Identity I6: with «Заполнять профиль новых компаний из интернета» on, the
+// new clients are web-enriched in `after()` (≤ 20, 240 s deadline) — that
+// work runs inside this function's duration.
+export const maxDuration = 300
+
 function errorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown error"
   const status =

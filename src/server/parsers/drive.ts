@@ -17,6 +17,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 import { parsePdfBytes, PdfTooLargeError } from "@/server/parsers/pdf"
 import {
@@ -545,13 +547,16 @@ async function runMetadataExtraction(
 
   const result = await aiGenerateText({
     process: "parsing.document_metadata",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: metadataOnlySchema }),
-    system: `${args.systemHint} Never fabricate facts that are not present in the provided content.
+    system: withOwnOrgLine(
+      `${args.systemHint} Never fabricate facts that are not present in the provided content.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For Drive documents specifically: the 'author/sender' is the file owner (provided in the context); don't include them in mentionedPeople. Only emit third parties referenced in the document body. When inferring organization from the author's affiliation, only do so if the document itself states the author's company unambiguously.`,
+      ai,
+    ),
     prompt: `${args.context}\n\n--- BEGIN CONTENT ---\n${clipped}\n--- END CONTENT ---`,
   })
   return { analysis: result.output, parserModel: servedModel(result) }

@@ -9,7 +9,7 @@ const RU_2026 = [
   { day: "2026-11-04", isWorking: false, isShort: false },
   { day: "2026-12-31", isWorking: false, isShort: false },
 ]
-const cal = new WorkCalendar(RU_2026, { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
+const cal = new WorkCalendar(RU_2026, { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" })
 const msk = (s: string) => new Date(`${s.replace(" ", "T")}:00+03:00`)
 
 describe("production calendar", () => {
@@ -58,7 +58,7 @@ const RU_NEW_YEAR = [
   { day: "2027-11-04", isWorking: false, isShort: false },
   { day: "2027-11-05", isWorking: false, isShort: false },
 ]
-const ny = new WorkCalendar(RU_NEW_YEAR, { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
+const ny = new WorkCalendar(RU_NEW_YEAR, { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" })
 
 describe("weekly review day on a holiday Friday (06 §7.2, one rule)", () => {
   it("Friday, or the last working day before it in the same week; none when the week has no working day", () => {

@@ -1,6 +1,6 @@
 // Sender classification: automated senders, free-mail domains.
 
-import { isFreemailDomain as baseIsFreemailDomain } from "@/lib/email-domain"
+import { isAnyFreemailDomain } from "@/lib/email-domain"
 import { isAutomatedEmail } from "@/lib/is-automated-email"
 import { extractEmailAddress, getHeader } from "./common"
 
@@ -41,14 +41,7 @@ export function isAutomatedSender(input: {
   return false
 }
 
-const EXTRA_FREEMAIL = new Set([
-  "rambler.ru", "lenta.ru", "autorambler.ru", "myrambler.ru", "ro.ru",
-  "bk.ru", "list.ru", "inbox.ru", "internet.ru", "mail.ua", "ukr.net",
-  "ya.ru", "yandex.by", "yandex.kz", "yandex.ua", "yandex.uz", "yandex.com.tr",
-])
-
 /** Free-mail check: @/lib/email-domain's list plus RU/CIS providers. */
 export function isFreemailDomain(domain: string): boolean {
-  const d = domain.trim().toLowerCase().replace(/^@/, "")
-  return EXTRA_FREEMAIL.has(d) || baseIsFreemailDomain(d)
+  return isAnyFreemailDomain(domain)
 }

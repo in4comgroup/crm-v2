@@ -135,7 +135,7 @@ function out(signals: Sig[], extra: Partial<NormalizedExtraction> = {}): Normali
       evidenceFound: s.evidenceFound ?? true,
     })),
     attributes: [],
-    subjects: [{ counterparty: "Ромашка", onBehalfOf: "", matter: "заказ шабли", references: [{ kind: "order", value: " 124 " }], products: ["Шабли 2021"] }],
+    subjects: [{ counterparty: "Норлекс", onBehalfOf: "", matter: "заказ товара А", references: [{ kind: "order", value: " 124 " }], products: ["Товар А 2021"] }],
     facts: {
       amounts: [],
       deadlines: [],
@@ -151,7 +151,7 @@ function out(signals: Sig[], extra: Partial<NormalizedExtraction> = {}): Normali
   }
 }
 
-const TEXT = "Прошу отгрузить 12 кор. Шабли 2021 к пятнице. Пришлите КП. Брак в поставке."
+const TEXT = "Прошу отгрузить 12 кор. Товар А 2021 к пятнице. Пришлите КП. Брак в поставке."
 const ITEM = { text: TEXT, ownText: null, date: new Date("2026-11-10T09:00:00Z"), orgAttribution: "external" }
 
 // ── tests ─────────────────────────────────────────────────────────────────
@@ -172,13 +172,22 @@ describe("resolveDirection", () => {
     expect(resolveDirection("outbound", "unknown")).toBe("outbound")
     expect(resolveDirection(null, null)).toBe("inbound")
   })
+
+  it("allInternal (identity Q9) makes `internal` deterministic, overriding the model", () => {
+    expect(resolveDirection("outbound", "own_org", true)).toBe("internal")
+    expect(resolveDirection("inbound", "own_org", true)).toBe("internal")
+    expect(resolveDirection(null, "unknown", true)).toBe("internal")
+    // Never against a deterministic external author.
+    expect(resolveDirection("inbound", "external", true)).toBe("inbound")
+    expect(resolveDirection("outbound", "own_org", false)).toBe("outbound")
+  })
 })
 
 describe("postprocessExtraction", () => {
   it("scores the strongest counted code (max, not sum)", () => {
     const r = postprocessExtraction(
       out([
-        { code: "ORDER_REQUESTED", evidence: "Прошу отгрузить 12 кор. Шабли 2021" },
+        { code: "ORDER_REQUESTED", evidence: "Прошу отгрузить 12 кор. Товар А 2021" },
         { code: "COMPLAINT_QUALITY", evidence: "Брак в поставке" },
       ]),
       ctx(),
@@ -330,6 +339,14 @@ describe("postprocessExtraction", () => {
       orgAttribution: "own_org",
     })
     expect(r2.instances).toHaveLength(1)
+    // allInternal: the model said outbound, the fact keeps the internal-only code.
+    const r3 = postprocessExtraction(out([{ code: "TEAM_INTERNAL", evidence: "Брак" }], { direction: "outbound" }), ctx(), {
+      ...ITEM,
+      orgAttribution: "own_org",
+      allInternal: true,
+    })
+    expect(r3.direction).toBe("internal")
+    expect(r3.instances).toHaveLength(1)
   })
 
   it("applies date gates against the item date", () => {
@@ -400,15 +417,15 @@ describe("evidence", () => {
 describe("runGates", () => {
   const base = {
     provider: "imap",
-    metadataJson: { from: [{ name: "Иван", email: "ivan@romashka.ru" }] },
+    metadataJson: { from: [{ name: "Иван", email: "ivan@norlex.example" }] },
     threadExternalId: null,
     orgAttribution: "external",
     subject: "Заказ",
-    from: "Иван <ivan@romashka.ru>",
-    fromEmail: "ivan@romashka.ru",
+    from: "Иван <ivan@norlex.example>",
+    fromEmail: "ivan@norlex.example",
     fromName: "Иван",
     headers: null,
-    text: "Прошу отгрузить 12 кор. Шабли 2021 к пятнице.",
+    text: "Прошу отгрузить 12 кор. Товар А 2021 к пятнице.",
     date: new Date("2026-11-10T09:00:00Z"),
   }
   const deps = () => ({ ctx: ctx(), exclusions: [], blocklist: null })
@@ -420,7 +437,7 @@ describe("runGates", () => {
   it("skips an excluded address (R18)", () => {
     const r = runGates(base, {
       ...deps(),
-      exclusions: [{ id: "e1", kind: "email", value: "ivan@romashka.ru", normalizedValue: "ivan@romashka.ru" }],
+      exclusions: [{ id: "e1", kind: "email", value: "ivan@norlex.example", normalizedValue: "ivan@norlex.example" }],
     })
     expect(r).toMatchObject({ kind: "skip", reason: "excluded" })
   })
@@ -428,7 +445,7 @@ describe("runGates", () => {
   it("skips a blocklisted external sender", () => {
     const r = runGates(base, {
       ...deps(),
-      blocklist: { isBlockedEmail: () => false, isBlockedDomain: (d: string) => d === "romashka.ru" },
+      blocklist: { isBlockedEmail: () => false, isBlockedDomain: (d: string) => d === "norlex.example" },
     })
     expect(r).toMatchObject({ kind: "skip", reason: "blocklist" })
   })
@@ -440,7 +457,7 @@ describe("runGates", () => {
         subject: "Недоставленное сообщение",
         from: "mailer-daemon@yandex.ru",
         fromEmail: "mailer-daemon@yandex.ru",
-        text: "Сообщение не доставлено. 550 5.1.1 user unknown\nMessage-ID: <abc@romashka.ru>",
+        text: "Сообщение не доставлено. 550 5.1.1 user unknown\nMessage-ID: <abc@norlex.example>",
       },
       deps(),
     )
@@ -456,7 +473,7 @@ describe("runGates", () => {
       {
         ...base,
         subject: "Автоответ: Заказ",
-        text: "Я в отпуске до 20 ноября. По срочным вопросам обращайтесь к Петру Сидорову, petr@romashka.ru",
+        text: "Я в отпуске до 20 ноября. По срочным вопросам обращайтесь к Петру Сидорову, petr@norlex.example",
       },
       deps(),
     )
@@ -473,7 +490,7 @@ describe("runGates", () => {
   })
 
   it("skips automated senders, but not our own items", () => {
-    const auto = { ...base, from: "noreply@shop.ru", fromEmail: "noreply@shop.ru", fromName: null }
+    const auto = { ...base, from: "noreply@shop.example", fromEmail: "noreply@shop.example", fromName: null }
     expect(runGates(auto, deps())).toMatchObject({ kind: "skip", reason: "automated" })
     expect(runGates({ ...auto, orgAttribution: "own_org" }, deps()).kind).toBe("llm")
   })

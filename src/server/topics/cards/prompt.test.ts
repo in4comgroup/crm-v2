@@ -6,9 +6,9 @@ const input: CardWriterInput = {
   sourceItemId: "i2",
   today: "2026-11-14",
   topic: {
-    title: "Ромашка — КП на корпоратив",
+    title: "Норлекс — КП на корпоратив",
     matter: "КП на корпоратив",
-    counterparty: "Ромашка",
+    counterparty: "Норлекс",
     contact: "Анна",
     status: "open",
     waiting: "waiting_on_us",
@@ -27,7 +27,7 @@ const input: CardWriterInput = {
   current: {
     id: "card-1",
     status: "open",
-    headline: "Ромашка — отправить КП",
+    headline: "Норлекс — отправить КП",
     whyNow: "Клиент запросил КП",
     whatChanged: "",
     steps: ["Подготовить КП"],
@@ -40,7 +40,7 @@ describe("card writer prompt", () => {
     const p = buildCardWriterPrompt(input)
     expect(p).toContain("ТЕКУЩАЯ ОТКРЫТАЯ КАРТОЧКА\nid: card-1")
     expect(p).toContain("[НОВОЕ]")
-    expect(p).toContain("Компания: Ромашка")
+    expect(p).toContain("Компания: Норлекс")
   })
 
   it("never carries the score, band or profile", () => {
@@ -57,5 +57,20 @@ describe("card writer prompt", () => {
     expect(p).toContain("ПРОШЛАЯ КАРТОЧКА (статус: accepted")
     expect(p).not.toContain("id: card-1")
     expect(p).toContain("ОБЯЗАТЕЛЬНОЕ ОБНОВЛЕНИЕ: Риск: затягивание решения")
+  })
+
+  it("identity I4: org lines + client profile only when given; off = unchanged", () => {
+    const off = buildCardWriterPrompt(input)
+    expect(off).not.toContain("НАША КОМПАНИЯ")
+    expect(buildCardWriterPrompt({ ...input, org: null, clientProfile: null })).toBe(off)
+    const on = buildCardWriterPrompt({
+      ...input,
+      org: { roleLine: "Наша компания: Альфа — производитель.", productsLine: "Наши продукты и услуги: Продукт 1." },
+      clientProfile: "Профиль клиента «Норлекс»: отрасль: розница",
+    })
+    expect(on).toContain("НАША КОМПАНИЯ\nНаша компания: Альфа — производитель.\nНаши продукты и услуги: Продукт 1.")
+    expect(on).toContain("Компания: Норлекс\nПрофиль клиента «Норлекс»: отрасль: розница")
+    // Still no engine fields.
+    for (const w of ["балл", "score", "band", "p8", "d4", "w1"]) expect(on.toLowerCase()).not.toContain(w)
   })
 })

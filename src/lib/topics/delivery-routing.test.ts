@@ -19,7 +19,7 @@ const CAL = new WorkCalendar(
     { day: "2026-11-04", isWorking: false, isShort: false },
     { day: "2026-11-20", isWorking: false, isShort: false }, // a test holiday Friday
   ],
-  { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" },
+  { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" },
 )
 const msk = (s: string) => new Date(`${s.replace(" ", "T")}:00+03:00`)
 const dayOf = (iso: string | null) => (iso ? CAL.localDay(new Date(iso)) : "0000-00-00")

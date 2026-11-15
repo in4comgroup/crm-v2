@@ -119,7 +119,7 @@ export function gchatSpaceFromMessageName(name: unknown): string | null {
 
 /**
  * WhatsApp archive chat name: the picked folder name («WhatsApp Chat -
- * Ромашка» → «ромашка»), lower-cased, bidi marks removed, spaces collapsed.
+ * Норлекс» → «норлекс»), lower-cased, bidi marks removed, spaces collapsed.
  */
 export function normalizeWhatsAppChatName(value: unknown): string | null {
   const v = clean(value)

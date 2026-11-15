@@ -40,6 +40,7 @@ import {
 } from "@/components/blocks/related-topics"
 import type { ClientDetail } from "@/server/client-content"
 import { ClientResponsibleField } from "@/components/blocks/client-responsible-field"
+import { ClientProfileBlock } from "@/components/blocks/client-profile-block"
 import type { ClientRow, ClientRevenueSummary } from "@/app/api/clients/route"
 import type { DealRow } from "@/app/api/deals/route"
 import type { SourceSummary } from "@/server/sources"
@@ -236,6 +237,10 @@ export function ClientDetailShell({
           <ClientResponsibleField
             client={detail}
             onChanged={refresh}
+            className="sm:col-span-2 text-foreground"
+          />
+          <ClientProfileBlock
+            clientId={detail.id}
             className="sm:col-span-2 text-foreground"
           />
           <div className="flex items-center gap-2 sm:col-span-2 text-xs">

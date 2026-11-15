@@ -15,6 +15,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 
 const pdfAnalysisSchema = z.object({
@@ -107,13 +109,16 @@ export async function parsePdfBytes(
 
   const result = await aiGenerateText({
     process: "parsing.pdf",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: pdfAnalysisSchema }),
-    system: `You are a precise document parsing assistant. Extract structured metadata and convert the provided PDF into clean Markdown. Do not invent facts. Aggressively strip repeating headers, footers, page numbers, and watermark boilerplate — they are noise, not content.
+    system: withOwnOrgLine(
+      `You are a precise document parsing assistant. Extract structured metadata and convert the provided PDF into clean Markdown. Do not invent facts. Aggressively strip repeating headers, footers, page numbers, and watermark boilerplate — they are noise, not content.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For PDFs specifically: the 'author/sender' is whoever you extract into the \`senders\` field (cover page byline, signature line, title-block author). Don't include them in mentionedPeople. Only emit third parties referenced in the document body. When inferring organization from the author's affiliation, only do so if the document itself states the author's company unambiguously (e.g. a letterhead, signature block with affiliation).`,
+      ai,
+    ),
     messages: [
       {
         role: "user",

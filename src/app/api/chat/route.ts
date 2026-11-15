@@ -20,6 +20,8 @@ import { listClients } from "@/server/clients"
 import { listContacts } from "@/server/contacts"
 import { listDeals } from "@/server/deals"
 import { searchWeb } from "@/server/web-search"
+import { getOwnOrgContext } from "@/server/identity/own-org"
+import { loadClientProfileTexts } from "@/server/identity/client-profile-context"
 import { aiStreamText } from "@/server/ai/runtime"
 import {
   entitySearchScore,
@@ -123,7 +125,7 @@ function buildSourceTools(organizationId: string | null) {
         // accent-fold, punctuation-insensitive, token-OR, pg_trgm fuzzy gate
         // at FUZZY_THRESHOLD). The old raw `name.toLowerCase().includes(q)`
         // scored 0 whenever the model rephrased the name even slightly —
-        // «АСТ» never found the stored «AST», and an em-dash query never
+        // «Норлекс» never found the stored «Norleks», and an em-dash query never
         // found an en-dash name. Results are RANKED so the best match leads.
         //
         // Soft-deleted (`deleted` status) entities are test artifacts /
@@ -228,14 +230,29 @@ function buildSourceTools(organizationId: string | null) {
           if (!sourceById.has(row.id)) sourceById.set(row.id, toSourceHit(row))
         }
 
-        const clients = matchedClients.slice(0, ENTITY_CAP).map((c) => ({
-          id: c.id,
-          name: c.name,
-          funnelPhase: c.funnelPhase,
-          webUrl: c.webUrl,
-          email: c.email,
-          status: c.status,
-        }))
+        // Identity spec I4 (§4.5 «AI chat tools»): the client business
+        // profile summary («Профиль клиента») rides along when one exists.
+        // Best effort — a failed read never breaks the search.
+        const shownClients = matchedClients.slice(0, ENTITY_CAP)
+        const profiles = await loadClientProfileTexts(
+          organizationId,
+          shownClients.map((c) => c.id),
+        ).catch((e) => {
+          console.error("[chat] client profiles failed", e)
+          return new Map<string, { summary: string }>()
+        })
+        const clients = shownClients.map((c) => {
+          const profile = profiles.get(c.id)?.summary ?? ""
+          return {
+            id: c.id,
+            name: c.name,
+            funnelPhase: c.funnelPhase,
+            webUrl: c.webUrl,
+            email: c.email,
+            status: c.status,
+            ...(profile ? { profile } : {}),
+          }
+        })
         const contacts = matchedContacts.slice(0, ENTITY_CAP).map((c) => ({
           id: c.id,
           name: c.name,
@@ -341,6 +358,15 @@ export async function POST(req: Request) {
       Object.keys(tools),
     )
 
+    // Identity spec I4: the org's «О нашей компании» card in the system
+    // prompt ("" when the org has no profile → prompt unchanged).
+    const orgCard = await getOwnOrgContext(sourceOrgId)
+      .then((ctx) => ctx.promptCard)
+      .catch((e) => {
+        console.error("[chat] own-org context failed", e)
+        return ""
+      })
+
     const result = await aiStreamText({
       process: "chat.assistant",
       orgId: sourceOrgId,
@@ -349,6 +375,7 @@ export async function POST(req: Request) {
       system: buildSystemPrompt({
         internal: sourceTools !== undefined,
         web: true,
+        orgCard,
       }),
       messages: await convertToModelMessages(messages),
       ...(hasTools ? { tools } : {}),

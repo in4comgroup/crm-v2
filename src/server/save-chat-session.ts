@@ -29,6 +29,8 @@ import {
   UnsupportedOfficeTypeError,
   UnsupportedDropoffTypeError,
 } from "@/server/parsers/dropoff"
+import { getOwnOrgContext } from "@/server/identity/own-org"
+import { buildOwnOrgPromptLine, parserAiContext } from "@/server/parsers/_shared"
 
 // ── Public types ─────────────────────────────────────────────────────
 
@@ -293,7 +295,7 @@ export async function saveChatSession(
         // OUR side is aichat, and the parent ref disambiguates.
         dropoffId: `${sessionId}-${i}`,
         description: `Attached to AI chat session "${trimmedTitle}"`,
-      }, { orgId: input.organizationId, userId: input.userId })
+      }, parserAiContext(input.organizationId, input.userId, buildOwnOrgPromptLine(await getOwnOrgContext(input.organizationId).catch(() => null))))
 
       // First block is the body; videos emit a second (audio) block.
       const firstBlock = parsed.blocks[0]

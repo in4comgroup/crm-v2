@@ -253,6 +253,12 @@ export const orgIdentityKind = pgEnum("org_identity_kind", [
   "name",
   "website",
   "address",
+  // Identity spec I1 (docs/specs/identity): own mail domain with no website,
+  // a shared mailbox (sales@ …) that is not a user, and a staff member's
+  // extra address (personal email / Telegram @handle / phone; `user_id` set).
+  "email_domain",
+  "mailbox",
+  "person",
 ])
 
 export type OrgIdentityKind = (typeof orgIdentityKind.enumValues)[number]
@@ -408,7 +414,7 @@ export const client = pgTable(
       .notNull()
       .default({}),
     // Alternate spellings / synonyms for this company seen across sources
-    // (cross-script + with/without legal form, e.g. ["AST", "АСТ", "AST
+    // (cross-script + with/without legal form, e.g. ["Norleks", "Норлекс", "Norleks
     // INTER"]). Used by discovery to dedup a known client against new
     // candidates and to attribute contacts by company. Nullable; populated by
     // discovery + the edit form. Matched via `companyMatchKey`.
@@ -521,7 +527,7 @@ export const discoveryBlocklist = pgTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     kind: blocklistKind("kind").notNull(),
     // Normalised canonical form (the dedup key): lower(email) | bare host |
-    // companyMatchKey | personMatchKey. Makes "ООО АСТ" / "AST" / "АСТ" collapse
+    // companyMatchKey | personMatchKey. Makes "ООО Норлекс" / "Norleks" / "Норлекс" collapse
     // to one entry.
     matchKey: text("match_key").notNull(),
     // Raw value as entered, for display.
@@ -550,12 +556,12 @@ export const discoveryBlocklist = pgTable(
 // synonyms, websites and postal addresses that mean "this is US, not a client".
 // The `organization` profile columns (name / web_url / address / email) stay
 // the PRIMARY identity; this table is purely additive, so an org can declare a
-// second brand ("АСТ" ≡ "AST INTER"), a second domain, or a warehouse address
+// second brand, a second domain, or a warehouse address
 // without those single-valued columns having to hold a delimited blob.
 //
-// Read by `loadOwnOrgIdentity` (discovery + parse-time own-org filtering) and
-// `getOrgIdentity` (parse-time authorship attribution). Owner-managed from the
-// organisation card on /account.
+// Read by the one «us» resolver `getOwnOrgContext` (src/server/identity/
+// own-org.ts): discovery, parse-time own-org filtering and authorship
+// attribution. Owner-managed in /account → «Профиль организации».
 export const orgIdentityEntry = pgTable(
   "org_identity_entry",
   {
@@ -571,6 +577,10 @@ export const orgIdentityEntry = pgTable(
     label: text("label").notNull(),
     // Optional operator "why" note.
     note: text("note"),
+    // Kind `person` only: the staff member the address belongs to, and the
+    // channel of the address (email | telegram | phone; text validated in code).
+    userId: text("user_id").references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
+    channel: text("channel"),
     createdByUserId: text("created_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
@@ -578,6 +588,7 @@ export const orgIdentityEntry = pgTable(
   },
   (table) => [
     index("org_identity_entry_organizationId_idx").on(table.organizationId),
+    index("org_identity_entry_user_idx").on(table.organizationId, table.userId),
     // Adding the same value twice is a no-op (onConflictDoNothing).
     uniqueIndex("org_identity_entry_org_kind_key_uidx").on(
       table.organizationId,
@@ -1125,7 +1136,7 @@ export const notificationReadState = pgTable(
 
 // ── Product catalog ──────────────────────────────────────────────────
 //
-// Org-scoped catalog of sellable items (wine/spirits catalog for the
+// Org-scoped catalog of sellable items (product catalog for the
 // first tenant). The source-of-truth spreadsheet has 42 columns; we map
 // them into three buckets:
 //   • Main attributes (spreadsheet cols C-H, minus price_range) → real
@@ -1447,7 +1458,7 @@ export const orderRequestItem = pgTable(
     // Exact fragment of the message this item came from (shown for context).
     rawSnippet: text("raw_snippet").notNull(),
     // Short human label for the step header (e.g. "William Lawson's",
-    // "Российские игристые вина").
+    // "Северные сыры").
     label: text("label"),
     mode: orderRequestItemMode("mode").notNull(),
     // Catalog attribute filters for `discovery` items (empty for `explicit`).
@@ -3538,4 +3549,140 @@ export const productWatchState = pgTable(
     checkedAt: timestamp("checked_at").defaultNow().notNull(),
   },
   (table) => [index("product_watch_state_org_idx").on(table.organizationId)],
+)
+
+// ── Identity spec (docs/specs/identity) I1: own organization profile ──────
+// Business categories («Отрасль»): platform reference data (rows in a
+// migration, fixed codes, ON CONFLICT DO NOTHING). Shared by the org
+// profile and (later) client profiles. No ОКВЭД (decision Q2).
+export const industry = pgTable("industry", {
+  code: text("code").primaryKey(),
+  labelRu: text("label_ru").notNull(),
+  sort: integer("sort").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+})
+
+// What the org does (group B of spec §3.1). One row per org; identity data
+// (names, domains, mailboxes, staff addresses) stays in `organization` +
+// `org_identity_entry`. Lists are jsonb validated in code
+// (src/lib/identity/org-profile.ts). Edited by the org OWNER only.
+export const orgProfile = pgTable("org_profile", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  // «Чем занимается компания», ≤ 500 chars.
+  description: text("description"),
+  industryCode: text("industry_code").references(() => industry.code, { onDelete: "set null" }),
+  // «Комментарий к отрасли».
+  industryNote: text("industry_note"),
+  // «Роль на рынке»: MARKET_ROLES codes.
+  marketRoles: text("market_roles").array().notNull().default(sql`'{}'::text[]`),
+  // «Продукты и услуги»: [{ name, description?, categories?[] }]
+  products: jsonb("products").$type<{ name: string; description?: string; categories?: string[] }[]>().notNull().default([]),
+  // «Наши клиенты»: [{ name, description? }]
+  targetCustomers: jsonb("target_customers").$type<{ name: string; description?: string }[]>().notNull().default([]),
+  // «Кто продаёт нам»: [{ name, description? }]
+  supplierTypes: jsonb("supplier_types").$type<{ name: string; description?: string }[]>().notNull().default([]),
+  geography: text("geography"),
+  // «Наши термины»: [{ term, meaning }]
+  glossary: jsonb("glossary").$type<{ term: string; meaning: string }[]>().notNull().default([]),
+  // «Нет своего домена (почта на общих сервисах)».
+  noOwnDomain: boolean("no_own_domain").notNull().default(false),
+  updatedByUserId: text("updated_by_user_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+})
+
+// Change log of `org_profile` (who, when, before / after of changed fields).
+export const orgProfileLog = pgTable(
+  "org_profile_log",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    changedByUserId: text("changed_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("org_profile_log_org_idx").on(table.organizationId, table.createdAt)],
+)
+
+// ── Identity spec I5 / I6: client business profile («Профиль компании») ───
+// One row per client (spec §4.1). Lists are jsonb validated in code
+// (src/lib/identity/client-profile.ts). `field_meta` = provenance per field
+// { source: manual | web | communications | import, byUserId?, at,
+// confidence?, evidenceUrl?, verified }. Edited by the client's responsible
+// member and the org owner (Q3); web data fills EMPTY fields only (Q5).
+export const clientProfile = pgTable(
+  "client_profile",
+  {
+    clientId: text("client_id")
+      .primaryKey()
+      .references(() => client.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // «Чем занимается», ≤ 500 chars.
+    description: text("description"),
+    industryCode: text("industry_code").references(() => industry.code, { onDelete: "set null" }),
+    industryNote: text("industry_note"),
+    // «Роль на рынке»: MARKET_ROLES codes (same list as the org profile).
+    marketRoles: text("market_roles").array().notNull().default(sql`'{}'::text[]`),
+    // «Продукты и услуги клиента»: [{ name }] ≤ 15.
+    products: jsonb("products").$type<{ name: string }[]>().notNull().default([]),
+    // «Что им интересно у нас»: { lines: our product line names[], note? }.
+    needs: jsonb("needs").$type<{ lines: string[]; note?: string }>().notNull().default({ lines: [] }),
+    // «Размер»: CLIENT_SIZE_BANDS code; `points_of_sale` for a chain.
+    sizeBand: text("size_band"),
+    pointsOfSale: integer("points_of_sale"),
+    geography: text("geography"),
+    // Provenance per field: { [field]: FieldMeta }.
+    fieldMeta: jsonb("field_meta").$type<Record<string, unknown>>().notNull().default({}),
+    // Last web enrichment of the profile (refresh rule: older than 180 days).
+    webEnrichedAt: timestamp("web_enriched_at"),
+    updatedByUserId: text("updated_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("client_profile_org_idx").on(table.organizationId),
+    index("client_profile_org_industry_idx").on(table.organizationId, table.industryCode),
+  ],
+)
+
+// Automatic value for a field that already has a manual value (spec §4.3):
+// the responsible KAM accepts or rejects it. status: pending | accepted |
+// rejected | superseded (a newer proposal for the same field).
+export const clientProfileProposal = pgTable(
+  "client_profile_proposal",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => client.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    field: text("field").notNull(),
+    value: jsonb("value").notNull(),
+    source: text("source").notNull(),
+    confidence: text("confidence"),
+    evidenceUrl: text("evidence_url"),
+    status: text("status").notNull().default("pending"),
+    decidedByUserId: text("decided_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("client_profile_proposal_client_idx").on(table.clientId, table.status),
+    index("client_profile_proposal_org_idx").on(table.organizationId, table.status),
+  ],
 )

@@ -5,6 +5,7 @@ import { db } from "@/db/drizzle"
 import { source, sourceItem, topicsGoldenItem } from "@/db/schema"
 import { AiBudgetExceededError } from "@/server/ai/budget"
 import { loadPromptCodes, type ExtractionVariant } from "@/server/topics/prompt/extraction"
+import { counterpartyLineForItem } from "@/server/topics/signals/counterparty-line"
 import { EXTRACTION_PROCESS, runExtraction } from "@/server/topics/prompt/run-extraction"
 import { messageContent } from "@/server/topics/signals/evidence"
 import { loadSignalBatchContext } from "@/server/topics/signals/extract-item"
@@ -63,9 +64,11 @@ export async function startSampleRun(args: {
   userId: string | null
   size: number
   variant: ExtractionVariant
+  /** Identity I4: force the org profile in / out of the prompt (omitted = org setting). */
+  promptContext?: boolean
 }): Promise<string> {
   const size = Math.max(1, Math.min(SAMPLE_MAX, Math.floor(args.size)))
-  const promptSet = await loadPromptCodes(args.orgId, "review")
+  const promptSet = await loadPromptCodes(args.orgId, "review", { promptContext: args.promptContext })
   const reviewCodes = promptSet.codes.filter((c) => c.reviewOnly).map((c) => c.code)
   if (reviewCodes.length === 0) {
     throw new EvalError("У организации нет кодов «на проверке» — выборке нечего проверять.")
@@ -106,6 +109,7 @@ export async function startSampleRun(args: {
       reviewCodes,
       sampleItemIds: rows.map((r) => r.id),
       sampleSize: size,
+      promptContext: promptSet.promptContext,
     },
     metrics: { schema: 1, sample: { items: {} } },
   })
@@ -128,10 +132,12 @@ export async function runSampleBatch(
   let failed = 0
 
   if (batchIds.length > 0) {
-    const promptSet = await loadPromptCodes(orgId, "review")
+    // The org profile follows the RUN (fixed at start), not today's setting.
+    const promptContext = run.config.promptContext === true
+    const promptSet = await loadPromptCodes(orgId, "review", { promptContext })
     const [ctx, batch, rows] = await Promise.all([
       loadEvalContext(orgId, promptSet),
-      loadSignalBatchContext(orgId),
+      loadSignalBatchContext(orgId, { promptContext }),
       loadSignalItemRows(orgId, batchIds),
     ])
     const byId = new Map(rows.map((r) => [r.id, r]))
@@ -162,6 +168,7 @@ export async function runSampleBatch(
         if (!text.trim()) return { ...base, gated: "no_text" }
         const envelope = envelopeFromItem(row, text)
         envelope.orgName = batch.orgName
+        envelope.counterpartyLine = await counterpartyLineForItem(batch.counterparties, row, envelope)
         const gate = runGates(
           {
             provider: row.provider,
@@ -255,6 +262,8 @@ export type SampleReport = {
   finishedAt: string | null
   variant: string
   codeSet: string
+  /** Identity I4: org profile in the prompt (run config). */
+  promptContext: boolean
   models: string[]
   taxonomyVersions: number[]
   planned: number
@@ -292,6 +301,7 @@ export async function getSampleReport(runId: string, known?: EvalRunRow): Promis
     finishedAt: run.finishedAt?.toISOString() ?? null,
     variant: run.config.variant,
     codeSet: run.config.codeSet,
+    promptContext: run.config.promptContext === true,
     models: [...new Set(items.map((i) => i.model).filter((m): m is string => !!m))],
     taxonomyVersions: [
       ...new Set(items.map((i) => i.taxonomyVersion).filter((v): v is number => typeof v === "number")),

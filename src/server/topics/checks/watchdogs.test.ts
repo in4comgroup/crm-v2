@@ -20,8 +20,8 @@ import {
   type WdTopicItem,
 } from "./watchdogs"
 
-// Moscow = UTC+3, no DST. Plain Mon–Fri calendar (no exception rows).
-const cal = new WorkCalendar([], { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
+// Etc/GMT-3 = UTC+3, no DST. Plain Mon–Fri calendar (no exception rows).
+const cal = new WorkCalendar([], { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" })
 const NOW = new Date("2026-11-14T10:00:00Z") // Saturday
 
 function ctx(p: Partial<WatchdogCtx> = {}): WatchdogCtx {
@@ -51,7 +51,7 @@ function topic(items: WdTopicItem[], instances: WdInstance[], p: Partial<WdTopic
     status: "open",
     clientId: "c1",
     contactId: null,
-    companyName: "Ромашка",
+    companyName: "Норлекс",
     matter: "КП на поставку",
     items,
     instances,
@@ -100,7 +100,7 @@ describe("offer_no_response", () => {
       conditionKey: KEY,
       topicId: "t1",
       clientId: "c1",
-      companyName: "Ромашка",
+      companyName: "Норлекс",
       matterRu: "КП на поставку",
       score: null,
       evidenceRu: "КП отправлено 03.11.2026; срок ответа 10.11.2026 (7 дней); ответа нет",
@@ -473,7 +473,7 @@ describe("contract_not_renewed", () => {
       topicStatus: "resolved",
       clientId: "c1",
       contactId: null,
-      companyName: "Ромашка",
+      companyName: "Норлекс",
       matter: "договор поставки",
       ...p,
     }
@@ -490,7 +490,7 @@ describe("contract_not_renewed", () => {
         conditionKey: KEY,
         topicId: "t1",
         clientId: "c1",
-        companyName: "Ромашка",
+        companyName: "Норлекс",
         matterRu: "договор поставки",
         evidenceRu: "Договор истёк 31.10.2026; продления и нового договора нет",
         score: null,

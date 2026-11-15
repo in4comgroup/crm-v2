@@ -33,6 +33,8 @@ import {
   matchAnalysisExclusion,
 } from "@/lib/analysis-exclusion-match"
 import { normalizeWhatsAppChatName, whatsappThreadKey } from "@/lib/thread-key"
+import { getOwnOrgContext } from "@/server/identity/own-org"
+import { buildOwnOrgPromptLine, parserAiContext } from "@/server/parsers/_shared"
 
 // WhatsApp video parsing dominates wall-clock — match the per-item
 // Parse route's ceiling so a 50 MB MP4 still fits comfortably.
@@ -116,7 +118,7 @@ export async function POST(request: NextRequest) {
   })
   const chatFile = chatFileIndex >= 0 ? files[chatFileIndex] : null
   // Archive chat = the picked folder name (first segment of `_chat.txt`'s
-  // relative path, e.g. «WhatsApp Chat - Ромашка»). Part of the thread key
+  // relative path, e.g. «WhatsApp Chat - Квант»). Part of the thread key
   // `wa:<archive chat>:<groupKey>` (spec topics/01 §6.1); null when the file
   // came without a folder.
   const chatPathSegments =
@@ -337,7 +339,7 @@ export async function POST(request: NextRequest) {
         description: "",
         userName,
         uploadedAt: now.toISOString(),
-      }, { orgId: activeOrgId, userId: session.user.id })
+      }, parserAiContext(activeOrgId, session.user.id, buildOwnOrgPromptLine(await getOwnOrgContext(activeOrgId).catch(() => null))))
 
       const rootId = randomUUID()
       const firstBlock = parsed.blocks[0]

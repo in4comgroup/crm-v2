@@ -35,12 +35,15 @@ export function extractWebsiteDomain(url: string): string {
   return s
 }
 
-// Public free-mail / consumer email providers. Their domains may match
-// real client websites by accident (e.g. someone setting their client's
-// webUrl to "https://gmail.com"); we treat any contact at one of these
-// as un-linkable to avoid false positives. The list covers the most
-// common globally — extend if you encounter regional gaps in practice.
-const FREEMAIL_DOMAINS = new Set([
+// Public free-mail / consumer email providers — the ONE list of the
+// platform (identity spec I2: merged with the RU / CIS list that used to live
+// in src/lib/ru-mail/senders.ts). Their domains may match real client
+// websites by accident (e.g. someone setting their client's webUrl to
+// "https://gmail.com"), and a staff member on one of them must never make the
+// provider "our" domain; any address at one of these is un-linkable by domain.
+// Extend here only — every caller (`isFreemailDomain` from this module or from
+// `@/lib/ru-mail`) reads this set.
+export const FREEMAIL_DOMAINS: ReadonlySet<string> = new Set([
   // Google
   "gmail.com",
   "googlemail.com",
@@ -81,18 +84,42 @@ const FREEMAIL_DOMAINS = new Set([
   "gmx.com",
   "gmx.de",
   "gmx.net",
-  "yandex.com",
-  "yandex.ru",
   "qq.com",
   "163.com",
   "126.com",
+  // RU / CIS providers
   "mail.ru",
+  "bk.ru",
+  "list.ru",
+  "inbox.ru",
+  "internet.ru",
+  "yandex.ru",
+  "yandex.com",
+  "yandex.by",
+  "yandex.kz",
+  "yandex.ua",
+  "yandex.uz",
+  "yandex.com.tr",
+  "ya.ru",
+  "rambler.ru",
+  "lenta.ru",
+  "autorambler.ru",
+  "myrambler.ru",
+  "ro.ru",
+  "mail.ua",
+  "ukr.net",
 ])
 
-/** True when the domain is a known consumer / free-mail provider. */
+/** True when the domain is a known consumer / free-mail provider (a leading "@" is ignored). */
 export function isFreemailDomain(domain: string): boolean {
-  return FREEMAIL_DOMAINS.has(domain.trim().toLowerCase())
+  return FREEMAIL_DOMAINS.has(domain.trim().toLowerCase().replace(/^@/, ""))
 }
+
+/**
+ * Alias of `isFreemailDomain` (same ONE list). Kept because identity code
+ * (src/lib/identity/registry.ts, src/lib/ru-mail/senders.ts) names it so.
+ */
+export const isAnyFreemailDomain = isFreemailDomain
 
 /**
  * Subdomain-tolerant domain match. Returns true when the email's domain

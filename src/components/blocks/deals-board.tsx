@@ -120,8 +120,8 @@ function ClientMultiSelect({
   const [q, setQ] = useState("")
   const selected = new Set(values)
   const query = q.trim()
-  // Shared cross-script normalisation (src/lib/entity-search.ts) so «АСТ»
-  // finds the stored «AST – …». Filter mode: no fuzzy tail in a picker.
+  // Shared cross-script normalisation (src/lib/entity-search.ts) so «Норлекс»
+  // finds the stored «Norleks – …». Filter mode: no fuzzy tail in a picker.
   const visible = query
     ? options.filter((c) =>
         entityMatchesFilter(query, [

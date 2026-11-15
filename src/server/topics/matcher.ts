@@ -3,6 +3,7 @@ import "server-only"
 import { Output } from "ai"
 import { z } from "zod"
 import { aiGenerateText } from "@/server/ai/runtime"
+import { getTopicsOrgPrompt } from "@/server/identity/prompt-context"
 import type { MatcherDecision, MatcherInput, TopicMatcher } from "./resolver"
 
 // LLM topic matcher (spec topics/01 §6.2 step 5; AI process
@@ -34,6 +35,16 @@ const SYSTEM = `Ты сопоставляешь деловой вопрос из
 
 Ответ: topicId — id темы, скопированный из списка символ в символ, или "NEW"; confidence — high только если уверен; reason — коротко по-русски.`
 
+/**
+ * Identity I4: the system prompt with the line «Наша компания: <name> —
+ * <роли>» («our» vs «their» side of a question). No line (switch
+ * `identity.promptContext` off, or nothing known) → the pre-I4 text.
+ */
+export function buildTopicMatchSystem(orgRoleLine?: string | null): string {
+  const line = (orgRoleLine ?? "").trim()
+  return line ? `${SYSTEM}\n\n${line}` : SYSTEM
+}
+
 function refs(list: { kind: string; value: string }[]): string {
   return list.length ? list.map((r) => `${r.kind} ${r.value}`).join("; ") : "—"
 }
@@ -64,14 +75,22 @@ export function buildTopicMatchPrompt(input: MatcherInput): string {
 
 /** The production matcher: one `topics.topic_match` call per subject. */
 export function createLlmTopicMatcher(orgId: string): TopicMatcher {
+  // Loaded once per matcher (= per org run), on the first call.
+  let system: Promise<string> | null = null
   return async (input: MatcherInput): Promise<MatcherDecision> => {
+    system ??= getTopicsOrgPrompt(orgId)
+      .then((p) => buildTopicMatchSystem(p?.roleLine))
+      .catch((e) => {
+        console.error("[topics/matcher] org prompt failed", orgId, e)
+        return SYSTEM
+      })
     const result = await aiGenerateText({
       process: TOPIC_MATCH_PROCESS,
       orgId,
       userId: null,
       ref: { sourceItemId: input.itemId },
       output: Output.object({ schema: topicMatchSchema }),
-      system: SYSTEM,
+      system: await system,
       prompt: buildTopicMatchPrompt(input),
       temperature: 0,
     })

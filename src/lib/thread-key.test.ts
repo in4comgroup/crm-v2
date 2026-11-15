@@ -70,7 +70,7 @@ describe("per-provider keys", () => {
   })
 
   it("whatsapp: archive chat name normalised, groupKey kept", () => {
-    expect(whatsappThreadKey("WhatsApp Chat - Ромашка  ООО", "abc123")).toBe("wa:ромашка ооо:abc123")
+    expect(whatsappThreadKey("WhatsApp Chat - Норлекс  ООО", "abc123")).toBe("wa:норлекс ооо:abc123")
     expect(whatsappThreadKey(null, "abc123")).toBe("wa:_:abc123")
     expect(whatsappThreadKey("x", null)).toBeNull()
   })

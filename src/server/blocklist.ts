@@ -84,7 +84,7 @@ async function requireOwnerOrg(): Promise<{ orgId: string; userId: string }> {
 
 // Map a raw operator-entered value to its canonical match key + display label,
 // or null when the value is malformed for the kind. Storing the canonical form
-// is what makes "ООО АСТ" / "AST" / "АСТ" collapse to one entry.
+// is what makes "ООО Норлекс" / "Norleks" / "Норлекс" collapse to one entry.
 export function normaliseBlocklistValue(
   kind: BlocklistKind,
   rawValue: string,
@@ -117,7 +117,7 @@ export function normaliseBlocklistValue(
   return { matchKey: key, label }
 }
 
-// ── The memoized read guard (§2.2) — mirror of loadOwnOrgIdentity ─────
+// ── The memoized read guard (§2.2) — mirror of the «us» resolver getOwnOrgContext ─────
 
 export type OrgBlocklist = {
   isBlockedEmail: (email: string) => boolean

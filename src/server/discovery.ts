@@ -2,6 +2,7 @@
 
 import { db } from "@/db/drizzle"
 import { client, contact, sourceItem, type EntityStatus } from "@/db/schema"
+import { scheduleEnrichOnCreate } from "@/server/identity/client-enrichment"
 import { and, eq, isNull, ne, or, sql, inArray, gte } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
 import { companyMatchKey, personMatchKey } from "@/lib/translit-ru"
@@ -16,7 +17,8 @@ import {
   extractWebsiteDomain,
   isFreemailDomain,
 } from "@/lib/email-domain"
-import { loadOwnOrgIdentity } from "@/server/org-identity"
+import { ownOrgIdentityFromContext } from "@/server/org-identity"
+import { getOwnOrgContext } from "@/server/identity/own-org"
 import { loadOrgBlocklist } from "@/server/blocklist"
 import { cleanPhone } from "@/server/parsers/_shared"
 import { randomUUID } from "crypto"
@@ -35,7 +37,7 @@ export type ClientCandidate = {
   /** Best (fullest) original casing — used as the new client.name. */
   displayName: string
   /** Cross-script canonical dedup key — `companyMatchKey(displayName)`.
-   *  Collapses Cyrillic/Latin + legal-form variants (АСТ ≡ AST ≡ ООО АСТ). */
+   *  Collapses Cyrillic/Latin + legal-form variants (Норлекс ≡ Norleks ≡ ООО Норлекс). */
   normalisedKey: string
   /** Other spellings of this company seen across the scanned rows (and from
    *  the parser's `organizations[].aliases`), excluding the displayName.
@@ -54,7 +56,7 @@ export type ClientCandidate = {
   /** Sample (capped at 5) source_item ids for context in the preview. */
   sampleSourceItemIds: string[]
   /** Set when this company's normalised key matches an existing client but
-   *  the displayed name differs (e.g. existing "IN4COM" vs source "IN4COM
+   *  the displayed name differs (e.g. existing "Globex" vs source "Globex
    *  GmbH") — points at that client so the dialog can flag a possible
    *  duplicate and pre-uncheck it. `null` when no such match (genuinely new)
    *  OR when the name is an exact match (silently merged, never surfaced).
@@ -139,7 +141,7 @@ export type LinkProposal = {
    *    a company that matches this client (used when no web domain is known). */
   matchedVia: "domain" | "company"
   /** Human-readable basis for the match, shown in the UI (e.g. the matched
-   *  domain, or "company «АСТ»"). */
+   *  domain, or "company «Норлекс»"). */
   matchedLabel: string
   /** Confidence in the link, gating the review UI default-check state. */
   confidence: DiscoveryConfidence
@@ -354,7 +356,7 @@ export async function previewDiscovery(opts?: {
   const { activeOrgId } = await requireOrgContext()
   const period = opts?.period ?? "all"
   const cutoff = periodCutoff(period)
-  const ownOrg = await loadOwnOrgIdentity(activeOrgId)
+  const ownOrg = ownOrgIdentityFromContext(await getOwnOrgContext(activeOrgId))
   // Blocklist guard — consulted at the SAME candidate drop-sites as the own-org
   // guard so business-irrelevant entities never surface. Re-aggregated each
   // preview, so adding an entry retroactively suppresses already-parsed items
@@ -586,7 +588,7 @@ export async function previewDiscovery(opts?: {
 
     // Companies — fold the flat `companies` list and the enriched
     // `organizations` list (name + aliases + webUrl) into one stream of
-    // signals, keyed cross-script so АСТ ≡ AST, then collapsed to the canonical
+    // signals, keyed cross-script so Норлекс ≡ Norleks, then collapsed to the canonical
     // company key (`canonicalKey`) so declared-alias / shared-domain spellings
     // bucket as ONE candidate.
     const rowKeys = rowCompanyKeys.get(row.id) ?? new Set<string>()
@@ -667,6 +669,10 @@ export async function previewDiscovery(opts?: {
     const participants = extractParticipants(meta).filter(
       (p) =>
         !ownOrg.isOwnDomain(extractEmailDomain(p.email)) &&
+        // Identity spec I2: a staff address (member sign-in email, staff
+        // extra address on any domain incl. free-mail, shared mailbox) is
+        // «us» and never becomes a contact.
+        !ownOrg.isOwnEmail(p.email) &&
         // Blocked email (or any address under a blocked domain) → never a
         // contact candidate, never feeds webUrl inference, never anchors a link.
         !blocklist.isBlockedEmail(p.email),
@@ -738,8 +744,8 @@ export async function previewDiscovery(opts?: {
   //   1. Parser-attributed website (organizations[].webUrl)        → high
   //   2. A participant business domain whose label matches the name → high
   //   3. The ONLY business (non-freemail) domain across the rows    → medium
-  // Step 3 is the relaxed inference that fixes the АСТ ↔ ast-inter.ru case:
-  // the domain label ("ast-inter") doesn't string-match the name ("АСТ"), but
+  // Step 3 is the relaxed inference that fixes the Норлекс ↔ norleks-inter.example case:
+  // the domain label ("norleks-inter") doesn't string-match the name ("Норлекс"), but
   // it's the sole business domain co-occurring with the company, so we adopt
   // it (and let the confidence + review UI catch the rare false positive).
   const clientCandidates: ClientCandidate[] = Array.from(
@@ -1128,7 +1134,7 @@ export async function applyDiscovery(
   input: ApplyDiscoveryInput,
 ): Promise<ApplyDiscoveryResult> {
   const { session, activeOrgId } = await requireOrgContext()
-  const ownOrg = await loadOwnOrgIdentity(activeOrgId)
+  const ownOrg = ownOrgIdentityFromContext(await getOwnOrgContext(activeOrgId))
   // Defense-in-depth against a stale preview: a block added between preview and
   // apply must still suppress the entity.
   const blocklist = await loadOrgBlocklist(activeOrgId)
@@ -1281,8 +1287,8 @@ export async function applyDiscovery(
   // ── 1b/1c. Enrich EXISTING clients (fill-blanks only, never overwrite) ──
   // Two sources feed this:
   //   1b. A candidate flagged `possibleDuplicate` and left unchecked — the
-  //       same company under a different spelling (existing "АСТ" + source
-  //       "AST"). Don't create a dup; fold the spelling into the client.
+  //       same company under a different spelling (existing "Норлекс" + source
+  //       "Norleks"). Don't create a dup; fold the spelling into the client.
   //   1c. `clientEnrichments` — exact-name matches that were never offered as
   //       a candidate, carrying a freshly-discovered website / spellings.
   // Both union new spellings into `aliases` and fill a blank `webUrl`.
@@ -1389,7 +1395,9 @@ export async function applyDiscovery(
       selectedContactEmails.has(c.email) &&
       !existingContactEmails.has(c.email) &&
       // Defence in depth: skip blocked emails / blocked-domain addresses.
-      !blocklist.isBlockedEmail(c.email),
+      !blocklist.isBlockedEmail(c.email) &&
+      // … and our own staff addresses / mailboxes (stale preview payloads).
+      !ownOrg.isOwnEmail(c.email),
   )
   // Split: candidates whose email matches a soft-deleted contact are REVIVED
   // (reuse the row); the rest are inserted fresh.
@@ -1589,6 +1597,15 @@ export async function applyDiscovery(
       )
     scannedRowsStamped = input.scannedRowIds.length
   }
+
+  // Identity I6 (Q6): web enrichment of the NEW clients (not revived ones)
+  // when the org setting is on — after the response, ≤ 20 per apply, never
+  // blocks or fails the apply.
+  await scheduleEnrichOnCreate(
+    activeOrgId,
+    session.user.id,
+    createdClients.map((c) => c.id),
+  )
 
   return {
     clientsCreated: createdClients.length,

@@ -3,8 +3,8 @@ import { WorkCalendar } from "@/lib/topics/attention-calendar"
 import { CHECKS_DEFAULTS } from "@/lib/topics/checks"
 import { duePeriodKey, isoWeekKey } from "./schedule"
 
-const cal = new WorkCalendar([], { timeZone: "Europe/Moscow", workStart: "08:00", workEnd: "18:00" })
-// 2026-11-14 is a Saturday. Moscow = UTC+3.
+const cal = new WorkCalendar([], { timeZone: "Etc/GMT-3", workStart: "08:00", workEnd: "18:00" })
+// 2026-11-14 is a Saturday. Etc/GMT-3 = UTC+3.
 const at = (iso: string) => new Date(iso)
 
 describe("isoWeekKey", () => {

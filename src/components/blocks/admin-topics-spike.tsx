@@ -68,6 +68,13 @@ const CODESET_LABEL: Record<string, string> = {
   live: "Активные коды («on»)",
   review: "Активные + на проверке",
 }
+// Identity I4 «С профилем организации»: org profile in the extraction prompt.
+const PROFILE_LABEL: Record<string, string> = {
+  setting: "По настройке организации",
+  on: "С профилем",
+  off: "Без профиля",
+}
+const profileText = (v: boolean | null) => (v === true ? "с профилем" : v === false ? "без профиля" : "—")
 const INPUT_LABEL: Record<string, string> = {
   golden: "Эталонный набор",
   sample: "Выборка последних сообщений",
@@ -141,6 +148,7 @@ export function AdminTopicsSpike() {
   const [input, setInput] = useState<"golden" | "sample">("golden")
   const [variant, setVariant] = useState("single")
   const [codeSet, setCodeSet] = useState("live")
+  const [profile, setProfile] = useState<"setting" | "on" | "off">("setting")
   const [sampleSize, setSampleSize] = useState("50")
   const [batch, setBatch] = useState("5")
   const [runs, setRuns] = useState<SpikeRunRow[]>([])
@@ -237,6 +245,8 @@ export function AdminTopicsSpike() {
             codeSet: input === "sample" ? "review" : codeSet,
             input,
             sampleSize: Math.max(1, Math.min(SAMPLE_MAX, Number(sampleSize) || 50)),
+            // Only a NEW run takes it; a resumed run keeps its stored value.
+            ...(profile === "setting" ? {} : { promptContext: profile === "on" }),
           }),
         })
         const data = (await res.json()) as SpikeBatchResult & { error?: string }
@@ -347,6 +357,25 @@ export function AdminTopicsSpike() {
           </div>
         )}
         <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">С профилем организации</Label>
+          <Select
+            value={profile}
+            onValueChange={(v) => setProfile(v === "on" ? "on" : v === "off" ? "off" : "setting")}
+            disabled={running}
+          >
+            <SelectTrigger size="sm" className="w-52">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(PROFILE_LABEL).map(([k, v]) => (
+                <SelectItem key={k} value={k}>
+                  {v}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Пакет</Label>
           <Input
             className="h-8 w-16"
@@ -412,6 +441,8 @@ export function AdminTopicsSpike() {
         Модель берётся из «Процессы ИИ» → «Извлечение сигналов» в момент вызова. Для сравнения моделей
         переключите её там и запустите новый прогон. Выборка последних сообщений берёт разобранные сообщения
         вне эталонного набора и проверяет коды «на проверке» (без точности и полноты — оценивает человек).
+        «С профилем организации» — блок «О нашей компании» и строка «Контрагент» в промпте извлечения на
+        время прогона; сравните прогоны с профилем и без него перед включением «Профиль в промптах».
       </div>
 
       <Card className="py-0">
@@ -423,6 +454,7 @@ export function AdminTopicsSpike() {
               <TableHead>Вход</TableHead>
               <TableHead>Вариант</TableHead>
               <TableHead>Коды</TableHead>
+              <TableHead>Профиль</TableHead>
               <TableHead>Модели</TableHead>
               <TableHead className="text-right">Элементы</TableHead>
               <TableHead className="text-right">Успешно</TableHead>
@@ -433,7 +465,7 @@ export function AdminTopicsSpike() {
           <TableBody>
             {runs.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-6 text-center text-muted-foreground">
+                <TableCell colSpan={10} className="py-6 text-center text-muted-foreground">
                   Прогонов ещё нет.
                 </TableCell>
               </TableRow>
@@ -454,6 +486,7 @@ export function AdminTopicsSpike() {
                 </TableCell>
                 <TableCell className="text-xs">{VARIANT_LABEL[r.variant ?? ""] ?? r.variant ?? "—"}</TableCell>
                 <TableCell className="text-xs">{CODESET_LABEL[r.codeSet ?? ""] ?? r.codeSet ?? "—"}</TableCell>
+                <TableCell className="text-xs">{profileText(r.promptContext)}</TableCell>
                 <TableCell className="text-xs font-mono">{r.models.join(", ") || "—"}</TableCell>
                 <TableCell className="text-right">
                   {r.items}
@@ -651,6 +684,7 @@ function SpikeReportView({ report: r }: { report: SpikeReport }) {
         <Badge variant="outline">{r.kind === "spike" ? "Спайк (фаза 0)" : "Eval"}</Badge>
         <Badge variant="outline">{VARIANT_LABEL[r.variant] ?? r.variant}</Badge>
         <Badge variant="outline">{CODESET_LABEL[r.codeSet] ?? r.codeSet}</Badge>
+        <Badge variant="outline">{r.promptContext ? "С профилем организации" : "Без профиля организации"}</Badge>
         {r.models.map((m) => (
           <Badge key={m} variant="secondary" className="font-mono">
             {m}
@@ -976,6 +1010,7 @@ function SampleReportView({ report: r }: { report: SampleReport }) {
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="font-medium">Выборка последних сообщений: коды «на проверке»</span>
         <Badge variant="outline">{VARIANT_LABEL[r.variant] ?? r.variant}</Badge>
+        <Badge variant="outline">{r.promptContext ? "С профилем организации" : "Без профиля организации"}</Badge>
         {r.models.map((m) => (
           <Badge key={m} variant="secondary" className="font-mono">
             {m}

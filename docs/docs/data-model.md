@@ -32,7 +32,12 @@ Managed mostly by better-auth (`src/lib/auth.ts`).
 | `contact` | A person | `name` (technical/envelope name), `nameNative` (local-script name), `aliases`, `email`, `phone`, `position`, `clientId` → `client` (**set null**), `status` |
 | `task` | Follow-up work | `type`, `priority`, `status`, `userId` (creator), `assigneeId`, `clientId` / `contactId` / `dealId` (all optional, **set null**), `dueDate` (not null) |
 | `discovery_blocklist` | Org dictionary of entities discovery must ignore | `kind` (`blocklist_kind`), `matchKey` (normalised), `label`, `note`, `sourceItemId`; unique `(org, kind, matchKey)` |
-| `org_identity_entry` | Extra names / websites / addresses that mean "our own org" | `kind` (`org_identity_kind`), `matchKey`, `label`, `note`; unique `(org, kind, matchKey)` |
+| `org_identity_entry` | What means "our own org": extra names, websites, mail domains, shared mailboxes, addresses, and staff members' extra addresses | `kind` (`org_identity_kind`), `matchKey` (normalised per kind, `src/lib/identity/registry.ts`), `label`, `note`, `userId` → `user` (**cascade**; kind `person` only), `channel` (`email` / `telegram` / `phone`, kind `person` only), `createdByUserId`; unique `(org, kind, matchKey)`; index `(org, userId)` |
+| `org_profile` | «Профиль организации» — what the org does (identity I1); one row per org, edited by the owner | PK `organizationId` → `organization` (**cascade**), `description`, `industryCode` → `industry` (**set null**), `industryNote`, `marketRoles` (text[], codes validated in code), `products` / `targetCustomers` / `supplierTypes` / `glossary` (jsonb lists), `geography`, `noOwnDomain`, `updatedByUserId` (**set null**), `updatedAt` |
+| `org_profile_log` | Change log of `org_profile`: one row per save | `organizationId` (**cascade**), `changedByUserId` (**set null**), `before` / `after` (jsonb: changed fields only), `createdAt`; index `(org, createdAt)` |
+| `industry` | Platform reference list «Отрасль» (shared by org and client profiles; no ОКВЭД) | PK `code`, `labelRu`, `sort`, `isActive`; 15 rows (17 seeded by migration `0031`; `0033` removed «Алкоголь» / «HoReCa») (`ON CONFLICT DO NOTHING`) |
+| `client_profile` | «Профиль компании» — what a client does (identity I5 / I6); one row per client | PK `clientId` → `client` (**cascade**), `organizationId` (**cascade**), `description`, `industryCode` → `industry` (**set null**), `industryNote`, `marketRoles` (text[]), `products` (jsonb `[{ name }]`), `needs` (jsonb `{ lines[], note? }`), `sizeBand`, `pointsOfSale`, `geography`, `fieldMeta` (jsonb provenance per field: `{ source: manual\|web\|communications\|import, byUserId?, at, confidence?, evidenceUrl?, verified, verifiedByUserId?, verifiedAt? }`), `webEnrichedAt`, `updatedByUserId` (**set null**), timestamps; index `(org)`, `(org, industryCode)`; migration `0032` |
+| `client_profile_proposal` | Automatic value for a client-profile field that already has a value (identity I6) — accepted / rejected by the responsible member or the owner | `clientId` (**cascade**), `organizationId` (**cascade**), `field`, `value` (jsonb slice of the field), `source`, `confidence`, `evidenceUrl`, `status` pending \| accepted \| rejected \| superseded, `decidedByUserId` (**set null**), `decidedAt`, `createdAt` |
 
 ## 3. Deals
 
@@ -126,7 +131,7 @@ stage, profile, closes, date gate, trigger rule), `signal_attribute`,
 `signal_registry_change` (every save = new version + change rows). Registry
 migrations: `0011` tables, `0012` seed v1, `0013` fixes, `0014` one pack
 (R21), `0016_signals_generic_registry` (R22: one generic set for every org —
-7 alcohol-only codes deleted, blocks DS1–DS7 renamed O–U, neutral texts, no
+7 vertical-specific codes deleted, blocks DS1–DS7 renamed O–U, neutral texts, no
 presets), `0017_signals_activate_onhold_drop_retired` (R23: every `onHold`
 code `active`, retired codes deleted). Topics phase
 0: `org_setting` (+ log; `topics.enabled`, `ai.budget.daily_usd`), `topics_run`,
@@ -207,7 +212,7 @@ Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
 | `r2_upload_status` | `pending`, `complete`, `failed` |
 | `org_attribution` | `own_org`, `external`, `unknown` |
 | `blocklist_kind` | `email`, `domain`, `company`, `person` |
-| `org_identity_kind` | `name`, `website`, `address` |
+| `org_identity_kind` | `name`, `website`, `address`, `email_domain`, `mailbox`, `person` |
 | `enrichment_status` | `enriched`, `review`, `no_match` (NULL = not processed yet) |
 | `rule_type` | `System`, `Custom` |
 | `pipeline_run_trigger` / `_status` | `cron, manual` / `running, success, failed` |

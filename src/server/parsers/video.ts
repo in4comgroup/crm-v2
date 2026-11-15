@@ -15,6 +15,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 import {
   audioSegmentSchema,
@@ -160,13 +162,16 @@ export async function parseVideoBytes(
 
   const result = await aiGenerateText({
     process: "parsing.video",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: videoAnalysisSchema }),
-    system: `You are a precise video parsing assistant. Analyse the provided video both visually and aurally. Produce a faithful visual description AND a faithful diarised transcript of any speech. Extract structured metadata. Never fabricate facts that are not present in the video.
+    system: withOwnOrgLine(
+      `You are a precise video parsing assistant. Analyse the provided video both visually and aurally. Produce a faithful visual description AND a faithful diarised transcript of any speech. Extract structured metadata. Never fabricate facts that are not present in the video.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For video specifically: the 'author/sender' is each of the SPEAKERS — don't include them in mentionedPeople. Only emit third parties referenced by the speakers or visibly labelled on-screen with affiliation (e.g. a slide showing 'John Donn — CEO, Acme'). When inferring organization from a speaker's affiliation, only do so if the video itself makes it unambiguous.`,
+      ai,
+    ),
     messages: [
       {
         role: "user",

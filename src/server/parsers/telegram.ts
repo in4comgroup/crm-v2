@@ -15,6 +15,8 @@ import {
   type MetadataAnalysis,
   type ParserAiContext,
   type SourceFrontmatter,
+  parserCallContext,
+  withOwnOrgLine,
 } from "@/server/parsers/_shared"
 
 // Telegram message parser. Like WhatsApp (and unlike gchat/nylas) there is
@@ -82,13 +84,16 @@ export async function parseTelegramMessage(
 ): Promise<ParsedTelegramMessage> {
   const result = await aiGenerateText({
     process: "parsing.chat_message",
-    ...ai,
+    ...parserCallContext(ai),
     output: Output.object({ schema: analysisSchema }),
-    system: `You are a precise Telegram message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.
+    system: withOwnOrgLine(
+      `You are a precise Telegram message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.
 
 ${MENTIONED_PEOPLE_PROMPT}
 
 For Telegram specifically: the 'author/sender' is the message sender shown above; don't include them in mentionedPeople. Only emit third parties referenced inside the message body. When inferring an organization from the sender's affiliation, only do so if the body text itself makes their company unambiguous (they introduce themselves with an affiliation, or quote a business email).`,
+      ai,
+    ),
     prompt: buildLlmPrompt({ sender: input.sender, rawText: input.rawText }),
   })
   const analysis = result.output

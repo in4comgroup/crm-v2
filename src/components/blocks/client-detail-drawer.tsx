@@ -53,6 +53,7 @@ import TaskEditDialog from "@/components/forms/form-task-edit"
 import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
 import { ClientResponsibleField } from "@/components/blocks/client-responsible-field"
+import { ClientProfileBlock } from "@/components/blocks/client-profile-block"
 import { BlacklistEntityButton } from "@/components/blocks/client-blocklist-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
@@ -539,6 +540,10 @@ export function ClientDetailDrawer({
 
               <ClientResponsibleField client={client} onChanged={onChanged} />
 
+              {/* «Профиль компании» (identity I5 / I6): own API + save, never
+                  submits this drawer's form (type="button" everywhere). */}
+              <ClientProfileBlock clientId={client.id} />
+
               <FormField
                 control={editForm.control}
                 name="namePhys"
@@ -631,7 +636,7 @@ export function ClientDetailDrawer({
                     <FormControl>
                       <Input
                         {...field}
-                        placeholder="Через запятую (напр. AST, АСТ)"
+                        placeholder="Через запятую"
                       />
                     </FormControl>
                   </FormItem>

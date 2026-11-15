@@ -478,7 +478,7 @@ Settings ladder: user → org (`org_setting`, new per-org key / value store, lik
 | `topics.enabled` | `off` (`off` \| `shadow` \| `on`; per org) | spec §13. `shadow` is an org flag, never a topic or card status. |
 | `topics.runIntervalMinutes` | 60 (fixed by the cron in `vercel.ts`) | R3 |
 | `cards.workingHours` | Mon–Fri 08:00–18:00 | Maslov §5.2 |
-| `cards.timeZone` | org: Europe/Moscow | spec §8.4 |
+| `cards.timeZone` | org: Europe/Vienna (default changed 2026-11-15) | spec §8.4 |
 | `cards.morningDigestTime` | 07:30 | Maslov §5.2 |
 | `cards.eveningDigestTime` | 17:00 (phase 7) | Maslov §5.2 |
 | `cards.weeklyReview` | Friday 12:00 | Maslov §5.2 |

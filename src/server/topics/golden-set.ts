@@ -18,6 +18,11 @@ import { loadPromptCodes } from "@/server/topics/prompt/extraction"
 import { runExtraction } from "@/server/topics/prompt/run-extraction"
 import { messageContent } from "@/server/topics/signals/evidence"
 import { envelopeFromItem, itemMarkdown, mapPool } from "@/server/topics/signals/item-input"
+import {
+  counterpartyLineForItem,
+  loadExtractionCounterparties,
+  type ExtractionCounterparties,
+} from "@/server/topics/signals/counterparty-line"
 
 // Golden set for the topics quality gates (spec 01 §12, plan phase 0 task 7).
 // Every function takes the org id explicitly (`server-only`). Callers: the
@@ -87,8 +92,16 @@ export type GoldenWorkItem = {
   date: Date | null
 }
 
-/** Text + envelope of golden items (for extraction). Items without text are left out. */
-export async function loadGoldenWorkItems(orgId: string, ids: string[]): Promise<GoldenWorkItem[]> {
+/**
+ * Text + envelope of golden items (for extraction). Items without text are
+ * left out. `counterparties` (identity I4, only when the org profile is in the
+ * prompt) adds the «Контрагент: …» line to real items with a known client.
+ */
+export async function loadGoldenWorkItems(
+  orgId: string,
+  ids: string[],
+  opts: { counterparties?: ExtractionCounterparties | null } = {},
+): Promise<GoldenWorkItem[]> {
   if (ids.length === 0) return []
   const [org] = await db
     .select({ name: organization.name })
@@ -120,6 +133,9 @@ export async function loadGoldenWorkItems(orgId: string, ids: string[]): Promise
       ? { synthetic: true, date: r.createdAt.toISOString() }
       : envelopeFromItem(r, text)
     envelope.orgName = org?.name ?? null
+    if (!r.synthetic && opts.counterparties) {
+      envelope.counterpartyLine = await counterpartyLineForItem(opts.counterparties, r, envelope)
+    }
     return {
       id: r.id,
       synthetic: r.synthetic,
@@ -626,7 +642,8 @@ export async function preAnnotate(
 ): Promise<{ id: string; ok: boolean; codes?: string[]; error?: string }[]> {
   const unique = [...new Set(ids)].slice(0, PREANNOTATE_MAX_IDS)
   const promptSet = await loadPromptCodes(orgId, "review")
-  const items = await loadGoldenWorkItems(orgId, unique)
+  const counterparties = promptSet.promptContext ? await loadExtractionCounterparties(orgId) : null
+  const items = await loadGoldenWorkItems(orgId, unique, { counterparties })
   const found = new Set(items.map((i) => i.id))
   const missing = unique
     .filter((id) => !found.has(id))

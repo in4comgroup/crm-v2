@@ -100,12 +100,16 @@ export function buildScoringContext(args: {
 /**
  * Final direction. The parse-time attribution is deterministic evidence of
  * who wrote the item; the model only decides `internal` vs `outbound` for
- * our own items and judges items with unknown attribution.
+ * our own items and judges items with unknown attribution. `allInternal`
+ * (identity spec Q9: author AND every recipient are ours) makes `internal`
+ * deterministic — it overrides the model.
  */
 export function resolveDirection(
   modelDirection: SignalDirection | null,
   orgAttribution: string | null,
+  allInternal = false,
 ): SignalDirection {
+  if (allInternal && orgAttribution !== "external") return "internal"
   if (orgAttribution === "own_org") return modelDirection === "internal" ? "internal" : "outbound"
   if (orgAttribution === "external") return "inbound"
   return modelDirection ?? "inbound"
@@ -232,9 +236,11 @@ export function postprocessExtraction(
     ownText: string | null
     date: Date | null
     orgAttribution: string | null
+    /** Identity spec Q9: every participant is ours → direction `internal`. */
+    allInternal?: boolean
   },
 ): PostprocessResult {
-  const direction = resolveDirection(out.direction ?? null, item.orgAttribution)
+  const direction = resolveDirection(out.direction ?? null, item.orgAttribution, item.allInternal === true)
   const subjects = normalizeSubjects(out.subjects)
   const facts = normalizeFacts(out.facts, subjects.length)
   const dropped: PostprocessResult["dropped"] = out.unknownCodes.map((code) => ({

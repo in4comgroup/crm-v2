@@ -17,6 +17,7 @@ import {
   runExtraction,
 } from "@/server/topics/prompt/run-extraction"
 import { loadGoldenWorkItems } from "@/server/topics/golden-set"
+import { loadExtractionCounterparties } from "@/server/topics/signals/counterparty-line"
 import { loadCodeInfo, loadEvalContext, postprocessForEval } from "@/server/topics/eval/context"
 import {
   computeEvalMetrics,
@@ -104,6 +105,8 @@ type ResultConfig = {
   outputTokens: number | null
   blocks: string[] | null
   synthetic: boolean
+  /** Identity I4: the org profile was in the prompt. */
+  promptContext: boolean
 }
 
 async function remainingItemIds(orgId: string, runId: string): Promise<string[]> {
@@ -147,6 +150,12 @@ export async function runSpikeBatch(args: {
   codeSet?: ExtractionCodeSet
   input?: EvalInput
   sampleSize?: number
+  /**
+   * Identity I4 «С профилем организации»: force the org profile in / out of
+   * the prompt for a NEW run (stored in its config; a resumed run keeps its
+   * own value). Omitted = the org setting `identity.promptContext`.
+   */
+  promptContext?: boolean
 }): Promise<SpikeBatchResult> {
   const limit = Math.max(1, Math.min(SPIKE_BATCH_MAX, Math.floor(args.limit ?? 5)))
   const variant: ExtractionVariant = args.variant ?? "single"
@@ -167,10 +176,11 @@ export async function runSpikeBatch(args: {
       userId: args.userId,
       size: args.sampleSize ?? 50,
       variant,
+      promptContext: args.promptContext,
     })
   } else {
     // Fails before any write when the org has no active code.
-    const promptSet = await loadPromptCodes(args.orgId, codeSet)
+    const promptSet = await loadPromptCodes(args.orgId, codeSet, { promptContext: args.promptContext })
     runId = `eval_${randomUUID()}`
     await createEvalRunRow({
       id: runId,
@@ -185,6 +195,7 @@ export async function runSpikeBatch(args: {
         taxonomyVersion: promptSet.taxonomyVersion,
         codes: promptSet.codes.map((c) => c.code),
         reviewCodes: promptSet.codes.filter((c) => c.reviewOnly).map((c) => c.code),
+        promptContext: promptSet.promptContext,
       },
       metrics: { schema: 1 },
     })
@@ -196,7 +207,15 @@ export async function runSpikeBatch(args: {
     const r = await runSampleBatch(run, limit)
     return { runId, input: "sample", variant: run.config.variant, codeSet: run.config.codeSet, ...r }
   }
-  return runGoldenBatch(run.id, args.orgId, run.config.variant, run.config.codeSet, limit, run.finishedAt !== null)
+  return runGoldenBatch(
+    run.id,
+    args.orgId,
+    run.config.variant,
+    run.config.codeSet,
+    limit,
+    run.finishedAt !== null,
+    run.config.promptContext === true,
+  )
 }
 
 async function runGoldenBatch(
@@ -206,16 +225,20 @@ async function runGoldenBatch(
   codeSet: ExtractionCodeSet,
   limit: number,
   wasFinished: boolean,
+  promptContext: boolean,
 ): Promise<SpikeBatchResult> {
   // Before any write: an org without active codes fails the whole batch.
-  const promptSet = await loadPromptCodes(orgId, codeSet)
+  // The org profile follows the RUN (fixed at start), not today's setting.
+  const promptSet = await loadPromptCodes(orgId, codeSet, { promptContext })
   const setCodes = promptSet.codes.map((c) => c.code)
 
   const pending = await remainingItemIds(orgId, runId)
   const batchIds = pending.slice(0, limit)
   if (batchIds.length > 0 && wasFinished) await clearEvalRunFinished(runId)
+  const counterparties =
+    batchIds.length > 0 && promptSet.promptContext ? await loadExtractionCounterparties(orgId) : null
   const [items, ctx] = await Promise.all([
-    loadGoldenWorkItems(orgId, batchIds),
+    loadGoldenWorkItems(orgId, batchIds, { counterparties }),
     batchIds.length > 0 ? loadEvalContext(orgId, promptSet) : null,
   ])
   const loaded = new Set(items.map((i) => i.id))
@@ -235,6 +258,7 @@ async function runGoldenBatch(
           codeSet,
           taxonomyVersion: promptSet.taxonomyVersion,
           codes: setCodes,
+          promptContext: promptSet.promptContext,
         },
         ok: false,
         error: "Нет текста элемента",
@@ -282,6 +306,7 @@ async function runGoldenBatch(
             outputTokens: run.outputTokens,
             blocks: run.blocks,
             synthetic: item.synthetic,
+            promptContext: promptSet.promptContext,
           }
           await db.insert(topicsEvalResult).values({
             id: randomUUID(),
@@ -308,6 +333,7 @@ async function runGoldenBatch(
               taxonomyVersion: promptSet.taxonomyVersion,
               codes: setCodes,
               synthetic: item.synthetic,
+              promptContext: promptSet.promptContext,
             },
             ok: false,
             error: message.slice(0, 2000),
@@ -358,6 +384,12 @@ export type SpikeRunRow = {
   /** A report snapshot is stored in topics_eval_run.metrics. */
   stored: boolean
   verdict: EvalGate["verdict"] | null
+  /** Identity I4: org profile in the prompt (true / false); null = before I4 / unknown. */
+  promptContext: boolean | null
+}
+
+function promptContextOf(v: string | null | undefined): boolean | null {
+  return v === "true" ? true : v === "false" ? false : null
 }
 
 export async function listSpikeRuns(orgId: string): Promise<SpikeRunRow[]> {
@@ -385,6 +417,7 @@ export async function listSpikeRuns(orgId: string): Promise<SpikeRunRow[]> {
         input: sql<string | null>`${topicsEvalRun.config}->>'input'`,
         variant: sql<string | null>`${topicsEvalRun.config}->>'variant'`,
         codeSet: sql<string | null>`${topicsEvalRun.config}->>'codeSet'`,
+        promptContext: sql<string | null>`${topicsEvalRun.config}->>'promptContext'`,
         planned: sql<number | null>`jsonb_array_length(coalesce(${topicsEvalRun.config}->'sampleItemIds', '[]'::jsonb))`,
         createdAt: topicsEvalRun.createdAt,
         finishedAt: topicsEvalRun.finishedAt,
@@ -420,6 +453,7 @@ export async function listSpikeRuns(orgId: string): Promise<SpikeRunRow[]> {
       avgDurationMs: r.avgDurationMs,
       stored: row?.stored ?? false,
       verdict: (row?.verdict as EvalGate["verdict"] | null) ?? null,
+      promptContext: promptContextOf(row?.promptContext),
     }
   })
   // Rows without results: sample runs, and golden runs that failed before the first item.
@@ -441,6 +475,7 @@ export async function listSpikeRuns(orgId: string): Promise<SpikeRunRow[]> {
       avgDurationMs: row.sAvg,
       stored: row.stored,
       verdict: sample ? null : ((row.verdict as EvalGate["verdict"] | null) ?? null),
+      promptContext: promptContextOf(row.promptContext),
     })
   }
   return out.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
@@ -460,6 +495,8 @@ export type SpikeReport = {
   finishedAt: string | null
   variant: string
   codeSet: string
+  /** Identity I4: org profile in the prompt (run config); false for runs before I4. */
+  promptContext: boolean
   models: string[]
   codeBlockChars: number | null
   codesInPrompt: number | null
@@ -651,6 +688,7 @@ export async function getSpikeReport(runId: string): Promise<SpikeReport> {
     finishedAt: runRow?.finishedAt?.toISOString() ?? null,
     variant,
     codeSet,
+    promptContext: runRow?.config.promptContext === true,
     models: [...models],
     codeBlockChars,
     codesInPrompt,

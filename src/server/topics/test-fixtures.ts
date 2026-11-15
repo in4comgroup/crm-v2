@@ -64,14 +64,14 @@ export function subject(p: Partial<ResolvedSubject> & { refs?: { kind: string; v
   const { refs, ...rest } = p
   return {
     index: 0,
-    counterparty: "Ромашка",
-    counterpartyKey: "romashka",
+    counterparty: "Норлекс",
+    counterpartyKey: "norlex",
     matter: "вопрос",
     references: normaliseReferences(refs ?? []),
     products: [],
-    clientId: "client-romashka",
+    clientId: "client-norlex",
     contactId: null,
-    companyName: "ООО «Ромашка»",
+    companyName: "ООО «Норлекс»",
     contactName: null,
     ...rest,
   }

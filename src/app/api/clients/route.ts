@@ -8,6 +8,7 @@ import {
   type ClientFeedTab,
 } from "@/server/clients"
 import { getServerSession } from "@/lib/get-session"
+import { listIndustries } from "@/server/identity/org-profile"
 import {
   ClientResponsibleError,
   getResponsibleOptions,
@@ -19,6 +20,7 @@ import {
 } from "@/server/client-content"
 
 export {
+  type ClientProfileTags,
   type ClientRow,
   type ClientContactPreview,
   type ClientRevenueSummary,
@@ -52,6 +54,15 @@ export async function GET(request: NextRequest) {
         }
         throw e
       }
+    }
+    // ?profileOptions=1 → the «Отрасль» list for the Companies page filters
+    // (identity I5; roles / sizes are static lists in src/lib).
+    if (new URL(request.url).searchParams.get("profileOptions")) {
+      const session = await getServerSession()
+      if (!session?.session.activeOrganizationId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      }
+      return NextResponse.json({ industries: await listIndustries() })
     }
     const id = new URL(request.url).searchParams.get("id")
     if (id) {
@@ -93,6 +104,9 @@ export async function GET(request: NextRequest) {
         tab: tab as ClientFeedTab,
         status: status ?? undefined,
         responsible: searchParams.get("responsible"),
+        industry: searchParams.get("industry"),
+        role: searchParams.get("role"),
+        size: searchParams.get("size"),
         limit,
         offset,
       })

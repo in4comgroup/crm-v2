@@ -3,6 +3,7 @@
 import { db } from "@/db/drizzle"
 import {
   client,
+  clientProfile,
   contact,
   order,
   deal,
@@ -21,6 +22,7 @@ import {
   count,
   inArray,
   gte,
+  sql,
 } from "drizzle-orm"
 import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { computeOrderDiscount } from "@/lib/orders-format"
@@ -30,10 +32,7 @@ import {
   listTaskSummaryByClient,
   type ClientTaskSummary,
 } from "@/server/tasks"
-import { Output, stepCountIs } from "ai"
-import { z } from "zod"
 import { getServerSession } from "@/lib/get-session"
-import { aiGenerateText } from "@/server/ai/runtime"
 import { onEntityStatusChanged } from "@/server/topics/integration"
 import {
   loadResponsibleNames,
@@ -46,8 +45,18 @@ import {
   type ResponsibleFilter,
 } from "@/lib/client-responsible"
 import { randomUUID } from "crypto"
-import { request as httpsRequest } from "node:https"
-import { request as httpRequest } from "node:http"
+import {
+  applyCandidateProfileForOrg,
+  candidatePatch,
+  enrichClientForOrg,
+  lookupClientOnWebForOrg,
+  scheduleEnrichOnCreate,
+  type ClientLookupCandidate,
+  type ClientLookupHints,
+  type ClientLookupResult,
+  type EnrichClientResult,
+  type EnrichFillable,
+} from "@/server/identity/client-enrichment"
 import {
   isClientType,
   isCompanyKind,
@@ -90,6 +99,18 @@ export type ClientRow = ClientResponsibleInfo & {
   // где её нет, бейдж «N дн без контакта» откатывается на updatedAt.
   lastActivityAt?: string
   contacts: ClientContactPreview[]
+  /**
+   * Short «Профиль компании» tags (identity I5) for the Companies feed badges
+   * — only on `listClientsFeed` rows; null when the client has no profile row.
+   */
+  profileTags?: ClientProfileTags | null
+}
+
+export type ClientProfileTags = {
+  industryCode: string | null
+  marketRoles: string[]
+  sizeBand: string | null
+  pointsOfSale: number | null
 }
 
 function maxIso(a: Date, b: Date | undefined): string {
@@ -262,6 +283,10 @@ export async function listClientsFeed(params: {
   status?: EntityStatus | "all"
   /** «Ответственный» filter: all | mine | handover | <member user id>. */
   responsible?: ResponsibleFilter | null
+  /** «Профиль компании» filters (identity I5): industry code / market role / size band; "none" = not set. */
+  industry?: string | null
+  role?: string | null
+  size?: string | null
   limit?: number
   offset?: number
 }): Promise<{
@@ -309,15 +334,46 @@ export async function listClientsFeed(params: {
       : [ne(client.status, "deleted"), ne(client.status, "blocked")]
 
   const rows = await db
-    .select({ client, userName: user.name })
+    .select({
+      client,
+      userName: user.name,
+      profile: {
+        clientId: clientProfile.clientId,
+        industryCode: clientProfile.industryCode,
+        marketRoles: clientProfile.marketRoles,
+        sizeBand: clientProfile.sizeBand,
+        pointsOfSale: clientProfile.pointsOfSale,
+      },
+    })
     .from(client)
     .leftJoin(user, eq(client.userId, user.id))
+    .leftJoin(clientProfile, eq(clientProfile.clientId, client.id))
     .where(and(eq(client.organizationId, activeOrgId), ...statusConditions))
 
   const taskSummary = await listTaskSummaryByClient()
 
+  const industryFilter = (params.industry ?? "").trim()
+  const roleFilter = (params.role ?? "").trim()
+  const sizeFilter = (params.size ?? "").trim()
+  const matchesProfile = (p: (typeof rows)[number]["profile"]) => {
+    if (industryFilter) {
+      const code = p?.industryCode ?? null
+      if (industryFilter === "none" ? code !== null : code !== industryFilter) return false
+    }
+    if (roleFilter) {
+      const roles = p?.marketRoles ?? []
+      if (roleFilter === "none" ? roles.length > 0 : !roles.includes(roleFilter)) return false
+    }
+    if (sizeFilter) {
+      const band = p?.sizeBand ?? null
+      if (sizeFilter === "none" ? band !== null : band !== sizeFilter) return false
+    }
+    return true
+  }
+
   const matching = rows.filter((r) => {
     if (!matchesResponsibleFilter(params.responsible, r.client, viewerUserId)) return false
+    if (!matchesProfile(r.profile)) return false
     if (params.tab === "all") return true
     const kind = r.client.customFields?.companyKind
     if (kind === "supplier") return params.tab === "supplier"
@@ -414,6 +470,14 @@ export async function listClientsFeed(params: {
         lastActivity.get(r.client.id),
       ),
       contacts: contactsByClient.get(r.client.id) ?? [],
+      profileTags: r.profile?.clientId
+        ? {
+            industryCode: r.profile.industryCode,
+            marketRoles: r.profile.marketRoles ?? [],
+            sizeBand: r.profile.sizeBand,
+            pointsOfSale: r.profile.pointsOfSale,
+          }
+        : null,
     })),
   }
 }
@@ -512,6 +576,10 @@ export async function createClient(data: {
     createdAt: now,
     updatedAt: now,
   })
+  // Identity I6 (Q6): when the org switched on «Заполнять профиль новых
+  // компаний из интернета», enrich the new client after the response
+  // (never blocks / fails the create).
+  await scheduleEnrichOnCreate(activeOrgId, session.user.id, [id])
   return { id }
 }
 
@@ -601,606 +669,41 @@ export async function updateClient(
 
 // ── Web lookup (grounded web search + structured extract) ────────────
 //
-// Two AI processes: `clients.enrichment_research` (web_search capability)
-// and `clients.enrichment_extract` (structured output). Models are picked
-// by the AI runtime (src/server/ai/), not here.
+// The lookup itself lives in the org-explicit module
+// src/server/identity/client-enrichment.ts (also used by background
+// enrichment on create, identity I6). This is the session-bound wrapper.
 
-// ── Direct homepage fetch (precision booster for the extract pass) ────
-//
-// Grounded web search returns snippets, not full page bodies — so an
-// address sitting in a homepage footer / Impressum frequently never reaches
-// the model. When we already know the company's own URL, we additionally
-// fetch the homepage + a few likely contact/legal pages and feed the raw
-// text straight into the structured-extract pass as primary-source evidence.
-const FETCH_TIMEOUT_MS = 8000 // per page
-const MAX_EXTRA_PAGES = 4 // contact/impressum/about pages beyond the homepage
-const MAX_REDIRECTS = 3
-// Raw-HTML cap. Deliberately generous: a Tilda-style one-pager weighs ~1 MB of
-// markup but strips down to ~5 KB of text, and the footer — where the phone and
-// the address live — is the LAST thing in the file. The previous 400 KB cap cut
-// it off silently, which is why site-published phones never reached the model.
-const MAX_PAGE_BYTES = 3_000_000
-const MAX_PAGE_TEXT = 6_000 // per-page text budget (head + footer sample)
-const MAX_SITE_TEXT = 16_000 // cap the combined text handed to the LLM
-// A real browser UA. Anti-DDoS front-ends (DDoS-Guard, Qrator) answer a bot UA
-// with 403 on every sub-page — ntechlab.ru/about does exactly that.
-const BROWSER_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-// Anchors whose href or label hint at where an address usually lives.
-const ADDRESS_PAGE_HINT =
-  /(contact|kontakt|contacto|contatti|impressum|imprint|about|legal|mentions[-\s]?l[eé]gales|company|firma|standort|location|контакт|адрес|реквизит|о[-\s]?нас|о[-\s]?компании|kontakty|rekvizity|o-kompanii|o-nas)/i
-// Fallback guesses used only when the homepage exposes no hinted links.
-const ADDRESS_PAGE_GUESSES = [
-  "/contacts",
-  "/contact",
-  "/kontakty",
-  "/kontakt",
-  "/about",
-  "/o-kompanii",
-  "/impressum",
-]
+export type {
+  ClientLookupCandidate,
+  ClientLookupSource,
+  ClientLookupResult,
+  ClientLookupHints,
+} from "@/server/identity/client-enrichment"
 
 /**
- * Accept whatever a human types into the "Сайт" field. A scheme-less
- * "ntechlab.ru" made `new URL()` throw, which silently disabled the whole
- * own-site fetch and left the URL-pinned research branch chasing a bare
- * hostname. Returns "" when there is nothing usable.
- */
-function normalizeSiteUrl(raw: string | null | undefined): string {
-  const trimmed = (raw ?? "").trim()
-  if (!trimmed) return ""
-  const withScheme = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`
-  try {
-    const u = new URL(withScheme)
-    if (!u.hostname.includes(".")) return ""
-    return u.toString().replace(/\/$/, "")
-  } catch {
-    return ""
-  }
-}
-
-// Minimal HTML → text: drop non-content tags, turn block boundaries into
-// newlines, decode the handful of entities that matter, collapse whitespace.
-function htmlToText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
-    .replace(/<\/(p|div|li|tr|h[1-6]|section|article|footer|header|address)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#0?39;|&apos;/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/[ \t ]+/g, " ")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-}
-
-// Keep a page's text inside budget WITHOUT losing the footer — that is where
-// the address and the phone usually sit, so a plain head-slice throws away the
-// very thing we came for. Sample the head and the tail instead.
-function clampPageText(text: string): string {
-  if (text.length <= MAX_PAGE_TEXT) return text
-  const head = text.slice(0, Math.floor(MAX_PAGE_TEXT * 0.55))
-  const tail = text.slice(-Math.floor(MAX_PAGE_TEXT * 0.45))
-  return `${head}\n…(middle omitted)…\n${tail}`
-}
-
-// Fetch one page → capped raw HTML, or "" on any failure (never throws).
-//
-// Uses node:https directly instead of global fetch for ONE reason: anti-DDoS
-// front-ends (ntechlab.ru sits behind DDoS-Guard) hand a self-signed
-// certificate to non-browser clients, so `fetch` dies with
-// DEPTH_ZERO_SELF_SIGNED_CERT before a single byte is read. These are public
-// marketing pages and we send no credentials with the request, so a relaxed
-// certificate check is the difference between reading the company's own site
-// and guessing from third-party news articles.
-function fetchPageRaw(url: string, depth = 0): Promise<string> {
-  return new Promise((resolve) => {
-    let target: URL
-    try {
-      target = new URL(url)
-    } catch {
-      return resolve("")
-    }
-    if (target.protocol !== "https:" && target.protocol !== "http:") {
-      return resolve("")
-    }
-    const secure = target.protocol === "https:"
-    const req = (secure ? httpsRequest : httpRequest)(
-      {
-        hostname: target.hostname,
-        port: target.port || undefined,
-        path: `${target.pathname}${target.search}`,
-        method: "GET",
-        ...(secure
-          ? { rejectUnauthorized: false, servername: target.hostname }
-          : {}),
-        headers: {
-          "user-agent": BROWSER_UA,
-          accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "accept-language": "ru-RU,ru;q=0.9,en;q=0.8",
-          // No gzip — we would have to inflate it ourselves here.
-          "accept-encoding": "identity",
-        },
-      },
-      (res) => {
-        const status = res.statusCode ?? 0
-        const location = res.headers.location
-        if (status >= 300 && status < 400 && location && depth < MAX_REDIRECTS) {
-          res.resume()
-          let next: string
-          try {
-            next = new URL(location, target).toString()
-          } catch {
-            return resolve("")
-          }
-          return resolve(fetchPageRaw(next, depth + 1))
-        }
-        if (status !== 200) {
-          res.resume()
-          return resolve("")
-        }
-        const ct = String(res.headers["content-type"] ?? "")
-        if (ct && !ct.includes("html") && !ct.includes("xml")) {
-          res.resume()
-          return resolve("")
-        }
-        let body = ""
-        res.setEncoding("utf8")
-        res.on("data", (chunk: string) => {
-          body += chunk
-          if (body.length > MAX_PAGE_BYTES) {
-            body = body.slice(0, MAX_PAGE_BYTES)
-            res.destroy()
-          }
-        })
-        res.on("close", () => resolve(body))
-        res.on("error", () => resolve(body))
-      },
-    )
-    req.on("error", () => resolve(""))
-    req.setTimeout(FETCH_TIMEOUT_MS, () => {
-      req.destroy()
-      resolve("")
-    })
-    req.end()
-  })
-}
-
-// Same-site anchors (homepage host or a sub/parent of it) whose href/label
-// hint at an address-bearing page. Deduped, capped.
-function findAddressPageLinks(homeHtml: string, base: URL): string[] {
-  const baseHost = base.hostname
-  const sameSite = (h: string) =>
-    h === baseHost || h.endsWith("." + baseHost) || baseHost.endsWith("." + h)
-  const out = new Set<string>()
-  const re = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi
-  let m: RegExpExecArray | null
-  while ((m = re.exec(homeHtml)) && out.size < MAX_EXTRA_PAGES * 4) {
-    const href = m[1]
-    const label = m[2].replace(/<[^>]+>/g, " ")
-    if (!ADDRESS_PAGE_HINT.test(href) && !ADDRESS_PAGE_HINT.test(label)) continue
-    try {
-      const abs = new URL(href, base)
-      abs.hash = ""
-      if (sameSite(abs.hostname) && abs.toString() !== base.toString()) {
-        out.add(abs.toString())
-      }
-    } catch {
-      /* skip unparseable href */
-    }
-  }
-  return [...out].slice(0, MAX_EXTRA_PAGES)
-}
-
-/**
- * Fetch the company's own site (homepage + up to {@link MAX_EXTRA_PAGES}
- * hinted contact/legal pages) and return a single labelled text blob for the
- * extract pass. Best-effort: returns "" if the homepage can't be fetched.
- */
-async function fetchSiteTextForLookup(knownUrl: string): Promise<string> {
-  const normalized = normalizeSiteUrl(knownUrl)
-  if (!normalized) return ""
-  let base: URL
-  try {
-    base = new URL(normalized)
-  } catch {
-    return ""
-  }
-
-  let homeRaw = await fetchPageRaw(base.toString())
-  // Some older RU corporate sites still answer on http only.
-  if (!homeRaw && base.protocol === "https:") {
-    const plain = new URL(base.toString())
-    plain.protocol = "http:"
-    homeRaw = await fetchPageRaw(plain.toString())
-    if (homeRaw) base = plain
-  }
-  if (!homeRaw) return ""
-
-  let links = findAddressPageLinks(homeRaw, base)
-  // No hinted links on the homepage → try a few well-known paths.
-  if (links.length === 0) {
-    links = ADDRESS_PAGE_GUESSES.slice(0, MAX_EXTRA_PAGES).map((p) =>
-      new URL(p, base).toString(),
-    )
-  }
-
-  const extraRaws = await Promise.all(links.map((u) => fetchPageRaw(u)))
-
-  const sections = [
-    `# ${base.toString()}\n${clampPageText(htmlToText(homeRaw))}`,
-  ]
-  links.forEach((u, i) => {
-    const t = clampPageText(htmlToText(extraRaws[i] || ""))
-    if (t) sections.push(`# ${u}\n${t}`)
-  })
-
-  let combined = sections.join("\n\n----\n\n")
-  if (combined.length > MAX_SITE_TEXT) {
-    combined = combined.slice(0, MAX_SITE_TEXT) + "\n…(truncated)"
-  }
-  return combined
-}
-
-export type ClientLookupCandidate = {
-  name: string
-  email: string
-  phone: string
-  address: string
-  webUrl: string
-  confidence: "high" | "medium" | "low"
-  whyMatch: string
-}
-
-export type ClientLookupSource = {
-  url: string
-  title: string
-}
-
-export type ClientLookupResult = {
-  candidates: ClientLookupCandidate[]
-  sources: ClientLookupSource[]
-  /** Free-text caveat from the model — empty when there's nothing to flag. */
-  notes: string
-}
-
-/**
- * Operator-typed search parameters. The stored client row is only a starting
- * point: whatever the user types in the lookup dialog overrides it for THIS
- * search (nothing is written to the DB until they press save). A `webUrl` hint
- * also switches the research on to the URL-pinned branch, which is the single
- * most effective way to stop name-similarity matches in another country.
- */
-export type ClientLookupHints = {
-  name?: string | null
-  email?: string | null
-  phone?: string | null
-  address?: string | null
-  webUrl?: string | null
-}
-
-const lookupExtractSchema = z.object({
-  candidates: z
-    .array(
-      z.object({
-        name: z
-          .string()
-          .describe(
-            "Canonical company name as listed on its own website / official records.",
-          ),
-        email: z
-          .string()
-          .describe(
-            "Primary contact email (info@, contact@, hello@, sales@). Empty string if not found.",
-          ),
-        phone: z
-          .string()
-          .describe(
-            "Primary main-office phone, in international format with the country code, exactly as the company publishes it. Do not guess the country code — take it from the source. Empty string if not found.",
-          ),
-        address: z
-          .string()
-          .describe(
-            "Main / headquarters office street address as a single line, e.g. 'street, city, postcode, country'. Return whatever parts you can confirm even if incomplete (e.g. just city + country). Empty string ONLY if no address at all is found.",
-          ),
-        webUrl: z
-          .string()
-          .describe(
-            "Canonical https://… homepage URL (no trailing slash). Empty string if not found.",
-          ),
-        confidence: z
-          .enum(["high", "medium", "low"])
-          .describe(
-            "How confidently this candidate matches the input client. high = address or contact email matches; medium = same industry / region; low = name match only.",
-          ),
-        whyMatch: z
-          .string()
-          .describe(
-            "One short sentence explaining why this is a candidate (e.g. 'Address matches your stored Vienna HQ'). Used to disambiguate between candidates.",
-          ),
-      }),
-    )
-    .max(3)
-    .describe(
-      "Up to 3 candidate companies that could match the input. Sort best match first. If the research clearly identifies one company, return one element.",
-    ),
-  notes: z
-    .string()
-    .describe(
-      "Caveats about the search (e.g. 'Two unrelated companies share this name in different countries'). Empty string when nothing to flag.",
-    ),
-})
-
-/**
- * Run a web lookup for the given client. Two-pass:
- *
- *   1. RESEARCH — process `clients.enrichment_research` with the web
- *      search tool (capability `web_search`).
- *      The model writes a short freeform research note about the company
- *      using whatever it learns from the web. We capture the grounded
- *      sources (URL + title) the model used.
- *
- *   2. EXTRACT — process `clients.enrichment_extract`, structured output but
- *      no tools, feeding it the research note + the input client's
- *      current fields. Returns up to 3 candidate matches.
- *
- * Two passes (rather than one with tools+structured-output combined)
- * keeps each call inside a known-good AI SDK shape — combining tools
- * with structured output is brittle across providers / SDK versions.
- *
- * NO writes — caller invokes the existing PUT /api/clients to apply
- * whatever the user picks in the preview modal.
- *
- * `hints` are the operator's own search parameters (see {@link
- * ClientLookupHints}): they override the stored row when the prompt is built,
- * and are passed to the model as authoritative constraints. Omitted → the
- * search runs off the stored record alone, as the batch enrichment does.
+ * Run a web lookup for the given client of the ACTIVE org (see
+ * `lookupClientOnWebForOrg`). NO writes — the lookup dialog saves what the
+ * user picks via PUT /api/clients.
  */
 export async function lookupClientOnWeb(
   clientId: string,
   hints?: ClientLookupHints,
 ): Promise<ClientLookupResult> {
   const { session, activeOrgId } = await requireOrgContext()
-  const target = await assertClientInOrg(clientId, activeOrgId)
-  const aiCtx = { orgId: activeOrgId, userId: session.user.id }
-
-  // Pull active contacts for extra disambiguation context (their names +
-  // emails — never the suspended ones, those are archived).
-  const contacts = await db
-    .select({
-      name: contact.name,
-      email: contact.email,
-      position: contact.position,
-    })
-    .from(contact)
-    .where(
-      and(
-        eq(contact.organizationId, activeOrgId),
-        eq(contact.clientId, clientId),
-        eq(contact.status, "active"),
-      ),
-    )
-
-  // Operator hints win over the stored row for this one search. `given` marks
-  // the fields the operator typed by hand — those go into the prompt a second
-  // time as hard constraints, because "the company we mean is the one in
-  // Moscow" is exactly the information that stops a .com namesake winning.
-  const hint = (v?: string | null) => (v ?? "").trim()
-  const given = {
-    name: hint(hints?.name),
-    email: hint(hints?.email),
-    phone: hint(hints?.phone),
-    address: hint(hints?.address),
-    webUrl: normalizeSiteUrl(hints?.webUrl),
-  }
-  const effective = {
-    name: given.name || target.name,
-    email: given.email || (target.email ?? "").trim(),
-    phone: given.phone || (target.phone ?? "").trim(),
-    address: given.address || (target.address ?? "").trim(),
-    webUrl: given.webUrl || normalizeSiteUrl(target.webUrl),
-  }
-
-  const knownLines = [
-    `Name: ${effective.name}`,
-    effective.email ? `Email: ${effective.email}` : null,
-    effective.phone ? `Phone: ${effective.phone}` : null,
-    effective.address ? `Address: ${effective.address}` : null,
-    effective.webUrl ? `Website: ${effective.webUrl}` : null,
-    contacts.length > 0
-      ? `Known contacts: ${contacts
-          .map((c) => {
-            const tail = [c.position, c.email].filter(Boolean).join(", ")
-            return tail ? `${c.name} (${tail})` : c.name
-          })
-          .join("; ")}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join("\n")
-
-  const constraintLines = [
-    given.name ? `- Company name: "${given.name}" — this is the entity meant.` : null,
-    given.webUrl
-      ? `- Official website: ${given.webUrl} — the company behind THIS domain, no other.`
-      : null,
-    given.address
-      ? `- Office / location: ${given.address} — reject any candidate in another city or country.`
-      : null,
-    given.phone ? `- Known phone: ${given.phone}` : null,
-    given.email ? `- Known email: ${given.email}` : null,
-  ].filter(Boolean)
-  const constraints =
-    constraintLines.length > 0
-      ? `
-
-Operator-confirmed parameters. These come from the CRM user, who knows this client — they are authoritative. Any candidate that contradicts them is the wrong company:
-${constraintLines.join("\n")}`
-      : ""
-
-  // A known website URL is the authoritative identity of the company: when
-  // it's present we pin all research to that one site and never offer
-  // name-similarity alternatives (the URL, not the name, is the key criterion).
-  const knownUrl = effective.webUrl
-  const hasKnownUrl = knownUrl.length > 0
-
-  // ── Pass 1: grounded research ───────────────────────────────────────
-  const researchPrompt = hasKnownUrl
-    ? `I have the following CRM record for a company:
-
-${knownLines}${constraints}
-
-This record already has a confirmed official website: ${knownUrl}
-
-Research ONLY this exact organisation — the one that owns ${knownUrl}. Use web search to read that website (and pages directly under that same domain) to gather: official company name, primary contact email, main-office phone, headquarters address. The website URL is the authoritative identity of this company.
-
-Do NOT consider, search for, or mention any other company that merely has a similar name — only the organisation behind ${knownUrl} matters here. Contact details published on ${knownUrl} itself outrank anything a news site, directory or aggregator says. Search in the language of that website as well as in English.
-
-Write 1–3 short paragraphs of research notes summarising what you found on that website. State for each detail where it came from. Do NOT fabricate facts — only state what your search results actually confirm.`
-    : `I have the following CRM record for a company:
-
-${knownLines}${constraints}
-
-Use web search to research this company. Identify the most likely real-world organisation (or organisations, if the name is ambiguous). For each candidate, gather: official company name, primary contact email, main-office phone, headquarters address, official website URL.
-
-Search in the local language of the operator-confirmed location as well as in English — the company's own local-language site is a better source than an English directory.
-
-Write 2–4 short paragraphs of research notes summarising what you found. If multiple companies share this name, note them separately, and say which one fits the operator-confirmed parameters. Do NOT fabricate facts — only state what your search results actually confirm.`
-
-  // When we know the company's own URL, fetch its actual page text in
-  // parallel with the grounded research — grounding only sees snippets, so
-  // this is what reliably surfaces footer / Impressum addresses.
-  const sitePromise = hasKnownUrl
-    ? fetchSiteTextForLookup(knownUrl)
-    : Promise.resolve("")
-
-  const research = await aiGenerateText({
-    process: "clients.enrichment_research",
-    ...aiCtx,
-    capabilities: ["web_search"],
-    system:
-      "You are a precise company-research assistant. Use the web search tool to find authoritative information about the given company. Prefer official websites, LinkedIn company pages, and corporate registries over social media or aggregators. Never invent details — if a field can't be confirmed by the search results, say so explicitly.",
-    prompt: researchPrompt,
-    // Bound the search → fetch → answer loop so the model can't spiral.
-    stopWhen: stepCountIs(5),
-    // Same input must give the same answer: two runs of this lookup used to
-    // return a different address and drop the phone entirely.
-    temperature: 0,
-  })
-
-  const siteText = await sitePromise
-
-  // Grounded search exposes the URLs it consulted on `result.sources`.
-  // The Source union has both 'url' and 'document' variants — narrow to
-  // url before we read .url / .title.
-  const sources: ClientLookupSource[] = (research.sources ?? []).flatMap(
-    (s) =>
-      s.sourceType === "url"
-        ? [{ url: s.url, title: s.title ?? s.url }]
-        : [],
-  )
-
-  // ── Pass 2: structured extraction ───────────────────────────────────
-  const extractPrompt = hasKnownUrl
-    ? `CRM record (current fields):
-${knownLines}${constraints}
-
-Research notes from web search (about ${knownUrl} only):
-${research.text || "(no research output)"}
-${
-  siteText
-    ? `
-Raw text fetched directly from the company's own website (${knownUrl} and its contact / legal pages). This is PRIMARY-SOURCE evidence — prefer it over the research notes for address, phone, and email. The headquarters address is usually in the page footer or on an Impressum / legal-notice / contact page:
-"""
-${siteText}
-"""
-`
-    : ""
+  return lookupClientOnWebForOrg(activeOrgId, session.user.id, clientId, hints)
 }
-The record's website URL (${knownUrl}) is the authoritative identity of this company. Return EXACTLY ONE candidate, describing the organisation behind ${knownUrl}. Set its webUrl to ${knownUrl}. Do NOT add alternative companies based on name similarity. Fill every field the research notes or website text confirm, and use empty strings for fields neither established. Set confidence to "high".
 
-Field precedence, strongest first: (1) the raw text of the company's own website above, (2) the research notes, (3) nothing — leave the field empty. Never replace an operator-confirmed parameter with a value from a news site, directory or registry; a value from the company's own website may replace it, and if the two disagree, say so in "notes".`
-    : `CRM record (current fields):
-${knownLines}${constraints}
-
-Research notes from web search:
-${research.text || "(no research output)"}
-
-Based on the research notes, extract up to 3 candidate companies that could be the right match for this CRM record. Sort by confidence (best first). For each candidate, fill every field that the research notes confirm, and use empty strings for fields the research didn't establish. Rate confidence by how well the candidate fits the operator-confirmed parameters and the record's address / contact email. Drop any candidate that contradicts an operator-confirmed parameter — do not return it as a lower-confidence alternative.`
-
-  const { output: extracted } = await aiGenerateText({
-    process: "clients.enrichment_extract",
-    ...aiCtx,
-    output: Output.object({ schema: lookupExtractSchema }),
-    system:
-      "You convert research notes and raw company-website text into structured candidate records. Never invent fields — if neither the research notes nor the website text confirms a value, return an empty string for that field. When raw website text is provided it is primary-source evidence and outranks the research notes. Operator-confirmed parameters outrank third-party sources. Use empty arrays for the candidates list if no plausible match was found.",
-    prompt: extractPrompt,
-    temperature: 0,
-  })
-
-  return {
-    candidates: extracted.candidates.map((c) => ({
-      name: c.name.trim(),
-      email: c.email.trim(),
-      phone: c.phone.trim(),
-      address: c.address.trim(),
-      webUrl: c.webUrl.trim(),
-      confidence: c.confidence,
-      whyMatch: c.whyMatch.trim(),
-    })),
-    sources,
-    notes: extracted.notes.trim(),
-  }
-}
 
 // ── Batch web enrichment (refs/enrich-clients.md) ────────────────────
 //
-// Orchestration layer over `lookupClientOnWeb`: a browser-driven loop POSTs
-// one client at a time; each client's `enrichment_status` is committed as it
+// Orchestration layer over the web lookup: a browser-driven loop POSTs one
+// client at a time; each client's `enrichment_status` is committed as it
 // finishes, so re-running processes ONLY what's still NULL (unprocessed or
-// previously failed). All org-scoped + IDOR-guarded via assertClientInOrg.
+// previously failed). The per-client core (contact fields fill-blanks + the
+// client profile apply rule, identity I6) is org-explicit in
+// src/server/identity/client-enrichment.ts; these are the session wrappers.
 
-const ENRICH_FILLABLE = ["webUrl", "email", "phone", "address"] as const
-type EnrichFillable = (typeof ENRICH_FILLABLE)[number]
-
-type EnrichTarget = {
-  webUrl: string | null
-  email: string | null
-  phone: string | null
-  address: string | null
-}
-
-// True when at least one fillable field is currently blank — the gate that
-// keeps us from spending LLM calls on already-complete records.
-function hasBlankFillable(target: EnrichTarget): boolean {
-  return ENRICH_FILLABLE.some((f) => !(target[f] ?? "").trim())
-}
-
-// Fill-blanks-only patch: never overwrites a value a human (or earlier run)
-// already set. Compute once, reuse for both the DB write and the report.
-function candidatePatch(
-  target: EnrichTarget,
-  candidate: ClientLookupCandidateJson,
-): Partial<Record<EnrichFillable, string>> {
-  const patch: Partial<Record<EnrichFillable, string>> = {}
-  for (const field of ENRICH_FILLABLE) {
-    const current = (target[field] ?? "").trim()
-    const incoming = (candidate[field] ?? "").trim()
-    if (!current && incoming) patch[field] = incoming
-  }
-  return patch
-}
+export type { EnrichClientResult, EnrichFillable } from "@/server/identity/client-enrichment"
 
 // 2.1 — the worklist + count for the button.
 export async function listPendingEnrichIds(
@@ -1219,11 +722,14 @@ export async function listPendingEnrichIds(
     isNull(client.address),
     eq(client.address, ""),
   )
+  // Identity I6: a client whose business profile was never web-enriched is
+  // in the worklist too (the same lookup fills both).
+  const profileNeverEnriched = sql`not exists (select 1 from ${clientProfile} cp where cp.client_id = ${client.id} and cp.web_enriched_at is not null)`
   const where = and(
     eq(client.organizationId, activeOrgId),
     isNull(client.enrichmentStatus),
     inArray(client.status, ["active", "initial"]),
-    blankFillable,
+    or(blankFillable, profileNeverEnriched),
   )
 
   const idRows = await db
@@ -1240,60 +746,14 @@ export async function listPendingEnrichIds(
   return { ids: idRows.map((r) => r.id), total: totalRows[0]?.c ?? 0 }
 }
 
-export type EnrichClientResult = {
-  outcome: "enriched" | "review" | "no_match" | "skipped"
-  filledFields: EnrichFillable[]
-  candidateCount: number
-}
-
 // 2.2 — process ONE client. Never catches the lookup error: on a throw the
 // row stays NULL so the next run retries only it (the whole resumability
 // guarantee depends on this).
 export async function enrichClientFromWeb(
   clientId: string,
 ): Promise<EnrichClientResult> {
-  const { activeOrgId } = await requireOrgContext()
-  const target = await assertClientInOrg(clientId, activeOrgId)
-
-  // Raced to complete between the worklist snapshot and now → stamp + skip.
-  if (!hasBlankFillable(target)) {
-    await db
-      .update(client)
-      .set({ enrichmentStatus: "enriched", enrichmentCandidates: null })
-      .where(eq(client.id, clientId))
-    return { outcome: "skipped", filledFields: [], candidateCount: 0 }
-  }
-
-  const { candidates } = await lookupClientOnWeb(clientId)
-
-  if (candidates.length === 0) {
-    await db
-      .update(client)
-      .set({ enrichmentStatus: "no_match", enrichmentCandidates: null })
-      .where(eq(client.id, clientId))
-    return { outcome: "no_match", filledFields: [], candidateCount: 0 }
-  }
-
-  // Auto-apply ONLY the unambiguous case: a single high-confidence candidate.
-  // Anything else (>1 candidate, or a lone medium/low) goes to the human queue.
-  if (candidates.length === 1 && candidates[0].confidence === "high") {
-    const patch = candidatePatch(target, candidates[0])
-    await db
-      .update(client)
-      .set({ ...patch, enrichmentStatus: "enriched", enrichmentCandidates: null })
-      .where(eq(client.id, clientId))
-    return {
-      outcome: "enriched",
-      filledFields: Object.keys(patch) as EnrichFillable[],
-      candidateCount: 1,
-    }
-  }
-
-  await db
-    .update(client)
-    .set({ enrichmentStatus: "review", enrichmentCandidates: candidates })
-    .where(eq(client.id, clientId))
-  return { outcome: "review", filledFields: [], candidateCount: candidates.length }
+  const { session, activeOrgId } = await requireOrgContext()
+  return enrichClientForOrg(activeOrgId, session.user.id, clientId)
 }
 
 export type EnrichReviewRow = {
@@ -1376,5 +836,8 @@ export async function resolveEnrichment(
     .update(client)
     .set({ ...patch, enrichmentStatus: "enriched", enrichmentCandidates: null })
     .where(eq(client.id, clientId))
+  // Identity I6: the picked candidate's business profile → apply rule
+  // (candidates parked before I6 carry no profile → only the stamp).
+  await applyCandidateProfileForOrg(activeOrgId, clientId, chosen as ClientLookupCandidate)
   return { outcome: "enriched", filledFields: Object.keys(patch) as EnrichFillable[] }
 }

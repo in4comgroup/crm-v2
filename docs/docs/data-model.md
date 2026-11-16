@@ -110,6 +110,8 @@ Custom-rule card generation was removed (topics plan phase 12). Topic cards come
 | `card_contact` | Card ↔ external contact (matched by sender email) | PK `(cardId, contactId)` |
 | `notification` | In-app notification, one row per recipient (spec `docs/specs/notifications/`, migration `0040`) | `organizationId` (null = platform), `userId`, `kind`, `category`, `priority` (important / info), `title`, `body`, `href`, `entityType` / `entityId`, `dedupeKey` (unique per user), `payload`, `readAt`, `dismissedAt`, `resolvedAt`, `expiresAt` |
 | `notification_pref` | Notification categories a user switched off, per org | PK `(organizationId, userId)`, `categories` jsonb |
+| `ai_chat_thread` | One AI chat conversation of one user in one org (spec `docs/specs/ai-chat/` §16.1, migration `0042`); id made in the browser | `organizationId`, `userId`, `title` (first question ≤ 60 chars, user can rename), `lastMessageAt`, `ingestMode` (on / off, CH6), `ingestedSeq` (CH6), `deletedAt` (soft delete; the daily pipeline removes the row after 2 days, and threads with no message for 90 days) |
+| `ai_chat_message` | One UI message of a thread | `threadId` (cascade), `seq` (unique per thread), `role` (user / assistant), `parts` jsonb (text, files ≤ 700 k chars else name only, data parts records / stats / evidence / turn / spec — never tool calls, reasoning or admin debug), `feedback` (up / down), `feedbackComment`, `feedbackAt` |
 
 ## 7. AI model registry
 

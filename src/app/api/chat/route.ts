@@ -11,12 +11,19 @@ import { pipeJsonRender } from "@json-render/core"
 import { getServerSession } from "@/lib/get-session"
 import { RECORD_TYPE_LABELS } from "@/lib/chat/records"
 import { parsePageRecord } from "@/lib/chat/page-context"
+import { isThreadId, parseUserMessage, threadTitle } from "@/lib/chat/thread"
 import { buildChatSystemPrompt, todayLine } from "@/lib/chat/prompt"
 import { STATUS_THINKING } from "@/lib/chat/turn"
 import { aiStreamText } from "@/server/ai/runtime"
 import { CHAT_LIMIT_ERROR, getChatLimitState } from "@/server/chat/limit"
 import { chatErrorCode, classifyChatError } from "@/server/chat/errors"
 import { cleanHistory, dataPartToModelText } from "@/server/chat/history"
+import {
+  appendChatMessage,
+  dropTrailingAssistant,
+  ensureChatThread,
+  loadChatMessages,
+} from "@/server/chat/threads"
 import { getRecord, loadRecordsContext, type RecordsContext } from "@/server/chat/records"
 import { visibleStatsSubjects } from "@/server/chat/stats"
 import { createChatStreamFilter } from "@/server/chat/stream"
@@ -35,10 +42,13 @@ export const maxDuration = 120
 const TURN_TIMEOUT_MS = 110_000
 const MAX_STEPS = 8
 const MAX_OUTPUT_TOKENS = 2_000
-const MAX_MESSAGES = 60
-
 type ChatRequest = {
-  messages?: UIMessage[]
+  /** Thread id (browser-made, §16.1); the thread is created on its first send. */
+  chatId?: string
+  /** The new user message (the history comes from the DB, never from the browser). */
+  message?: UIMessage
+  /** "regenerate-message" = «Повторить»: answer the last user message again. */
+  trigger?: string
   /** A model id from GET /api/ai/models?process=chat.assistant; others are ignored by the runtime. */
   model?: string
   /** Address of the page the user is on (Q12), e.g. "/clients/abc". */
@@ -79,17 +89,34 @@ export async function POST(req: Request) {
   } catch {
     return Response.json({ error: "Bad request" }, { status: 400 })
   }
-  const history = cleanHistory(Array.isArray(body.messages) ? body.messages : []).slice(-MAX_MESSAGES)
+  const chatId = body.chatId
+  const userMessage = parseUserMessage(body.message)
+  const regenerate = body.trigger === "regenerate-message"
+  if (!isThreadId(chatId) || (!userMessage && !regenerate)) {
+    return Response.json({ error: "Bad request" }, { status: 400 })
+  }
+
+  // History (§16.1): the thread is the user's own in the active org; the
+  // user message is stored BEFORE the model call.
+  const thread = await ensureChatThread(orgId, userId, chatId, threadTitle(userMessage?.text))
+  if (!thread) return Response.json({ error: "chat_not_found" }, { status: 404 })
+  const lastLeft = regenerate ? await dropTrailingAssistant(chatId) : null
+  if (userMessage && (!regenerate || lastLeft !== "user")) {
+    await appendChatMessage(chatId, { id: crypto.randomUUID(), role: "user", parts: userMessage.parts })
+  }
+  const history = cleanHistory(await loadChatMessages(chatId))
   if (!history.length || history[history.length - 1].role !== "user") {
     return Response.json({ error: "Bad request" }, { status: 400 })
   }
+  const assistantId = crypto.randomUUID()
 
   const requestId = crypto.randomUUID().slice(0, 8)
   const startedAt = Date.now()
 
   const stream = createUIMessageStream({
+    originalMessages: history,
     execute: async ({ writer }) => {
-      writer.write({ type: "start" })
+      writer.write({ type: "start", messageId: assistantId })
       // The first status line before any model call (spec §13: ≤ 1 s).
       writer.write({ type: "data-status", data: STATUS_THINKING, transient: true } as UIMessageChunk)
 
@@ -170,6 +197,16 @@ export async function POST(req: Request) {
       const cls = classifyChatError(e)
       console.error(`[chat ${requestId}] failed (${cls}, org ${orgId})`, e)
       return chatErrorCode(cls)
+    },
+    // The answer is stored at the end — also a broken / stopped one, with
+    // what was produced (§16.1). Admin debug and status parts are not stored.
+    onEnd: async ({ responseMessage }) => {
+      if (responseMessage.role !== "assistant") return
+      try {
+        await appendChatMessage(chatId, { id: assistantId, role: "assistant", parts: responseMessage.parts })
+      } catch (e) {
+        console.error(`[chat ${requestId}] saving the answer failed (thread ${chatId})`, e)
+      }
     },
   })
 

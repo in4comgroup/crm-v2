@@ -434,6 +434,11 @@ one status line («Ищу в CRM…») and never tool calls, ids, JSON or reason
 route strips them on the server; platform admins get a collapsed «Ход
 рассуждений» and «Отладка» tabs. The page the user is on is context for the
 answer («эта компания»). The chat stops at 100 % of the org monthly AI limit.
+Chat history (CH5): each user has a list of own chats in the panel header
+(«Новый чат», rename, «Удалить чат»); the server stores the messages
+(`ai_chat_thread` / `ai_chat_message`) and loads the history itself — the browser
+sends only the new message; a chat continues after a reload; thumbs up / down on
+answers; chats with no message for 90 days are deleted by the daily pipeline.
 «Сохранить чат» (Save chat) stores the conversation as an `aichat` source item
 (to be replaced by automatic ingest, ai-chat CH6).
 

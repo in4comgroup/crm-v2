@@ -20,7 +20,14 @@ export function cleanHistory(messages: UIMessage[]): UIMessage[] {
     .filter((m) => m && (m.role === "user" || m.role === "assistant") && Array.isArray(m.parts))
     .map((m) => ({
       ...m,
-      parts: m.parts.filter((p) => KEEP.has(p.type) || p.type === "data-records" || p.type === "data-stats" || p.type === "data-evidence"),
+      parts: m.parts.filter(
+        (p) =>
+          // A stored file without its data (too big for the history) cannot go to the model.
+          (KEEP.has(p.type) && !(p.type === "file" && !(p as { url?: string }).url)) ||
+          p.type === "data-records" ||
+          p.type === "data-stats" ||
+          p.type === "data-evidence",
+      ),
     }))
     .filter((m) => m.parts.length > 0)
 }

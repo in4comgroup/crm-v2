@@ -17,7 +17,7 @@ import {
   Component,
   type ReactNode,
 } from "react"
-import { CopyIcon, CheckIcon, Save, Trash2Icon, CircleAlert } from "lucide-react"
+import { CopyIcon, CheckIcon, Save, CircleAlert, Paperclip } from "lucide-react"
 import { toast } from "sonner"
 import {
   useJsonRenderMessage,
@@ -37,6 +37,13 @@ import {
   mergeRecordsParts,
   type ChatStatus,
 } from "@/lib/chat/turn"
+import {
+  NEW_CHAT_TITLE,
+  isThreadId,
+  type ChatMessageMetadata,
+  type ChatThreadSummary,
+} from "@/lib/chat/thread"
+import { FeedbackButtons, ThreadControls } from "@/components/blocks/chat/thread-ui"
 
 import {
   Conversation,
@@ -86,12 +93,6 @@ import {
   TurnLine,
 } from "@/components/blocks/chat/turn-ui"
 import { Button } from "@/components/ui/button"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import Image from "next/image"
 import { BrandMark } from "./brand-mark"
@@ -137,10 +138,174 @@ function currentPage(): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Component
+// Chat history (§16.1): which chat is open. The messages live on the server;
+// this part loads a chat, starts a new one and keeps the user's chat list.
 // ---------------------------------------------------------------------------
 
+const LAST_THREAD_KEY = "ai-chat:last-thread"
+
+function rememberThread(id: string | null) {
+  try {
+    if (id) window.localStorage.setItem(LAST_THREAD_KEY, id)
+    else window.localStorage.removeItem(LAST_THREAD_KEY)
+  } catch {
+    // storage blocked — the chat still works, it just opens empty after a reload
+  }
+}
+
+function recallThread(): string | null {
+  try {
+    const v = window.localStorage.getItem(LAST_THREAD_KEY)
+    return isThreadId(v) ? v : null
+  } catch {
+    return null
+  }
+}
+
+type OpenChat = { id: string; messages: UIMessage[]; saved: boolean }
+
 export function AIChat({ className, isAdmin = false }: { className?: string; isAdmin?: boolean }) {
+  const { open: panelOpen } = useGlobalChat()
+  const [threads, setThreads] = useState<ChatThreadSummary[]>([])
+  const [current, setCurrent] = useState<OpenChat | null>(null)
+  const started = useRef(false)
+
+  const refreshThreads = useCallback(async () => {
+    try {
+      const r = await fetch("/api/chat/threads")
+      if (!r.ok) return
+      const data = (await r.json()) as { threads?: ChatThreadSummary[] }
+      setThreads(data.threads ?? [])
+    } catch {
+      // list stays as it was
+    }
+  }, [])
+
+  const newChat = useCallback(() => {
+    setCurrent({ id: crypto.randomUUID(), messages: [], saved: false })
+    rememberThread(null)
+  }, [])
+
+  const openThread = useCallback(
+    async (id: string) => {
+      try {
+        const r = await fetch(`/api/chat/threads/${encodeURIComponent(id)}`)
+        if (!r.ok) throw new Error(String(r.status))
+        const data = (await r.json()) as { messages: UIMessage[] }
+        setCurrent({ id, messages: data.messages ?? [], saved: true })
+        rememberThread(id)
+      } catch {
+        toast.error("Не удалось открыть чат")
+        newChat()
+      }
+    },
+    [newChat],
+  )
+
+  // First open of the panel: the chat list + the last chat of this browser.
+  useEffect(() => {
+    if (!panelOpen || started.current) return
+    started.current = true
+    void refreshThreads()
+    const last = recallThread()
+    if (last) void openThread(last)
+    else newChat()
+  }, [panelOpen, refreshThreads, openThread, newChat])
+
+  const title = current ? (threads.find((t) => t.id === current.id)?.title ?? NEW_CHAT_TITLE) : NEW_CHAT_TITLE
+
+  const renameCurrent = useCallback(
+    async (next: string) => {
+      if (!current) return false
+      const r = await fetch(`/api/chat/threads/${encodeURIComponent(current.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: next }),
+      }).catch(() => null)
+      if (!r?.ok) {
+        toast.error("Не удалось переименовать чат")
+        return false
+      }
+      setThreads((list) => list.map((t) => (t.id === current.id ? { ...t, title: next } : t)))
+      return true
+    },
+    [current],
+  )
+
+  const deleteCurrent = useCallback(async () => {
+    if (!current) return
+    const r = await fetch(`/api/chat/threads/${encodeURIComponent(current.id)}`, { method: "DELETE" }).catch(() => null)
+    if (!r?.ok) {
+      toast.error("Не удалось удалить чат")
+      return
+    }
+    setThreads((list) => list.filter((t) => t.id !== current.id))
+    newChat()
+  }, [current, newChat])
+
+  if (!current) {
+    return (
+      <div
+        className={cn(
+          "flex h-full flex-col items-center justify-center rounded-md border-2 border-gray-200 dark:border-gray-700 bg-card text-sm text-muted-foreground",
+          className,
+        )}
+      >
+        Загрузка…
+      </div>
+    )
+  }
+
+  return (
+    <ChatSession
+      key={current.id}
+      className={className}
+      isAdmin={isAdmin}
+      threadId={current.id}
+      initialMessages={current.messages}
+      renderControls={({ busy, hasMessages }) => (
+        <ThreadControls
+          title={title}
+          currentId={current.id}
+          threads={threads}
+          saved={current.saved || hasMessages}
+          disabled={busy}
+          onSelect={(id) => {
+            if (id !== current.id) void openThread(id)
+          }}
+          onNew={newChat}
+          onRename={renameCurrent}
+          onDelete={deleteCurrent}
+        />
+      )}
+      onAnswered={() => {
+        rememberThread(current.id)
+        void refreshThreads()
+      }}
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// One chat session (useChat). Keyed by the thread id: another chat = a new
+// session with the messages loaded from the server.
+// ---------------------------------------------------------------------------
+
+function ChatSession({
+  className,
+  isAdmin,
+  threadId,
+  initialMessages,
+  renderControls,
+  onAnswered,
+}: {
+  className?: string
+  isAdmin: boolean
+  threadId: string
+  initialMessages: UIMessage[]
+  renderControls: (s: { busy: boolean; hasMessages: boolean }) => ReactNode
+  onAnswered: () => void
+}) {
   // Model picker only when the admin allowed more than one model (Q1).
   const { models, defaultModelId } = useAiProcessModels("chat.assistant")
   const [pickedModel, setPickedModel] = useState<string | null>(null)
@@ -162,7 +327,16 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => ({ ...bodyRef.current, page: currentPage() }),
+        // Only the new message: the server loads the history of the thread (§16.1).
+        prepareSendMessagesRequest: ({ id, messages, trigger }) => ({
+          body: {
+            chatId: id,
+            message: messages[messages.length - 1],
+            trigger,
+            ...bodyRef.current,
+            page: currentPage(),
+          },
+        }),
       }),
     [],
   )
@@ -187,8 +361,11 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
   // The status line of the running request (transient data parts, §9).
   const [liveStatus, setLiveStatus] = useState<ChatStatus | null>(null)
 
-  const { messages, sendMessage, status, stop, setMessages, error, clearError, regenerate } = useChat({
+  const { messages, sendMessage, status, stop, error, clearError, regenerate } = useChat({
+    id: threadId,
+    messages: initialMessages,
     transport,
+    onFinish: () => onAnswered(),
     onData: (part) => {
       if (part.type === "data-status") setLiveStatus(part.data as ChatStatus)
     },
@@ -232,11 +409,6 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
     void regenerate()
   }, [regenerate, clearError])
 
-  const handleClear = useCallback(() => {
-    clearError()
-    setMessages([])
-  }, [setMessages, clearError])
-
   const last = messages[messages.length - 1]
   // While the request is sent but no assistant message exists yet.
   const pendingStatus = isLoading && last?.role === "user"
@@ -249,8 +421,9 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
       )}
     >
       {/* Header */}
-      <div className="flex min-h-11 items-center justify-end border-b px-4 py-2">
-        <div className="flex items-center gap-1">
+      <div className="flex min-h-11 items-center gap-2 border-b px-2 py-2">
+        {renderControls({ busy: isLoading, hasMessages: messages.length > 0 })}
+        <div className="flex shrink-0 items-center gap-1">
           {showPicker && (
             <ModelSelector open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
               <ModelSelectorTrigger asChild>
@@ -284,21 +457,6 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
                 </ModelSelectorList>
               </ModelSelectorContent>
             </ModelSelector>
-          )}
-
-          {messages.length > 0 && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={handleClear} disabled={isLoading}>
-                    <Trash2Icon className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Очистить переписку</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
           )}
 
           {/* Replaced by automatic ingest + «Передать в источники сейчас» in CH6 (Q24). */}
@@ -456,6 +614,15 @@ function ChatMessage({
               </p>
             )
           }
+          if (part.type === "file" && !part.url) {
+            // A big file is kept in the history by name only (§16.1).
+            return (
+              <p key={key} className="text-muted-foreground flex items-center gap-1 text-xs">
+                <Paperclip className="size-3.5" />
+                {part.filename ?? "Файл"} — не сохранён в истории чата
+              </p>
+            )
+          }
           if (part.type === "file" && part.mediaType?.startsWith("image/")) {
             return (
               <div key={key} className="relative max-w-sm">
@@ -498,8 +665,12 @@ function ChatMessage({
       </MessageContent>
 
       {isAssistant && !isLive && text && (
-        <MessageActions>
+        <MessageActions className="flex-wrap">
           <CopyButton text={text} />
+          <FeedbackButtons
+            messageId={message.id}
+            initial={(message.metadata as ChatMessageMetadata | undefined)?.feedback ?? null}
+          />
         </MessageActions>
       )}
     </Message>

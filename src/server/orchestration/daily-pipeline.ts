@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { pipelineRun, sourceItem, type PipelineRunTrigger } from "@/db/schema"
 import { parseSourceItem } from "@/server/parse-source-item"
+import { purgeChatThreads } from "@/server/chat/threads"
 import { uploadSourceItem } from "@/server/upload-source-item"
 import { runFullSync } from "./run-full-sync"
 import {
@@ -120,6 +121,15 @@ export async function runDailyPipeline(
       phase: "catalog",
       message: `usage cost reconcile: ${reconcile.failed} of ${reconcile.checked} lookups failed`,
     })
+  }
+
+  // AI chat history retention (docs/specs/ai-chat §16.1): threads with no
+  // message for 90 days, and threads the user deleted, are removed. Isolated.
+  try {
+    const purged = await purgeChatThreads()
+    if (purged.deleted) console.log(`[daily] AI chat threads removed: ${purged.deleted}`)
+  } catch (e) {
+    pushError(errors, { phase: "catalog", message: `chat history retention: ${e instanceof Error ? e.message : String(e)}` })
   }
 
   // ── Phase 1: Sync ─────────────────────────────────────────────────

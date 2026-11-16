@@ -4013,3 +4013,62 @@ export const notificationPref = pgTable(
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.userId] })],
 )
+
+// ── AI chat history (docs/specs/ai-chat/01-specification.md §16.1, CH5) ──
+// One thread per conversation of ONE user in ONE org (Q16). Business data,
+// not private (Q21) — the panel lists only the user's own threads, and the
+// content reaches the org through the «AI Chat» source (CH6).
+export const aiChatThread = pgTable(
+  "ai_chat_thread",
+  {
+    // Client-generated (the browser opens a new chat before the first send).
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // First user question (≤ 60 chars), the user can rename.
+    title: text("title").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
+    // §16.3 (CH6): on = segments go to the org's «AI Chat» source; off = «Не передавать в источники».
+    ingestMode: text("ingest_mode").notNull().default("on"),
+    // Last message seq already sent to sources (CH6); 0 = none.
+    ingestedSeq: integer("ingested_seq").notNull().default(0),
+    // Soft delete by the user; the daily pipeline removes the row later.
+    deletedAt: timestamp("deleted_at"),
+  },
+  (table) => [
+    index("ai_chat_thread_user_list_idx")
+      .on(table.organizationId, table.userId, table.lastMessageAt)
+      .where(sql`${table.deletedAt} is null`),
+    index("ai_chat_thread_last_message_idx").on(table.lastMessageAt),
+  ],
+)
+
+// One UI message of a thread. `parts` = the AI SDK UI message parts as the
+// user saw them: text, files, our data parts (records / stats / evidence /
+// turn); never tool calls, reasoning or admin debug (§9).
+export const aiChatMessage = pgTable(
+  "ai_chat_message",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => aiChatThread.id, { onDelete: "cascade" }),
+    // 1, 2, 3 … per thread.
+    seq: integer("seq").notNull(),
+    // user | assistant
+    role: text("role").notNull(),
+    parts: jsonb("parts").$type<unknown[]>().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    // Q14: up | down | null (assistant messages only) + optional comment.
+    feedback: text("feedback"),
+    feedbackComment: text("feedback_comment"),
+    feedbackAt: timestamp("feedback_at"),
+  },
+  (table) => [uniqueIndex("ai_chat_message_thread_seq_uq").on(table.threadId, table.seq)],
+)

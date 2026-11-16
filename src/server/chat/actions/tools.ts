@@ -8,6 +8,8 @@ import {
   TASK_TYPES,
   buildInputIndex,
   cleanText,
+  findSource,
+  groundText,
   companyFill,
   contactFill,
   groundCompany,
@@ -29,12 +31,17 @@ import {
   type DraftItem,
   type DealValues,
   type DraftMatch,
+  type DealMoveValues,
+  type FieldMeta,
   type InputSources,
   type LinkValues,
+  type OrderRequestValues,
+  type RemovedValue,
+  type TaskUpdateValues,
   type TaskValues,
   type UpdateValues,
 } from "@/lib/chat/actions"
-import { dueLabel } from "@/lib/chat/due-date"
+import { dueLabel, utcToLocal } from "@/lib/chat/due-date"
 import type { ChatAttachmentPart } from "@/lib/chat/files"
 import { companyMatchKey, personMatchKey } from "@/lib/translit-ru"
 import { statusForTool, type ChatQuestionPart } from "@/lib/chat/turn"
@@ -53,8 +60,12 @@ import {
   findContactByName,
   findDealByName,
   loadOrgIndex,
+  dealWithStage,
+  findOpenTaskByTitle,
   loadDealOptions,
+  loadMoveOptions,
   loadOrgMembers,
+  taskInOrg,
   openDealsOfClient,
   type DealOptions,
   type OrgIndex,
@@ -114,7 +125,8 @@ function kindOf(items: DraftItem[]): ActionKind {
   const p = items.some((i) => i.type === "contact")
   const t = items.filter((i) => i.type === "task").length
   const d = items.some((i) => i.type === "deal")
-  const u = items.filter((i) => i.type === "update" || i.type === "link")
+  for (const k of ["order_request", "deal_move", "task_update"] as const) if (items.length && items.every((i) => i.type === k)) return k
+  const u = items.filter((i) => i.type === "update" || i.type === "link" || i.type === "order_request" || i.type === "deal_move" || i.type === "task_update")
   if (u.length && u.length === items.length) return items.every((i) => i.type === "update") ? "update" : items.every((i) => i.type === "link") ? "link" : "group"
   if (u.length) return "group"
   if (d) return c || p || t ? "group" : "deal"
@@ -186,6 +198,8 @@ export function buildActionTools(turn: ActionTurn) {
   let turnSignals: TurnSignals | null = null
   let questions = 0
   const dealOptions = () => (dealOptionsP ??= loadDealOptions(turn.orgId))
+  let moveOptionsP: ReturnType<typeof loadMoveOptions> | undefined
+  const moveOptions = () => (moveOptionsP ??= loadMoveOptions(turn.orgId))
   const sources = () => (sourcesP ??= loadSources(turn))
   const index = () => (indexP ??= loadOrgIndex(turn.orgId))
   const members = () => (membersP ??= loadOrgMembers(turn.orgId))
@@ -237,7 +251,7 @@ export function buildActionTools(turn: ActionTurn) {
   }
 
   async function optionsOf(items: DraftItem[]): Promise<ActionOptions | undefined> {
-    const hasTask = items.some((i) => i.type === "task")
+    const hasTask = items.some((i) => i.type === "task" || i.type === "task_update" || i.type === "deal_move")
     const hasDeal = items.some((i) => i.type === "deal")
     if (!hasTask && !hasDeal) return undefined
     const o: ActionOptions = { members: (await members()).map((m) => ({ id: m.id, name: m.name })), timeZone: turn.rctx.timeZone }
@@ -246,6 +260,7 @@ export function buildActionTools(turn: ActionTurn) {
       o.stages = d.stages
       o.dealTypes = d.dealTypes.map((t) => ({ id: t.id, name: t.name }))
     }
+    if (items.some((i) => i.type === "deal_move")) Object.assign(o, await moveOptions())
     return o
   }
 
@@ -781,6 +796,183 @@ export function buildActionTools(turn: ActionTurn) {
         }),
     }),
 
+    draftOrderRequest: tool({
+      description:
+        "Prepare «Заказ из запроса»: the client's request (what and how much they want to buy) → the existing order-from-request wizard, after the user confirms. " +
+        "requestText = the client's request copied EXACTLY from the input (their message / mail / file); companyRef = the client company (ref, name or a draftId of this answer).",
+      inputSchema: z.object({
+        companyRef: z.string().optional(),
+        requestText: z.string().describe("The client's request, copied exactly (not a summary)"),
+        comment: z.string().max(300).optional(),
+      }),
+      execute: (input) =>
+        serial(async () => {
+          if (!asked) return NOT_ASKED
+          if (tooMany()) return LIMIT
+          count++
+          status("draftOrderRequest", input)
+          try {
+            const idx = await index()
+            const src = await sources()
+            const v: OrderRequestValues = { clientId: null, companyKey: null, clientName: "", requestText: "", comment: cleanText(input.comment, 300) }
+            const meta: Record<string, FieldMeta> = {}
+            const removed: RemovedValue[] = []
+            const text = (input.requestText ?? "").trim().slice(0, 12000)
+            // The request must be the client's own words from the input, not the model's summary.
+            const found = text ? findSource(src, (i) => groundText(text, i, 0.8)) : null
+            if (found) {
+              v.requestText = text
+              meta.requestText = { source: found.source, fileName: found.fileName, fileId: found.fileId }
+            } else if (text) removed.push({ field: "requestText", value: text.slice(0, 200), reason: "это не текст из сообщения клиента" })
+            let into: ChatDraftPart | undefined
+            const co = await resolveCompany((input.companyRef ?? "").trim(), idx, false)
+            if (co.kind === "card") {
+              into = co.part
+              v.companyKey = co.key
+              v.clientName = co.name
+            } else if (co.kind === "existing") {
+              v.clientId = co.id
+              v.clientName = co.name
+            } else {
+              const page = await pageClient()
+              if (page && co.kind === "empty") {
+                v.clientId = page.id
+                v.clientName = page.name
+                meta.clientName = { source: "page" }
+              }
+            }
+            const item: DraftItem = { key: nextKey(into, [], "o"), type: "order_request", values: v, meta, removed, matches: [], missing: [], refused: null }
+            item.missing = missingFields(item)
+            return modelView(await saveDraft([item], into), co.kind === "many" ? `Компаний «${input.companyRef}» несколько — уточни у пользователя.` : undefined)
+          } catch (e) {
+            return failed(e)
+          }
+        }),
+    }),
+
+    draftDealMove: tool({
+      description:
+        "Prepare a card that MOVES an existing deal to another stage, or marks it won / lost («сделку с Вектором — в «Переговоры»», «мы проиграли Вектору: выбрали другого»). dealRef = the deal's ref (searchRecords / listRecords) or its exact name. " +
+        "Lost needs a reason from the org's list — pass the user's words; the card shows the list.",
+      inputSchema: z.object({
+        dealRef: z.string(),
+        stage: z.string().optional().describe("Target stage name as the user says it"),
+        outcome: z.enum(["won", "lost"]).optional(),
+        reason: z.string().optional().describe("Lost / won: the user's words for the reason"),
+      }),
+      execute: (input) =>
+        serial(async () => {
+          if (!asked) return NOT_ASKED
+          if (tooMany()) return LIMIT
+          count++
+          status("draftDealMove", input)
+          try {
+            const ref = (input.dealRef ?? "").trim()
+            const d = (await dealWithStage(turn.orgId, ref)) ?? (await (async () => {
+              const byName = await findDealByName(turn.orgId, ref)
+              return byName && byName !== "many" ? dealWithStage(turn.orgId, byName.id) : null
+            })())
+            if (!d || d.status === "deleted") return { error: "Сделка не найдена — найди её через searchRecords и передай ref." }
+            const mo = await moveOptions()
+            const cur = mo.allStages.find((s) => s.id === d.stageId)
+            const v: DealMoveValues = {
+              dealId: d.id,
+              dealName: d.name,
+              fromStageName: cur?.name ?? "",
+              stageId: null,
+              stageName: "",
+              outcome: null,
+              reasonCode: "",
+              reasonText: "",
+            }
+            const meta: Record<string, FieldMeta> = {}
+            const target = input.outcome
+              ? mo.allStages.find((s) => s.role === input.outcome)
+              : input.stage?.trim()
+                ? (mo.allStages.find((s) => s.name.toLowerCase() === input.stage!.trim().toLowerCase()) ??
+                  mo.allStages.find((s) => s.name.toLowerCase().includes(input.stage!.trim().toLowerCase())))
+                : undefined
+            if (target) {
+              v.stageId = target.id
+              v.stageName = target.name
+              v.outcome = target.role === "won" || target.role === "lost" ? (target.role as "won" | "lost") : null
+              meta.stageName = { source: "input" }
+            }
+            const why = cleanText(input.reason, 300)
+            if (why) {
+              v.reasonText = why
+              meta.reasonText = { source: "input" }
+              if (v.outcome === "lost") {
+                const hit =
+                  mo.lostReasons.find((r) => r.label.toLowerCase() === why.toLowerCase()) ??
+                  mo.lostReasons.find((r) => why.toLowerCase().includes(r.label.toLowerCase()) || r.label.toLowerCase().includes(why.toLowerCase()))
+                if (hit) {
+                  v.reasonCode = hit.code
+                  meta.reasonCode = { source: "input" }
+                }
+              }
+            }
+            const item: DraftItem = { key: "m1", type: "deal_move", values: v, meta, removed: [], matches: [], missing: [], refused: null }
+            item.missing = missingFields(item)
+            const note = !target
+              ? `Стадия «${input.stage ?? ""}» не найдена — карточка предложит выбрать.`
+              : target.id === d.stageId
+                ? "Сделка уже на этой стадии."
+                : undefined
+            return modelView(await saveDraft([item]), note)
+          } catch (e) {
+            return failed(e)
+          }
+        }),
+    }),
+
+    draftTaskUpdate: tool({
+      description:
+        "Prepare a card that marks an EXISTING task done or moves its due date («задачу позвонить Вектору — выполнена», «перенеси КП на понедельник»). taskRef = the task's ref (listRecords / searchRecords) or words of its title. " +
+        "For a new date pass the user's own words (dueText).",
+      inputSchema: z.object({
+        taskRef: z.string(),
+        action: z.enum(["done", "reschedule"]),
+        dueText: z.string().optional(),
+        dueDate: z.string().optional().describe("Your reading of dueText, YYYY-MM-DDTHH:MM (org time; date only = 18:00)"),
+      }),
+      execute: (input) =>
+        serial(async () => {
+          if (!asked) return NOT_ASKED
+          if (tooMany()) return LIMIT
+          count++
+          status("draftTaskUpdate", input)
+          try {
+            const ref = (input.taskRef ?? "").trim()
+            const t = (await taskInOrg(turn.orgId, ref)) ?? (await findOpenTaskByTitle(turn.orgId, ref))
+            if (t === "many") return { error: `Открытых задач со словами «${ref}» несколько — уточни у пользователя (askUser) или передай ref.` }
+            if (!t) return { error: "Задача не найдена — найди её через listRecords и передай ref." }
+            const v: TaskUpdateValues = {
+              taskId: t.id,
+              taskTitle: t.name,
+              action: input.action,
+              dueDate: "",
+              dueText: "",
+              currentDue: utcToLocal(t.dueDate, turn.rctx.timeZone),
+            }
+            let removed: RemovedValue[] = []
+            let meta: Record<string, FieldMeta> = {}
+            if (input.action === "reschedule") {
+              const g = groundTask({ title: t.name, dueText: input.dueText, dueDate: input.dueDate }, await sources(), turn.rctx.now, turn.rctx.timeZone)
+              v.dueDate = g.values.dueDate
+              v.dueText = g.values.dueText
+              removed = g.removed.filter((r) => r.field === "dueDate")
+              meta = g.meta.dueDate ? { dueDate: g.meta.dueDate } : {}
+            }
+            const item: DraftItem = { key: "u1", type: "task_update", values: v, meta, removed, matches: [], missing: [], refused: null }
+            item.missing = missingFields(item)
+            return modelView(await saveDraft([item]), t.status === "done" && input.action === "done" ? "Задача уже выполнена." : undefined)
+          } catch (e) {
+            return failed(e)
+          }
+        }),
+    }),
+
     readSignals: tool({
       description:
         "Read the business signals of the user's latest message and files with the org's signal model, and what the org's funnel rules suggest (create a deal of type X at stage Y, move an open deal, …). " +
@@ -1033,7 +1225,20 @@ export function buildActionTools(turn: ActionTurn) {
   }
 }
 
-export const ACTION_TOOLS = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals", "askUser", "draftUpdate", "draftLink"])
+export const ACTION_TOOLS = new Set([
+  "draftCompany",
+  "draftContact",
+  "draftTask",
+  "draftTasks",
+  "draftDeal",
+  "readSignals",
+  "askUser",
+  "draftUpdate",
+  "draftLink",
+  "draftOrderRequest",
+  "draftDealMove",
+  "draftTaskUpdate",
+])
 
 function unlinkKeys(item: DraftItem) {
   const v = item.values as TaskValues

@@ -16,7 +16,7 @@ import { parseMoneyRu } from "@/lib/ru-mail/money"
 
 // ── Kinds, statuses ─────────────────────────────────────────────────────
 
-export const ACTION_KINDS = ["company", "contact", "company_contact", "task", "tasks", "deal", "update", "link", "group"] as const
+export const ACTION_KINDS = ["company", "contact", "company_contact", "task", "tasks", "deal", "update", "link", "order_request", "deal_move", "task_update", "group"] as const
 export type ActionKind = (typeof ACTION_KINDS)[number]
 
 // `confirming` = a confirm request is running (guards a double click).
@@ -37,6 +37,9 @@ export const ACTION_KIND_TITLES: Record<ActionKind, string> = {
   deal: "Новая сделка",
   update: "Дополнить запись",
   link: "Связать записи",
+  order_request: "Заказ из запроса",
+  deal_move: "Перевести сделку",
+  task_update: "Изменить задачу",
   group: "Новые записи",
 }
 
@@ -164,7 +167,44 @@ export type DealValues = {
   ruleNote: string
 }
 
-export type ItemType = "company" | "contact" | "task" | "deal" | "update" | "link"
+/** «Заказ из запроса» (T5): the client's request text → the existing order-from-request wizard. */
+export type OrderRequestValues = {
+  clientId: string | null
+  /** A company of the same card (draft). */
+  companyKey: string | null
+  clientName: string
+  /** The client's request copied exactly from the input (a message / a mail / a file). */
+  requestText: string
+  comment: string
+}
+
+/** «Перевести сделку» (T5): another stage, or won / lost with the funnel's reason. */
+export type DealMoveValues = {
+  dealId: string
+  dealName: string
+  fromStageName: string
+  stageId: string | null
+  stageName: string
+  /** Role of the target stage: won / lost need the outcome rules. */
+  outcome: "won" | "lost" | null
+  /** Lost: a code of the org's lost-reason list (required). */
+  reasonCode: string
+  reasonText: string
+}
+
+/** «Изменить задачу» (T5): mark done, or a new due date. */
+export type TaskUpdateValues = {
+  taskId: string
+  taskTitle: string
+  action: "done" | "reschedule"
+  /** Reschedule: org-local «YYYY-MM-DDTHH:MM». */
+  dueDate: string
+  dueText: string
+  /** The current due date (org-local), for the card. */
+  currentDue: string
+}
+
+export type ItemType = "company" | "contact" | "task" | "deal" | "update" | "link" | "order_request" | "deal_move" | "task_update"
 
 /** Where a value came from — shown as a hint next to the field. */
 export type FieldSource = "input" | "file" | "page" | "default" | "model" | "rule"
@@ -198,7 +238,7 @@ export type DraftItem = {
   /** Stable within the action: c1, c2 … (companies), p1, p2 … (contacts). */
   key: string
   type: ItemType
-  values: CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues
+  values: CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues | OrderRequestValues | DealMoveValues | TaskUpdateValues
   meta: Record<string, FieldMeta>
   removed: RemovedValue[]
   matches: DraftMatch[]
@@ -215,7 +255,7 @@ export type ChatDraft = {
 }
 
 export type ActionResult = {
-  type: "client" | "contact" | "task" | "deal"
+  type: "client" | "contact" | "task" | "deal" | "order_request"
   id: string
   title: string
   href: string
@@ -226,6 +266,8 @@ export type ActionResult = {
   updated?: boolean
   /** «Связать» linked the existing records (T4). */
   linked?: boolean
+  /** «Перевести сделку» moved the deal (T5). */
+  moved?: boolean
 }
 
 /** `data-draft` part (id = action id). The card re-reads the row by id. */
@@ -246,6 +288,9 @@ export type ActionOptions = {
   /** Deal items: working stages of the org funnel (area0 / won / lost left out) and the deal types. */
   stages?: { id: string; name: string }[]
   dealTypes?: { id: string; name: string }[]
+  /** Deal moves (T5): every visible stage of the funnel with its role, and the org's lost reasons. */
+  allStages?: { id: string; name: string; role: string }[]
+  lostReasons?: { code: string; label: string }[]
 }
 
 /** `data-action-result` part, added to the assistant message after confirm. */
@@ -298,6 +343,9 @@ export const DEAL_FIELD_LABELS: Record<"name" | "description" | "companyName" | 
 }
 
 export const MISSING_LABELS: Record<string, string> = {
+  client: "Укажите компанию клиента",
+  requestText: "Нет текста запроса клиента",
+  reason: "Выберите причину проигрыша",
   changes: "Нечего добавлять — всё уже есть в записи",
   contact: "Укажите контакт",
   target: "Укажите компанию или сделку",
@@ -332,6 +380,9 @@ export function emptyContactValues(): ContactValues {
 export function itemLabel(item: Pick<DraftItem, "type" | "values">): string {
   if (item.type === "task") return (item.values as TaskValues).title
   if (item.type === "update") return (item.values as UpdateValues).targetName
+  if (item.type === "order_request") return `Запрос клиента «${(item.values as OrderRequestValues).clientName || "—"}»`
+  if (item.type === "deal_move") return (item.values as DealMoveValues).dealName
+  if (item.type === "task_update") return (item.values as TaskUpdateValues).taskTitle
   if (item.type === "link") {
     const l = item.values as LinkValues
     return [l.contactName, l.clientName || l.dealName].filter(Boolean).join(" ↔ ")
@@ -346,6 +397,9 @@ export const ITEM_TYPE_WORDS: Record<ItemType, string> = {
   deal: "сделка",
   update: "дополнение",
   link: "связь",
+  order_request: "запрос клиента",
+  deal_move: "перевод сделки",
+  task_update: "изменение задачи",
 }
 
 /** Required fields of an item (§8.4, Q8). */
@@ -360,6 +414,23 @@ export function missingFields(item: Pick<DraftItem, "type" | "values">): string[
   }
   if (item.type === "update") {
     if (!(item.values as UpdateValues).changes.length) out.push("changes")
+    return out
+  }
+  if (item.type === "order_request") {
+    const o = item.values as OrderRequestValues
+    if (!o.clientId && !o.companyKey) out.push("client")
+    if (!o.requestText.trim()) out.push("requestText")
+    return out
+  }
+  if (item.type === "deal_move") {
+    const m = item.values as DealMoveValues
+    if (!m.stageId) out.push("stage")
+    if (m.outcome === "lost" && !m.reasonCode) out.push("reason")
+    return out
+  }
+  if (item.type === "task_update") {
+    const u = item.values as TaskUpdateValues
+    if (u.action === "reschedule" && !u.dueDate) out.push("dueDate")
     return out
   }
   if (item.type === "link") {
@@ -695,7 +766,7 @@ export function userAsksForRecord(text: string, hasFiles: boolean): boolean {
   if (!own.trim()) return hasFiles
   // Whole verb forms only: «поставщика» must not read as «поставь».
   const verb =
-    /(?<![а-яё])(добав(ь|ьте|ить|и)|созда(й|йте|ть)|сохран(и|ите|ить)|внес(и|ите|ти)|запиш(и|ите)|записать|запомн(и|ите)|напомн(и|ите)|постав(ь|ьте|ить)|завед(и|ите)|завести|оформ(и|ите|ить)|сделай(те)?|свяж(и|ите)|связать|привяж(и|ите)|привязать|дополн(и|ите)|дополнить|обнов(и|ите)|обновить|перешел|перешёл|перешла)(?![а-яё])/
+    /(?<![а-яё])(добав(ь|ьте|ить|и)|созда(й|йте|ть)|сохран(и|ите|ить)|внес(и|ите|ти)|запиш(и|ите)|записать|запомн(и|ите)|напомн(и|ите)|постав(ь|ьте|ить)|завед(и|ите)|завести|оформ(и|ите|ить)|сделай(те)?|свяж(и|ите)|связать|привяж(и|ите)|привязать|дополн(и|ите)|дополнить|обнов(и|ите)|обновить|перешел|перешёл|перешла|переведи|перевести|перенеси|перенести|отметь|закрой|выполнен[аоы]?|проиграли|выиграли|проиграна|выиграна)(?![а-яё])/
   return (
     verb.test(own) ||
     /теперь\s+работает|визитк|нов\S*\s+(клиент|контакт|компан|партн)|в\s*crm|\bcrm\b|\badd\b|\bcreate\b|\bsave\b|remind/.test(own)
@@ -1086,6 +1157,34 @@ export const updateValuesSchema = z.object({
   changes: z.array(fillChangeSchema).max(20).default([]),
 })
 
+export const orderRequestValuesSchema = z.object({
+  clientId: z.string().max(100).nullable().default(null),
+  companyKey: z.string().max(10).nullable().default(null),
+  clientName: str(200).default(""),
+  requestText: str(12000),
+  comment: str(1000).default(""),
+})
+
+export const dealMoveValuesSchema = z.object({
+  dealId: z.string().min(1).max(100),
+  dealName: str(200).default(""),
+  fromStageName: str(200).default(""),
+  stageId: z.string().max(100).nullable().default(null),
+  stageName: str(200).default(""),
+  outcome: z.enum(["won", "lost"]).nullable().default(null),
+  reasonCode: str(100).default(""),
+  reasonText: str(1000).default(""),
+})
+
+export const taskUpdateValuesSchema = z.object({
+  taskId: z.string().min(1).max(100),
+  taskTitle: str(300).default(""),
+  action: z.enum(["done", "reschedule"]),
+  dueDate: z.string().max(16).default(""),
+  dueText: str(200).default(""),
+  currentDue: z.string().max(16).default(""),
+})
+
 export const linkValuesSchema = z.object({
   contactId: z.string().max(100).nullable().default(null),
   contactName: str(200).default(""),
@@ -1115,7 +1214,7 @@ export const dealValuesSchema = z.object({
   ruleNote: str(500).default(""),
 })
 
-type AnyValues = CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues
+type AnyValues = CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues | OrderRequestValues | DealMoveValues | TaskUpdateValues
 
 export function parseItemValues(type: ItemType, raw: unknown): AnyValues | null {
   const schema = {
@@ -1125,16 +1224,21 @@ export function parseItemValues(type: ItemType, raw: unknown): AnyValues | null 
     task: taskValuesSchema,
     update: updateValuesSchema,
     link: linkValuesSchema,
+    order_request: orderRequestValuesSchema,
+    deal_move: dealMoveValuesSchema,
+    task_update: taskUpdateValuesSchema,
   }[type]
   const r = schema.safeParse(raw)
   if (!r.success) return null
   if (type === "task" && (r.data as TaskValues).dueDate && !isLocalDateTime((r.data as TaskValues).dueDate)) return null
+  if (type === "task_update" && (r.data as TaskUpdateValues).dueDate && !isLocalDateTime((r.data as TaskUpdateValues).dueDate)) return null
   return r.data as AnyValues
 }
 
 /** Href of a created / used record. */
 export function actionResultHref(type: ActionResult["type"], id: string): string {
   const e = encodeURIComponent(id)
+  if (type === "order_request") return `/products?assembleRequest=${e}`
   return type === "client" ? `/clients/${e}` : type === "contact" ? `/contacts?openContact=${e}` : type === "deal" ? `/deals?openDeal=${e}` : `/tasks?openTask=${e}`
 }
 
@@ -1154,13 +1258,14 @@ export function draftNote(p: ChatDraftPart): string {
         : p.status === "expired"
           ? "устарело"
           : "ожидает подтверждения пользователем"
-  return `[Черновик (draftId ${p.actionId}): ${names} — ${state}]`
+  // No id: a card of an earlier answer cannot be joined anyway, and an id the model copies would leak.
+  return `[Черновик: ${names} — ${state}]`
 }
 
 export function actionResultNote(p: ChatActionResultPart): string {
   if (!p.results.length) return `[Черновик ${p.actionId}: ничего не создано]`
   const list = p.results
-    .map((r) => `${{ client: "компания", contact: "контакт", task: "задача", deal: "сделка" }[r.type]} «${r.title}» (ref ${r.id}${r.existing ? ", существующая запись" : ""})`)
+    .map((r) => `${{ client: "компания", contact: "контакт", task: "задача", deal: "сделка", order_request: "запрос клиента" }[r.type]} «${r.title}» (ref ${r.id}${r.existing ? ", существующая запись" : ""})`)
     .join("; ")
   return `[Пользователь подтвердил черновик ${p.actionId}: ${list}]`
 }

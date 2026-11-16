@@ -41,7 +41,7 @@ export const EMPTY_ANSWER_FALLBACK =
 export const STATUS_WRITING: ChatStatus = { stage: "writing", label: "Готовлю ответ…" }
 
 /** Draft tools (ai-chat-tools): a turn that names a card must have called one. */
-export const DRAFT_TOOL_NAMES = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "draftUpdate", "draftLink"])
+export const DRAFT_TOOL_NAMES = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "draftUpdate", "draftLink", "draftOrderRequest", "draftDealMove", "draftTaskUpdate"])
 
 /** «Подготовил карточку / задачи / список задач …» — the answer says a card is there. */
 export function claimsDraft(text: string): boolean {
@@ -86,6 +86,12 @@ export function statusForTool(tool: string, input: unknown, title?: string | nul
       return { stage: "draft", label: "Готовлю вопрос…" }
     case "draftUpdate":
       return { stage: "draft", label: "Проверяю, что можно дополнить…" }
+    case "draftOrderRequest":
+      return { stage: "draft", label: "Готовлю заказ из запроса…" }
+    case "draftDealMove":
+      return { stage: "draft", label: "Готовлю перевод сделки…" }
+    case "draftTaskUpdate":
+      return { stage: "draft", label: "Готовлю изменение задачи…" }
     case "draftLink":
       return { stage: "draft", label: "Готовлю связь записей…" }
     case "readSignals":
@@ -275,4 +281,60 @@ export function chatErrorText(message: string | null | undefined): { cls: ChatEr
   }
   if (/timeout|timed out|aborted/i.test(m)) return { cls: "timeout", text: CHAT_ERROR_MESSAGES_RU.timeout }
   return { cls: "unknown", text: CHAT_ERROR_MESSAGES_RU.unknown }
+}
+
+/**
+ * The model sometimes copies the internal history notes («[Черновик: …]»,
+ * «[Вопрос пользователю: …]», «[Показано пользователю …]») into its answer.
+ * This filter drops whole lines of that shape from the streamed text. A line
+ * that starts with «[» is held until its end (a markdown link line is then
+ * passed on unchanged).
+ */
+export const INTERNAL_NOTE_LINE =
+  /^\s*\[(?:(?:Черновик|Вопрос пользователю|Пользователь подтвердил|Показано пользователю|Показана статистика|Вложение)[^\n]*|[^\n]*\b(?:ref|draftId)\b[^\n]*)\]\s*$/i
+
+export function createNoteLineStripper(): { push: (delta: string) => string; end: () => string } {
+  let hold = ""
+  let atLineStart = true
+  return {
+    push(delta: string): string {
+      let s = hold + delta
+      hold = ""
+      let out = ""
+      while (s) {
+        if (atLineStart && s.trimStart().startsWith("[")) {
+          const nl = s.indexOf("\n")
+          if (nl < 0) {
+            hold = s
+            return out
+          }
+          const line = s.slice(0, nl + 1)
+          if (!INTERNAL_NOTE_LINE.test(line.replace(/\n$/, ""))) out += line
+          s = s.slice(nl + 1)
+          atLineStart = true
+          continue
+        }
+        if (atLineStart && !s.trim() && !s.includes("\n")) {
+          // Leading spaces of a line: wait for the first visible character.
+          hold = s
+          return out
+        }
+        const nl = s.indexOf("\n")
+        if (nl < 0) {
+          out += s
+          atLineStart = false
+          return out
+        }
+        out += s.slice(0, nl + 1)
+        s = s.slice(nl + 1)
+        atLineStart = true
+      }
+      return out
+    },
+    end(): string {
+      const rest = hold
+      hold = ""
+      return INTERNAL_NOTE_LINE.test(rest) ? "" : rest
+    },
+  }
 }

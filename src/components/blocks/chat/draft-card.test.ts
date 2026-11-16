@@ -540,3 +540,156 @@ describe("DraftCard — T4", () => {
     expect(html).toContain("Контакт «Алексей Смирнов» — связан")
   })
 })
+
+function single(kind: ChatDraftPart["kind"], item: ChatDraftPart["draft"]["items"][number], options?: ChatDraftPart["options"]): ChatDraftPart {
+  return { actionId: `act-${kind}`, kind, status: "draft", options, draft: { files: [], items: [item] } }
+}
+
+function item(key: string, type: ChatDraftPart["draft"]["items"][number]["type"], values: ChatDraftPart["draft"]["items"][number]["values"]) {
+  return { key, type, values, meta: {}, removed: [], matches: [], missing: [], refused: null }
+}
+
+const MOVE_OPTIONS = {
+  members: [],
+  timeZone: "Europe/Vienna",
+  allStages: [
+    { id: "s1", name: "Квалификация", role: "active" },
+    { id: "s2", name: "Переговоры", role: "active" },
+    { id: "sw", name: "Выиграна", role: "won" },
+    { id: "sl", name: "Проиграна", role: "lost" },
+  ],
+  lostReasons: [
+    { code: "price", label: "Цена" },
+    { code: "competitor", label: "Выбрали конкурента" },
+  ],
+}
+
+function move(v: Partial<import("@/lib/chat/actions").DealMoveValues>) {
+  return {
+    dealId: "dl-1",
+    dealName: "Вектор — поставка",
+    fromStageName: "Квалификация",
+    stageId: null,
+    stageName: "",
+    outcome: null,
+    reasonCode: "",
+    reasonText: "",
+    ...v,
+  }
+}
+
+function taskUpd(v: Partial<import("@/lib/chat/actions").TaskUpdateValues>) {
+  return {
+    taskId: "tk-1",
+    taskTitle: "Позвонить Смирнову",
+    action: "done" as const,
+    dueDate: "",
+    dueText: "",
+    currentDue: "2026-11-18T18:00",
+    ...v,
+  }
+}
+
+describe("DraftCard — T5", () => {
+  test("order request: company line, read-only request, comment, «Разобрать запрос»", async () => {
+    const html = await render(
+      single(
+        "order_request",
+        item("o1", "order_request", {
+          clientId: "cl-9",
+          companyKey: null,
+          clientName: "Вектор",
+          requestText: "Прошу выставить счёт:\n— 20 коробок А\n— 5 коробок Б",
+          comment: "",
+        }),
+      ),
+    )
+    expect(html).toContain("Заказ из запроса")
+    expect(html).toContain("Компания:")
+    expect(html).toContain("убрать")
+    expect(html).toContain("Текст запроса клиента — из сообщения / файла")
+    expect(html).toContain("whitespace-pre-wrap")
+    expect(html).toContain("— 20 коробок А")
+    expect(html).toContain("Комментарий")
+    expect(buttonTag(html, "Разобрать запрос<")).not.toContain('disabled=""')
+    // Company line comes before the request block.
+    expect(html.indexOf("Компания:")).toBeLessThan(html.indexOf("Текст запроса клиента"))
+  })
+
+  test("deal move to a working stage: «Перевести» enabled, no reason fields", async () => {
+    const html = await render(single("deal_move", item("m1", "deal_move", move({ stageId: "s2", stageName: "Переговоры" })), MOVE_OPTIONS))
+    expect(html).toContain("Перевести сделку")
+    expect(html).toContain('href="/deals?openDeal=dl-1"')
+    expect(html).toContain("Сейчас:")
+    expect(html).toContain("Квалификация")
+    expect(html).toContain("Выиграна")
+    expect(html).not.toContain("Причина проигрыша")
+    expect(buttonTag(html, "Перевести<")).not.toContain('disabled=""')
+  })
+
+  test("lost move without a reason disables «Перевести»", async () => {
+    const html = await render(
+      single("deal_move", item("m1", "deal_move", move({ stageId: "sl", stageName: "Проиграна", outcome: "lost" })), MOVE_OPTIONS),
+    )
+    expect(html).toContain("Причина проигрыша")
+    expect(html).toContain("Выбрали конкурента")
+    expect(html).toContain("Подробнее о причине")
+    expect(html).toContain("Выберите причину проигрыша")
+    expect(buttonTag(html, "Перевести<")).toContain('disabled=""')
+  })
+
+  test("won move: only the comment field", async () => {
+    const html = await render(
+      single("deal_move", item("m1", "deal_move", move({ stageId: "sw", stageName: "Выиграна", outcome: "won" })), MOVE_OPTIONS),
+    )
+    expect(html).toContain("Комментарий к итогу")
+    expect(html).not.toContain("Причина проигрыша")
+    expect(buttonTag(html, "Перевести<")).not.toContain('disabled=""')
+  })
+
+  test("task update: done is fine; reschedule without a date disables «Сохранить»", async () => {
+    const opts = { members: [], timeZone: "Europe/Vienna" }
+    const done = await render(single("task_update", item("u1", "task_update", taskUpd({})), opts))
+    expect(done).toContain("Изменить задачу")
+    expect(done).toContain('href="/tasks?openTask=tk-1"')
+    expect(done).toContain("Сейчас срок:")
+    expect(done).toContain("ср, 18.11.2026, 18:00")
+    expect(done).toContain("Отметить выполненной")
+    expect(done).toContain("Перенести срок")
+    expect(buttonTag(done, "Сохранить<")).not.toContain('disabled=""')
+
+    const resched = await render(single("task_update", item("u1", "task_update", taskUpd({ action: "reschedule" })), opts))
+    expect(resched).toContain('type="datetime-local"')
+    expect(resched).toContain("время организации: Europe/Vienna")
+    expect(resched).toContain("Укажите срок")
+    expect(buttonTag(resched, "Сохранить<")).toContain('disabled=""')
+  })
+
+  test("result lines: order request, moved deal, done / rescheduled task", async () => {
+    const order = await render({
+      ...single("order_request", item("o1", "order_request", { clientId: "cl-9", companyKey: null, clientName: "Вектор", requestText: "x", comment: "" })),
+      status: "created",
+      results: [{ type: "order_request", id: "or-1", title: "Вектор", href: "/products?assembleRequest=or-1" }],
+    })
+    expect(order).toContain("Запрос клиента «Вектор»")
+    expect(order).toContain("Собрать заказ")
+    expect(order).toContain('href="/products?assembleRequest=or-1"')
+
+    const moved = await render({
+      ...single("deal_move", item("m1", "deal_move", move({ stageId: "s2" }))),
+      status: "created",
+      results: [{ type: "deal", id: "dl-1", title: "Вектор — поставка", href: "/deals?openDeal=dl-1", existing: true, moved: true }],
+    })
+    expect(moved).toContain("Сделка «Вектор — поставка» — переведена")
+
+    const taskResult = [{ type: "task" as const, id: "tk-1", title: "Позвонить Смирнову", href: "/tasks?openTask=tk-1", existing: true, updated: true }]
+    const doneRes = await render({ ...single("task_update", item("u1", "task_update", taskUpd({}))), status: "created", results: taskResult })
+    expect(doneRes).toContain("Задача «Позвонить Смирнову» — выполнена")
+    const reschedRes = await render({
+      ...single("task_update", item("u1", "task_update", taskUpd({ action: "reschedule", dueDate: "2026-11-25T18:00" }))),
+      status: "created",
+      results: taskResult,
+    })
+    expect(reschedRes).toContain("Задача «Позвонить Смирнову» — срок перенесён")
+  })
+})

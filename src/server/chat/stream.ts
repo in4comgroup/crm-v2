@@ -6,6 +6,7 @@ import {
   EMPTY_ANSWER_FALLBACK,
   FALSE_DRAFT_NOTE,
   claimsDraft,
+  createNoteLineStripper,
   STATUS_WRITING,
   type ChatDebugPart,
   type ChatDebugStep,
@@ -87,6 +88,7 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
   let failed = false
   let emptyAnswer = false
   let falseDraftClaim = false
+  const strippers = new Map<string, ReturnType<typeof createNoteLineStripper>>()
   let answer = ""
 
   const stream = new TransformStream<UIMessageChunk, UIMessageChunk>({
@@ -132,11 +134,27 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
           if (stepCount > 1) controller.enqueue({ type: "data-status", data: STATUS_WRITING, transient: true } as UIMessageChunk)
           controller.enqueue(chunk)
           return
-        case "text-delta":
-          if (chunk.delta.trim()) wroteText = true
-          if (answer.length < 4000) answer += chunk.delta
+        case "text-delta": {
+          // Internal history notes copied by the model never reach the user.
+          let st = strippers.get(chunk.id)
+          if (!st) strippers.set(chunk.id, (st = createNoteLineStripper()))
+          const delta = st.push(chunk.delta)
+          if (!delta) return
+          if (delta.trim()) wroteText = true
+          if (answer.length < 4000) answer += delta
+          controller.enqueue({ ...chunk, delta })
+          return
+        }
+        case "text-end": {
+          const rest = strippers.get(chunk.id)?.end() ?? ""
+          if (rest) {
+            if (rest.trim()) wroteText = true
+            if (answer.length < 4000) answer += rest
+            controller.enqueue({ type: "text-delta", id: chunk.id, delta: rest })
+          }
           controller.enqueue(chunk)
           return
+        }
         case "error":
           failed = true
           controller.enqueue(chunk)

@@ -93,7 +93,7 @@ export function turnResult(httpStatus: number, chunks: StreamChunk[], ms: number
 
 // ── Checks every case gets (spec §9, §11, §12) ────────────────────────
 
-export const TOOL_NAMES = ["searchRecords", "listRecords", "getRecord", "readSource", "queryStats", "searchWeb", "draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals", "askUser", "draftUpdate", "draftLink"]
+export const TOOL_NAMES = ["searchRecords", "listRecords", "getRecord", "readSource", "queryStats", "searchWeb", "draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals", "askUser", "draftUpdate", "draftLink", "draftOrderRequest", "draftDealMove", "draftTaskUpdate"]
 
 /** Things a user must never see in the answer text. */
 export function leakProblems(answer: string): string[] {

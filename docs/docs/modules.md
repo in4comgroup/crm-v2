@@ -458,7 +458,10 @@ pick the deal type and stage; an open deal of the same company and type is
 offered instead of a duplicate; it can also add missing data to an existing
 company / contact («Дополнить» — empty fields and new addresses only, never an
 overwrite), link a contact to a company or a deal, record a past meeting / call,
-and asks a short question with buttons when something required is missing; task deadlines come from the
+start an order from a client's request («Заказ из запроса» → the existing
+wizard), move a deal (also won / lost with the funnel's reasons), close a task or
+move its due date, and asks a short question with buttons when something
+required is missing; task deadlines come from the
 user's own words («до пятницы») and are computed in the org time zone — no
 words, no date (the card asks); assignee by a colleague's name; code removes every value that is not in the
 user's own text or files, shows existing records with the same e-mail / phone /

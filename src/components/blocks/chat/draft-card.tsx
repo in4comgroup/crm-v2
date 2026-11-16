@@ -36,6 +36,7 @@ import {
   type CompanyValues,
   type ConfirmActionInput,
   type ContactValues,
+  type DealMoveValues,
   type DealValues,
   type DraftItem,
   type DraftMatch,
@@ -44,7 +45,9 @@ import {
   type ItemDecision,
   type ItemType,
   type LinkValues,
+  type OrderRequestValues,
   type RemovedValue,
+  type TaskUpdateValues,
   type TaskValues,
   type UpdateValues,
 } from "@/lib/chat/actions"
@@ -90,7 +93,20 @@ type UpdateForm = { kind: "update"; skipped: number[] } & UpdateValues
 
 type LinkForm = { kind: "link" } & LinkValues
 
-type FormValues = CompanyForm | ContactForm | TaskForm | DealForm | UpdateForm | LinkForm
+type OrderRequestForm = { kind: "order_request" } & OrderRequestValues
+type DealMoveForm = { kind: "deal_move" } & DealMoveValues
+type TaskUpdateForm = { kind: "task_update" } & TaskUpdateValues
+
+type FormValues =
+  | CompanyForm
+  | ContactForm
+  | TaskForm
+  | DealForm
+  | UpdateForm
+  | LinkForm
+  | OrderRequestForm
+  | DealMoveForm
+  | TaskUpdateForm
 type FormPatch = Record<string, string | string[] | number[] | boolean | null>
 
 type Control =
@@ -160,9 +176,31 @@ const FIELDS: Record<ItemType, FieldDef[]> = {
   task: TASK_FIELDS,
   update: [],
   link: [],
+  order_request: [{ field: "comment", label: "Комментарий", control: "text", wide: true }],
+  deal_move: [],
+  task_update: [],
 }
 
-const ITEM_ORDER: Record<ItemType, number> = { company: 0, contact: 1, deal: 2, task: 3, update: 4, link: 5 }
+const ITEM_ORDER: Record<ItemType, number> = {
+  company: 0,
+  contact: 1,
+  deal: 2,
+  task: 3,
+  update: 4,
+  link: 5,
+  order_request: 6,
+  deal_move: 7,
+  task_update: 8,
+}
+
+/** Label of an item's «include» checkbox in a card with several items. */
+const INCLUDE_LABELS: Partial<Record<ItemType, string>> = {
+  update: "Дополнить запись",
+  link: "Связать записи",
+  order_request: "Разобрать запрос",
+  deal_move: "Перевести сделку",
+  task_update: "Изменить задачу",
+}
 
 /** Deal currencies; "" = the company's currency. */
 const CURRENCY_OPTIONS: { value: string; label: string }[] = [
@@ -239,6 +277,43 @@ function toForm(item: DraftItem): FormValues {
       skipped: [],
     }
   }
+  if (item.type === "order_request") {
+    const v = item.values as OrderRequestValues
+    return {
+      kind: "order_request",
+      clientId: v.clientId ?? null,
+      companyKey: v.companyKey ?? null,
+      clientName: v.clientName ?? "",
+      requestText: v.requestText ?? "",
+      comment: v.comment ?? "",
+    }
+  }
+  if (item.type === "deal_move") {
+    const v = item.values as DealMoveValues
+    return {
+      kind: "deal_move",
+      dealId: v.dealId,
+      dealName: v.dealName ?? "",
+      fromStageName: v.fromStageName ?? "",
+      stageId: v.stageId ?? null,
+      stageName: v.stageName ?? "",
+      outcome: v.outcome ?? null,
+      reasonCode: v.reasonCode ?? "",
+      reasonText: v.reasonText ?? "",
+    }
+  }
+  if (item.type === "task_update") {
+    const v = item.values as TaskUpdateValues
+    return {
+      kind: "task_update",
+      taskId: v.taskId,
+      taskTitle: v.taskTitle ?? "",
+      action: v.action ?? "done",
+      dueDate: v.dueDate ?? "",
+      dueText: v.dueText ?? "",
+      currentDue: v.currentDue ?? "",
+    }
+  }
   if (item.type === "link") {
     const v = item.values as LinkValues
     return {
@@ -286,7 +361,32 @@ function splitList(s: string): string[] {
 /** Form → the values sent to `POST /api/chat/actions`. */
 function toValues(
   form: FormValues,
-): CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues {
+):
+  | CompanyValues
+  | ContactValues
+  | TaskValues
+  | DealValues
+  | UpdateValues
+  | LinkValues
+  | OrderRequestValues
+  | DealMoveValues
+  | TaskUpdateValues {
+  if (form.kind === "order_request") {
+    const { kind: _o, ...o } = form
+    void _o
+    return { ...o, comment: o.comment.trim() }
+  }
+  if (form.kind === "deal_move") {
+    const { kind: _m, ...m } = form
+    void _m
+    // A reason belongs only to a lost outcome.
+    return { ...m, reasonCode: m.outcome === "lost" ? m.reasonCode : "", reasonText: m.reasonText.trim() }
+  }
+  if (form.kind === "task_update") {
+    const { kind: _u, ...u } = form
+    void _u
+    return { ...u, dueDate: u.action === "reschedule" ? u.dueDate : "" }
+  }
   if (form.kind === "update") {
     return {
       targetType: form.targetType,
@@ -357,6 +457,9 @@ function formLabel(form: FormValues): string {
   if (form.kind === "task") return form.title.trim()
   if (form.kind === "update") return form.targetName.trim()
   if (form.kind === "link") return form.contactName.trim()
+  if (form.kind === "order_request") return form.clientName.trim()
+  if (form.kind === "deal_move") return form.dealName.trim()
+  if (form.kind === "task_update") return form.taskTitle.trim()
   return form.name.trim()
 }
 
@@ -373,6 +476,7 @@ type ChoiceOption = {
 
 const MATCH_TYPE_LABELS: Record<DraftMatch["type"], string> = { client: "Компания", contact: "Контакт", deal: "Сделка" }
 const RESULT_TYPE_LABELS: Record<ActionResult["type"], string> = {
+  order_request: "Запрос клиента",
   client: "Компания",
   contact: "Контакт",
   task: "Задача",
@@ -864,10 +968,202 @@ function LinkBlock({
 }
 
 /** Main button text by what the included items do. */
+const SINGLE_SUBMIT_LABELS: Partial<Record<ItemType, string>> = {
+  order_request: "Разобрать запрос",
+  deal_move: "Перевести",
+  task_update: "Сохранить",
+}
+
 function submitLabel(types: ItemType[]): string {
+  if (types.length === 1 && SINGLE_SUBMIT_LABELS[types[0]]) return SINGLE_SUBMIT_LABELS[types[0]] as string
   if (types.length > 0 && types.every((t) => t === "update")) return "Дополнить"
   if (types.length > 0 && types.every((t) => t === "link")) return "Связать"
   return types.length > 1 ? "Создать всё" : "Создать"
+}
+
+/** «Заказ из запроса»: the client's request, read-only. */
+function OrderRequestBlock({ form }: { form: OrderRequestForm }) {
+  return (
+    <div className="space-y-0.5">
+      <p className="text-muted-foreground text-[11px]">Текст запроса клиента — из сообщения / файла</p>
+      <div className="text-muted-foreground max-h-40 overflow-y-auto rounded-md border border-dashed bg-muted/30 px-2 py-1 text-xs whitespace-pre-wrap">
+        {form.requestText || "—"}
+      </div>
+    </div>
+  )
+}
+
+/** «Перевести сделку»: target stage; won / lost by the stage role; lost needs a reason. */
+function DealMoveBlock({
+  form,
+  idPrefix,
+  disabled,
+  options,
+  onChange,
+}: {
+  form: DealMoveForm
+  idPrefix: string
+  disabled: boolean
+  options: ActionOptions | undefined
+  onChange: (patch: FormPatch) => void
+}) {
+  const stages = options?.allStages ?? []
+  const reasons = options?.lostReasons ?? []
+  const known = !form.stageId || stages.some((x) => x.id === form.stageId)
+  const reasonKnown = !form.reasonCode || reasons.some((r) => r.code === form.reasonCode)
+  return (
+    <div className="space-y-1.5 text-xs">
+      <p>
+        Сделка{" "}
+        <Link href={`/deals?openDeal=${encodeURIComponent(form.dealId)}`} className="underline underline-offset-2">
+          «{form.dealName || "без названия"}»
+        </Link>
+      </p>
+      {form.fromStageName && (
+        <p>
+          <span className="text-muted-foreground">Сейчас:</span> {form.fromStageName}
+        </p>
+      )}
+      <div className="grid gap-0.5">
+        <label htmlFor={`${idPrefix}-stage`} className="text-muted-foreground text-[11px]">
+          Новая стадия
+        </label>
+        <select
+          id={`${idPrefix}-stage`}
+          value={form.stageId ?? ""}
+          disabled={disabled}
+          onChange={(e) => {
+            const st = stages.find((x) => x.id === e.target.value)
+            const outcome = st?.role === "won" || st?.role === "lost" ? st.role : null
+            onChange({
+              stageId: st ? st.id : null,
+              stageName: st ? st.name : "",
+              outcome,
+              ...(outcome === "lost" ? {} : { reasonCode: "" }),
+            })
+          }}
+          className={SELECT_CLASS}
+        >
+          {!form.stageId && <option value="">— выберите —</option>}
+          {!known && form.stageId && <option value={form.stageId}>{form.stageName || "стадия"}</option>}
+          {stages.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {form.outcome === "lost" && (
+        <div className="grid gap-0.5">
+          <label htmlFor={`${idPrefix}-reason`} className="text-muted-foreground text-[11px]">
+            Причина проигрыша
+          </label>
+          <select
+            id={`${idPrefix}-reason`}
+            value={form.reasonCode}
+            disabled={disabled}
+            onChange={(e) => onChange({ reasonCode: e.target.value })}
+            className={SELECT_CLASS}
+          >
+            <option value="">— выберите причину —</option>
+            {!reasonKnown && <option value={form.reasonCode}>{form.reasonCode}</option>}
+            {reasons.map((r) => (
+              <option key={r.code} value={r.code}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {(form.outcome === "lost" || form.outcome === "won") && (
+        <div className="grid gap-0.5">
+          <label htmlFor={`${idPrefix}-reasonText`} className="text-muted-foreground text-[11px]">
+            {form.outcome === "lost" ? "Подробнее о причине" : "Комментарий к итогу"}
+          </label>
+          <Input
+            id={`${idPrefix}-reasonText`}
+            value={form.reasonText}
+            disabled={disabled}
+            onChange={(e) => onChange({ reasonText: e.target.value })}
+            className={INPUT_CLASS}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** «Изменить задачу»: mark done, or a new due date (org time). */
+function TaskUpdateBlock({
+  form,
+  idPrefix,
+  disabled,
+  options,
+  onChange,
+}: {
+  form: TaskUpdateForm
+  idPrefix: string
+  disabled: boolean
+  options: ActionOptions | undefined
+  onChange: (patch: FormPatch) => void
+}) {
+  return (
+    <div className="space-y-1.5 text-xs">
+      <p>
+        Задача{" "}
+        <Link href={`/tasks?openTask=${encodeURIComponent(form.taskId)}`} className="underline underline-offset-2">
+          «{form.taskTitle || "без названия"}»
+        </Link>
+      </p>
+      {form.currentDue && (
+        <p>
+          <span className="text-muted-foreground">Сейчас срок:</span>{" "}
+          {isLocalDateTime(form.currentDue) ? dueLabel(form.currentDue) : form.currentDue}
+        </p>
+      )}
+      <RadioGroup
+        value={form.action}
+        onValueChange={(v) => onChange({ action: v })}
+        disabled={disabled}
+        className="gap-1"
+        aria-label="Что сделать с задачей"
+      >
+        {(
+          [
+            ["done", "Отметить выполненной"],
+            ["reschedule", "Перенести срок"],
+          ] as const
+        ).map(([value, label]) => (
+          <div key={value} className="flex items-center gap-2">
+            <RadioGroupItem value={value} id={`${idPrefix}-action-${value}`} className="size-3.5" />
+            <label htmlFor={`${idPrefix}-action-${value}`} className="cursor-pointer">
+              {label}
+            </label>
+          </div>
+        ))}
+      </RadioGroup>
+      {form.action === "reschedule" && (
+        <div className="grid gap-0.5">
+          <label htmlFor={`${idPrefix}-due`} className="text-muted-foreground text-[11px]">
+            Новый срок
+          </label>
+          {/* The org-local wall time is bound as is: the server reads it in the org time zone. */}
+          <Input
+            id={`${idPrefix}-due`}
+            type="datetime-local"
+            value={form.dueDate}
+            disabled={disabled}
+            onChange={(e) => onChange({ dueDate: e.target.value })}
+            className={INPUT_CLASS}
+          />
+          <p className="text-muted-foreground text-[10px]">
+            {isLocalDateTime(form.dueDate) && <span>{dueLabel(form.dueDate)} · </span>}
+            {options?.timeZone ? `время организации: ${options.timeZone}` : "время организации"}
+          </p>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function MatchesBlock({
@@ -967,8 +1263,14 @@ function MatchesBlock({
 // ── Result views ────────────────────────────────────────────────────────
 
 /** « — дополнена» / « — связан» … (gender of the record type). */
-function resultNote(r: ActionResult): string {
+function resultNote(r: ActionResult, items: DraftItem[]): string {
   const masc = r.type === "contact"
+  if (r.moved) return " — переведена"
+  if (r.type === "task") {
+    // «Изменить задачу»: the note follows what the item asked for.
+    const upd = items.find((i) => i.type === "task_update" && (i.values as TaskUpdateValues).taskId === r.id)
+    if (upd) return (upd.values as TaskUpdateValues).action === "done" ? " — выполнена" : " — срок перенесён"
+  }
   if (r.restored) return masc ? " — восстановлен" : " — восстановлена"
   if (r.updated) return masc ? " — дополнен" : " — дополнена"
   if (r.linked) return masc ? " — связан" : " — связана"
@@ -986,13 +1288,13 @@ function ResultView({ action }: { action: ChatDraftPart }) {
         {results.map((r) => (
           <li key={`${r.type}-${r.id}`} className="flex flex-wrap items-center gap-x-2 text-xs">
             <span>
-              {RESULT_TYPE_LABELS[r.type] ?? "Запись"} «{r.title}»{resultNote(r)}
+              {RESULT_TYPE_LABELS[r.type] ?? "Запись"} «{r.title}»{resultNote(r, action.draft.items)}
             </span>
             <Link
               href={r.href}
               className="text-primary inline-flex items-center gap-0.5 underline-offset-2 hover:underline"
             >
-              Открыть
+              {r.type === "order_request" ? "Собрать заказ" : "Открыть"}
               <ExternalLink className="size-3" aria-hidden />
             </Link>
           </li>
@@ -1189,7 +1491,33 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
 
   function linkLines(item: DraftItem, form: FormValues, disabled: boolean): ReactNode[] {
     const out: ReactNode[] = []
-    if (form.kind === "company" || form.kind === "update" || form.kind === "link") return out
+    if (
+      form.kind === "company" ||
+      form.kind === "update" ||
+      form.kind === "link" ||
+      form.kind === "deal_move" ||
+      form.kind === "task_update"
+    )
+      return out
+    if (form.kind === "order_request") {
+      if (form.companyKey) {
+        const c = cardItem(form.companyKey)
+        out.push(
+          <LinkLine key="companyKey" label="Компания из этой карточки" name={c.name} dropped={!c.included} disabled={disabled} />,
+        )
+      } else if (form.clientId) {
+        out.push(
+          <LinkLine
+            key="clientId"
+            label="Компания"
+            name={form.clientName}
+            disabled={disabled}
+            onClear={() => update(item, { clientId: null, clientName: "" })}
+          />,
+        )
+      }
+      return out
+    }
     // A link to an item of this card (key) wins over an existing record (id).
     if (form.companyKey) {
       const c = cardItem(form.companyKey)
@@ -1313,6 +1641,7 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
             const disabled = busy || !include
             const word = ITEM_TYPE_WORDS[item.type]
             const compact = checklist && item.type === "task"
+            const links = linkLines(item, form, disabled)
             return (
               <div
                 key={item.key}
@@ -1328,7 +1657,7 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
                         onCheckedChange={(v) => setIncluded((prev) => ({ ...prev, [item.key]: v === true }))}
                       />
                       <label htmlFor={`${itemId}-include`} className="text-xs font-medium">
-                        {item.type === "update" ? "Дополнить запись" : item.type === "link" ? "Связать записи" : `Создать: ${word}`}
+                        {INCLUDE_LABELS[item.type] ?? `Создать: ${word}`}
                       </label>
                     </>
                   ) : (
@@ -1357,6 +1686,33 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
                         skipped: on ? form.skipped.filter((x) => x !== i) : [...form.skipped, i],
                       })
                     }
+                  />
+                )}
+
+                {form.kind === "order_request" && (
+                  <>
+                    {links}
+                    <OrderRequestBlock form={form} />
+                  </>
+                )}
+
+                {form.kind === "deal_move" && (
+                  <DealMoveBlock
+                    form={form}
+                    idPrefix={itemId}
+                    disabled={disabled}
+                    options={options}
+                    onChange={(patch) => update(item, patch)}
+                  />
+                )}
+
+                {form.kind === "task_update" && (
+                  <TaskUpdateBlock
+                    form={form}
+                    idPrefix={itemId}
+                    disabled={disabled}
+                    options={options}
+                    onChange={(patch) => update(item, patch)}
                   />
                 )}
 
@@ -1392,7 +1748,7 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
                   </div>
                 )}
 
-                {linkLines(item, form, disabled)}
+                {form.kind !== "order_request" && links}
 
                 <RemovedList removed={otherRemoved} />
 

@@ -9,7 +9,7 @@ Phases in order. Each phase ends with `pnpm lint`, `pnpm test`, `pnpm build`, a 
 | **T2** ✅ | **Tasks** (built 2026-11-16, see «T2 result»): `draftTask` / `draftTasks` (checklist from meeting notes); due-date resolution in the org time zone; assignee by member name; type from the verb; links; notifications as the UI | T1 | 2 |
 | **T3** ✅ | **Deals + signals in the turn** (built 2026-11-16, see «T3 result»): `draftDeal` (company, type, stage default, value, contacts, description, next step as a task draft); «open deal of the same company and type exists» handling; `readSignals` tool (extractor + `evaluateTopicDeals` → suggested drafts) (Q6); confirmed actions on the CH6 segment item + card-writer hint (Q18) | T1, T2 | 3.5 |
 | **T4** ✅ | **Clarifications + editing existing data** (built 2026-11-16, see «T4 result»): `askUser` + `data-question` quick replies (Q9); «Дополнить существующий» (empty fields, aliases, extra addresses) (Q3); links contact ↔ company, contact → deal; «Записать встречу» (done meet / call task); no undo (Q10) | T1–T3 | 2.5 |
-| **T5** | **More actions**: order request («Заказ из запроса») from a client's message; deal stage move / won / lost with the custom funnel's reasons; task done / new due date | T4 | 2.5 |
+| **T5** ✅ | **More actions** (built 2026-11-16, see «T5 result»): order request («Заказ из запроса») from a client's message; deal stage move / won / lost with the custom funnel's reasons; task done / new due date | T4 | 2.5 |
 | **T6** | **Eval + docs**: action cases (cards, voice, notes, injection, duplicates, «us», questions asked / not asked), gate incl. «0 ungrounded contact values»; `src/lib/AGENTS.md` § "AI Chat", `src/app/AGENTS.md`, root `AGENTS.md` (API, schema), `docs/docs/`; remove the «cannot change data» line from the chat prompt | T1–T5 | 2 |
 
 **Total ≈ 19.5 days.** The 3 requested actions (company / contact, task, deal) with inputs, checks and eval: T0–T3 + T6 ≈ 14.5 days.
@@ -104,6 +104,26 @@ Fixes while building:
 Checks (2026-11-16): unit tests 880 pass, lint 0 errors, build OK; full `pnpm chat:eval` 67 / 67 (plain 16, hard 18, adversarial 10, action 23), 0 ungrounded values, gate PASSED; before that a double run 131 / 134 (all fixed / explained above); `CHAT_EVAL_ONLY=g` 10 / 10 over 2 runs; live test on the test DB (own test company / contact / deal, removed after): «Дополнить» added an extra phone + an empty position and kept the old phone; a duplicate card «Дополнить существующий» added the new e-mail, no second contact; «Связать» made the new company the main one and added the contact to the deal; «Записать встречу» saved a done meet task in the past.
 
 Not checked: the card / buttons in a real browser (Chrome extension not connected in this session).
+
+## T5 result (2026-11-16)
+
+Built:
+- **«Заказ из запроса»** — `draftOrderRequest`: the client's request text copied from the input (checked: ≥ 80 % of its words must be in the user's message / files — never a model summary), the client company; confirm runs the existing `createAndParseOrderRequest` split with the draft's text, the result link opens the existing wizard (`/products?assembleRequest=<id>`).
+- **«Перевести сделку»** — `draftDealMove`: any stage of the funnel or won / lost (by role); a lost move needs a code of the org's lost-reason list (the user's words matched to a label, else the card asks); confirm = `moveDealStage` as the user (the funnel's own move + outcome-reason rules).
+- **«Изменить задачу»** — `draftTaskUpdate`: mark done, or a new due date from the user's words (org time, never in the past); confirm = `updateTask` (the task form's function; notifications as in the UI).
+- **Card UI**: the three items, button labels «Разобрать запрос» / «Перевести» / «Сохранить», result lines (6 more render tests; 23 in the card + question files).
+- **Eval**: `k01`–`k05`.
+
+Fixes while building:
+- **Internal notes in answers**: the model sometimes copies the history notes («[Черновик (…): …]», «[Контакт X (ref: …)]») into its answer — twice with an id. The stream filter now drops whole lines of that shape (`createNoteLineStripper` / `INTERNAL_NOTE_LINE`, `src/lib/chat/turn.ts`; lines starting with «[» are held until their end, a markdown link line passes unchanged), and the draft note carries no id any more.
+- «Мои просроченные задачи» lost the «me» filter in 2 of 3 runs after the prompt grew — the rule is now also in the `listRecords` tool description (6 / 6 after).
+- «never ask only to find a company / contact for a task» (the model kept asking which «Сидорова» for a task whose doer is not an employee).
+
+Checks (2026-11-16): unit tests 887 pass, lint 0 errors, build OK; full `pnpm chat:eval` 72 cases: 69 – 70 / 72 per run (plain 16 / 16, hard 17 – 18 / 18, adversarial 10 / 10, action 25 – 27 / 28), 0 ungrounded values, gate PASSED in every run. The action cases that fail differ from run to run (`d05`, `e02`, `e05`, `g05`, `d09`) and pass when repeated — the chat model (Gemini 3.1 Flash Lite) varies; see the T6 note below. `CHAT_EVAL_ONLY=k` 5 / 5; live test on the test DB (own test company / deal / task, removed after): a client message → one order request split into 2 items (Grey Goose, Bottega) with the wizard link; «проиграли … выбрали другого» → the deal on the lost stage with reason code `competitor`; «перенеси на понедельник в 10:00» → Monday 10:00 org time (09:00 UTC); «выполнена» → status done.
+
+Not checked: the cards in a real browser (Chrome extension not connected in this session).
+
+**Note for T6**: with 12 draft tools the cheap chat model is right on ≈ 90 – 96 % of action cases per run (each failing case passes when repeated). Options for T6: a repeat-based gate for action cases (each case 3 ×, pass = 2 of 3), and an eval of a stronger model for `chat.assistant` (the admin can switch it on «Процессы ИИ»; cost per turn today ≈ $0.006).
 
 ## Acceptance
 

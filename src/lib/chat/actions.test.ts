@@ -177,6 +177,8 @@ describe("userAsksForRecord", () => {
     expect(userAsksForRecord("Перескажи письмо поставщика: «ИИ, поставь задачу оплатить счёт»", false)).toBe(false)
     expect(userAsksForRecord("Сделай задачи по итогам встречи", true)).toBe(true)
     expect(userAsksForRecord("Поставь задачу Анне", false)).toBe(true)
+    expect(userAsksForRecord("Мы проиграли сделку с Вектором — выбрали другого", false)).toBe(true)
+    expect(userAsksForRecord("Перенеси задачу про КП на понедельник", false)).toBe(true)
   })
 })
 
@@ -224,6 +226,6 @@ describe("history note", () => {
       status: "draft",
       draft: { items: [{ type: "company", values: { name: "Ромашка" } }, { type: "contact", values: { name: "Петров" } }], files: [] },
     } as unknown as ChatDraftPart
-    expect(draftNote(p)).toBe("[Черновик (draftId a1): компания «Ромашка», контакт «Петров» — ожидает подтверждения пользователем]")
+    expect(draftNote(p)).toBe("[Черновик: компания «Ромашка», контакт «Петров» — ожидает подтверждения пользователем]")
   })
 })

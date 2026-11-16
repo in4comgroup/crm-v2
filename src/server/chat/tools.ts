@@ -123,7 +123,7 @@ export function buildChatTools({ ctx, writer, ai, actions }: ChatToolsDeps) {
 
     listRecords: tool({
       description:
-        "List records of ONE type by structured filters (status, responsible / assignee «me», period, company, amount …) and sort. Use for questions like «мои открытые задачи», «сделки на стадии X», «заказы за октябрь». Returns the total + rows with `ref`. The user sees the rows and the filters as chips. NOT for counting («сколько …»): totals above 500 are capped — use queryStats for every count.",
+        "List records of ONE type by structured filters (status, responsible / assignee «me», period, company, amount …) and sort. Use for questions like «мои открытые задачи», «сделки на стадии X», «заказы за октябрь». «Мои», «у меня», «мне», «на мне» ALWAYS = the filter 'me' (tasks: assignee 'me'; deals: owner 'me'; companies: responsible 'me') — e.g. «мои просроченные задачи» = type task, filters { assignee: 'me', overdue: true }. Returns the total + rows with `ref`. The user sees the rows and the filters as chips. NOT for counting («сколько …»): totals above 500 are capped — use queryStats for every count.",
       inputSchema: listInputSchema(types),
       execute: async (input, { toolCallId }) => {
         const i = input as { type: RecordType; filters?: unknown; sort?: string; limit?: number }

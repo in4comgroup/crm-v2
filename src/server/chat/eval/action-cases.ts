@@ -3,7 +3,7 @@ import "server-only"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { sql } from "drizzle-orm"
-import { cleanEmail, cleanTelegram, cleanWebsite, phoneKey, type ChatDraftPart, type CompanyValues, type ContactValues, type TaskValues, type DealValues, type UpdateValues, type LinkValues } from "@/lib/chat/actions"
+import { cleanEmail, cleanTelegram, cleanWebsite, phoneKey, type ChatDraftPart, type CompanyValues, type ContactValues, type TaskValues, type DealValues, type UpdateValues, type LinkValues, type OrderRequestValues, type DealMoveValues, type TaskUpdateValues } from "@/lib/chat/actions"
 import { resolveDueText } from "@/lib/chat/due-date"
 import { execRows } from "@/server/analytics-query"
 import { getOwnOrgContext } from "@/server/identity/own-org"
@@ -514,6 +514,131 @@ ACTION_CASES.push(
       const out = dueIs(list, /./, "завтра в 10:00", ctx)
       const vector = await clientIdOf(ctx.orgId, "Вектор")
       if (vector && list[0].companyId !== vector) out.push("not linked to «Вектор»")
+      return out
+    },
+  },
+)
+
+// ── Order request, deal moves, task updates (T5) ──────────────────────
+
+/** An open deal with a unique name on a working stage + another working stage of the funnel. */
+async function movableDeal(orgId: string): Promise<{ id: string; name: string; target: { id: string; name: string } } | null> {
+  const rows = await execRows<{ id: string; name: string; stage_id: string }>(sql`
+    select d.id, d.name, d.funnel_stage_id stage_id from deal d join deal_funnel_stage s on s.id = d.funnel_stage_id
+    where d.organization_id = ${orgId} and d.status = 'active' and s.role = 'active'
+      and (select count(*) from deal d2 where d2.organization_id = ${orgId} and lower(d2.name) = lower(d.name)) = 1
+    order by d.updated_at desc limit 1`)
+  const d = rows[0]
+  if (!d) return null
+  const stages = await execRows<{ id: string; name: string; display_name: string | null }>(sql`
+    select s.id, s.name, s.display_name from deal_funnel_stage s
+    where s.id <> ${d.stage_id} and s.role = 'active' and s.is_active and not s.is_hidden
+      and (s.owner_organization_id = ${orgId} or (s.is_system and not exists (
+        select 1 from deal_funnel_stage o where o.owner_organization_id = ${orgId} and o.is_active)))
+    order by s.sort_order limit 1`)
+  const st = stages[0]
+  return st ? { id: d.id, name: d.name, target: { id: st.id, name: (st.display_name ?? "").trim() || st.name } } : null
+}
+
+/** An open task with a unique, long enough title. */
+async function openTask(orgId: string): Promise<{ id: string; name: string } | null> {
+  const rows = await execRows<{ id: string; name: string }>(sql`
+    select t.id, t.name from task t where t.organization_id = ${orgId} and t.status in ('todo', 'in_progress') and length(t.name) between 8 and 60
+      and (select count(*) from task t2 where t2.organization_id = ${orgId} and lower(t2.name) = lower(t.name)) = 1
+    order by t.created_at limit 1`)
+  return rows[0] ?? null
+}
+
+const byType = (t: TurnResult, type: string) => items(t).filter((i) => i.type === type)
+
+ACTION_CASES.push(
+  {
+    id: "k01",
+    kind: "action",
+    question:
+      "Оформи заказ по сообщению клиента Вектор: «Добрый день! Пришлите, пожалуйста, 20 бутылок Grey Goose 0,7 и 12 бутылок просекко Bottega. Доставка до пятницы.»",
+    check: async (t, ctx) => {
+      const o = byType(t, "order_request")[0]
+      if (!o) return ["no order-request card"]
+      const v = o.values as OrderRequestValues
+      const out: string[] = []
+      const vector = await clientIdOf(ctx.orgId, "Вектор")
+      if (vector && v.clientId !== vector) out.push(`client «${v.clientName}», expected «Вектор»`)
+      if (!/20 бутылок Grey Goose/i.test(v.requestText)) out.push("the request text is not the client's words")
+      return out
+    },
+  },
+  {
+    id: "k02",
+    kind: "action",
+    question: "",
+    questionFn: async (ctx) => {
+      const d = await movableDeal(ctx.orgId)
+      return d ? `Переведи сделку «${d.name}» на стадию «${d.target.name}»` : "Переведи сделку с Вектором дальше"
+    },
+    check: async (t, ctx) => {
+      const d = await movableDeal(ctx.orgId)
+      if (!d) return []
+      const m = byType(t, "deal_move")[0]
+      if (!m) return ["no deal-move card"]
+      const v = m.values as DealMoveValues
+      const out: string[] = []
+      if (v.dealId !== d.id) out.push(`moves «${v.dealName}», expected «${d.name}»`)
+      if (v.stageId !== d.target.id) out.push(`to «${v.stageName}», expected «${d.target.name}»`)
+      return out
+    },
+  },
+  {
+    id: "k03",
+    kind: "action",
+    question: "",
+    questionFn: async (ctx) => {
+      const d = await movableDeal(ctx.orgId)
+      return d ? `Мы проиграли сделку «${d.name}» — клиент выбрал другого поставщика` : "Мы проиграли сделку с Вектором"
+    },
+    check: async (t, ctx) => {
+      if (!(await movableDeal(ctx.orgId))) return []
+      const m = byType(t, "deal_move")[0]
+      if (!m) return ["no deal-move card"]
+      const v = m.values as DealMoveValues
+      return v.outcome === "lost" && v.stageId ? [] : [`outcome ${v.outcome ?? "—"}, expected lost`]
+    },
+  },
+  {
+    id: "k04",
+    kind: "action",
+    question: "",
+    questionFn: async (ctx) => {
+      const x = await openTask(ctx.orgId)
+      return x ? `Задача «${x.name}» выполнена, отметь` : "Отметь задачу выполненной"
+    },
+    check: async (t, ctx) => {
+      const x = await openTask(ctx.orgId)
+      if (!x) return []
+      const u = byType(t, "task_update")[0]
+      if (!u) return ["no task-update card"]
+      const v = u.values as TaskUpdateValues
+      return v.taskId === x.id && v.action === "done" ? [] : [`task ${v.taskTitle} / ${v.action}, expected «${x.name}» / done`]
+    },
+  },
+  {
+    id: "k05",
+    kind: "action",
+    question: "",
+    questionFn: async (ctx) => {
+      const x = await openTask(ctx.orgId)
+      return x ? `Перенеси задачу «${x.name}» на понедельник` : "Перенеси задачу на понедельник"
+    },
+    check: async (t, ctx) => {
+      const x = await openTask(ctx.orgId)
+      if (!x) return []
+      const u = byType(t, "task_update")[0]
+      if (!u) return ["no task-update card"]
+      const v = u.values as TaskUpdateValues
+      const want = resolveDueText("на понедельник", ctx.now, ctx.timeZone)
+      const out: string[] = []
+      if (v.taskId !== x.id) out.push(`task «${v.taskTitle}», expected «${x.name}»`)
+      if (v.action !== "reschedule" || v.dueDate !== want) out.push(`${v.action} ${v.dueDate || "—"}, expected reschedule ${want}`)
       return out
     },
   },

@@ -2,7 +2,7 @@ import "server-only"
 
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { client, contact, contactAddress, deal, member, user } from "@/db/schema"
+import { client, contact, contactAddress, deal, member, task, user } from "@/db/schema"
 import {
   cleanEmail,
   cleanTelegram,
@@ -26,6 +26,7 @@ import { ownOrgIdentityFromContext } from "@/server/org-identity"
 import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getOrgFunnel } from "@/server/deal-engine"
 import { listDealTypes } from "@/server/deal-types"
+import { getOutcomeReasons } from "@/server/funnel-config"
 import { stageDisplayLabel } from "@/lib/deal-funnel"
 
 // Checks of a chat draft (docs/specs/ai-chat-tools §8.3): duplicates of
@@ -389,4 +390,55 @@ export async function openDealsOfClient(
     .map((r) => ({ r, s: stages.find((x) => x.id === r.stageId) }))
     .filter(({ s }) => !s || (s.role !== "won" && s.role !== "lost"))
     .map(({ r, s }) => ({ id: r.id, name: r.name, dealTypeId: r.dealTypeId, stageName: s ? stageDisplayLabel(s.name, s.displayName) : "" }))
+}
+
+// ── T5: deal moves, task updates ──────────────────────────────────────
+
+/** Every visible stage of the org funnel (with its role) + the org's lost reasons. */
+export async function loadMoveOptions(orgId: string): Promise<{ allStages: { id: string; name: string; role: string }[]; lostReasons: { code: string; label: string }[] }> {
+  const [stages, reasons] = await Promise.all([getOrgFunnel(orgId), getOutcomeReasons(orgId)])
+  return {
+    allStages: stages
+      .filter((s) => !s.isHidden)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((s) => ({ id: s.id, name: stageDisplayLabel(s.name, s.displayName), role: s.role })),
+    lostReasons: reasons.lost.map((r) => ({ code: r.code, label: r.label })),
+  }
+}
+
+/** A deal of the org with its current stage. */
+export async function dealWithStage(orgId: string, id: string): Promise<{ id: string; name: string; status: string; stageId: string } | null> {
+  const [r] = await db
+    .select({ id: deal.id, name: deal.name, status: deal.status, stageId: deal.funnelStageId })
+    .from(deal)
+    .where(and(eq(deal.organizationId, orgId), eq(deal.id, id)))
+  return r ?? null
+}
+
+export type TaskLite = { id: string; name: string; status: string; dueDate: Date; assigneeId: string | null }
+
+export async function taskInOrg(orgId: string, id: string): Promise<TaskLite | null> {
+  const [r] = await db
+    .select({ id: task.id, name: task.name, status: task.status, dueDate: task.dueDate, assigneeId: task.assigneeId })
+    .from(task)
+    .where(and(eq(task.organizationId, orgId), eq(task.id, id)))
+  return r ?? null
+}
+
+/** The only OPEN task of the org whose title contains the words (case-insensitive), or "many" / null. */
+export async function findOpenTaskByTitle(orgId: string, title: string): Promise<TaskLite | "many" | null> {
+  const q = title.trim().toLowerCase()
+  if (q.length < 3) return null
+  const rows = await db
+    .select({ id: task.id, name: task.name, status: task.status, dueDate: task.dueDate, assigneeId: task.assigneeId })
+    .from(task)
+    .where(
+      and(
+        eq(task.organizationId, orgId),
+        inArray(task.status, ["todo", "in_progress"]),
+        sql`position(${q} in lower(${task.name})) > 0`,
+      ),
+    )
+    .limit(3)
+  return rows.length === 1 ? rows[0] : rows.length > 1 ? "many" : null
 }

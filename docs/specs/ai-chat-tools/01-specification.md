@@ -1,6 +1,6 @@
 # 01 — AI chat actions: specification
 
-**Date:** 2026-11-16 · **Status:** Q1–Q23 decided ([02-open-questions.md](02-open-questions.md)); T0–T4 built (see [03-development-plan.md](03-development-plan.md))
+**Date:** 2026-11-16 · **Status:** Q1–Q23 decided ([02-open-questions.md](02-open-questions.md)); T0–T5 built (see [03-development-plan.md](03-development-plan.md))
 **Surface:** the global «ИИ чат» panel (docs/specs/ai-chat/)
 **Current state:** [00-current-state.md](00-current-state.md)
 

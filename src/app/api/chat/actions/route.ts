@@ -9,7 +9,8 @@ import { ChatActionError, cancelChatAction, confirmChatAction, getChatAction } f
 // The draft must be the caller's own in the active org (else 404). Records are
 // created as the signed-in user through the normal server functions.
 
-export const maxDuration = 60
+// 120 s: «Заказ из запроса» runs the order-request split (one model call) on confirm.
+export const maxDuration = 120
 
 async function session() {
   const s = await getServerSession()

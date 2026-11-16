@@ -29,7 +29,10 @@ import {
   type ExistingClient,
   type ExistingContact,
   type FillChange,
+  type DealMoveValues,
   type LinkValues,
+  type OrderRequestValues,
+  type TaskUpdateValues,
   type UpdateValues,
   companyFill,
   contactFill,
@@ -39,8 +42,9 @@ import {
 import { normalizeAddress } from "@/lib/contact-links"
 import { createClient, updateClient } from "@/server/clients"
 import { createContact, updateContact } from "@/server/contacts"
-import { createTask } from "@/server/tasks"
-import { createDeal, updateDeal } from "@/server/deals"
+import { createTask, updateTask } from "@/server/tasks"
+import { createAndParseOrderRequest } from "@/server/order-requests"
+import { createDeal, moveDealStage, updateDeal } from "@/server/deals"
 import { dealActivity, dealContact } from "@/db/schema"
 import { and, eq, isNull } from "drizzle-orm"
 import { applyLinkAction } from "@/server/contact-links"
@@ -54,12 +58,15 @@ import {
   clientRow,
   contactsInOrg,
   dealInOrg,
+  dealWithStage,
   existingClient,
   existingContact,
   loadDealOptions,
+  loadMoveOptions,
   loadOrgIndex,
   loadOrgMembers,
   openDealsOfClient,
+  taskInOrg,
 } from "./checks"
 import { actionPart, claimAction, createdLastHour, finishAction, loadAction, syncActionMessage, type ActionRow } from "./store"
 
@@ -83,11 +90,13 @@ export class ChatActionError extends Error {
 /** The card's part + (task items) the members and the org time zone for the form. */
 async function withOptions(orgId: string, userId: string, part: ChatDraftPart): Promise<ChatDraftPart> {
   const hasDeal = part.draft.items.some((i) => i.type === "deal")
-  if (!hasDeal && !part.draft.items.some((i) => i.type === "task")) return part
-  const [members, ctx, deals] = await Promise.all([
+  const hasMove = part.draft.items.some((i) => i.type === "deal_move")
+  if (!hasDeal && !hasMove && !part.draft.items.some((i) => i.type === "task" || i.type === "task_update")) return part
+  const [members, ctx, deals, moves] = await Promise.all([
     loadOrgMembers(orgId),
     loadRecordsContext(orgId, userId),
     hasDeal ? loadDealOptions(orgId) : Promise.resolve(null),
+    hasMove ? loadMoveOptions(orgId) : Promise.resolve(null),
   ])
   return {
     ...part,
@@ -95,6 +104,7 @@ async function withOptions(orgId: string, userId: string, part: ChatDraftPart): 
       members: members.map((m) => ({ id: m.id, name: m.name })),
       timeZone: ctx.timeZone,
       ...(deals ? { stages: deals.stages, dealTypes: deals.dealTypes.map((t) => ({ id: t.id, name: t.name })) } : {}),
+      ...(moves ?? {}),
     },
   }
 }
@@ -117,9 +127,14 @@ export async function cancelChatAction(orgId: string, userId: string, id: string
 
 const labelOf = (i: DraftItem) => `${ITEM_TYPE_WORDS[i.type]} «${itemLabel(i)}»`
 
-type Planned = { item: DraftItem; values: CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues; decision: string; existingId?: string }
+type Planned = {
+  item: DraftItem
+  values: CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues | OrderRequestValues | DealMoveValues | TaskUpdateValues
+  decision: string
+  existingId?: string
+}
 
-const ORDER: Record<DraftItem["type"], number> = { company: 0, contact: 1, deal: 2, task: 3, update: 4, link: 5 }
+const ORDER: Record<DraftItem["type"], number> = { company: 0, contact: 1, deal: 2, task: 3, update: 4, link: 5, order_request: 6, deal_move: 7, task_update: 8 }
 
 export async function confirmChatAction(orgId: string, userId: string, input: ConfirmActionInput): Promise<ChatDraftPart> {
   const r = await loadAction(orgId, userId, input.actionId)
@@ -144,7 +159,15 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
   // A contact whose company of this card is NOT created / used has no company.
   const plannedKeys = new Set(plan.map((p) => p.item.key))
   for (const p of plan) {
-    if (p.item.type === "company" || p.item.type === "update" || p.item.type === "link") continue
+    if (p.item.type === "order_request") {
+      const o = p.values as OrderRequestValues
+      if (o.companyKey && !plannedKeys.has(o.companyKey)) {
+        o.companyKey = null
+        o.clientName = ""
+      }
+      continue
+    }
+    if (["company", "update", "link", "deal_move", "task_update"].includes(p.item.type)) continue
     const v = p.values as ContactValues | TaskValues | DealValues
     if (v.companyKey && !plannedKeys.has(v.companyKey)) {
       v.companyKey = null
@@ -169,7 +192,13 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
     }
   }
   // Tasks: the org time zone of the due dates; a due date in the past is refused.
-  const timeZone = plan.some((p) => p.item.type === "task") ? (await loadRecordsContext(orgId, userId)).timeZone : "UTC"
+  const timeZone = plan.some((p) => p.item.type === "task" || p.item.type === "task_update") ? (await loadRecordsContext(orgId, userId)).timeZone : "UTC"
+  for (const p of plan) {
+    if (p.item.type !== "task_update" || (p.values as TaskUpdateValues).action !== "reschedule") continue
+    const at = localToUtc((p.values as TaskUpdateValues).dueDate, timeZone)
+    if (!at) throw new ChatActionError(`${labelOf(p.item)}: ${MISSING_LABELS.dueDate}`, 400)
+    if (at.getTime() < Date.now() - 60_000) throw new ChatActionError(`${labelOf(p.item)}: срок в прошлом`, 400)
+  }
   for (const p of plan) {
     if (p.item.type !== "task") continue
     const at = localToUtc((p.values as TaskValues).dueDate, timeZone)
@@ -203,7 +232,7 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
   let duplicate: string | null = null
   for (const item of draft.items) {
     const p = plan.find((x) => x.item.key === item.key)
-    if (!p || item.type === "task" || item.type === "update" || item.type === "link") {
+    if (!p || ["task", "update", "link", "order_request", "deal_move", "task_update"].includes(item.type)) {
       fresh.push(p ? { ...item, values: p.values } : item)
       continue
     }
@@ -277,6 +306,41 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
         const chosen = v.changes.filter((c) => allowedValues.has(`${c.field}\u0000${c.value}`))
         const done = await applyFill(orgId, userId, v.targetType, v.targetId, (cur) => stillApplicable(v.targetType, cur, chosen))
         results.push({ type: v.targetType, id: done.id, title: done.name, href: actionResultHref(v.targetType, done.id), existing: true, updated: done.changed > 0 })
+      } else if (p.item.type === "order_request") {
+        // «Заказ из запроса» (T5): the request text of the DRAFT (shown read-only) → the wizard's split.
+        const v = p.values as OrderRequestValues
+        const d0 = draft.items.find((i) => i.key === p.item.key)!.values as OrderRequestValues
+        const clientId = v.companyKey ? (byItem.get(v.companyKey)?.id ?? null) : v.clientId
+        if (!clientId) throw new Error("нет компании клиента")
+        const cl = await clientInOrg(orgId, clientId)
+        if (!cl || cl.status === "deleted" || cl.status === "blocked") throw new Error("компания не найдена")
+        const { id } = await createAndParseOrderRequest({ clientId: cl.id, rawText: d0.requestText, comment: v.comment || null })
+        results.push({ type: "order_request", id, title: cl.name, href: actionResultHref("order_request", id) })
+      } else if (p.item.type === "deal_move") {
+        // «Перевести сделку» (T5): the funnel's own move + outcome-reason rules.
+        const v = p.values as DealMoveValues
+        const d0 = draft.items.find((i) => i.key === p.item.key)!.values as DealMoveValues
+        if (v.dealId !== d0.dealId) throw new Error("другая сделка")
+        const d = await dealWithStage(orgId, v.dealId)
+        if (!d || d.status === "deleted") throw new Error("сделка не найдена")
+        if (d.stageId !== v.stageId) {
+          await moveDealStage(d.id, v.stageId!, `Переведено из ИИ чата${v.reasonText ? `: ${v.reasonText}` : ""}`, {
+            actor: "user",
+            outcomeReasonCode: v.outcome === "lost" ? v.reasonCode || null : null,
+            outcomeReason: v.outcome ? v.reasonText || null : null,
+          })
+        }
+        results.push({ type: "deal", id: d.id, title: d.name, href: actionResultHref("deal", d.id), existing: true, moved: true })
+      } else if (p.item.type === "task_update") {
+        // «Изменить задачу» (T5): done or a new due date, through the task form's own function.
+        const v = p.values as TaskUpdateValues
+        const d0 = draft.items.find((i) => i.key === p.item.key)!.values as TaskUpdateValues
+        if (v.taskId !== d0.taskId) throw new Error("другая задача")
+        const t = await taskInOrg(orgId, v.taskId)
+        if (!t) throw new Error("задача не найдена")
+        if (v.action === "done") await updateTask(t.id, { status: "done" })
+        else await updateTask(t.id, { dueDate: localToUtc(v.dueDate, timeZone)!.toISOString() })
+        results.push({ type: "task", id: t.id, title: t.name, href: actionResultHref("task", t.id), existing: true, updated: true })
       } else if (p.item.type === "link") {
         const v = p.values as LinkValues
         const d0 = draft.items.find((i) => i.key === p.item.key)!.values as LinkValues
@@ -465,8 +529,9 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
       results.find((x) => x.type === "contact") ??
       results.find((x) => x.type === "client") ??
       results.find((x) => x.type === "deal")
-    const targets = party ? [party] : results.filter((x) => x.type === "task")
+    const targets = party ? [party] : results.filter((x) => x.type === "task" && !x.existing)
     for (const t of targets) {
+      if (t.type === "order_request") continue
       for (const f of draft.files) {
         await addDocumentLink(orgId, userId, f.itemId, t.type, t.id).catch((e) =>
           console.error("[chat/actions] document link failed", r.id, f.itemId, e),

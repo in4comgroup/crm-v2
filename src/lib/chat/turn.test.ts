@@ -119,3 +119,18 @@ describe("claimsDraft", () => {
     expect(claimsDraft("Карточку не подготовил: нет компании.")).toBe(false)
   })
 })
+
+describe("createNoteLineStripper", () => {
+  it("drops copied history notes, keeps everything else (also split across deltas)", async () => {
+    const { createNoteLineStripper } = await import("./turn")
+    const run = (parts: string[]) => {
+      const st = createNoteLineStripper()
+      return parts.map((p) => st.push(p)).join("") + st.end()
+    }
+    expect(run(["Подготовил задачу.\n\n[Черно", "вик (c5fa7e1d): Позвонить Вектору]"])).toBe("Подготовил задачу.\n\n")
+    expect(run(["Текст\n[Вопрос пользователю: когда?]\nдальше"])).toBe("Текст\nдальше")
+    expect(run(["[ссылка](https://x) и текст\n", "строка"])).toBe("[ссылка](https://x) и текст\nстрока")
+    expect(run(["Обычный ", "ответ без заметок."])).toBe("Обычный ответ без заметок.")
+    expect(run(["Уже есть.\n\n[Контакт Маргарита (ref: 121146a8-8f5c)]\n[Контакт Margo (ref: a8)]"])).toBe("Уже есть.\n\n")
+  })
+})

@@ -3,7 +3,7 @@ import { actionResultNote, draftNote, type ChatActionResultPart, type ChatDraftP
 
 import type { UIMessage } from "ai"
 import { RECORD_TYPE_LABELS, RECORD_TYPE_ORDER } from "@/lib/chat/records"
-import type { ChatEvidencePart, ChatRecordsPart } from "@/lib/chat/turn"
+import type { ChatEvidencePart, ChatQuestionPart, ChatRecordsPart } from "@/lib/chat/turn"
 import type { StatsResult } from "@/lib/chat/stats"
 import type { ChatAttachmentPart } from "@/lib/chat/files"
 
@@ -16,7 +16,7 @@ import type { ChatAttachmentPart } from "@/lib/chat/files"
 // File parts never reach the model (docs/specs/ai-chat-tools Q22): a file
 // is read by its parser and the model gets its text via `data-attachment`.
 const KEEP = new Set(["text"])
-const KEEP_DATA = new Set(["data-records", "data-stats", "data-evidence", "data-attachment", "data-draft", "data-action-result"])
+const KEEP_DATA = new Set(["data-records", "data-stats", "data-evidence", "data-attachment", "data-draft", "data-action-result", "data-question"])
 const NOTE_HITS = 15
 
 /** Keep text, files and our data parts; drop tool / reasoning / source / unknown parts and empty messages. */
@@ -70,6 +70,10 @@ export function dataPartToModelText(part: DataPartLike): { type: "text"; text: s
     return { type: "text", text: `[Вложение «${a.name}» (ref ${a.itemId}): ${head}${head.length >= 300 ? "…" : ""} — полный текст через readSource]` }
   }
   if (part.type === "data-draft" && part.data) return { type: "text", text: draftNote(part.data as ChatDraftPart) }
+  if (part.type === "data-question" && part.data) {
+    const q = part.data as ChatQuestionPart
+    return { type: "text", text: `[Вопрос пользователю: ${q.question}${q.options.length ? ` Варианты: ${q.options.join(" / ")}` : ""}]` }
+  }
   if (part.type === "data-action-result" && part.data) return { type: "text", text: actionResultNote(part.data as ChatActionResultPart) }
   if (part.type === "data-evidence" && part.data) {
     const e = part.data as ChatEvidencePart

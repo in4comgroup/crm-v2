@@ -10,12 +10,13 @@ import { z } from "zod"
 import { searchNormalise } from "@/lib/entity-search"
 import { extractEmailDomain, extractWebsiteDomain, isFreemailDomain } from "@/lib/email-domain"
 import { normalisePhone, normaliseTelegramHandle } from "@/lib/identity/registry"
-import { isLocalDateTime, localToUtc, resolveDueText } from "@/lib/chat/due-date"
+import { isLocalDateTime, localToUtc, resolveDueText, utcToLocal } from "@/lib/chat/due-date"
+import { companyMatchKey } from "@/lib/translit-ru"
 import { parseMoneyRu } from "@/lib/ru-mail/money"
 
 // ── Kinds, statuses ─────────────────────────────────────────────────────
 
-export const ACTION_KINDS = ["company", "contact", "company_contact", "task", "tasks", "deal", "group"] as const
+export const ACTION_KINDS = ["company", "contact", "company_contact", "task", "tasks", "deal", "update", "link", "group"] as const
 export type ActionKind = (typeof ACTION_KINDS)[number]
 
 // `confirming` = a confirm request is running (guards a double click).
@@ -34,6 +35,8 @@ export const ACTION_KIND_TITLES: Record<ActionKind, string> = {
   task: "Новая задача",
   tasks: "Задачи",
   deal: "Новая сделка",
+  update: "Дополнить запись",
+  link: "Связать записи",
   group: "Новые записи",
 }
 
@@ -103,6 +106,36 @@ export type TaskValues = {
   /** A deal of the same card (draft). */
   dealKey: string | null
   dealName: string
+  /** «Записать встречу» (T4): a past meeting / call stored as done; `dueDate` = when it happened (may be in the past). */
+  done: boolean
+}
+
+/** One change of «Дополнить» — only an EMPTY field, a new extra address or a new alias (Q3: never overwrite). */
+export type FillChange = {
+  field: "phone" | "email" | "website" | "address" | "alias" | "position" | "nameNative" | "extraPhone" | "extraEmail" | "telegram"
+  /** Russian: «Телефон», «Доп. e-mail», «Другое название» … */
+  label: string
+  value: string
+}
+
+/** «Дополнить запись» (T4): what will be added to an existing company / contact. */
+export type UpdateValues = {
+  targetType: "client" | "contact"
+  targetId: string
+  targetName: string
+  changes: FillChange[]
+}
+
+/** «Связать записи» (T4): an existing contact ↔ an existing company and / or deal. */
+export type LinkValues = {
+  contactId: string | null
+  contactName: string
+  clientId: string | null
+  clientName: string
+  /** The company becomes the contact's main company (else: one more current company). */
+  primary: boolean
+  dealId: string | null
+  dealName: string
 }
 
 export type DealValues = {
@@ -131,7 +164,7 @@ export type DealValues = {
   ruleNote: string
 }
 
-export type ItemType = "company" | "contact" | "task" | "deal"
+export type ItemType = "company" | "contact" | "task" | "deal" | "update" | "link"
 
 /** Where a value came from — shown as a hint next to the field. */
 export type FieldSource = "input" | "file" | "page" | "default" | "model" | "rule"
@@ -155,6 +188,8 @@ export type DraftMatch = {
   subtitle?: string
   /** Russian: «совпадает телефон», «похожее название» … */
   reason: string
+  /** What «Дополнить существующий» would add to this record (T4, exact matches only; empty = nothing new). */
+  fill?: FillChange[]
 }
 
 export type RemovedValue = { field: string; value: string; reason: string }
@@ -163,7 +198,7 @@ export type DraftItem = {
   /** Stable within the action: c1, c2 … (companies), p1, p2 … (contacts). */
   key: string
   type: ItemType
-  values: CompanyValues | ContactValues | TaskValues | DealValues
+  values: CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues
   meta: Record<string, FieldMeta>
   removed: RemovedValue[]
   matches: DraftMatch[]
@@ -187,6 +222,10 @@ export type ActionResult = {
   /** An existing record was used / restored (not created). */
   existing?: boolean
   restored?: boolean
+  /** «Дополнить» added data to the existing record (T4). */
+  updated?: boolean
+  /** «Связать» linked the existing records (T4). */
+  linked?: boolean
 }
 
 /** `data-draft` part (id = action id). The card re-reads the row by id. */
@@ -259,6 +298,9 @@ export const DEAL_FIELD_LABELS: Record<"name" | "description" | "companyName" | 
 }
 
 export const MISSING_LABELS: Record<string, string> = {
+  changes: "Нечего добавлять — всё уже есть в записи",
+  contact: "Укажите контакт",
+  target: "Укажите компанию или сделку",
   company: "Укажите компанию сделки",
   stage: "Выберите стадию",
   name: "Укажите название / имя",
@@ -288,10 +330,23 @@ export function emptyContactValues(): ContactValues {
 
 /** Name of a company / contact, title of a task. */
 export function itemLabel(item: Pick<DraftItem, "type" | "values">): string {
-  return item.type === "task" ? (item.values as TaskValues).title : (item.values as CompanyValues | ContactValues | DealValues).name
+  if (item.type === "task") return (item.values as TaskValues).title
+  if (item.type === "update") return (item.values as UpdateValues).targetName
+  if (item.type === "link") {
+    const l = item.values as LinkValues
+    return [l.contactName, l.clientName || l.dealName].filter(Boolean).join(" ↔ ")
+  }
+  return (item.values as CompanyValues | ContactValues | DealValues).name
 }
 
-export const ITEM_TYPE_WORDS: Record<ItemType, string> = { company: "компания", contact: "контакт", task: "задача", deal: "сделка" }
+export const ITEM_TYPE_WORDS: Record<ItemType, string> = {
+  company: "компания",
+  contact: "контакт",
+  task: "задача",
+  deal: "сделка",
+  update: "дополнение",
+  link: "связь",
+}
 
 /** Required fields of an item (§8.4, Q8). */
 export function missingFields(item: Pick<DraftItem, "type" | "values">): string[] {
@@ -301,6 +356,16 @@ export function missingFields(item: Pick<DraftItem, "type" | "values">): string[
     if (!t.title.trim()) out.push("title")
     if (!t.dueDate) out.push("dueDate")
     if (!t.assigneeId) out.push("assignee")
+    return out
+  }
+  if (item.type === "update") {
+    if (!(item.values as UpdateValues).changes.length) out.push("changes")
+    return out
+  }
+  if (item.type === "link") {
+    const l = item.values as LinkValues
+    if (!l.contactId) out.push("contact")
+    if (!l.clientId && !l.dealId) out.push("target")
     return out
   }
   if (item.type === "deal") {
@@ -628,7 +693,13 @@ export function userAsksForRecord(text: string, hasFiles: boolean): boolean {
     .join("\n")
     .toLowerCase()
   if (!own.trim()) return hasFiles
-  return /добав|созда|сохран|внес|внеси|запиш|запомн|напомн|постав|завед|завест|оформ|сделай|задач|визитк|карточк|контакт|в\s*crm|\bcrm\b|нов\S*\s+(клиент|контакт|компан|партн)|\badd\b|\bcreate\b|\bsave\b|remind/.test(own)
+  // Whole verb forms only: «поставщика» must not read as «поставь».
+  const verb =
+    /(?<![а-яё])(добав(ь|ьте|ить|и)|созда(й|йте|ть)|сохран(и|ите|ить)|внес(и|ите|ти)|запиш(и|ите)|записать|запомн(и|ите)|напомн(и|ите)|постав(ь|ьте|ить)|завед(и|ите)|завести|оформ(и|ите|ить)|сделай(те)?|свяж(и|ите)|связать|привяж(и|ите)|привязать|дополн(и|ите)|дополнить|обнов(и|ите)|обновить|перешел|перешёл|перешла)(?![а-яё])/
+  return (
+    verb.test(own) ||
+    /теперь\s+работает|визитк|нов\S*\s+(клиент|контакт|компан|партн)|в\s*crm|\bcrm\b|\badd\b|\bcreate\b|\bsave\b|remind/.test(own)
+  )
 }
 
 // ── Assignee (§10) ──────────────────────────────────────────────────────
@@ -665,6 +736,90 @@ export function matchMembers<T extends { name: string; email?: string }>(query: 
   return members.filter((m) => nameMatches(q, m.name))
 }
 
+// ── «Дополнить существующий» (T4, Q3: only empty fields, new addresses, new aliases) ──
+
+export type ExistingClient = { name: string; aliases: string[]; phone: string | null; email: string | null; webUrl: string | null; address: string | null }
+export type ExistingContact = {
+  name: string
+  nameNative: string | null
+  aliases: string[]
+  phone: string | null
+  email: string | null
+  position: string | null
+  /** Extra addresses (normalised: e-mail lower-case, phone digits, telegram handle). */
+  extra: { kind: string; value: string }[]
+}
+
+const FILL_LABELS: Record<FillChange["field"], string> = {
+  phone: "Телефон",
+  email: "E-mail",
+  website: "Сайт",
+  address: "Адрес",
+  alias: "Другое название",
+  position: "Должность",
+  nameNative: "Имя (другое написание)",
+  extraPhone: "Доп. телефон",
+  extraEmail: "Доп. e-mail",
+  telegram: "Telegram",
+}
+
+const change = (field: FillChange["field"], value: string): FillChange => ({ field, label: FILL_LABELS[field], value })
+
+/** What a company draft would ADD to an existing company: only empty fields + new names. */
+export function companyFill(existing: ExistingClient, v: Partial<CompanyValues>): FillChange[] {
+  const out: FillChange[] = []
+  const blank = (x: string | null) => !(x ?? "").trim()
+  if (v.phone && blank(existing.phone)) out.push(change("phone", v.phone))
+  const email = cleanEmail(v.email ?? "")
+  if (email && blank(existing.email)) out.push(change("email", email))
+  const site = cleanWebsite(v.website ?? "")
+  if (site && blank(existing.webUrl)) out.push(change("website", site))
+  if (v.address && blank(existing.address)) out.push(change("address", v.address))
+  const known = new Set([existing.name, ...existing.aliases].map(companyMatchKey).filter(Boolean))
+  for (const n of [v.name ?? "", ...(v.aliases ?? [])].map((x) => x.trim()).filter(Boolean)) {
+    const k = companyMatchKey(n)
+    if (k && !known.has(k) && searchNormalise(n) !== searchNormalise(existing.name)) {
+      known.add(k)
+      out.push(change("alias", n))
+    }
+  }
+  return out
+}
+
+/** What a contact draft would ADD to an existing contact: empty fields, new phones / e-mails as extra addresses, a new Telegram. */
+export function contactFill(existing: ExistingContact, v: Partial<ContactValues>): FillChange[] {
+  const out: FillChange[] = []
+  const blank = (x: string | null) => !(x ?? "").trim()
+  const emails = new Set([existing.email ?? "", ...existing.extra.filter((a) => a.kind === "email").map((a) => a.value)].map(cleanEmail).filter(Boolean))
+  const phones = new Set([existing.phone ?? "", ...existing.extra.filter((a) => a.kind === "phone").map((a) => a.value)].map(phoneKey).filter(Boolean))
+  let emailFree = blank(existing.email)
+  for (const e of (v.emails ?? []).map(cleanEmail).filter(Boolean)) {
+    if (emails.has(e)) continue
+    emails.add(e)
+    out.push(change(emailFree ? "email" : "extraEmail", e))
+    emailFree = false
+  }
+  let phoneFree = blank(existing.phone)
+  for (const p of v.phones ?? []) {
+    const k = phoneKey(p)
+    if (!k || phones.has(k)) continue
+    phones.add(k)
+    out.push(change(phoneFree ? "phone" : "extraPhone", p))
+    phoneFree = false
+  }
+  if (v.position && blank(existing.position)) out.push(change("position", v.position))
+  if (v.nameNative && blank(existing.nameNative) && searchNormalise(v.nameNative) !== searchNormalise(existing.name)) {
+    out.push(change("nameNative", v.nameNative))
+  }
+  const tg = cleanTelegram(v.telegram ?? "")
+  const tgs = new Set([
+    ...existing.aliases.filter((a) => a.trim().startsWith("@")).map(cleanTelegram),
+    ...existing.extra.filter((a) => a.kind === "telegram").map((a) => a.value.replace(/^@/, "").toLowerCase()),
+  ])
+  if (tg && !tgs.has(tg)) out.push(change("telegram", tg))
+  return out
+}
+
 /** Task type from the verb of the title (when the model gave none). */
 export function taskTypeFromTitle(title: string): ChatTaskType {
   const t = (title ?? "").toLowerCase()
@@ -684,7 +839,7 @@ export function taskTypeFromTitle(title: string): ChatTaskType {
  * asks (Q8). Assignee and links are resolved by the server.
  */
 export function groundTask(
-  raw: { title?: unknown; description?: unknown; type?: unknown; priority?: unknown; dueText?: unknown; dueDate?: unknown },
+  raw: { title?: unknown; description?: unknown; type?: unknown; priority?: unknown; dueText?: unknown; dueDate?: unknown; done?: unknown },
   sources: InputSources,
   now: Date,
   timeZone: string,
@@ -700,6 +855,8 @@ export function groundTask(
   values.type = type && type !== "other" ? type : taskTypeFromTitle(values.title)
   // «срочно» / «важно» in the user's own words → high; else medium.
   values.priority = findSource(sources, (i) => /srochn|vazhn|asap|urgent/.test(i.tokens.join(" "))) ? "high" : "medium"
+  // «Записать встречу» (T4): a past meeting / call — the date is when it happened.
+  values.done = raw.done === true
 
   const dueText = cleanText(raw.dueText, 200)
   const modelDate = typeof raw.dueDate === "string" && isLocalDateTime(raw.dueDate.trim()) ? raw.dueDate.trim() : ""
@@ -708,7 +865,7 @@ export function groundTask(
     if (!src) removed.push({ field: "dueDate", value: dueText, reason: "срок не назван в сообщении" })
     else {
       values.dueText = dueText
-      const code = resolveDueText(dueText, now, timeZone)
+      const code = resolveDueText(dueText, now, timeZone, { past: values.done })
       if (code) {
         values.dueDate = code
         meta.dueDate = { source: src.source, fileName: src.fileName, fileId: src.fileId }
@@ -720,8 +877,12 @@ export function groundTask(
   } else if (modelDate) {
     removed.push({ field: "dueDate", value: modelDate.replace("T", " "), reason: "срок не назван в сообщении" })
   }
-  // A deadline already in the past is a misread — ask instead.
-  if (values.dueDate) {
+  // A logged meeting without a date happened now; a deadline in the past is a misread — ask instead.
+  if (values.done && !values.dueDate) {
+    values.dueDate = utcToLocal(now, timeZone)
+    meta.dueDate = { source: "default" }
+  }
+  if (values.dueDate && !values.done) {
     const at = localToUtc(values.dueDate, timeZone)
     if (!at || at.getTime() < now.getTime() - 60_000) {
       removed.push({ field: "dueDate", value: values.dueDate.replace("T", " "), reason: "срок в прошлом" })
@@ -751,6 +912,7 @@ export function emptyTaskValues(): TaskValues {
     dealId: null,
     dealKey: null,
     dealName: "",
+    done: false,
   }
 }
 
@@ -849,7 +1011,7 @@ export function groundDeal(raw: { name?: unknown; description?: unknown; valueTe
 
 // ── Confirm payload (`POST /api/chat/actions`) ──────────────────────────
 
-export const ITEM_DECISIONS = ["create", "create_anyway", "use_existing", "restore"] as const
+export const ITEM_DECISIONS = ["create", "create_anyway", "use_existing", "restore", "fill_existing"] as const
 export type ItemDecision = (typeof ITEM_DECISIONS)[number]
 
 const str = (max: number) => z.string().max(max).transform((s) => s.trim())
@@ -911,6 +1073,27 @@ export const taskValuesSchema = z.object({
   dealId: z.string().max(100).nullable().default(null),
   dealKey: z.string().max(10).nullable().default(null),
   dealName: str(200).default(""),
+  done: z.boolean().default(false),
+})
+
+const FILL_FIELDS = ["phone", "email", "website", "address", "alias", "position", "nameNative", "extraPhone", "extraEmail", "telegram"] as const
+const fillChangeSchema = z.object({ field: z.enum(FILL_FIELDS), label: str(100), value: str(300) })
+
+export const updateValuesSchema = z.object({
+  targetType: z.enum(["client", "contact"]),
+  targetId: z.string().min(1).max(100),
+  targetName: str(200).default(""),
+  changes: z.array(fillChangeSchema).max(20).default([]),
+})
+
+export const linkValuesSchema = z.object({
+  contactId: z.string().max(100).nullable().default(null),
+  contactName: str(200).default(""),
+  clientId: z.string().max(100).nullable().default(null),
+  clientName: str(200).default(""),
+  primary: z.boolean().default(false),
+  dealId: z.string().max(100).nullable().default(null),
+  dealName: str(200).default(""),
 })
 
 export const dealValuesSchema = z.object({
@@ -932,18 +1115,21 @@ export const dealValuesSchema = z.object({
   ruleNote: str(500).default(""),
 })
 
-export function parseItemValues(type: ItemType, raw: unknown): CompanyValues | ContactValues | TaskValues | DealValues | null {
-  const r =
-    type === "company"
-      ? companyValuesSchema.safeParse(raw)
-      : type === "contact"
-        ? contactValuesSchema.safeParse(raw)
-        : type === "deal"
-          ? dealValuesSchema.safeParse(raw)
-          : taskValuesSchema.safeParse(raw)
+type AnyValues = CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues
+
+export function parseItemValues(type: ItemType, raw: unknown): AnyValues | null {
+  const schema = {
+    company: companyValuesSchema,
+    contact: contactValuesSchema,
+    deal: dealValuesSchema,
+    task: taskValuesSchema,
+    update: updateValuesSchema,
+    link: linkValuesSchema,
+  }[type]
+  const r = schema.safeParse(raw)
   if (!r.success) return null
   if (type === "task" && (r.data as TaskValues).dueDate && !isLocalDateTime((r.data as TaskValues).dueDate)) return null
-  return r.data as CompanyValues | ContactValues | TaskValues | DealValues
+  return r.data as AnyValues
 }
 
 /** Href of a created / used record. */

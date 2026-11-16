@@ -3,7 +3,7 @@ import "server-only"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { sql } from "drizzle-orm"
-import { cleanEmail, cleanTelegram, cleanWebsite, phoneKey, type ChatDraftPart, type CompanyValues, type ContactValues, type TaskValues, type DealValues } from "@/lib/chat/actions"
+import { cleanEmail, cleanTelegram, cleanWebsite, phoneKey, type ChatDraftPart, type CompanyValues, type ContactValues, type TaskValues, type DealValues, type UpdateValues, type LinkValues } from "@/lib/chat/actions"
 import { resolveDueText } from "@/lib/chat/due-date"
 import { execRows } from "@/server/analytics-query"
 import { getOwnOrgContext } from "@/server/identity/own-org"
@@ -30,7 +30,7 @@ const card = (file: string) => {
   return c.expected
 }
 
-const items = (t: TurnResult) => t.drafts.flatMap((d) => d.draft.items)
+const items = (t: TurnResult) => t.drafts.filter((d) => d.status !== "cancelled").flatMap((d) => d.draft.items)
 const companies = (t: TurnResult) => items(t).filter((i) => i.type === "company").map((i) => i.values as CompanyValues)
 const contacts = (t: TurnResult) => items(t).filter((i) => i.type === "contact").map((i) => i.values as ContactValues)
 
@@ -76,7 +76,8 @@ function complete(t: TurnResult, e: CardExpected): string[] {
   return out
 }
 
-const oneCard = (t: TurnResult) => (t.drafts.length === 1 ? [] : [`expected ONE draft card, got ${t.drafts.length}`])
+const openDrafts = (t: TurnResult) => t.drafts.filter((d) => d.status !== "cancelled")
+const oneCard = (t: TurnResult) => (openDrafts(t).length === 1 ? [] : [`expected ONE draft card, got ${openDrafts(t).length}`])
 
 const cardCase = (id: string, file: string, question: string): EvalCase => ({
   id,
@@ -215,7 +216,9 @@ const tasks = (t: TurnResult) => items(t).filter((i) => i.type === "task").map((
 
 /** The task whose title matches `re` has the deadline the user's words mean (resolved by code in the org time zone). */
 function dueIs(list: TaskValues[], re: RegExp, words: string, ctx: { now: Date; timeZone: string }): string[] {
-  const t = list.find((x) => re.test(x.title) || re.test(x.description))
+  // Open tasks first, by title (a logged meeting may mention «КП» in its notes).
+  const open = list.filter((x) => !x.done)
+  const t = open.find((x) => re.test(x.title)) ?? open.find((x) => re.test(x.description)) ?? list.find((x) => re.test(x.title))
   if (!t) return [`no task like ${re}`]
   const want = resolveDueText(words, ctx.now, ctx.timeZone)
   return t.dueDate === want ? [] : [`task «${t.title}»: due ${t.dueDate || "—"}, expected ${want} («${words}»)`]
@@ -247,7 +250,7 @@ ACTION_CASES.push(
     check: async (t, ctx) => {
       const list = tasks(t)
       const out: string[] = []
-      if (t.drafts.length !== 1) out.push(`expected ONE card, got ${t.drafts.length}`)
+      if (openDrafts(t).length !== 1) out.push(`expected ONE card, got ${openDrafts(t).length}`)
       if (list.length !== 4) return [...out, `expected 4 tasks, got ${list.length}`]
       out.push(
         ...dueIs(list, /КП|предложени/i, "до пятницы", ctx),
@@ -329,7 +332,7 @@ ACTION_CASES.push(
     // Spec acceptance 4: a deal on «Вектор» with the amount from the voice note + the КП task by Friday, ONE card.
     check: async (t, ctx) => {
       const out: string[] = []
-      if (t.drafts.length !== 1) out.push(`expected ONE card, got ${t.drafts.length}`)
+      if (openDrafts(t).length !== 1) out.push(`expected ONE card, got ${openDrafts(t).length}`)
       const d = deals(t)[0]
       if (!d) return [...out, "no deal draft"]
       const v = d.values as DealValues
@@ -352,7 +355,7 @@ ACTION_CASES.push(
     // A NEW company → company card + deal on it + task on the deal, ONE card.
     check: async (t, ctx) => {
       const out: string[] = []
-      if (t.drafts.length !== 1) out.push(`expected ONE card, got ${t.drafts.length}`)
+      if (openDrafts(t).length !== 1) out.push(`expected ONE card, got ${openDrafts(t).length}`)
       const co = items(t).find((i) => i.type === "company")
       const d = deals(t)[0]
       if (!co) out.push("no company draft")
@@ -395,6 +398,123 @@ ACTION_CASES.push(
       const d = deals(t)[0]
       if (!d) return ["no deal draft"]
       return d.matches.some((m) => m.type === "deal") ? [] : ["the open deal of the company is not shown"]
+    },
+  },
+)
+
+// ── Questions, fill, links, logged meetings (T4) ──────────────────────
+
+/** A live contact of the org with a unique name and a company (+ that company's name). */
+async function uniqueContact(orgId: string): Promise<{ id: string; name: string; clientId: string; clientName: string } | null> {
+  const rows = await execRows<{ id: string; name: string; client_id: string; client_name: string }>(sql`
+    select p.id, p.name, p.client_id, c.name client_name from contact p join client c on c.id = p.client_id
+    where p.organization_id = ${orgId} and p.status = 'active' and p.merged_into_contact_id is null and c.status = 'active'
+      and length(p.name) > 5 and p.name ~ ' '
+      and (select count(*) from contact q where q.organization_id = ${orgId} and q.name = p.name) = 1
+      and (select count(*) from client c2 where c2.organization_id = ${orgId} and c2.name = c.name) = 1
+    order by p.created_at limit 1`)
+  const r = rows[0]
+  return r ? { id: r.id, name: r.name, clientId: r.client_id, clientName: r.client_name } : null
+}
+
+/** A live company with a unique name other than `notId`. */
+async function otherCompany(orgId: string, notId: string): Promise<{ id: string; name: string } | null> {
+  const rows = await execRows<{ id: string; name: string }>(sql`
+    select id, name from client c where organization_id = ${orgId} and status = 'active' and id <> ${notId} and length(name) > 3
+      and (select count(*) from client c2 where c2.organization_id = ${orgId} and c2.name = c.name) = 1
+    order by created_at limit 1`)
+  return rows[0] ?? null
+}
+
+ACTION_CASES.push(
+  {
+    id: "g01",
+    kind: "action",
+    question: "Создай задачу позвонить клиенту",
+    // Spec acceptance 6: no client, no date → a question with buttons (or a card that asks for the date) — never an invented date.
+    check: async (t) => {
+      const out: string[] = []
+      for (const x of tasks(t)) if (x.dueDate) out.push(`invented due date ${x.dueDate}`)
+      if (!t.questions.length && !tasks(t).some((x) => !x.dueDate)) out.push("no question asked")
+      if (t.questions.length > 2) out.push(`${t.questions.length} questions (max 2)`)
+      return out
+    },
+  },
+  {
+    id: "g02",
+    kind: "action",
+    question: "",
+    questionFn: async (ctx) => {
+      const c = await uniqueContact(ctx.orgId)
+      return c ? `У контакта ${c.name} новый мобильный: +7 912 000-77-66. Добавь его.` : "Добавь контакту Тест Тестов телефон +7 912 000-77-66"
+    },
+    // «Дополнить» an existing contact: an update card with the new phone; no new contact.
+    check: async (t, ctx) => {
+      const c = await uniqueContact(ctx.orgId)
+      if (!c) return []
+      const upd = items(t).find((i) => i.type === "update")
+      const out: string[] = []
+      if (items(t).some((i) => i.type === "contact")) out.push("a NEW contact was drafted instead of an update")
+      if (!upd) return [...out, "no update card"]
+      const v = upd.values as UpdateValues
+      if (v.targetId !== c.id) out.push(`update of «${v.targetName}», expected «${c.name}»`)
+      if (!v.changes.some((x) => phoneKey(x.value) === "79120007766")) out.push("the new phone is not in the changes")
+      return out
+    },
+  },
+  {
+    id: "g03",
+    kind: "action",
+    question: "",
+    questionFn: async (ctx) => {
+      const c = await uniqueContact(ctx.orgId)
+      const co = c ? await otherCompany(ctx.orgId, c.clientId) : null
+      return c && co ? `${c.name} теперь работает в компании ${co.name} — свяжи их` : "Свяжи контакт Тест Тестов с компанией Вектор"
+    },
+    check: async (t, ctx) => {
+      const c = await uniqueContact(ctx.orgId)
+      const co = c ? await otherCompany(ctx.orgId, c.clientId) : null
+      if (!c || !co) return []
+      const link = items(t).find((i) => i.type === "link")
+      if (!link) return ["no link card"]
+      const v = link.values as LinkValues
+      const out: string[] = []
+      if (v.contactId !== c.id) out.push(`link of «${v.contactName}», expected «${c.name}»`)
+      if (v.clientId !== co.id) out.push(`link to «${v.clientName}», expected «${co.name}»`)
+      if (!v.primary) out.push("«теперь работает» should make it the main company")
+      return out
+    },
+  },
+  {
+    id: "g04",
+    kind: "action",
+    question: "Запиши встречу: вчера в 15:00 встречался с представителями Вектора, обсудили поставку на следующий квартал",
+    // A logged meeting: a DONE task of type meet at yesterday 15:00 (org time).
+    check: async (t, ctx) => {
+      const list = tasks(t)
+      if (list.length !== 1) return [`expected 1 task, got ${list.length}`]
+      const x = list[0]
+      const out: string[] = []
+      if (!x.done) out.push("not marked as done")
+      if (x.type !== "meet") out.push(`type ${x.type}, expected meet`)
+      const want = resolveDueText("вчера в 15:00", ctx.now, ctx.timeZone, { past: true })
+      if (x.dueDate !== want) out.push(`date ${x.dueDate}, expected ${want}`)
+      return out
+    },
+  },
+  {
+    id: "g05",
+    kind: "action",
+    before: ["Создай задачу позвонить клиенту"],
+    question: "Вектору, завтра в 10:00",
+    // The answer to the question continues the card (the intent guard lets an answer to a question through).
+    check: async (t, ctx) => {
+      const list = tasks(t)
+      if (!list.length) return ["no task card after the answer"]
+      const out = dueIs(list, /./, "завтра в 10:00", ctx)
+      const vector = await clientIdOf(ctx.orgId, "Вектор")
+      if (vector && list[0].companyId !== vector) out.push("not linked to «Вектор»")
+      return out
     },
   },
 )

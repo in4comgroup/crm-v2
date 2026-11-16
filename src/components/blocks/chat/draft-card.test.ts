@@ -223,6 +223,7 @@ function task(v: Partial<TaskValues>): TaskValues {
     dealId: null,
     dealKey: null,
     dealName: "",
+    done: false,
     ...v,
   }
 }
@@ -352,5 +353,190 @@ describe("DraftCard — deals", () => {
     })
     expect(html).toContain("Сделка «Вектор — поставка»")
     expect(html).toContain('href="/deals?openDeal=dl-1"')
+  })
+})
+
+/** The <button …>…text part of the button with this text. */
+function buttonTag(html: string, text: string): string {
+  return new RegExp(`<button[^>]*>(?:(?!</button>).)*${text}`).exec(html)?.[0] ?? ""
+}
+
+describe("DraftCard — T4", () => {
+  test("contact exact match with fill: «Дополнить существующий» is offered, «Использовать» stays default", async () => {
+    const html = await render({
+      actionId: "act-5",
+      kind: "contact",
+      status: "draft",
+      draft: {
+        files: [],
+        items: [
+          {
+            key: "p1",
+            type: "contact",
+            values: {
+              name: "Алексей Смирнов",
+              nameNative: "",
+              position: "Директор",
+              emails: ["a.smirnov@vector.ru"],
+              phones: ["+7 912 345-67-89"],
+              telegram: "",
+              companyId: null,
+              companyKey: null,
+              companyName: "",
+            },
+            meta: {},
+            removed: [],
+            matches: [
+              {
+                kind: "exact",
+                type: "contact",
+                id: "ct-7",
+                title: "Алексей Смирнов",
+                subtitle: "Вектор",
+                reason: "совпадает телефон",
+                fill: [
+                  { field: "position", label: "Должность", value: "Директор" },
+                  { field: "extraEmail", label: "Доп. e-mail", value: "a.smirnov@vector.ru" },
+                ],
+              },
+            ],
+            missing: [],
+            refused: null,
+          },
+        ],
+      },
+    })
+    expect(html).toContain("Похоже, уже есть: Контакт «Алексей Смирнов» (Вектор) — совпадает телефон")
+    expect(html).toContain("Дополнить существующий")
+    expect(html).toContain("Добавится: Должность: ")
+    expect(html).toContain("Добавится: Доп. e-mail: ")
+    expect(html).toMatch(/aria-checked="true"[^>]*value="use:ct-7"/)
+    expect(html).toMatch(/aria-checked="false"[^>]*value="fill:ct-7"/)
+  })
+
+  test("update card: an unticked change is not counted; «Дополнить» enabled while one is left", async () => {
+    const part: ChatDraftPart = {
+      actionId: "act-6",
+      kind: "update",
+      status: "draft",
+      draft: {
+        files: [],
+        items: [
+          {
+            key: "u1",
+            type: "update",
+            values: {
+              targetType: "client",
+              targetId: "cl-9",
+              targetName: "Вектор",
+              changes: [
+                { field: "phone", label: "Телефон", value: "+7 343 000-11-22" },
+                { field: "alias", label: "Другое название", value: "Vector LLC" },
+              ],
+            },
+            meta: {},
+            removed: [],
+            matches: [],
+            missing: [],
+            refused: null,
+          },
+        ],
+      },
+    }
+    const html = await render(part)
+    expect(html).toContain("Дополнить запись")
+    expect(html).toContain('href="/clients/cl-9"')
+    expect(html).toContain("«Вектор»")
+    expect(html).toContain("+7 343 000-11-22")
+    expect(html).toContain("Vector LLC")
+    expect(buttonTag(html, "Дополнить<")).not.toContain('disabled=""')
+    // No change left → «Нечего добавлять», button disabled.
+    const empty = await render({
+      ...part,
+      draft: { ...part.draft, items: [{ ...part.draft.items[0], values: { targetType: "client", targetId: "cl-9", targetName: "Вектор", changes: [] } }] },
+    })
+    expect(empty).toContain("Нечего добавлять — всё уже есть в записи")
+    expect(buttonTag(empty, "Дополнить<")).toContain('disabled=""')
+  })
+
+  test("link card: contact → company with «основная», deal", async () => {
+    const html = await render({
+      actionId: "act-7",
+      kind: "link",
+      status: "draft",
+      draft: {
+        files: [],
+        items: [
+          {
+            key: "l1",
+            type: "link",
+            values: {
+              contactId: "ct-7",
+              contactName: "Алексей Смирнов",
+              clientId: "cl-9",
+              clientName: "Вектор",
+              primary: true,
+              dealId: "dl-1",
+              dealName: "Вектор — поставка",
+            },
+            meta: {},
+            removed: [],
+            matches: [],
+            missing: [],
+            refused: null,
+          },
+        ],
+      },
+    })
+    expect(html).toContain("Связать записи")
+    expect(html).toContain("Контакт:")
+    expect(html).toContain("Алексей Смирнов")
+    expect(html).toContain("→ Компания:")
+    expect(html).toContain("Сделать основной компанией контакта")
+    expect(html).toMatch(/aria-checked="true"[^>]*id="[^"]*-primary"/)
+    expect(html).toContain("→ Сделка:")
+    expect(buttonTag(html, "Связать<")).not.toContain('disabled=""')
+  })
+
+  test("done task: «Когда было», checkbox checked", async () => {
+    const html = await render({
+      actionId: "act-8",
+      kind: "task",
+      status: "draft",
+      options: { members: [{ id: "u1", name: "Анна Иванова" }], timeZone: "Europe/Vienna" },
+      draft: {
+        files: [],
+        items: [
+          {
+            key: "t1",
+            type: "task",
+            values: task({ title: "Встреча с Вектором", type: "meet", dueDate: "2026-11-10T11:00", assigneeId: "u1", assigneeName: "Анна Иванова", done: true }),
+            meta: {},
+            removed: [],
+            matches: [],
+            missing: [],
+            refused: null,
+          },
+        ],
+      },
+    })
+    expect(html).toContain("Когда было")
+    expect(html).not.toContain(">Срок<")
+    expect(html).toContain("Уже было (записать встречу / звонок)")
+    expect(html).toMatch(/aria-checked="true"[^>]*id="[^"]*-dueDate-done"/)
+    expect(buttonTag(html, "Создать<")).not.toContain('disabled=""')
+  })
+
+  test("result lines: updated / linked", async () => {
+    const html = await render({
+      ...draft(),
+      status: "created",
+      results: [
+        { type: "client", id: "cl-9", title: "Вектор", href: "/clients/cl-9", existing: true, updated: true },
+        { type: "contact", id: "ct-7", title: "Алексей Смирнов", href: "/contacts?openContact=ct-7", existing: true, linked: true },
+      ],
+    })
+    expect(html).toContain("Компания «Вектор» — дополнена")
+    expect(html).toContain("Контакт «Алексей Смирнов» — связан")
   })
 })

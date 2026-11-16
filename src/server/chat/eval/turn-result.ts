@@ -9,6 +9,7 @@ import {
   mergeRecordsParts,
   type ChatDebugPart,
   type ChatEvidencePart,
+  type ChatQuestionPart,
   type ChatRecordsPart,
   type ChatTurnPart,
 } from "@/lib/chat/turn"
@@ -34,6 +35,8 @@ export type TurnResult = {
   turn: ChatTurnPart | null
   /** Draft cards of the answer (ai-chat-tools T1), last version per card. */
   drafts: ChatDraftPart[]
+  /** Clarification questions of the answer (T4). */
+  questions: ChatQuestionPart[]
   ms: number
 }
 
@@ -83,13 +86,14 @@ export function turnResult(httpStatus: number, chunks: StreamChunk[], ms: number
     evidence: mergeEvidenceParts(data<ChatEvidencePart>("evidence")),
     turn: data<ChatTurnPart>("turn")[0] ?? null,
     drafts: [...new Map(data<ChatDraftPart>("draft").map((d) => [d.actionId, d])).values()],
+    questions: data<ChatQuestionPart>("question"),
     ms,
   }
 }
 
 // ── Checks every case gets (spec §9, §11, §12) ────────────────────────
 
-export const TOOL_NAMES = ["searchRecords", "listRecords", "getRecord", "readSource", "queryStats", "searchWeb", "draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals"]
+export const TOOL_NAMES = ["searchRecords", "listRecords", "getRecord", "readSource", "queryStats", "searchWeb", "draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals", "askUser", "draftUpdate", "draftLink"]
 
 /** Things a user must never see in the answer text. */
 export function leakProblems(answer: string): string[] {

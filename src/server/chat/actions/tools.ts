@@ -7,6 +7,9 @@ import {
   MISSING_LABELS,
   TASK_TYPES,
   buildInputIndex,
+  cleanText,
+  companyFill,
+  contactFill,
   groundCompany,
   groundContact,
   groundDeal,
@@ -27,18 +30,23 @@ import {
   type DealValues,
   type DraftMatch,
   type InputSources,
+  type LinkValues,
   type TaskValues,
+  type UpdateValues,
 } from "@/lib/chat/actions"
 import { dueLabel } from "@/lib/chat/due-date"
 import type { ChatAttachmentPart } from "@/lib/chat/files"
 import { companyMatchKey, personMatchKey } from "@/lib/translit-ru"
-import { statusForTool } from "@/lib/chat/turn"
+import { statusForTool, type ChatQuestionPart } from "@/lib/chat/turn"
 import { readChatAttachmentContents } from "@/server/chat/files"
 import type { RecordsContext } from "@/server/chat/records"
 import {
   checkCompany,
   checkContact,
   clientInOrg,
+  clientRow,
+  existingClient,
+  existingContact,
   contactById,
   dealInOrg,
   findClientByName,
@@ -52,7 +60,7 @@ import {
   type OrgIndex,
 } from "./checks"
 import { readTurnSignals, type TurnSignals } from "./signals"
-import { insertAction, updateActionDraft } from "./store"
+import { finishAction, insertAction, updateActionDraft } from "./store"
 
 // Draft tools of the AI chat (docs/specs/ai-chat-tools §7.2; T1 companies /
 // contacts, T2 tasks). They NEVER write a CRM record: they check the model's
@@ -106,6 +114,9 @@ function kindOf(items: DraftItem[]): ActionKind {
   const p = items.some((i) => i.type === "contact")
   const t = items.filter((i) => i.type === "task").length
   const d = items.some((i) => i.type === "deal")
+  const u = items.filter((i) => i.type === "update" || i.type === "link")
+  if (u.length && u.length === items.length) return items.every((i) => i.type === "update") ? "update" : items.every((i) => i.type === "link") ? "link" : "group"
+  if (u.length) return "group"
   if (d) return c || p || t ? "group" : "deal"
   if (t && (c || p)) return "group"
   if (t) return t > 1 ? "tasks" : "task"
@@ -154,6 +165,10 @@ const taskInput = z.object({
     .optional()
     .describe("The user's OWN words for the deadline, copied exactly («до пятницы», «завтра в 11:00», «20.11»). Omit when the input names no deadline."),
   dueDate: z.string().optional().describe("Your reading of dueText as YYYY-MM-DDTHH:MM in the org time zone (date only = 18:00)"),
+  done: z
+    .boolean()
+    .optional()
+    .describe("true = record a PAST meeting / call that already happened («встретился вчера с …», «запиши звонок»): dueText = when it happened"),
   assignee: z.string().optional().describe("Who does it, as written: «me» (мне / я / себе) or a person's name («Анне», «Петров»). Omit = the user."),
   companyRef: z.string().optional().describe("draftId of a company card of this answer, ref of an existing company, or its name"),
   contactRef: z.string().optional().describe("draftId of a contact card of this answer, ref of an existing contact, or the person's name"),
@@ -169,6 +184,7 @@ export function buildActionTools(turn: ActionTurn) {
   let membersP: Promise<Member[]> | undefined
   let dealOptionsP: Promise<DealOptions> | undefined
   let turnSignals: TurnSignals | null = null
+  let questions = 0
   const dealOptions = () => (dealOptionsP ??= loadDealOptions(turn.orgId))
   const sources = () => (sourcesP ??= loadSources(turn))
   const index = () => (indexP ??= loadOrgIndex(turn.orgId))
@@ -196,7 +212,8 @@ export function buildActionTools(turn: ActionTurn) {
     const i = turn.history.lastIndexOf(lastUser as UIMessage)
     return i > 0 ? turn.history[i - 1] : undefined
   })()
-  const followsDraft = !!prevAssistant?.parts.some((p) => p.type === "data-draft")
+  // An answer to a card or to a question of the previous answer counts as the user's request.
+  const followsDraft = !!prevAssistant?.parts.some((p) => p.type === "data-draft" || p.type === "data-question")
   const asked = !!lastUser && (followsDraft || userAsksForRecord(textOf(lastUser), attachmentIds(lastUser).length > 0))
   const NOT_ASKED = {
     error:
@@ -265,6 +282,13 @@ export function buildActionTools(turn: ActionTurn) {
   const nextKey = (into: ChatDraftPart | undefined, extra: DraftItem[], prefix: string) =>
     `${prefix}${[...(into?.draft.items ?? []), ...extra].filter((i) => i.key.startsWith(prefix)).length + 1}`
 
+  /** «d1» / «c1» / «p1» — an item key the model passes instead of a draftId → the draftId of the newest card with that item. */
+  const keyRef = (ref: string, type: DraftItem["type"]): string => {
+    if (!/^[cpdt]\d{1,2}$/i.test(ref)) return ref
+    const card = [...drafts.values()].reverse().find((p) => p.draft.items.some((i) => i.type === type && i.key === ref.toLowerCase()))
+    return card?.actionId ?? ref
+  }
+
   type CompanyRes =
     | { kind: "card"; part: ChatDraftPart; key: string; name: string }
     | { kind: "existing"; id: string; name: string }
@@ -272,6 +296,7 @@ export function buildActionTools(turn: ActionTurn) {
 
   /** draftId / same name of a card of this answer → existing (ref, then name) → the only company card of this answer. */
   async function resolveCompany(ref: string, idx: OrgIndex, allowOnlyCard: boolean): Promise<CompanyRes> {
+    ref = keyRef(ref, "company")
     const cards = cardsWith("company")
     const asCard = (p: ChatDraftPart): CompanyRes => {
       const c = firstOf(p, "company")
@@ -299,6 +324,7 @@ export function buildActionTools(turn: ActionTurn) {
 
   function resolveContact(ref: string, idx: OrgIndex): ContactRes {
     if (!ref) return { kind: "empty" }
+    ref = keyRef(ref, "contact")
     const cards = cardsWith("contact")
     const byDraft = drafts.get(ref)
     const card =
@@ -417,7 +443,7 @@ export function buildActionTools(turn: ActionTurn) {
       }
     }
 
-    const dealRef = (input.dealRef ?? "").trim()
+    const dealRef = keyRef((input.dealRef ?? "").trim(), "deal")
     // A deal card of this answer: by draftId, by name, or by an open deal it shows as a
     // match (the user picks «new» or «existing» there; the task follows the choice).
     const dealCard = dealRef
@@ -570,6 +596,19 @@ export function buildActionTools(turn: ActionTurn) {
               }
             }
             const chk = await checkContact(idx, v, turn.rctx)
+            // The same person drafted earlier in this answer as a stand-alone card
+            // (the model called draftContact before draftCompany): that card is
+            // replaced by this one — cancelled, so only ONE card stays open.
+            const pk = personMatchKey(v.name)
+            for (const p of [...drafts.values()]) {
+              if (p === into || p.status === "cancelled" || p.draft.items.length !== 1) continue
+              const only = p.draft.items[0]
+              if (only.type !== "contact" || !pk || personMatchKey(itemLabel(only)) !== pk) continue
+              const gone: ChatDraftPart = { ...p, status: "cancelled" }
+              await finishAction(p.actionId, { status: "cancelled" })
+              drafts.set(p.actionId, gone)
+              writePart(gone)
+            }
             const item: DraftItem = {
               key: nextKey(into, [], "p"),
               type: "contact",
@@ -581,6 +620,161 @@ export function buildActionTools(turn: ActionTurn) {
               refused: chk.refused,
             }
             return modelView(await saveDraft([item], into), note)
+          } catch (e) {
+            return failed(e)
+          }
+        }),
+    }),
+
+    askUser: tool({
+      description:
+        "Ask the user ONE short clarification question with up to 5 quick-reply buttons — only when a required value is missing or ambiguous (which company, which colleague, the deadline, is it this existing contact). Max 2 per answer. After it, stop and wait for the answer.",
+      inputSchema: z.object({
+        question: z.string().max(300).describe("The question in Russian, short"),
+        options: z.array(z.string().max(80)).max(5).optional().describe("Quick replies, e.g. company names; omit for a free answer"),
+      }),
+      execute: async (input) => {
+        if (questions >= 2) return { error: "Не больше двух вопросов за ответ — подожди ответа пользователя." }
+        questions++
+        status("askUser", input)
+        const part: ChatQuestionPart = {
+          id: crypto.randomUUID(),
+          question: cleanText(input.question, 300),
+          // Plain words on the buttons: id / ref fragments the model may add are cut («Анна (a2573ad1…)» → «Анна»).
+          options: [
+            ...new Set(
+              (input.options ?? [])
+                .map((o) => cleanText(o, 80).replace(/\s*\(?\b[0-9a-f]{6,}[0-9a-f-]*(\.{2,}|…)?\)?/gi, "").trim())
+                .filter(Boolean),
+            ),
+          ].slice(0, 5),
+          allowFreeText: true,
+        }
+        turn.writer.write({ type: "data-question", id: part.id, data: part } as Parameters<UIMessageStreamWriter["write"]>[0])
+        return { shownToUser: true, note: "Вопрос с кнопками показан. Не повторяй его текстом; закончи ответ и жди ответа пользователя." }
+      },
+    }),
+
+    draftUpdate: tool({
+      description:
+        "Prepare a card that ADDS data to an EXISTING company or contact («добавь Петрову новый телефон …», «у Вектора новый сайт …»). Only empty fields, new extra phones / e-mails, a new Telegram or a new company name are added — nothing is overwritten. " +
+        "ref = the record's ref (find it with searchRecords first). Values must be in the user's input. Returns draftId and status.",
+      inputSchema: z.object({
+        type: z.enum(["client", "contact"]),
+        ref: z.string().describe("ref of the existing company / contact"),
+        phones: z.array(z.string()).max(5).optional(),
+        emails: z.array(z.string()).max(5).optional(),
+        telegram: z.string().optional(),
+        position: z.string().optional(),
+        nameNative: z.string().optional(),
+        website: z.string().optional(),
+        address: z.string().optional(),
+        aliases: z.array(z.string()).max(5).optional().describe("Other names of the company"),
+      }),
+      execute: (input) =>
+        serial(async () => {
+          if (!asked) return NOT_ASKED
+          if (tooMany()) return LIMIT
+          count++
+          status("draftUpdate", input)
+          try {
+            const idx = await index()
+            const src = await sources()
+            let item: DraftItem
+            if (input.type === "client") {
+              const c = clientRow(idx, input.ref.trim())
+              if (!c || c.status === "deleted" || c.status === "blocked") return { error: "Компания не найдена — найди её через searchRecords и передай ref." }
+              const g = groundCompany({ name: c.name, website: input.website, address: input.address, aliases: input.aliases }, src)
+              // The company name itself is the record's, not the input's.
+              g.removed = g.removed.filter((r) => r.field !== "name")
+              const changes = companyFill(existingClient(c), { ...g.values, name: c.name })
+              item = {
+                key: "u1",
+                type: "update",
+                values: { targetType: "client", targetId: c.id, targetName: c.name, changes } satisfies UpdateValues,
+                meta: {},
+                removed: g.removed,
+                matches: [],
+                missing: [],
+                refused: null,
+              }
+            } else {
+              const c = contactById(idx, input.ref.trim())
+              if (!c) return { error: "Контакт не найден — найди его через searchRecords и передай ref." }
+              const g = groundContact(
+                { name: c.name, nameNative: input.nameNative, position: input.position, emails: input.emails, phones: input.phones, telegram: input.telegram },
+                src,
+              )
+              g.removed = g.removed.filter((r) => r.field !== "name")
+              const own = await checkContact(idx, { ...g.values, name: "" }, null)
+              if (own.refused) return { error: own.refused }
+              const changes = contactFill(existingContact(idx, c), g.values)
+              item = {
+                key: "u1",
+                type: "update",
+                values: { targetType: "contact", targetId: c.id, targetName: c.name, changes } satisfies UpdateValues,
+                meta: {},
+                removed: g.removed,
+                matches: [],
+                missing: [],
+                refused: null,
+              }
+            }
+            item.missing = missingFields(item)
+            return modelView(await saveDraft([item]), (item.values as UpdateValues).changes.length ? undefined : "Добавлять нечего: эти данные уже есть в записи (или их нет в сообщении).")
+          } catch (e) {
+            return failed(e)
+          }
+        }),
+    }),
+
+    draftLink: tool({
+      description:
+        "Prepare a card that LINKS an existing contact to an existing company (works there; primary = it becomes the main company) and / or to an existing deal. refs come from searchRecords. Returns draftId and status.",
+      inputSchema: z.object({
+        contactRef: z.string(),
+        companyRef: z.string().optional(),
+        primary: z.boolean().optional().describe("true when the person moved to this company («теперь работает в …»)"),
+        dealRef: z.string().optional(),
+      }),
+      execute: (input) =>
+        serial(async () => {
+          if (!asked) return NOT_ASKED
+          if (tooMany()) return LIMIT
+          count++
+          status("draftLink", input)
+          try {
+            const idx = await index()
+            const ct = resolveContact(input.contactRef.trim(), idx)
+            const v: LinkValues = { contactId: null, contactName: "", clientId: null, clientName: "", primary: input.primary === true, dealId: null, dealName: "" }
+            const notes: string[] = []
+            if (ct.kind === "existing") {
+              v.contactId = ct.id
+              v.contactName = ct.name
+            } else notes.push(`Контакт «${input.contactRef}» не найден в CRM (или их несколько) — уточни у пользователя.`)
+            if (input.companyRef?.trim()) {
+              const co = await resolveCompany(input.companyRef.trim(), idx, false)
+              if (co.kind === "existing") {
+                v.clientId = co.id
+                v.clientName = co.name
+                const cur = ct.kind === "existing" ? ct.clientId : null
+                if (cur === co.id) notes.push("Контакт уже связан с этой компанией.")
+                if (!cur) v.primary = true
+              } else notes.push(`Компания «${input.companyRef}» не найдена в CRM — уточни у пользователя.`)
+            }
+            if (input.dealRef?.trim()) {
+              const d = await dealInOrg(turn.orgId, input.dealRef.trim())
+              const live = d && d.status === "active" ? d : null
+              const byName = live ? null : await findDealByName(turn.orgId, input.dealRef.trim())
+              const deal = live ?? (byName && byName !== "many" ? byName : null)
+              if (deal) {
+                v.dealId = deal.id
+                v.dealName = deal.name
+              } else notes.push(`Сделка «${input.dealRef}» не найдена.`)
+            }
+            const item: DraftItem = { key: "l1", type: "link", values: v, meta: {}, removed: [], matches: [], missing: [], refused: null }
+            item.missing = missingFields(item)
+            return modelView(await saveDraft([item]), notes.join(" ") || undefined)
           } catch (e) {
             return failed(e)
           }
@@ -839,7 +1033,7 @@ export function buildActionTools(turn: ActionTurn) {
   }
 }
 
-export const ACTION_TOOLS = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals"])
+export const ACTION_TOOLS = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals", "askUser", "draftUpdate", "draftLink"])
 
 function unlinkKeys(item: DraftItem) {
   const v = item.values as TaskValues

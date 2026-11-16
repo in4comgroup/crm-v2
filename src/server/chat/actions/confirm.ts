@@ -26,6 +26,13 @@ import {
   type ContactValues,
   type DealValues,
   type DraftItem,
+  type ExistingClient,
+  type ExistingContact,
+  type FillChange,
+  type LinkValues,
+  type UpdateValues,
+  companyFill,
+  contactFill,
   type DraftMatch,
   type TaskValues,
 } from "@/lib/chat/actions"
@@ -34,12 +41,26 @@ import { createClient, updateClient } from "@/server/clients"
 import { createContact, updateContact } from "@/server/contacts"
 import { createTask } from "@/server/tasks"
 import { createDeal, updateDeal } from "@/server/deals"
-import { dealActivity } from "@/db/schema"
+import { dealActivity, dealContact } from "@/db/schema"
 import { and, eq, isNull } from "drizzle-orm"
+import { applyLinkAction } from "@/server/contact-links"
 import { loadRecordsContext } from "@/server/chat/records"
 import { localToUtc } from "@/lib/chat/due-date"
 import { addDocumentLink } from "@/server/documents"
-import { checkCompany, checkContact, clientInOrg, contactsInOrg, dealInOrg, loadDealOptions, loadOrgIndex, loadOrgMembers, openDealsOfClient } from "./checks"
+import {
+  checkCompany,
+  checkContact,
+  clientInOrg,
+  clientRow,
+  contactsInOrg,
+  dealInOrg,
+  existingClient,
+  existingContact,
+  loadDealOptions,
+  loadOrgIndex,
+  loadOrgMembers,
+  openDealsOfClient,
+} from "./checks"
 import { actionPart, claimAction, createdLastHour, finishAction, loadAction, syncActionMessage, type ActionRow } from "./store"
 
 // Confirm of a chat draft (docs/specs/ai-chat-tools §7.4). Runs in the
@@ -96,9 +117,9 @@ export async function cancelChatAction(orgId: string, userId: string, id: string
 
 const labelOf = (i: DraftItem) => `${ITEM_TYPE_WORDS[i.type]} «${itemLabel(i)}»`
 
-type Planned = { item: DraftItem; values: CompanyValues | ContactValues | TaskValues | DealValues; decision: string; existingId?: string }
+type Planned = { item: DraftItem; values: CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues; decision: string; existingId?: string }
 
-const ORDER: Record<DraftItem["type"], number> = { company: 0, contact: 1, deal: 2, task: 3 }
+const ORDER: Record<DraftItem["type"], number> = { company: 0, contact: 1, deal: 2, task: 3, update: 4, link: 5 }
 
 export async function confirmChatAction(orgId: string, userId: string, input: ConfirmActionInput): Promise<ChatDraftPart> {
   const r = await loadAction(orgId, userId, input.actionId)
@@ -123,7 +144,7 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
   // A contact whose company of this card is NOT created / used has no company.
   const plannedKeys = new Set(plan.map((p) => p.item.key))
   for (const p of plan) {
-    if (p.item.type === "company") continue
+    if (p.item.type === "company" || p.item.type === "update" || p.item.type === "link") continue
     const v = p.values as ContactValues | TaskValues | DealValues
     if (v.companyKey && !plannedKeys.has(v.companyKey)) {
       v.companyKey = null
@@ -153,10 +174,11 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
     if (p.item.type !== "task") continue
     const at = localToUtc((p.values as TaskValues).dueDate, timeZone)
     if (!at) throw new ChatActionError(`${labelOf(p.item)}: ${MISSING_LABELS.dueDate}`, 400)
-    if (at.getTime() < Date.now() - 60_000) throw new ChatActionError(`${labelOf(p.item)}: срок в прошлом`, 400)
+    // A logged meeting / call (T4) happened in the past — that is its point.
+    if (!(p.values as TaskValues).done && at.getTime() < Date.now() - 60_000) throw new ChatActionError(`${labelOf(p.item)}: срок в прошлом`, 400)
   }
   for (const p of plan) {
-    if (p.decision === "use_existing" || p.decision === "restore") continue
+    if (p.decision === "use_existing" || p.decision === "restore" || p.decision === "fill_existing") continue
     const miss = missingFields({ type: p.item.type, values: p.values })
     if (miss.length) throw new ChatActionError(`${labelOf(p.item)}: ${miss.map((m) => MISSING_LABELS[m] ?? m).join("; ")}`, 400)
   }
@@ -181,7 +203,7 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
   let duplicate: string | null = null
   for (const item of draft.items) {
     const p = plan.find((x) => x.item.key === item.key)
-    if (!p || item.type === "task") {
+    if (!p || item.type === "task" || item.type === "update" || item.type === "link") {
       fresh.push(p ? { ...item, values: p.values } : item)
       continue
     }
@@ -237,7 +259,48 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
 
   for (const p of plan) {
     try {
-      if (p.item.type === "company") {
+      if ((p.item.type === "company" || p.item.type === "contact") && p.decision === "fill_existing") {
+        // «Дополнить существующий» (T4): only what is still empty / new at this moment.
+        if (!allowed(p.item, p.existingId, ["exact"])) throw new Error("запись не из списка совпадений")
+        const targetType = p.item.type === "company" ? "client" : "contact"
+        const done = await applyFill(orgId, userId, targetType, p.existingId!, (cur) =>
+          targetType === "client" ? companyFill(cur as ExistingClient, p.values as CompanyValues) : contactFill(cur as ExistingContact, p.values as ContactValues),
+        )
+        byItem.set(p.item.key, { id: done.id, name: done.name })
+        results.push({ type: targetType, id: done.id, title: done.name, href: actionResultHref(targetType, done.id), existing: true, updated: done.changed > 0 })
+      } else if (p.item.type === "update") {
+        const v = p.values as UpdateValues
+        const draftItem = draft.items.find((i) => i.key === p.item.key)!.values as UpdateValues
+        if (v.targetId !== draftItem.targetId || v.targetType !== draftItem.targetType) throw new Error("другая запись")
+        // Only changes of the draft (the user may untick some); re-checked against the record now.
+        const allowedValues = new Set(draftItem.changes.map((c) => `${c.field}\u0000${c.value}`))
+        const chosen = v.changes.filter((c) => allowedValues.has(`${c.field}\u0000${c.value}`))
+        const done = await applyFill(orgId, userId, v.targetType, v.targetId, (cur) => stillApplicable(v.targetType, cur, chosen))
+        results.push({ type: v.targetType, id: done.id, title: done.name, href: actionResultHref(v.targetType, done.id), existing: true, updated: done.changed > 0 })
+      } else if (p.item.type === "link") {
+        const v = p.values as LinkValues
+        const d0 = draft.items.find((i) => i.key === p.item.key)!.values as LinkValues
+        if (v.contactId !== d0.contactId || (v.clientId && v.clientId !== d0.clientId) || (v.dealId && v.dealId !== d0.dealId)) throw new Error("другая запись")
+        const [c] = await contactsInOrg(orgId, [v.contactId!])
+        if (!c || c.status === "deleted" || c.status === "blocked") throw new Error("контакт не найден")
+        if (v.clientId) {
+          const cl = await clientInOrg(orgId, v.clientId)
+          if (!cl || cl.status === "deleted" || cl.status === "blocked") throw new Error("компания не найдена")
+          await applyLinkAction(orgId, c.id, { action: "add", clientId: cl.id, primary: v.primary }, userId).catch(async (e) => {
+            // Already a current company of the contact → only the «main company» choice.
+            if (!/уже связан/i.test(e instanceof Error ? e.message : "")) throw e
+            if (v.primary) await applyLinkAction(orgId, c.id, { action: "primary", clientId: cl.id }, userId)
+          })
+        }
+        if (v.dealId) {
+          const d = await dealInOrg(orgId, v.dealId)
+          if (!d || d.status !== "active") throw new Error("сделка не найдена")
+          const cur = await db.select({ contactId: dealContact.contactId }).from(dealContact).where(eq(dealContact.dealId, d.id))
+          const ids = [...new Set([...cur.map((x) => x.contactId), c.id])]
+          if (ids.length !== cur.length) await updateDeal(d.id, { contactIds: ids })
+        }
+        results.push({ type: "contact", id: c.id, title: c.name, href: actionResultHref("contact", c.id), existing: true, linked: true })
+      } else if (p.item.type === "company") {
         const v = p.values as CompanyValues
         if (p.decision === "use_existing") {
           if (!allowed(p.item, p.existingId, ["exact", "similar"])) throw new Error("запись не из списка совпадений")
@@ -382,6 +445,7 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
           contactId,
           dealId: v.dealKey ? (byItem.get(v.dealKey)?.id ?? null) : v.dealId,
           dueDate: localToUtc(v.dueDate, timeZone)!.toISOString(),
+          ...(v.done ? { status: "done" as const } : {}),
         })
         results.push({ type: "task", id, title: v.title, href: actionResultHref("task", id) })
       }
@@ -424,3 +488,90 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
   return withOptions(orgId, userId, actionPart(next))
 }
 
+// ── «Дополнить» (T4, Q3: never overwrite) ─────────────────────────────
+
+/** Re-check chosen changes against the record NOW: a field filled meanwhile is skipped. */
+function stillApplicable(type: "client" | "contact", cur: ExistingClient | ExistingContact, chosen: FillChange[]): FillChange[] {
+  if (type === "client") {
+    const c = cur as ExistingClient
+    const v: Partial<CompanyValues> = { name: c.name, aliases: [] }
+    for (const x of chosen) {
+      if (x.field === "phone") v.phone = x.value
+      else if (x.field === "email") v.email = x.value
+      else if (x.field === "website") v.website = x.value
+      else if (x.field === "address") v.address = x.value
+      else if (x.field === "alias") v.aliases!.push(x.value)
+    }
+    return companyFill(c, v)
+  }
+  const c = cur as ExistingContact
+  const v: Partial<ContactValues> = { emails: [], phones: [] }
+  for (const x of chosen) {
+    if (x.field === "email" || x.field === "extraEmail") v.emails!.push(x.value)
+    else if (x.field === "phone" || x.field === "extraPhone") v.phones!.push(x.value)
+    else if (x.field === "position") v.position = x.value
+    else if (x.field === "nameNative") v.nameNative = x.value
+    else if (x.field === "telegram") v.telegram = x.value
+  }
+  return contactFill(c, v)
+}
+
+/**
+ * Apply «Дополнить» to an existing company / contact through the UI's own
+ * functions (`updateClient` / `updateContact`, extra addresses via the
+ * contact-link rules). `changesFor` gets the CURRENT record, so a field filled
+ * since the draft is never overwritten.
+ */
+async function applyFill(
+  orgId: string,
+  userId: string,
+  type: "client" | "contact",
+  id: string,
+  changesFor: (cur: ExistingClient | ExistingContact) => FillChange[],
+): Promise<{ id: string; name: string; changed: number }> {
+  const idx = await loadOrgIndex(orgId)
+  if (type === "client") {
+    const row = clientRow(idx, id)
+    if (!row || row.status === "deleted" || row.status === "blocked") throw new Error("компания не найдена")
+    const cur = existingClient(row)
+    const changes = changesFor(cur)
+    if (!changes.length) return { id, name: row.name, changed: 0 }
+    const patch: Parameters<typeof updateClient>[1] = {}
+    const aliases = [...cur.aliases]
+    for (const c of changes) {
+      if (c.field === "phone") patch.phone = c.value
+      else if (c.field === "email") patch.email = c.value
+      else if (c.field === "website") patch.webUrl = `https://${c.value}`
+      else if (c.field === "address") patch.address = c.value
+      else if (c.field === "alias") aliases.push(c.value)
+    }
+    if (aliases.length !== cur.aliases.length) patch.aliases = aliases
+    await updateClient(id, patch)
+    return { id, name: row.name, changed: changes.length }
+  }
+  const row = idx.contacts.find((c) => c.id === id)
+  if (!row || row.status === "deleted" || row.status === "blocked") throw new Error("контакт не найден")
+  const cur = existingContact(idx, row)
+  const changes = changesFor(cur)
+  if (!changes.length) return { id, name: row.name, changed: 0 }
+  const patch: Parameters<typeof updateContact>[1] = {}
+  const aliases = [...cur.aliases]
+  for (const c of changes) {
+    if (c.field === "phone") patch.phone = c.value
+    else if (c.field === "email") patch.email = c.value
+    else if (c.field === "position") patch.position = c.value
+    else if (c.field === "nameNative") patch.nameNative = c.value
+    else if (c.field === "telegram") aliases.push(`@${c.value}`)
+  }
+  if (aliases.length !== cur.aliases.length) patch.aliases = aliases
+  if (Object.keys(patch).length) await updateContact(id, patch)
+  for (const c of changes) {
+    if (c.field !== "extraPhone" && c.field !== "extraEmail") continue
+    await applyLinkAction(orgId, id, { action: "addAddress", kind: c.field === "extraPhone" ? "phone" : "email", value: c.value, clientId: row.clientId }, userId).catch(
+      (e) => {
+        if (!/уже/i.test(e instanceof Error ? e.message : "")) throw e
+      },
+    )
+  }
+  return { id, name: row.name, changed: changes.length }
+}

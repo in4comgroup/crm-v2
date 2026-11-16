@@ -41,7 +41,7 @@ export const EMPTY_ANSWER_FALLBACK =
 export const STATUS_WRITING: ChatStatus = { stage: "writing", label: "Готовлю ответ…" }
 
 /** Draft tools (ai-chat-tools): a turn that names a card must have called one. */
-export const DRAFT_TOOL_NAMES = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal"])
+export const DRAFT_TOOL_NAMES = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "draftUpdate", "draftLink"])
 
 /** «Подготовил карточку / задачи / список задач …» — the answer says a card is there. */
 export function claimsDraft(text: string): boolean {
@@ -82,6 +82,12 @@ export function statusForTool(tool: string, input: unknown, title?: string | nul
       return { stage: "draft", label: str(i.name) ? `Проверяю, нет ли компании «${cut(str(i.name), 40)}»…` : "Готовлю карточку компании…" }
     case "draftDeal":
       return { stage: "draft", label: str(i.name) ? `Готовлю сделку «${cut(str(i.name), 40)}»…` : "Готовлю сделку…" }
+    case "askUser":
+      return { stage: "draft", label: "Готовлю вопрос…" }
+    case "draftUpdate":
+      return { stage: "draft", label: "Проверяю, что можно дополнить…" }
+    case "draftLink":
+      return { stage: "draft", label: "Готовлю связь записей…" }
     case "readSignals":
       return { stage: "draft", label: "Проверяю сигналы и правила воронки…" }
     case "draftTask":
@@ -144,6 +150,18 @@ export type ChatDataParts = {
   draft: ChatDraftPart
   /** What a confirmed draft created (added to the assistant message after confirm). */
   "action-result": ChatActionResultPart
+  /** A clarification question with quick replies (ai-chat-tools §12, T4). */
+  question: ChatQuestionPart
+}
+
+/** `data-question` (id = question id): a click on an option sends it as the user's next message. */
+export type ChatQuestionPart = {
+  id: string
+  question: string
+  /** ≤ 5 quick replies, e.g. «Вектор (Екатеринбург)», «Вектор-Плюс». */
+  options: string[]
+  /** Free text in the input also answers (always true today). */
+  allowFreeText: boolean
 }
 
 type AnyPart = { type: string; data?: unknown }

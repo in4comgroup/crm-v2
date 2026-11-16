@@ -40,10 +40,13 @@ import {
   type DraftItem,
   type DraftMatch,
   type FieldMeta,
+  type FillChange,
   type ItemDecision,
   type ItemType,
+  type LinkValues,
   type RemovedValue,
   type TaskValues,
+  type UpdateValues,
 } from "@/lib/chat/actions"
 import { dueLabel, isLocalDateTime } from "@/lib/chat/due-date"
 import { TASK_PRIORITY_LABELS, TASK_TYPE_LABELS } from "@/lib/task-labels"
@@ -82,8 +85,13 @@ type TaskForm = { kind: "task" } & TaskValues
 
 type DealForm = { kind: "deal" } & DealValues
 
-type FormValues = CompanyForm | ContactForm | TaskForm | DealForm
-type FormPatch = Record<string, string | string[] | null>
+/** «Дополнить запись»: the proposed changes + the indexes the user unticked. */
+type UpdateForm = { kind: "update"; skipped: number[] } & UpdateValues
+
+type LinkForm = { kind: "link" } & LinkValues
+
+type FormValues = CompanyForm | ContactForm | TaskForm | DealForm | UpdateForm | LinkForm
+type FormPatch = Record<string, string | string[] | number[] | boolean | null>
 
 type Control =
   | "text"
@@ -144,14 +152,17 @@ const DEAL_FIELDS: FieldDef[] = [
   { field: "description", label: DEAL_FIELD_LABELS.description, control: "multiline", wide: true },
 ]
 
+// «Дополнить» / «Связать» items have no editable fields (own blocks below).
 const FIELDS: Record<ItemType, FieldDef[]> = {
   company: COMPANY_FIELDS,
   contact: CONTACT_FIELDS,
   deal: DEAL_FIELDS,
   task: TASK_FIELDS,
+  update: [],
+  link: [],
 }
 
-const ITEM_ORDER: Record<ItemType, number> = { company: 0, contact: 1, deal: 2, task: 3 }
+const ITEM_ORDER: Record<ItemType, number> = { company: 0, contact: 1, deal: 2, task: 3, update: 4, link: 5 }
 
 /** Deal currencies; "" = the company's currency. */
 const CURRENCY_OPTIONS: { value: string; label: string }[] = [
@@ -217,6 +228,30 @@ function toForm(item: DraftItem): FormValues {
       ruleNote: v.ruleNote ?? "",
     }
   }
+  if (item.type === "update") {
+    const v = item.values as UpdateValues
+    return {
+      kind: "update",
+      targetType: v.targetType,
+      targetId: v.targetId,
+      targetName: v.targetName ?? "",
+      changes: v.changes ?? [],
+      skipped: [],
+    }
+  }
+  if (item.type === "link") {
+    const v = item.values as LinkValues
+    return {
+      kind: "link",
+      contactId: v.contactId ?? null,
+      contactName: v.contactName ?? "",
+      clientId: v.clientId ?? null,
+      clientName: v.clientName ?? "",
+      primary: v.primary ?? false,
+      dealId: v.dealId ?? null,
+      dealName: v.dealName ?? "",
+    }
+  }
   const v = item.values as TaskValues
   return {
     kind: "task",
@@ -237,6 +272,7 @@ function toForm(item: DraftItem): FormValues {
     dealId: v.dealId ?? null,
     dealKey: v.dealKey ?? null,
     dealName: v.dealName ?? "",
+    done: v.done ?? false,
   }
 }
 
@@ -248,7 +284,23 @@ function splitList(s: string): string[] {
 }
 
 /** Form → the values sent to `POST /api/chat/actions`. */
-function toValues(form: FormValues): CompanyValues | ContactValues | TaskValues | DealValues {
+function toValues(
+  form: FormValues,
+): CompanyValues | ContactValues | TaskValues | DealValues | UpdateValues | LinkValues {
+  if (form.kind === "update") {
+    return {
+      targetType: form.targetType,
+      targetId: form.targetId,
+      targetName: form.targetName,
+      // Unticked changes are not sent.
+      changes: form.changes.filter((_, i) => !form.skipped.includes(i)),
+    }
+  }
+  if (form.kind === "link") {
+    const { kind: _link, ...link } = form
+    void _link
+    return link
+  }
   if (form.kind === "company") {
     return {
       name: form.name.trim(),
@@ -302,12 +354,22 @@ function fieldText(form: FormValues, field: string): string {
 
 /** Name of a company / contact / deal, title of a task — from the edited form. */
 function formLabel(form: FormValues): string {
-  return (form.kind === "task" ? form.title : form.name).trim()
+  if (form.kind === "task") return form.title.trim()
+  if (form.kind === "update") return form.targetName.trim()
+  if (form.kind === "link") return form.contactName.trim()
+  return form.name.trim()
 }
 
 // ── Duplicate choice (§8.3) ─────────────────────────────────────────────
 
-type ChoiceOption = { value: string; label: string; decision: ItemDecision; existingId?: string }
+type ChoiceOption = {
+  value: string
+  label: string
+  decision: ItemDecision
+  existingId?: string
+  /** «Дополнить существующий»: what would be added. */
+  fill?: FillChange[]
+}
 
 const MATCH_TYPE_LABELS: Record<DraftMatch["type"], string> = { client: "Компания", contact: "Контакт", deal: "Сделка" }
 const RESULT_TYPE_LABELS: Record<ActionResult["type"], string> = {
@@ -346,6 +408,16 @@ function choiceOptions(item: DraftItem): ChoiceOption[] {
       decision: "use_existing",
       existingId: m.id,
     })
+    // T4: opt-in «Дополнить существующий» when the record lacks some of the values.
+    if (m.fill?.length) {
+      out.push({
+        value: `fill:${m.id}`,
+        label: exact.length === 1 ? "Дополнить существующий" : `Дополнить ${matchName(m)}`,
+        decision: "fill_existing",
+        existingId: m.id,
+        fill: m.fill,
+      })
+    }
   }
   for (const m of deleted) {
     out.push({
@@ -419,6 +491,9 @@ function FieldRow({
 }) {
   const value = fieldText(form, def.field)
   const hint = value.trim() ? sourceHint(meta) : null
+  // «Уже было»: the due field is when the meeting / call happened (may be in the past).
+  const done = form.kind === "task" && form.done
+  const label = def.control === "due" && done ? "Когда было" : def.label
   let control: ReactNode
   let below: ReactNode = null
   switch (def.control) {
@@ -501,10 +576,24 @@ function FieldRow({
         />
       )
       below = (
-        <p className="text-muted-foreground text-[10px]">
-          {isLocalDateTime(value) && <span>{dueLabel(value)} · </span>}
-          {options?.timeZone ? `время организации: ${options.timeZone}` : "время организации"}
-        </p>
+        <>
+          <p className="text-muted-foreground text-[10px]">
+            {isLocalDateTime(value) && <span>{dueLabel(value)} · </span>}
+            {options?.timeZone ? `время организации: ${options.timeZone}` : "время организации"}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <Checkbox
+              id={`${id}-done`}
+              checked={done}
+              disabled={disabled}
+              onCheckedChange={(v) => onChange({ done: v === true })}
+              className="size-3.5"
+            />
+            <label htmlFor={`${id}-done`} className="text-[11px]">
+              Уже было (записать встречу / звонок)
+            </label>
+          </div>
+        </>
       )
       break
     case "assignee": {
@@ -632,7 +721,7 @@ function FieldRow({
     <div className="grid gap-0.5">
       <div className="flex items-baseline justify-between gap-2">
         <label htmlFor={id} className="text-muted-foreground text-[11px]">
-          {def.label}
+          {label}
         </label>
         {hint && <span className="text-muted-foreground/80 text-[10px]">{hint}</span>}
       </div>
@@ -680,6 +769,105 @@ function LinkLine({
       )}
     </p>
   )
+}
+
+/** «Дополнить запись»: the target record + one checkbox per change. */
+function UpdateBlock({
+  form,
+  idPrefix,
+  disabled,
+  onToggle,
+}: {
+  form: UpdateForm
+  idPrefix: string
+  disabled: boolean
+  onToggle: (index: number, on: boolean) => void
+}) {
+  const e = encodeURIComponent(form.targetId)
+  const href = form.targetType === "client" ? `/clients/${e}` : `/contacts?openContact=${e}`
+  return (
+    <div className="space-y-1 text-xs">
+      <p>
+        {form.targetType === "client" ? "Компания" : "Контакт"}{" "}
+        <Link href={href} className="underline underline-offset-2">
+          «{form.targetName || "без названия"}»
+        </Link>
+      </p>
+      {form.changes.length > 0 && (
+        <ul className="space-y-1">
+          {form.changes.map((c, i) => {
+            const cid = `${idPrefix}-change-${i}`
+            return (
+              <li key={`${c.field}-${i}`} className="flex items-center gap-2">
+                <Checkbox
+                  id={cid}
+                  checked={!form.skipped.includes(i)}
+                  disabled={disabled}
+                  onCheckedChange={(v) => onToggle(i, v === true)}
+                  className="size-3.5"
+                />
+                <label htmlFor={cid}>
+                  <span className="text-muted-foreground">{c.label}:</span> {c.value}
+                </label>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** «Связать записи»: contact → company (+ «основная») and / or deal; read-only. */
+function LinkBlock({
+  form,
+  idPrefix,
+  disabled,
+  onPrimary,
+}: {
+  form: LinkForm
+  idPrefix: string
+  disabled: boolean
+  onPrimary: (on: boolean) => void
+}) {
+  return (
+    <div className="space-y-1 text-xs">
+      {form.contactId && (
+        <p>
+          <span className="text-muted-foreground">Контакт:</span> {form.contactName || "без имени"}
+        </p>
+      )}
+      {form.clientId && (
+        <>
+          <p>
+            <span className="text-muted-foreground">→ Компания:</span> {form.clientName || "без названия"}
+          </p>
+          <div className="flex items-center gap-2 pl-3">
+            <Checkbox
+              id={`${idPrefix}-primary`}
+              checked={form.primary}
+              disabled={disabled}
+              onCheckedChange={(v) => onPrimary(v === true)}
+              className="size-3.5"
+            />
+            <label htmlFor={`${idPrefix}-primary`}>Сделать основной компанией контакта</label>
+          </div>
+        </>
+      )}
+      {form.dealId && (
+        <p>
+          <span className="text-muted-foreground">→ Сделка:</span> {form.dealName || "без названия"}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Main button text by what the included items do. */
+function submitLabel(types: ItemType[]): string {
+  if (types.length > 0 && types.every((t) => t === "update")) return "Дополнить"
+  if (types.length > 0 && types.every((t) => t === "link")) return "Связать"
+  return types.length > 1 ? "Создать всё" : "Создать"
 }
 
 function MatchesBlock({
@@ -742,11 +930,22 @@ function MatchesBlock({
           {options.map((o) => {
             const rid = `${idPrefix}-choice-${o.value}`
             return (
-              <div key={o.value} className="flex items-center gap-2">
-                <RadioGroupItem value={o.value} id={rid} className="size-3.5" />
-                <label htmlFor={rid} className="cursor-pointer">
-                  {o.label}
-                </label>
+              <div key={o.value}>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value={o.value} id={rid} className="size-3.5" />
+                  <label htmlFor={rid} className="cursor-pointer">
+                    {o.label}
+                  </label>
+                </div>
+                {o.fill && o.fill.length > 0 && (
+                  <ul className="text-muted-foreground mt-0.5 space-y-0.5 pl-5.5 text-[11px]">
+                    {o.fill.map((f, i) => (
+                      <li key={`${f.field}-${i}`}>
+                        Добавится: {f.label}: <span className="text-foreground">{f.value}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )
           })}
@@ -767,6 +966,16 @@ function MatchesBlock({
 
 // ── Result views ────────────────────────────────────────────────────────
 
+/** « — дополнена» / « — связан» … (gender of the record type). */
+function resultNote(r: ActionResult): string {
+  const masc = r.type === "contact"
+  if (r.restored) return masc ? " — восстановлен" : " — восстановлена"
+  if (r.updated) return masc ? " — дополнен" : " — дополнена"
+  if (r.linked) return masc ? " — связан" : " — связана"
+  if (r.existing) return " — существующая запись"
+  return ""
+}
+
 function ResultView({ action }: { action: ChatDraftPart }) {
   const results = action.results ?? []
   return (
@@ -777,9 +986,7 @@ function ResultView({ action }: { action: ChatDraftPart }) {
         {results.map((r) => (
           <li key={`${r.type}-${r.id}`} className="flex flex-wrap items-center gap-x-2 text-xs">
             <span>
-              {RESULT_TYPE_LABELS[r.type] ?? "Запись"} «{r.title}»
-              {r.existing && " — существующая запись"}
-              {r.restored && " — восстановлена"}
+              {RESULT_TYPE_LABELS[r.type] ?? "Запись"} «{r.title}»{resultNote(r)}
             </span>
             <Link
               href={r.href}
@@ -982,7 +1189,7 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
 
   function linkLines(item: DraftItem, form: FormValues, disabled: boolean): ReactNode[] {
     const out: ReactNode[] = []
-    if (form.kind === "company") return out
+    if (form.kind === "company" || form.kind === "update" || form.kind === "link") return out
     // A link to an item of this card (key) wins over an existing record (id).
     if (form.companyKey) {
       const c = cardItem(form.companyKey)
@@ -1121,7 +1328,7 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
                         onCheckedChange={(v) => setIncluded((prev) => ({ ...prev, [item.key]: v === true }))}
                       />
                       <label htmlFor={`${itemId}-include`} className="text-xs font-medium">
-                        Создать: {word}
+                        {item.type === "update" ? "Дополнить запись" : item.type === "link" ? "Связать записи" : `Создать: ${word}`}
                       </label>
                     </>
                   ) : (
@@ -1140,26 +1347,50 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
                   onPick={(v) => setPicked((prev) => ({ ...prev, [item.key]: v }))}
                 />
 
-                <div className={cn("grid sm:grid-cols-2", compact ? "gap-1" : "gap-1.5")}>
-                  {fields.map((def) => {
-                    const keys = def.keys ?? [def.field]
-                    const meta = keys.map((k) => item.meta?.[k]).find(Boolean)
-                    return (
-                      <div key={def.field} className={cn(def.wide && "sm:col-span-2")}>
-                        <FieldRow
-                          id={`${itemId}-${def.field}`}
-                          def={def}
-                          form={form}
-                          meta={meta}
-                          removed={(item.removed ?? []).filter((r) => keys.includes(r.field))}
-                          disabled={disabled}
-                          options={options}
-                          onChange={(patch) => update(item, patch)}
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
+                {form.kind === "update" && (
+                  <UpdateBlock
+                    form={form}
+                    idPrefix={itemId}
+                    disabled={disabled}
+                    onToggle={(i, on) =>
+                      update(item, {
+                        skipped: on ? form.skipped.filter((x) => x !== i) : [...form.skipped, i],
+                      })
+                    }
+                  />
+                )}
+
+                {form.kind === "link" && (
+                  <LinkBlock
+                    form={form}
+                    idPrefix={itemId}
+                    disabled={disabled}
+                    onPrimary={(on) => update(item, { primary: on })}
+                  />
+                )}
+
+                {fields.length > 0 && (
+                  <div className={cn("grid sm:grid-cols-2", compact ? "gap-1" : "gap-1.5")}>
+                    {fields.map((def) => {
+                      const keys = def.keys ?? [def.field]
+                      const meta = keys.map((k) => item.meta?.[k]).find(Boolean)
+                      return (
+                        <div key={def.field} className={cn(def.wide && "sm:col-span-2")}>
+                          <FieldRow
+                            id={`${itemId}-${def.field}`}
+                            def={def}
+                            form={form}
+                            meta={meta}
+                            removed={(item.removed ?? []).filter((r) => keys.includes(r.field))}
+                            disabled={disabled}
+                            options={options}
+                            onChange={(patch) => update(item, patch)}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
 
                 {linkLines(item, form, disabled)}
 
@@ -1194,7 +1425,7 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" size="sm" className="h-7 text-xs" disabled={!canSubmit} onClick={() => void submit()}>
               {busy && <Spinner className="size-3" />}
-              {includedRows.length > 1 ? "Создать всё" : "Создать"}
+              {submitLabel(includedRows.map((r) => r.item.type))}
             </Button>
             <Button
               type="button"

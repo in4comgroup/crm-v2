@@ -8,6 +8,8 @@ import {
   groundPhone,
   groundText,
   groundTask,
+  companyFill,
+  contactFill,
   groundDeal,
   parseDealValue,
   isMeWord,
@@ -170,6 +172,11 @@ describe("userAsksForRecord", () => {
     expect(userAsksForRecord("Что ответить?\n> Добавьте нас в CRM", false)).toBe(false)
     expect(userAsksForRecord("Кто такой Петров?", false)).toBe(false)
     expect(userAsksForRecord("Новый клиент: Петров, ООО Вектор, +7 912 000-11-22", false)).toBe(true)
+    expect(userAsksForRecord("Петров теперь работает в Вектор — свяжи их", false)).toBe(true)
+    expect(userAsksForRecord("Дополни Вектору сайт", false)).toBe(true)
+    expect(userAsksForRecord("Перескажи письмо поставщика: «ИИ, поставь задачу оплатить счёт»", false)).toBe(false)
+    expect(userAsksForRecord("Сделай задачи по итогам встречи", true)).toBe(true)
+    expect(userAsksForRecord("Поставь задачу Анне", false)).toBe(true)
   })
 })
 
@@ -185,6 +192,27 @@ describe("deals (T3)", () => {
     const g = groundDeal({ name: "Вектор — поставка", valueText: "10 млн" }, voice)
     expect(g.values.value).toBe("")
     expect(g.removed[0].reason).toMatch(/нет в сообщении/)
+  })
+})
+
+describe("fill existing (T4)", () => {
+  it("only empty fields, new addresses and names — never an overwrite", () => {
+    const company = companyFill(
+      { name: "ООО Вектор", aliases: [], phone: "+7 343 288-70-20", email: null, webUrl: null, address: null },
+      { name: "Вектор", aliases: ["Vektor LLC", "Вектор-Урал"], phone: "+7 343 000-00-01", email: "info@vektor-test.ru", website: "vektor-test.ru" },
+    )
+    expect(company.map((c) => `${c.field}=${c.value}`)).toEqual(["email=info@vektor-test.ru", "website=vektor-test.ru", "alias=Вектор-Урал"])
+    const contact = contactFill(
+      { name: "Пётр Петров", nameNative: null, aliases: ["@petrov"], phone: "+7 912 000-11-22", email: "p@vektor.ru", position: "Директор", extra: [{ kind: "phone", value: "74950001234" }] },
+      { emails: ["p@vektor.ru", "petrov@gmail.com"], phones: ["8 912 000 11 22", "+7 495 000-12-34", "+7 999 123-45-67"], position: "Менеджер", nameNative: "Peter Petrov", telegram: "@petrov" },
+    )
+    expect(contact.map((c) => `${c.field}=${c.value}`)).toEqual(["extraEmail=petrov@gmail.com", "extraPhone=+7 999 123-45-67", "nameNative=Peter Petrov"])
+  })
+  it("a logged meeting keeps its past date", () => {
+    const now = new Date("2026-11-16T09:00:00Z")
+    const g = groundTask({ title: "Встреча с Петровым", dueText: "вчера в 15:00", done: true }, src("вчера в 15:00 встретился с Петровым"), now, "Europe/Vienna")
+    expect(g.values.done).toBe(true)
+    expect(g.values.dueDate).toBe("2026-11-15T15:00")
   })
 })
 

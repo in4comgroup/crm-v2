@@ -12,6 +12,10 @@ import {
   type CompanyValues,
   type ContactValues,
   type DraftMatch,
+  type ExistingClient,
+  type ExistingContact,
+  companyFill,
+  contactFill,
 } from "@/lib/chat/actions"
 import { extractEmailDomain, extractWebsiteDomain, isFreemailDomain } from "@/lib/email-domain"
 import { companyMatchKey, personMatchKey } from "@/lib/translit-ru"
@@ -37,6 +41,7 @@ type ClientRow = {
   webUrl: string | null
   email: string | null
   phone: string | null
+  address: string | null
   status: string
 }
 type ContactRow = {
@@ -46,6 +51,7 @@ type ContactRow = {
   aliases: string[] | null
   email: string | null
   phone: string | null
+  position: string | null
   clientId: string | null
   status: string
 }
@@ -64,7 +70,16 @@ export type OrgIndex = {
 export async function loadOrgIndex(orgId: string): Promise<OrgIndex> {
   const [clients, contacts, addrs, own, blocklist] = await Promise.all([
     db
-      .select({ id: client.id, name: client.name, aliases: client.aliases, webUrl: client.webUrl, email: client.email, phone: client.phone, status: client.status })
+      .select({
+        id: client.id,
+        name: client.name,
+        aliases: client.aliases,
+        webUrl: client.webUrl,
+        email: client.email,
+        phone: client.phone,
+        address: client.address,
+        status: client.status,
+      })
       .from(client)
       .where(eq(client.organizationId, orgId)),
     db
@@ -75,6 +90,7 @@ export async function loadOrgIndex(orgId: string): Promise<OrgIndex> {
         aliases: contact.aliases,
         email: contact.email,
         phone: contact.phone,
+        position: contact.position,
         clientId: contact.clientId,
         status: contact.status,
       })
@@ -144,7 +160,15 @@ export async function checkCompany(idx: OrgIndex, v: CompanyValues, rctx: Record
     const sameName = [c.name, ...(c.aliases ?? [])].some((n) => nameKeys.includes(companyMatchKey(n)))
     if (c.status === "blocked" && (reasons.length || sameName)) return { matches: [], refused: `Компания «${c.name}» заблокирована (список блокировки)` }
     if (reasons.length) {
-      pushMatch(matches, { kind: c.status === "deleted" ? "deleted" : "exact", type: "client", id: c.id, title: c.name, reason: reasons.join(", ") })
+      const exact = c.status !== "deleted"
+      pushMatch(matches, {
+        kind: exact ? "exact" : "deleted",
+        type: "client",
+        id: c.id,
+        title: c.name,
+        reason: reasons.join(", "),
+        ...(exact ? { fill: companyFill(existingClient(c), v) } : {}),
+      })
     } else if (sameName) {
       pushMatch(matches, { kind: c.status === "deleted" ? "deleted" : "similar", type: "client", id: c.id, title: c.name, reason: "такое же название" })
     }
@@ -200,7 +224,16 @@ export async function checkContact(idx: OrgIndex, v: ContactValues, rctx: Record
     const subtitle = c.clientId ? idx.clientNames.get(c.clientId) : undefined
     if (c.status === "blocked" && reasons.length) return { matches: [], refused: `Контакт «${c.name}» заблокирован (список блокировки)` }
     if (reasons.length) {
-      pushMatch(matches, { kind: c.status === "deleted" ? "deleted" : "exact", type: "contact", id: c.id, title: c.name, subtitle, reason: reasons.join(", ") })
+      const exact = c.status !== "deleted"
+      pushMatch(matches, {
+        kind: exact ? "exact" : "deleted",
+        type: "contact",
+        id: c.id,
+        title: c.name,
+        subtitle,
+        reason: reasons.join(", "),
+        ...(exact ? { fill: contactFill(existingContact(idx, c), v) } : {}),
+      })
     } else if (sameName && c.status !== "blocked") {
       pushMatch(matches, {
         kind: c.status === "deleted" ? "deleted" : "similar",
@@ -249,6 +282,28 @@ export async function contactsInOrg(orgId: string, ids: string[]): Promise<{ id:
     .select({ id: contact.id, name: contact.name, status: contact.status })
     .from(contact)
     .where(and(eq(contact.organizationId, orgId), inArray(contact.id, ids)))
+}
+
+// ── «Дополнить» (T4) ──────────────────────────────────────────────────
+
+export function existingClient(c: ClientRow): ExistingClient {
+  return { name: c.name, aliases: c.aliases ?? [], phone: c.phone, email: c.email, webUrl: c.webUrl, address: c.address }
+}
+
+export function existingContact(idx: OrgIndex, c: ContactRow): ExistingContact {
+  return {
+    name: c.name,
+    nameNative: c.nameNative,
+    aliases: c.aliases ?? [],
+    phone: c.phone,
+    email: c.email,
+    position: c.position,
+    extra: idx.addresses.get(c.id) ?? [],
+  }
+}
+
+export function clientRow(idx: OrgIndex, id: string): ClientRow | null {
+  return idx.clients.find((c) => c.id === id) ?? null
 }
 
 // ── Tasks (T2) ────────────────────────────────────────────────────────

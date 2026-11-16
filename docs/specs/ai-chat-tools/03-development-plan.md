@@ -8,7 +8,7 @@ Phases in order. Each phase ends with `pnpm lint`, `pnpm test`, `pnpm build`, a 
 | **T1** ✅ | **Draft engine + company / contact** (built 2026-11-16, see «T1 result»): `ai_chat_action` table (migration); draft tools `draftCompany` / `draftContact`; checks of §8 (normalisation, grounding, duplicates, «us», blocklist, defaults); `data-draft` / `data-action-result` parts; the draft card (edit, duplicates, grouped company + contact, «Прикрепить файл»); `POST /api/chat/actions`; provenance through the action row + the document link + `deal_activity.source_item_id` (Q15, no new column); prompt rules; eval fixtures: 6 synthetic business cards | T0 | 4 |
 | **T2** ✅ | **Tasks** (built 2026-11-16, see «T2 result»): `draftTask` / `draftTasks` (checklist from meeting notes); due-date resolution in the org time zone; assignee by member name; type from the verb; links; notifications as the UI | T1 | 2 |
 | **T3** ✅ | **Deals + signals in the turn** (built 2026-11-16, see «T3 result»): `draftDeal` (company, type, stage default, value, contacts, description, next step as a task draft); «open deal of the same company and type exists» handling; `readSignals` tool (extractor + `evaluateTopicDeals` → suggested drafts) (Q6); confirmed actions on the CH6 segment item + card-writer hint (Q18) | T1, T2 | 3.5 |
-| **T4** | **Clarifications + editing existing data**: `askUser` + `data-question` quick replies (Q9); «Дополнить существующий» (empty fields, aliases, extra addresses) (Q3); links contact ↔ company, contact → deal; «Записать встречу» (done meet / call task); no undo (Q10) | T1–T3 | 2.5 |
+| **T4** ✅ | **Clarifications + editing existing data** (built 2026-11-16, see «T4 result»): `askUser` + `data-question` quick replies (Q9); «Дополнить существующий» (empty fields, aliases, extra addresses) (Q3); links contact ↔ company, contact → deal; «Записать встречу» (done meet / call task); no undo (Q10) | T1–T3 | 2.5 |
 | **T5** | **More actions**: order request («Заказ из запроса») from a client's message; deal stage move / won / lost with the custom funnel's reasons; task done / new due date | T4 | 2.5 |
 | **T6** | **Eval + docs**: action cases (cards, voice, notes, injection, duplicates, «us», questions asked / not asked), gate incl. «0 ungrounded contact values»; `src/lib/AGENTS.md` § "AI Chat", `src/app/AGENTS.md`, root `AGENTS.md` (API, schema), `docs/docs/`; remove the «cannot change data» line from the chat prompt | T1–T5 | 2 |
 
@@ -82,6 +82,28 @@ Fixes found while building:
 Checks (2026-11-16): unit tests 869 pass, lint 0 errors, build OK; full `pnpm chat:eval` 62 / 62 (plain 16, hard 18, adversarial 10, action 18), 0 ungrounded values, gate PASSED; `CHAT_EVAL_ONLY=f` (after the fixes) 8 / 8 over 2 runs except one run of `f01` before the amount-by-value fix; live test on the test DB: voice note → one card → confirm → deal 2 000 000 on «Вектор» at the default stage, the task on the deal, the WAV as the deal's document and on its creation row, the card-writer hint lists the new task; «use existing» → no new deal, the task on the existing deal. Test rows removed. The CH6 segment note is covered by a unit test (the live ingest waited: the test org's daily budget was used up — background work correctly stops).
 
 Not checked: the card in a real browser (Chrome extension not connected in this session).
+
+## T4 result (2026-11-16)
+
+Built:
+- **Questions** (Q9): `askUser(question, options?)` → `data-question` part with ≤ 5 buttons (`question-block.tsx`); a click sends the option as the next message; ≤ 2 per answer; the answer continues the card (the intent guard lets it through).
+- **«Дополнить»** (Q3 B — only empty fields, new extra phones / e-mails, a new Telegram, a new company name; never an overwrite): an exact match on a company / contact card offers «Дополнить существующий» with the list «Добавится: …»; `draftUpdate` makes a «Дополнить запись» card for an existing record. Confirm re-reads the record, so a field filled meanwhile is not overwritten.
+- **Links**: `draftLink` — contact ↔ company (main company when «теперь работает в …») and contact → deal.
+- **Logged meeting / call**: `draftTask({ done: true })` with past dates («вчера в 15:00», last Friday) → a done task of type meet / call.
+- No undo (Q10).
+- **Card UI**: fill option, update / link items, «Уже было» checkbox, button labels «Дополнить» / «Связать» (more render tests; 17 in the card + question files).
+- **Eval**: `g01`–`g05` (a task without client / date → question with buttons; «новый мобильный» → update card; «теперь работает в …» → link card, main company; «запиши встречу вчера в 15:00» → done meet task; an answer to the question → the card).
+
+Fixes while building:
+- The intent guard did not know «свяжи / дополни / теперь работает» (a link card was refused), and it matched word PARTS: «поставщика» read as «поставь» and let a task card through from a quoted mail (adversarial `e06`). It now matches whole verb forms (`userAsksForRecord`).
+- **Prompt size**: after T1–T4 the card section had grown to ≈ 9,000 characters and the small chat model got worse at OLD rules (the «me» filter, the «no margin data» answer, a tool name in an answer). The section was rewritten at about half the size with the same rules + «prepare ONLY what was asked» (`сделай задачи` → only tasks).
+- Item keys («d1», «c1», «p1») the model passes instead of a draftId now resolve to the card; a contact drafted twice in one answer (before and after its company) cancels the first stand-alone card; `askUser` buttons never carry ids; the model no longer turns a business card into «Дополнить» because a same-name contact exists.
+- Records engine: the mail filter also accepts `createdFrom` / `createdTo` (other record types use those names; the strict schema used to reject the call and the model dropped the date filter — `h16`).
+- Eval checks: read the last SUCCESSFUL stats / list call; «нет данных» in either word order; due checks prefer open tasks by title.
+
+Checks (2026-11-16): unit tests 880 pass, lint 0 errors, build OK; full `pnpm chat:eval` 67 / 67 (plain 16, hard 18, adversarial 10, action 23), 0 ungrounded values, gate PASSED; before that a double run 131 / 134 (all fixed / explained above); `CHAT_EVAL_ONLY=g` 10 / 10 over 2 runs; live test on the test DB (own test company / contact / deal, removed after): «Дополнить» added an extra phone + an empty position and kept the old phone; a duplicate card «Дополнить существующий» added the new e-mail, no second contact; «Связать» made the new company the main one and added the contact to the deal; «Записать встречу» saved a done meet task in the past.
+
+Not checked: the card / buttons in a real browser (Chrome extension not connected in this session).
 
 ## Acceptance
 

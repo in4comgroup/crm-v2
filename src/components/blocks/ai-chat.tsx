@@ -94,6 +94,7 @@ import {
 import { RecordsBlock } from "@/components/blocks/chat/records-block"
 import { StatsBlock } from "@/components/blocks/chat/stats-block"
 import { DraftCard } from "@/components/blocks/chat/draft-card"
+import { QuestionBlock } from "@/components/blocks/chat/question-block"
 import {
   ChatErrorLine,
   ChatStatusLine,
@@ -448,6 +449,15 @@ function ChatSession({
     [sendMessage, clearError],
   )
 
+  // A quick reply of a clarification question = a normal user message (ai-chat-tools §12).
+  const handleQuickReply = useCallback(
+    (text: string) => {
+      clearError()
+      void sendMessage({ text })
+    },
+    [sendMessage, clearError],
+  )
+
   const handleRetry = useCallback(() => {
     clearError()
     setLiveStatus(null)
@@ -529,6 +539,9 @@ function ChatSession({
                 isLive={isLoading && i === messages.length - 1 && message.role === "assistant"}
                 liveStatus={liveStatus}
                 isAdmin={isAdmin}
+                answer={message.role === "assistant" ? nextUserText(messages, i) : null}
+                busy={isLoading}
+                onQuickReply={handleQuickReply}
               />
             ))
           )}
@@ -604,17 +617,35 @@ function ChatSession({
 // One message
 // ---------------------------------------------------------------------------
 
+/** Text of the first user message after `index`; null = none yet. */
+function nextUserText(messages: readonly UIMessage[], index: number): string | null {
+  const next = messages.slice(index + 1).find((m) => m.role === "user")
+  if (!next) return null
+  return next.parts
+    .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
+    .map((p) => p.text)
+    .join("\n")
+}
+
 function ChatMessage({
   message,
   isLive,
   liveStatus,
   isAdmin,
+  answer,
+  busy,
+  onQuickReply,
 }: {
   message: UIMessage
   /** The assistant message of the request that is still running. */
   isLive: boolean
   liveStatus: ChatStatus | null
   isAdmin: boolean
+  /** The user's reply after this message (questions); null = not answered yet. */
+  answer: string | null
+  /** A chat request is running. */
+  busy: boolean
+  onQuickReply: (text: string) => void
 }) {
   const isAssistant = message.role === "assistant"
   const { openRecord, openPanel } = usePanelContext()
@@ -685,6 +716,11 @@ function ChatMessage({
         })}
 
         {!isAssistant && <AttachmentReadStatus items={dataParts(message.parts, "attachment")} />}
+
+        {isAssistant &&
+          dataParts(message.parts, "question").map((q) => (
+            <QuestionBlock key={q.id} part={q} answer={answer} busy={busy} onAnswer={onQuickReply} />
+          ))}
 
         {isAssistant && dataParts(message.parts, "draft").map((p) => <DraftCard key={p.actionId} part={p} />)}
 

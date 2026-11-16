@@ -102,7 +102,7 @@ const MONTHS: [RegExp, number][] = [
 export function hasDateCue(text: string): boolean {
   const t = (text ?? "").toLowerCase()
   return (
-    /сегодня|завтра|послезавтра|через\s+\S+|до\s+конца|к\s+концу|на\s+(этой|следующей)\s+неделе|today|tomorrow/.test(t) ||
+    /сегодня|завтра|послезавтра|вчера|через\s+\S+|до\s+конца|к\s+концу|на\s+(этой|следующей)\s+неделе|today|tomorrow|yesterday/.test(t) ||
     WEEKDAYS.some(([re]) => re.test(t)) ||
     /\b\d{1,2}[./]\d{1,2}([./]\d{2,4})?\b/.test(t) ||
     MONTHS.some(([re]) => new RegExp(`\\b\\d{1,2}\\s+${re.source}`).test(t))
@@ -141,11 +141,24 @@ const WORD_NUM: Record<string, number> = { один: 1, одну: 1, два: 2, 
  * when the words are not a deadline code can read (then the model's date is
  * used, marked as such). `now` = the turn's time.
  */
-export function resolveDueText(text: string, now: Date, timeZone: string): LocalDateTime | null {
+export function resolveDueText(text: string, now: Date, timeZone: string, opts: { past?: boolean } = {}): LocalDateTime | null {
   const t = ` ${(text ?? "").toLowerCase().replace(/ё/g, "е")} `
   const today = zonedParts(now, timeZone)
-  const at = (day: { y: number; m: number; d: number }) => `${day.y}-${two(day.m)}-${two(day.d)}T${timeOf(t) ?? DEFAULT_DUE_TIME}`
+  const past = opts.past === true
+  // A logged meeting / call (`past`) without a time = the current time of that day is unknown → 12:00.
+  const at = (day: { y: number; m: number; d: number }) => `${day.y}-${two(day.m)}-${two(day.d)}T${timeOf(t) ?? (past ? "12:00" : DEFAULT_DUE_TIME)}`
   const plus = (n: number) => addDays(today.y, today.m, today.d, n)
+
+  // `past` (T4 «Записать встречу»): when it HAPPENED.
+  if (past) {
+    if (/позавчера/.test(t)) return at(plus(-2))
+    if (/вчера|yesterday/.test(t)) return at(plus(-1))
+    if (/сегодня|today/.test(t)) return at(plus(0))
+    for (const [re, wd] of WEEKDAYS) {
+      if (!re.test(t)) continue
+      return at(plus(-((today.weekday - wd + 7) % 7)))
+    }
+  }
 
   if (/послезавтра/.test(t)) return at(plus(2))
   if (/завтра|tomorrow/.test(t)) return at(plus(1))
@@ -193,7 +206,10 @@ export function resolveDueText(text: string, now: Date, timeZone: string): Local
     const [d, m] = [Number(dm[1]), Number(dm[2])]
     if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
       let y = dm[3] ? Number(dm[3].length === 2 ? `20${dm[3]}` : dm[3]) : today.y
-      if (!dm[3] && (m < today.m || (m === today.m && d < today.d))) y++
+      const before = m < today.m || (m === today.m && d < today.d)
+      const after = m > today.m || (m === today.m && d > today.d)
+      if (!dm[3] && !past && before) y++
+      if (!dm[3] && past && after) y--
       return at({ y, m, d })
     }
   }
@@ -203,7 +219,9 @@ export function resolveDueText(text: string, now: Date, timeZone: string): Local
     if (!r) continue
     const d = Number(r[1])
     if (d < 1 || d > 31) continue
-    const y = m < today.m || (m === today.m && d < today.d) ? today.y + 1 : today.y
+    const before = m < today.m || (m === today.m && d < today.d)
+    const after = m > today.m || (m === today.m && d > today.d)
+    const y = !past && before ? today.y + 1 : past && after ? today.y - 1 : today.y
     return at({ y, m, d })
   }
   return null

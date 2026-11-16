@@ -105,6 +105,10 @@ export const sourceItemFilterSchema = z
       .describe("Channel: mail, telegram, whatsapp, gchat (Google Chat), drive (Google Drive), files (uploaded files), aichat (saved AI chats)"),
     dateFrom: z.string().optional().describe("Message / file date on or after this day, YYYY-MM-DD"),
     dateTo: z.string().optional().describe("Message / file date on or before this day, YYYY-MM-DD"),
+    // Other record types call their date filter createdFrom / createdTo; the model mixes
+    // them up and a strict schema then rejects the call (eval h16) — accept both.
+    createdFrom: z.string().optional().describe("Same as dateFrom"),
+    createdTo: z.string().optional().describe("Same as dateTo"),
     company: z
       .string()
       .min(1)
@@ -497,8 +501,8 @@ async function list(ctx: RecordsContext, filters: SourceItemFilters, sort: strin
     where.push(inArray(source.provider, [...PROVIDER_GROUPS[filters.provider]]))
     applied.push({ label: "Источник", value: PROVIDER_GROUP_LABELS[filters.provider] })
   }
-  const from = parseDay(filters.dateFrom, false, ctx.timeZone)
-  const to = parseDay(filters.dateTo, true, ctx.timeZone)
+  const from = parseDay(filters.dateFrom ?? filters.createdFrom, false, ctx.timeZone)
+  const to = parseDay(filters.dateTo ?? filters.createdTo, true, ctx.timeZone)
   if (from || to) {
     where.push(dateBounds(from, to))
     applied.push({

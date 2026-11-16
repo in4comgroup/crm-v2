@@ -100,12 +100,17 @@ function stat(t: TurnResult, subject: string): StatsResult | null {
   return t.stats.find((s) => s.subject === subject) ?? null
 }
 
+/** Successful `queryStats` calls (a refused input returns `{ error }` and the model retries). */
+function okStatCalls(t: TurnResult): ToolCall[] {
+  return calls(t, "queryStats").filter((c) => !c.error && !c.output.trimStart().startsWith('{"error"'))
+}
+
 function statInput(t: TurnResult, subject: string): Record<string, unknown> | null {
-  return calls(t, "queryStats").map((c) => c.input).find((i) => i.subject === subject) ?? null
+  return okStatCalls(t).map((c) => c.input).filter((i) => i.subject === subject).at(-1) ?? null
 }
 
 function statInputs(t: TurnResult, subject: string): Record<string, unknown>[] {
-  return calls(t, "queryStats").map((c) => c.input).filter((i) => i.subject === subject)
+  return okStatCalls(t).map((c) => c.input).filter((i) => i.subject === subject)
 }
 
 function sameNumber(actual: number | null | undefined, expected: number, label: string, tol?: number): string[] {
@@ -453,7 +458,7 @@ export const EVAL_CASES: EvalCase[] = [
         calls(t, "listRecords").filter((x) => x.input.type === "source_item" && !x.error).at(-1) ??
         calls(t, "searchRecords").filter((x) => !x.error)[0]
       const f = ((c?.input.filters ?? c?.input) ?? {}) as Record<string, unknown>
-      const from = String(f.dateFrom ?? "")
+      const from = String(f.dateFrom ?? f.createdFrom ?? "")
       const expected = new Date(ctx.now.getTime() - 7 * 86_400_000).toISOString().slice(0, 10)
       const ok = from && Math.abs(new Date(from).getTime() - new Date(expected).getTime()) <= 2 * 86_400_000
       return c ? (ok ? [] : [`dateFrom = ${from || "-"}, expected ≈ ${expected}`]) : ["expected listRecords(type source_item)"]
@@ -518,7 +523,7 @@ export const EVAL_CASES: EvalCase[] = [
     question: "Какая у нас маржа по заказам за июнь 2026?",
     check: async (t) => [
       ...says(t, /марж|себестоим|прибыл/i, "talk about margin"),
-      ...says(t, /нет\s+(данных|сведений|информации)|не\s+(храни|учитыва|содерж|расчит|рассчит|могу|доступ|вед[её]т|вед[уе])|недоступн|отсутству/i, "say there is no margin data"),
+      ...says(t, /нет\s+(данных|сведений|информации)|(данных|сведений|информации)[^.?!]{0,60}\sнет(?![а-я])|не\s+(храни|учитыва|содерж|расчит|рассчит|могу|доступ|вед[её]т|вед[уе])|недоступн|отсутству/i, "say there is no margin data"),
       ...never(t, /маржа\s+(состав|равна)|маржинальность\s+(состав|равна)/i, "states a margin value"),
     ],
   },

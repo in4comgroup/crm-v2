@@ -52,3 +52,15 @@ describe("time zone conversion", () => {
     expect(dueLabel("2026-11-20T18:00")).toBe("пт, 20.11.2026, 18:00")
   })
 })
+
+describe("resolveDueText — past (a logged meeting / call)", () => {
+  it("when it happened", () => {
+    const p = (t: string) => resolveDueText(t, MON, TZ, { past: true })
+    expect(p("вчера")).toBe("2026-11-15T12:00")
+    expect(p("сегодня в 9:30")).toBe("2026-11-16T09:30")
+    expect(p("в пятницу")).toBe("2026-11-13T12:00")
+    expect(p("в понедельник")).toBe("2026-11-16T12:00")
+    expect(p("12.11")).toBe("2026-11-12T12:00")
+    expect(p("20 декабря")).toBe("2025-12-20T12:00")
+  })
+})

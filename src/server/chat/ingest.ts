@@ -14,6 +14,7 @@ import {
   chatThreadKey,
   dataUrlBytes,
   messageAttachments,
+  segmentActions,
   messageFiles,
   segmentContent,
   segmentHasUserContent,
@@ -277,7 +278,9 @@ export async function ingestChatThread(threadId: string): Promise<ChatIngestOutc
         messageCount: msgs.length,
         savedByUserId: t.userId,
         from: [{ name: authorName, email: author?.email ?? null }],
-        chatNote: { hasNewBusinessInfo: newInfo, facts, relayedFrom: relayedFrom || null },
+        // Q18 (ai-chat-tools): records the user created from cards of this segment —
+        // the topics engine reads them as already done (no second deal / task).
+        chatNote: { hasNewBusinessInfo: newInfo, facts, relayedFrom: relayedFrom || null, actions: segmentActions(msgs) },
         ...meta,
       },
     })

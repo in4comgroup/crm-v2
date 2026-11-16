@@ -95,7 +95,6 @@ function never(t: TurnResult, re: RegExp, what: string): string[] {
 }
 
 const NOT_FOUND = /не\s+(на(шёл|шел|шла|шлось|йден|йдена|йдено|йти)|обнаруж|удалось\s+найти|нашлось)|найти\s+не\s+удалось|нет\s+(данных|записей|информации|сведений|компании|такой|такого)|ничего\s+не|отсутству/i
-const CANNOT = /не\s+(могу|умею|имею|может|получится|поддержива)|нельзя|только\s+(чтени|просмотр|для чтения)|недоступн|нет\s+(возможности|доступа|такой возможности)/i
 
 function stat(t: TurnResult, subject: string): StatsResult | null {
   return t.stats.find((s) => s.subject === subject) ?? null

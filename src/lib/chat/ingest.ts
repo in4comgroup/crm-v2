@@ -176,3 +176,15 @@ export function chatIngestDue(
 
 /** Envelope line of a relayed chat note (topics extractor). */
 export const CHAT_NOTE_ENVELOPE = "Заметка сотрудника из ИИ чата (пересказ)"
+
+/** Records created by confirmed chat cards of these messages (`data-action-result` parts). */
+export function segmentActions(msgs: readonly { parts?: readonly unknown[] | null }[]): { type: string; id: string; title: string; existing?: boolean }[] {
+  const out: { type: string; id: string; title: string; existing?: boolean }[] = []
+  for (const m of msgs) {
+    for (const p of (m.parts ?? []) as { type?: string; data?: { results?: { type: string; id: string; title: string; existing?: boolean }[] } }[]) {
+      if (p?.type !== "data-action-result") continue
+      for (const r of p.data?.results ?? []) out.push({ type: r.type, id: r.id, title: r.title, ...(r.existing ? { existing: true } : {}) })
+    }
+  }
+  return out
+}

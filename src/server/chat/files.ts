@@ -283,7 +283,7 @@ export async function prepareChatAttachments(
         const [k] = await db.select({ key: sourceItem.fileKey }).from(sourceItem).where(eq(sourceItem.id, r.id))
         await parseTextFile(r.id, r, k?.key ?? null)
       } else {
-        await parseSourceItem(r.id, { userId })
+        await parseSourceItem(r.id, { userId, interactive: true })
       }
     } catch (e) {
       console.error("[chat/files] parse failed", r.id, e)

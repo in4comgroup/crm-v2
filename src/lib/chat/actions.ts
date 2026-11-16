@@ -11,10 +11,11 @@ import { searchNormalise } from "@/lib/entity-search"
 import { extractEmailDomain, extractWebsiteDomain, isFreemailDomain } from "@/lib/email-domain"
 import { normalisePhone, normaliseTelegramHandle } from "@/lib/identity/registry"
 import { isLocalDateTime, localToUtc, resolveDueText } from "@/lib/chat/due-date"
+import { parseMoneyRu } from "@/lib/ru-mail/money"
 
 // ── Kinds, statuses ─────────────────────────────────────────────────────
 
-export const ACTION_KINDS = ["company", "contact", "company_contact", "task", "tasks", "group"] as const
+export const ACTION_KINDS = ["company", "contact", "company_contact", "task", "tasks", "deal", "group"] as const
 export type ActionKind = (typeof ACTION_KINDS)[number]
 
 // `confirming` = a confirm request is running (guards a double click).
@@ -32,6 +33,7 @@ export const ACTION_KIND_TITLES: Record<ActionKind, string> = {
   company_contact: "Компания и контакт",
   task: "Новая задача",
   tasks: "Задачи",
+  deal: "Новая сделка",
   group: "Новые записи",
 }
 
@@ -98,13 +100,41 @@ export type TaskValues = {
   contactKey: string | null
   contactName: string
   dealId: string | null
+  /** A deal of the same card (draft). */
+  dealKey: string | null
   dealName: string
 }
 
-export type ItemType = "company" | "contact" | "task"
+export type DealValues = {
+  /** «<Компания> — <предмет>». */
+  name: string
+  /** What was agreed (short list) — the model's words. */
+  description: string
+  companyId: string | null
+  companyKey: string | null
+  companyName: string
+  /** Existing contacts / contacts of the same card. */
+  contactIds: string[]
+  contactKeys: string[]
+  contactNames: string[]
+  /** Amount as digits («2000000»); "" = not stated. */
+  value: string
+  /** The user's words for the amount («бюджет ~2 млн»). */
+  valueText: string
+  /** RUB / USD / EUR / CNY from the words; "" = the company's currency. */
+  currency: string
+  dealTypeId: string | null
+  dealTypeName: string
+  stageId: string | null
+  stageName: string
+  /** «по правилу воронки: …» when the org's stage rules chose the stage / type (readSignals). */
+  ruleNote: string
+}
+
+export type ItemType = "company" | "contact" | "task" | "deal"
 
 /** Where a value came from — shown as a hint next to the field. */
-export type FieldSource = "input" | "file" | "page" | "default" | "model"
+export type FieldSource = "input" | "file" | "page" | "default" | "model" | "rule"
 export type FieldMeta = { source: FieldSource; fileName?: string; fileId?: string }
 
 export const FIELD_SOURCE_LABELS: Record<FieldSource, string> = {
@@ -113,12 +143,13 @@ export const FIELD_SOURCE_LABELS: Record<FieldSource, string> = {
   page: "со страницы",
   default: "по умолчанию",
   model: "текст ИИ",
+  rule: "по правилу воронки",
 }
 
 export type MatchKind = "exact" | "similar" | "deleted"
 export type DraftMatch = {
   kind: MatchKind
-  type: "client" | "contact"
+  type: "client" | "contact" | "deal"
   id: string
   title: string
   subtitle?: string
@@ -132,7 +163,7 @@ export type DraftItem = {
   /** Stable within the action: c1, c2 … (companies), p1, p2 … (contacts). */
   key: string
   type: ItemType
-  values: CompanyValues | ContactValues | TaskValues
+  values: CompanyValues | ContactValues | TaskValues | DealValues
   meta: Record<string, FieldMeta>
   removed: RemovedValue[]
   matches: DraftMatch[]
@@ -149,7 +180,7 @@ export type ChatDraft = {
 }
 
 export type ActionResult = {
-  type: "client" | "contact" | "task"
+  type: "client" | "contact" | "task" | "deal"
   id: string
   title: string
   href: string
@@ -170,7 +201,13 @@ export type ChatDraftPart = {
   options?: ActionOptions
 }
 
-export type ActionOptions = { members: { id: string; name: string }[]; timeZone: string }
+export type ActionOptions = {
+  members: { id: string; name: string }[]
+  timeZone: string
+  /** Deal items: working stages of the org funnel (area0 / won / lost left out) and the deal types. */
+  stages?: { id: string; name: string }[]
+  dealTypes?: { id: string; name: string }[]
+}
 
 /** `data-action-result` part, added to the assistant message after confirm. */
 export type ChatActionResultPart = {
@@ -211,7 +248,19 @@ export const TASK_FIELD_LABELS: Record<"title" | "description" | "type" | "prior
   dealName: "Сделка",
 }
 
+export const DEAL_FIELD_LABELS: Record<"name" | "description" | "companyName" | "contactNames" | "value" | "dealTypeName" | "stageName", string> = {
+  name: "Название сделки",
+  description: "Что обсудили",
+  companyName: "Компания",
+  contactNames: "Контакты",
+  value: "Сумма",
+  dealTypeName: "Тип сделки",
+  stageName: "Стадия",
+}
+
 export const MISSING_LABELS: Record<string, string> = {
+  company: "Укажите компанию сделки",
+  stage: "Выберите стадию",
   name: "Укажите название / имя",
   title: "Укажите, что нужно сделать",
   dueDate: "Укажите срок",
@@ -239,10 +288,10 @@ export function emptyContactValues(): ContactValues {
 
 /** Name of a company / contact, title of a task. */
 export function itemLabel(item: Pick<DraftItem, "type" | "values">): string {
-  return item.type === "task" ? (item.values as TaskValues).title : (item.values as CompanyValues | ContactValues).name
+  return item.type === "task" ? (item.values as TaskValues).title : (item.values as CompanyValues | ContactValues | DealValues).name
 }
 
-export const ITEM_TYPE_WORDS: Record<ItemType, string> = { company: "компания", contact: "контакт", task: "задача" }
+export const ITEM_TYPE_WORDS: Record<ItemType, string> = { company: "компания", contact: "контакт", task: "задача", deal: "сделка" }
 
 /** Required fields of an item (§8.4, Q8). */
 export function missingFields(item: Pick<DraftItem, "type" | "values">): string[] {
@@ -252,6 +301,13 @@ export function missingFields(item: Pick<DraftItem, "type" | "values">): string[
     if (!t.title.trim()) out.push("title")
     if (!t.dueDate) out.push("dueDate")
     if (!t.assigneeId) out.push("assignee")
+    return out
+  }
+  if (item.type === "deal") {
+    const d = item.values as DealValues
+    if (!d.name.trim()) out.push("name")
+    if (!d.companyId && !d.companyKey) out.push("company")
+    if (!d.stageId) out.push("stage")
     return out
   }
   if (!(item.values as CompanyValues | ContactValues).name.trim()) out.push("name")
@@ -693,8 +749,102 @@ export function emptyTaskValues(): TaskValues {
     contactKey: null,
     contactName: "",
     dealId: null,
+    dealKey: null,
     dealName: "",
   }
+}
+
+export function emptyDealValues(): DealValues {
+  return {
+    name: "",
+    description: "",
+    companyId: null,
+    companyKey: null,
+    companyName: "",
+    contactIds: [],
+    contactKeys: [],
+    contactNames: [],
+    value: "",
+    valueText: "",
+    currency: "",
+    dealTypeId: null,
+    dealTypeName: "",
+    stageId: null,
+    stageName: "",
+    ruleNote: "",
+  }
+}
+
+const WORD_NUMBERS: [RegExp, string][] = [
+  [/полтор[аы]/g, "1,5"],
+  [/(?<![а-я])одн?(ин|а|ого)(?![а-я])/g, "1"],
+  [/(?<![а-я])дв(а|е|ух)(?![а-я])/g, "2"],
+  [/(?<![а-я])тр(и|ех|ёх)(?![а-я])/g, "3"],
+  [/(?<![а-я])четыр(е|ех|ёх)(?![а-я])/g, "4"],
+  [/(?<![а-я])пят(ь|и)(?![а-я])/g, "5"],
+  [/(?<![а-я])шест(ь|и)(?![а-я])/g, "6"],
+  [/(?<![а-я])сем(ь|и)(?![а-я])/g, "7"],
+  [/(?<![а-я])восем(ь|и)(?![а-я])/g, "8"],
+  [/(?<![а-я])девят(ь|и)(?![а-я])/g, "9"],
+  [/(?<![а-я])десят(ь|и)(?![а-я])/g, "10"],
+  [/(?<![а-я])сто(?![а-я])/g, "100"],
+  [/(?<![а-я])двести(?![а-я])/g, "200"],
+  [/(?<![а-я])триста(?![а-я])/g, "300"],
+  [/(?<![а-я])пятьсот(?![а-я])/g, "500"],
+]
+
+/**
+ * The user's words for a deal amount → digits + currency. Reads «2 млн ₽»,
+ * «~2 миллиона рублей», «два миллиона», «150 тыс.», «$40k». null = no amount
+ * (a bare number without a multiplier or a currency is not money).
+ */
+function moneyText(text: string): string {
+  let t = ` ${(text ?? "").toLowerCase()} `
+  t = t.replace(/миллиард\S*/g, "млрд").replace(/миллион\S*/g, "млн").replace(/тысяч\S*/g, "тыс")
+  for (const [re, n] of WORD_NUMBERS) t = t.replace(re, n)
+  return t.replace(/(\d)\s*k(?![a-z])/g, "$1к")
+}
+
+export function parseDealValue(text: string): { value: string; currency: string } | null {
+  const a = parseMoneyRu(moneyText(text)).find((m) => m.value > 0)
+  if (!a) return null
+  return { value: String(Math.round(a.value * 100) / 100), currency: a.currency }
+}
+
+/** Every amount the text names (any spelling: «2 млн», «два миллиона рублей», «2 000 000 ₽»), as digits. */
+export function amountsIn(text: string): Set<string> {
+  return new Set(parseMoneyRu(moneyText(text)).filter((m) => m.value > 0).map((m) => String(Math.round(m.value * 100) / 100)))
+}
+
+/**
+ * Raw deal values from the model → checked values (§9). Name / description =
+ * the model's words; the amount must be the USER's words (`valueText`,
+ * grounded), read by code. Company, contacts, type and stage are resolved by
+ * the server.
+ */
+export function groundDeal(raw: { name?: unknown; description?: unknown; valueText?: unknown }, sources: InputSources): Grounded<DealValues> {
+  const values = emptyDealValues()
+  const meta: Record<string, FieldMeta> = {}
+  const removed: RemovedValue[] = []
+  values.name = cleanText(raw.name, 200)
+  if (values.name) meta.name = { source: "model" }
+  values.description = cleanText(raw.description, 2000)
+  if (values.description) meta.description = { source: "model" }
+  const vt = cleanText(raw.valueText, 200)
+  if (vt) {
+    // The AMOUNT must be in the input, in any spelling («2 млн руб.» ≈ «два миллиона рублей»).
+    const parsed = parseDealValue(vt)
+    const src = parsed ? findSource(sources, (i) => amountsIn(i.lower).has(parsed.value)) : null
+    if (!parsed) removed.push({ field: "value", value: vt, reason: "не удалось прочитать сумму" })
+    else if (!src) removed.push({ field: "value", value: vt, reason: "суммы нет в сообщении" })
+    else {
+      values.value = parsed.value
+      values.currency = parsed.currency
+      values.valueText = vt
+      meta.value = { source: src.source, fileName: src.fileName, fileId: src.fileId }
+    }
+  }
+  return { values, meta, removed }
 }
 
 // ── Confirm payload (`POST /api/chat/actions`) ──────────────────────────
@@ -759,21 +909,47 @@ export const taskValuesSchema = z.object({
   contactKey: z.string().max(10).nullable().default(null),
   contactName: str(200).default(""),
   dealId: z.string().max(100).nullable().default(null),
+  dealKey: z.string().max(10).nullable().default(null),
   dealName: str(200).default(""),
 })
 
-export function parseItemValues(type: ItemType, raw: unknown): CompanyValues | ContactValues | TaskValues | null {
+export const dealValuesSchema = z.object({
+  name: str(200),
+  description: str(4000).default(""),
+  companyId: z.string().max(100).nullable().default(null),
+  companyKey: z.string().max(10).nullable().default(null),
+  companyName: str(200).default(""),
+  contactIds: z.array(z.string().max(100)).max(20).default([]),
+  contactKeys: z.array(z.string().max(10)).max(20).default([]),
+  contactNames: z.array(str(200)).max(20).default([]),
+  value: z.string().max(20).regex(/^(\d+(\.\d{1,2})?)?$/).default(""),
+  valueText: str(200).default(""),
+  currency: z.enum(["", "RUB", "USD", "EUR", "CNY", "GBP"]).default(""),
+  dealTypeId: z.string().max(100).nullable().default(null),
+  dealTypeName: str(200).default(""),
+  stageId: z.string().max(100).nullable().default(null),
+  stageName: str(200).default(""),
+  ruleNote: str(500).default(""),
+})
+
+export function parseItemValues(type: ItemType, raw: unknown): CompanyValues | ContactValues | TaskValues | DealValues | null {
   const r =
-    type === "company" ? companyValuesSchema.safeParse(raw) : type === "contact" ? contactValuesSchema.safeParse(raw) : taskValuesSchema.safeParse(raw)
+    type === "company"
+      ? companyValuesSchema.safeParse(raw)
+      : type === "contact"
+        ? contactValuesSchema.safeParse(raw)
+        : type === "deal"
+          ? dealValuesSchema.safeParse(raw)
+          : taskValuesSchema.safeParse(raw)
   if (!r.success) return null
   if (type === "task" && (r.data as TaskValues).dueDate && !isLocalDateTime((r.data as TaskValues).dueDate)) return null
-  return r.data as CompanyValues | ContactValues | TaskValues
+  return r.data as CompanyValues | ContactValues | TaskValues | DealValues
 }
 
 /** Href of a created / used record. */
 export function actionResultHref(type: ActionResult["type"], id: string): string {
   const e = encodeURIComponent(id)
-  return type === "client" ? `/clients/${e}` : type === "contact" ? `/contacts?openContact=${e}` : `/tasks?openTask=${e}`
+  return type === "client" ? `/clients/${e}` : type === "contact" ? `/contacts?openContact=${e}` : type === "deal" ? `/deals?openDeal=${e}` : `/tasks?openTask=${e}`
 }
 
 /** Short Russian note of a draft for the model's next turn. */
@@ -798,7 +974,7 @@ export function draftNote(p: ChatDraftPart): string {
 export function actionResultNote(p: ChatActionResultPart): string {
   if (!p.results.length) return `[Черновик ${p.actionId}: ничего не создано]`
   const list = p.results
-    .map((r) => `${r.type === "client" ? "компания" : r.type === "contact" ? "контакт" : "задача"} «${r.title}» (ref ${r.id}${r.existing ? ", существующая запись" : ""})`)
+    .map((r) => `${{ client: "компания", contact: "контакт", task: "задача", deal: "сделка" }[r.type]} «${r.title}» (ref ${r.id}${r.existing ? ", существующая запись" : ""})`)
     .join("; ")
   return `[Пользователь подтвердил черновик ${p.actionId}: ${list}]`
 }

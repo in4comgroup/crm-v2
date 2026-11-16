@@ -13,6 +13,7 @@ since 00:00 UTC).
 | --- | --- |
 | `background` (parsing, generation, topics engine) | **Refused before the call**: a usage event with `status = blocked`, `error_type = budget_exceeded` is written, then `AiBudgetExceededError` is thrown. The caller treats it like any AI failure (e.g. a parse becomes `failed` and is retried by the next run). |
 | `interactive` (AI chat, assistants, enrichment, order split) | **Runs anyway** (a user is waiting); a warning is logged. |
+| A background process called with `interactive: true` (2026-11-16, ai-chat-tools T3: a file parsed when an AI chat message is sent, `readSignals` of the chat) | Like `interactive` for the DAILY budget (a user is waiting); the monthly limit still refuses it. |
 | Calls without an organization (`systemCall`) | Not budgeted. |
 
 ## 2. Settings

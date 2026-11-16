@@ -19,6 +19,7 @@ import {
   ACTION_KIND_TITLES,
   COMPANY_FIELD_LABELS,
   CONTACT_FIELD_LABELS,
+  DEAL_FIELD_LABELS,
   FIELD_SOURCE_LABELS,
   ITEM_TYPE_WORDS,
   MISSING_LABELS,
@@ -35,6 +36,7 @@ import {
   type CompanyValues,
   type ConfirmActionInput,
   type ContactValues,
+  type DealValues,
   type DraftItem,
   type DraftMatch,
   type FieldMeta,
@@ -78,10 +80,23 @@ type ContactForm = {
 
 type TaskForm = { kind: "task" } & TaskValues
 
-type FormValues = CompanyForm | ContactForm | TaskForm
-type FormPatch = Record<string, string | null>
+type DealForm = { kind: "deal" } & DealValues
 
-type Control = "text" | "list" | "multiline" | "telegram" | "taskType" | "priority" | "due" | "assignee"
+type FormValues = CompanyForm | ContactForm | TaskForm | DealForm
+type FormPatch = Record<string, string | string[] | null>
+
+type Control =
+  | "text"
+  | "list"
+  | "multiline"
+  | "telegram"
+  | "taskType"
+  | "priority"
+  | "due"
+  | "assignee"
+  | "money"
+  | "dealType"
+  | "stage"
 type FieldDef = {
   /** Form field the control edits. */
   field: string
@@ -121,9 +136,32 @@ const TASK_FIELDS: FieldDef[] = [
   { field: "description", label: TASK_FIELD_LABELS.description, control: "multiline", wide: true },
 ]
 
-const FIELDS: Record<ItemType, FieldDef[]> = { company: COMPANY_FIELDS, contact: CONTACT_FIELDS, task: TASK_FIELDS }
+const DEAL_FIELDS: FieldDef[] = [
+  { field: "name", label: DEAL_FIELD_LABELS.name, control: "text", wide: true },
+  { field: "value", label: DEAL_FIELD_LABELS.value, control: "money", keys: ["value", "valueText", "currency"] },
+  { field: "dealTypeId", label: DEAL_FIELD_LABELS.dealTypeName, control: "dealType", keys: ["dealTypeId", "dealTypeName"] },
+  { field: "stageId", label: DEAL_FIELD_LABELS.stageName, control: "stage", keys: ["stageId", "stageName", "ruleNote"] },
+  { field: "description", label: DEAL_FIELD_LABELS.description, control: "multiline", wide: true },
+]
 
-const ITEM_ORDER: Record<ItemType, number> = { company: 0, contact: 1, task: 2 }
+const FIELDS: Record<ItemType, FieldDef[]> = {
+  company: COMPANY_FIELDS,
+  contact: CONTACT_FIELDS,
+  deal: DEAL_FIELDS,
+  task: TASK_FIELDS,
+}
+
+const ITEM_ORDER: Record<ItemType, number> = { company: 0, contact: 1, deal: 2, task: 3 }
+
+/** Deal currencies; "" = the company's currency. */
+const CURRENCY_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "валюта компании" },
+  { value: "RUB", label: "₽" },
+  { value: "USD", label: "$" },
+  { value: "EUR", label: "€" },
+  { value: "CNY", label: "¥" },
+  { value: "GBP", label: "£" },
+]
 
 /** Task types offered in the picker («support» only when the draft already has it). */
 const PICKABLE_TASK_TYPES: readonly ChatTaskType[] = TASK_TYPES.filter((t) => t !== "support")
@@ -157,6 +195,28 @@ function toForm(item: DraftItem): FormValues {
       companyName: v.companyName ?? "",
     }
   }
+  if (item.type === "deal") {
+    const v = item.values as DealValues
+    return {
+      kind: "deal",
+      name: v.name ?? "",
+      description: v.description ?? "",
+      companyId: v.companyId ?? null,
+      companyKey: v.companyKey ?? null,
+      companyName: v.companyName ?? "",
+      contactIds: v.contactIds ?? [],
+      contactKeys: v.contactKeys ?? [],
+      contactNames: v.contactNames ?? [],
+      value: v.value ?? "",
+      valueText: v.valueText ?? "",
+      currency: v.currency ?? "",
+      dealTypeId: v.dealTypeId ?? null,
+      dealTypeName: v.dealTypeName ?? "",
+      stageId: v.stageId ?? null,
+      stageName: v.stageName ?? "",
+      ruleNote: v.ruleNote ?? "",
+    }
+  }
   const v = item.values as TaskValues
   return {
     kind: "task",
@@ -175,6 +235,7 @@ function toForm(item: DraftItem): FormValues {
     contactKey: v.contactKey ?? null,
     contactName: v.contactName ?? "",
     dealId: v.dealId ?? null,
+    dealKey: v.dealKey ?? null,
     dealName: v.dealName ?? "",
   }
 }
@@ -187,7 +248,7 @@ function splitList(s: string): string[] {
 }
 
 /** Form → the values sent to `POST /api/chat/actions`. */
-function toValues(form: FormValues): CompanyValues | ContactValues | TaskValues {
+function toValues(form: FormValues): CompanyValues | ContactValues | TaskValues | DealValues {
   if (form.kind === "company") {
     return {
       name: form.name.trim(),
@@ -212,6 +273,17 @@ function toValues(form: FormValues): CompanyValues | ContactValues | TaskValues 
       companyName: form.companyName.trim(),
     }
   }
+  if (form.kind === "deal") {
+    const { kind: _deal, ...deal } = form
+    void _deal
+    return {
+      ...deal,
+      name: deal.name.trim(),
+      description: deal.description.trim(),
+      value: deal.value.replace(/\D/g, ""),
+      companyName: deal.companyName.trim(),
+    }
+  }
   const { kind: _kind, ...task } = form
   void _kind
   return {
@@ -228,7 +300,7 @@ function fieldText(form: FormValues, field: string): string {
   return typeof v === "string" ? v : ""
 }
 
-/** Name of a company / contact, title of a task — from the edited form. */
+/** Name of a company / contact / deal, title of a task — from the edited form. */
 function formLabel(form: FormValues): string {
   return (form.kind === "task" ? form.title : form.name).trim()
 }
@@ -237,11 +309,17 @@ function formLabel(form: FormValues): string {
 
 type ChoiceOption = { value: string; label: string; decision: ItemDecision; existingId?: string }
 
-const MATCH_TYPE_LABELS: Record<DraftMatch["type"], string> = { client: "Компания", contact: "Контакт" }
-const RESULT_TYPE_LABELS: Record<ActionResult["type"], string> = { client: "Компания", contact: "Контакт", task: "Задача" }
+const MATCH_TYPE_LABELS: Record<DraftMatch["type"], string> = { client: "Компания", contact: "Контакт", deal: "Сделка" }
+const RESULT_TYPE_LABELS: Record<ActionResult["type"], string> = {
+  client: "Компания",
+  contact: "Контакт",
+  task: "Задача",
+  deal: "Сделка",
+}
 
 function matchHref(m: DraftMatch): string {
-  return m.type === "client" ? `/clients/${encodeURIComponent(m.id)}` : `/contacts?openContact=${encodeURIComponent(m.id)}`
+  const e = encodeURIComponent(m.id)
+  return m.type === "client" ? `/clients/${e}` : m.type === "deal" ? `/deals?openDeal=${e}` : `/contacts?openContact=${e}`
 }
 
 function matchName(m: DraftMatch): string {
@@ -253,11 +331,18 @@ function choiceOptions(item: DraftItem): ChoiceOption[] {
   const exact = item.matches.filter((m) => m.kind === "exact")
   const deleted = item.matches.filter((m) => m.kind === "deleted")
   if (!exact.length && !deleted.length) return []
+  // A deal is feminine in Russian («сделка»): «существующую» / «новую».
+  const deal = item.type === "deal"
   const out: ChoiceOption[] = []
   for (const m of exact) {
     out.push({
       value: `use:${m.id}`,
-      label: exact.length === 1 ? "Использовать существующий" : `Использовать ${matchName(m)}`,
+      label:
+        exact.length === 1
+          ? deal
+            ? "Использовать существующую"
+            : "Использовать существующий"
+          : `Использовать ${matchName(m)}`,
       decision: "use_existing",
       existingId: m.id,
     })
@@ -272,7 +357,7 @@ function choiceOptions(item: DraftItem): ChoiceOption[] {
   }
   out.push(
     exact.length
-      ? { value: "create_anyway", label: "Всё равно создать новый", decision: "create_anyway" }
+      ? { value: "create_anyway", label: deal ? "Всё равно создать новую" : "Всё равно создать новый", decision: "create_anyway" }
       : { value: "create", label: "Создать новую", decision: "create" },
   )
   return out
@@ -448,6 +533,89 @@ function FieldRow({
       )
       break
     }
+    case "money": {
+      const d = form as DealForm
+      control = (
+        <div className="flex items-center gap-1">
+          <Input
+            id={id}
+            inputMode="numeric"
+            value={value}
+            disabled={disabled}
+            onChange={(e) => onChange({ value: e.target.value.replace(/\D/g, "") })}
+            className={INPUT_CLASS}
+          />
+          <select
+            aria-label="Валюта"
+            value={d.currency}
+            disabled={disabled}
+            onChange={(e) => onChange({ currency: e.target.value })}
+            className={cn(SELECT_CLASS, "w-auto shrink-0")}
+          >
+            {CURRENCY_OPTIONS.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )
+      if (d.valueText.trim()) below = <p className="text-muted-foreground text-[10px]">из сообщения: {d.valueText}</p>
+      break
+    }
+    case "dealType": {
+      const types = options?.dealTypes ?? []
+      const d = form as DealForm
+      const known = !d.dealTypeId || types.some((t) => t.id === d.dealTypeId)
+      control = (
+        <select
+          id={id}
+          value={d.dealTypeId ?? ""}
+          disabled={disabled}
+          onChange={(e) => {
+            const t = types.find((x) => x.id === e.target.value)
+            onChange({ dealTypeId: t ? t.id : null, dealTypeName: t ? t.name : "" })
+          }}
+          className={SELECT_CLASS}
+        >
+          <option value="">— без типа —</option>
+          {!known && d.dealTypeId && <option value={d.dealTypeId}>{d.dealTypeName || "тип"}</option>}
+          {types.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      )
+      break
+    }
+    case "stage": {
+      const stages = options?.stages ?? []
+      const d = form as DealForm
+      const known = !d.stageId || stages.some((x) => x.id === d.stageId)
+      control = (
+        <select
+          id={id}
+          value={d.stageId ?? ""}
+          disabled={disabled}
+          onChange={(e) => {
+            const st = stages.find((x) => x.id === e.target.value)
+            onChange({ stageId: st ? st.id : null, stageName: st ? st.name : "" })
+          }}
+          className={SELECT_CLASS}
+        >
+          {!d.stageId && <option value="">— выберите —</option>}
+          {!known && d.stageId && <option value={d.stageId}>{d.stageName || "стадия"}</option>}
+          {stages.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
+            </option>
+          ))}
+        </select>
+      )
+      if (d.ruleNote.trim()) below = <p className="text-muted-foreground text-[10px]">{d.ruleNote}</p>
+      break
+    }
     default:
       control = (
         <Input
@@ -480,6 +648,7 @@ function LinkLine({
   label,
   name,
   dropped,
+  masculine,
   disabled,
   onClear,
 }: {
@@ -487,13 +656,15 @@ function LinkLine({
   name: string
   /** The linked item of this card is unticked — the server drops the link. */
   dropped?: boolean
+  /** Grammatical gender of the linked item («создан» / «создана»). */
+  masculine?: boolean
   disabled: boolean
   onClear?: () => void
 }) {
   return (
     <p className={cn("text-xs", dropped && "text-muted-foreground")}>
       <span className="text-muted-foreground">{label}:</span> {name || "без названия"}
-      {dropped && " (не будет создана)"}
+      {dropped && (masculine ? " (не будет создан)" : " (не будет создана)")}
       {onClear && (
         <>
           {" "}
@@ -533,14 +704,19 @@ function MatchesBlock({
   const similar = matches.filter((m) => m.kind === "similar")
   return (
     <div className="space-y-1.5 rounded-md bg-muted/40 px-2 py-1.5 text-xs">
-      {exact.length === 1 && (
-        <p>
-          Похоже, уже есть: {MATCH_TYPE_LABELS[exact[0].type]} {matchName(exact[0])} — {exact[0].reason}
-        </p>
-      )}
+      {exact.length === 1 &&
+        (exact[0].type === "deal" ? (
+          <p>
+            Есть открытая сделка {matchName(exact[0])} — {exact[0].reason}
+          </p>
+        ) : (
+          <p>
+            Похоже, уже есть: {MATCH_TYPE_LABELS[exact[0].type]} {matchName(exact[0])} — {exact[0].reason}
+          </p>
+        ))}
       {exact.length > 1 && (
         <div>
-          <p>Похоже, уже есть:</p>
+          <p>{item.type === "deal" ? "Есть открытые сделки:" : "Похоже, уже есть:"}</p>
           <ul className="text-muted-foreground list-disc pl-4">
             {exact.map((m) => (
               <li key={m.id}>
@@ -815,7 +991,7 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
           key="companyKey"
           label="Компания из этой карточки"
           name={c.name}
-          dropped={form.kind === "task" && !c.included}
+          dropped={form.kind !== "contact" && !c.included}
           disabled={disabled}
         />,
       )
@@ -830,11 +1006,50 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
         />,
       )
     }
+    if (form.kind === "deal") {
+      form.contactKeys.forEach((key) => {
+        const c = cardItem(key)
+        out.push(
+          <LinkLine
+            key={`contactKey-${key}`}
+            label="Контакт из этой карточки"
+            name={c.name}
+            dropped={!c.included}
+            masculine
+            disabled={disabled}
+          />,
+        )
+      })
+      form.contactIds.forEach((id, i) => {
+        out.push(
+          <LinkLine
+            key={`contactId-${id}`}
+            label="Контакт"
+            name={form.contactNames[i] ?? ""}
+            disabled={disabled}
+            onClear={() =>
+              update(item, {
+                contactIds: form.contactIds.filter((_, j) => j !== i),
+                contactNames: form.contactNames.filter((_, j) => j !== i),
+              })
+            }
+          />,
+        )
+      })
+      return out
+    }
     if (form.kind !== "task") return out
     if (form.contactKey) {
       const c = cardItem(form.contactKey)
       out.push(
-        <LinkLine key="contactKey" label="Контакт из этой карточки" name={c.name} dropped={!c.included} disabled={disabled} />,
+        <LinkLine
+          key="contactKey"
+          label="Контакт из этой карточки"
+          name={c.name}
+          dropped={!c.included}
+          masculine
+          disabled={disabled}
+        />,
       )
     } else if (form.contactId) {
       out.push(
@@ -847,7 +1062,12 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
         />,
       )
     }
-    if (form.dealId) {
+    if (form.dealKey) {
+      const d = cardItem(form.dealKey)
+      out.push(
+        <LinkLine key="dealKey" label="Сделка из этой карточки" name={d.name} dropped={!d.included} disabled={disabled} />,
+      )
+    } else if (form.dealId) {
       out.push(
         <LinkLine
           key="dealId"
@@ -876,7 +1096,10 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
       ) : (
         <div className="space-y-2 px-3 py-2">
           {rows.map(({ item, form, include, choices, choice, missing }) => {
-            const fields = FIELDS[item.type]
+            // The deal type picker is shown only when the org has deal types.
+            const fields = FIELDS[item.type].filter(
+              (f) => f.control !== "dealType" || (options?.dealTypes?.length ?? 0) > 0,
+            )
             const shown = new Set(fields.flatMap((f) => f.keys ?? [f.field]))
             const otherRemoved = (item.removed ?? []).filter((r) => !shown.has(r.field))
             const itemId = `${idPrefix}-${item.key}`

@@ -289,9 +289,12 @@ export async function parseSourceItem(
   itemId: string,
   // The signed-in user on manual paths (parse / process / fetch routes);
   // null for cron and webhook paths. The org comes from the item row.
-  opts: { userId: string | null },
+  // `interactive`: the user waits (an AI chat file read at send) — the
+  // parser calls pass the daily AI budget gate like interactive processes.
+  opts: { userId: string | null; interactive?: boolean },
 ): Promise<ParseResult> {
   const ctx = await loadParseContext(itemId, opts.userId)
+  if (opts.interactive) ctx.ai = { ...ctx.ai, interactive: true }
 
   // «Исключения из анализа» (spec topics/01 §5.2 gate 3a): an item with an
   // excluded address / domain / chat is never parsed and never sent to a

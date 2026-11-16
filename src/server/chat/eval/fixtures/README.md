@@ -8,3 +8,7 @@ Regenerate (macOS only, uses `qlmanage`): `sh src/server/chat/eval/fixtures/make
 # Eval fixtures: meeting notes
 `notes/meeting-notes.txt` (source) and `notes/meeting-notes.docx` — invented meeting notes with 4 action items for the task cases (`e02`, T2).
 Regenerate the DOCX (macOS only, uses `textutil`): `sh src/server/chat/eval/fixtures/notes/make-notes.sh`.
+
+# Eval fixtures: voice message
+`voice/meeting-vector.txt` (source) and `voice/meeting-vector.wav` — a synthetic Russian voice note (TTS) about a meeting with «Вектор» for the deal case `f01` (T3).
+Regenerate (macOS only, uses `say -v Milena`): `sh src/server/chat/eval/fixtures/voice/make-voice.sh`.

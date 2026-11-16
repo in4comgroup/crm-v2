@@ -9,6 +9,7 @@ import {
   buildInputIndex,
   groundCompany,
   groundContact,
+  groundDeal,
   groundTask,
   isMeWord,
   userAsksForRecord,
@@ -23,6 +24,8 @@ import {
   type ChatDraftPart,
   type ContactValues,
   type DraftItem,
+  type DealValues,
+  type DraftMatch,
   type InputSources,
   type TaskValues,
 } from "@/lib/chat/actions"
@@ -42,9 +45,13 @@ import {
   findContactByName,
   findDealByName,
   loadOrgIndex,
+  loadDealOptions,
   loadOrgMembers,
+  openDealsOfClient,
+  type DealOptions,
   type OrgIndex,
 } from "./checks"
+import { readTurnSignals, type TurnSignals } from "./signals"
 import { insertAction, updateActionDraft } from "./store"
 
 // Draft tools of the AI chat (docs/specs/ai-chat-tools §7.2; T1 companies /
@@ -98,6 +105,8 @@ function kindOf(items: DraftItem[]): ActionKind {
   const c = items.some((i) => i.type === "company")
   const p = items.some((i) => i.type === "contact")
   const t = items.filter((i) => i.type === "task").length
+  const d = items.some((i) => i.type === "deal")
+  if (d) return c || p || t ? "group" : "deal"
   if (t && (c || p)) return "group"
   if (t) return t > 1 ? "tasks" : "task"
   return c && p ? "company_contact" : c ? "company" : "contact"
@@ -158,6 +167,9 @@ export function buildActionTools(turn: ActionTurn) {
   let sourcesP: Promise<InputSources> | undefined
   let indexP: Promise<OrgIndex> | undefined
   let membersP: Promise<Member[]> | undefined
+  let dealOptionsP: Promise<DealOptions> | undefined
+  let turnSignals: TurnSignals | null = null
+  const dealOptions = () => (dealOptionsP ??= loadDealOptions(turn.orgId))
   const sources = () => (sourcesP ??= loadSources(turn))
   const index = () => (indexP ??= loadOrgIndex(turn.orgId))
   const members = () => (membersP ??= loadOrgMembers(turn.orgId))
@@ -208,8 +220,16 @@ export function buildActionTools(turn: ActionTurn) {
   }
 
   async function optionsOf(items: DraftItem[]): Promise<ActionOptions | undefined> {
-    if (!items.some((i) => i.type === "task")) return undefined
-    return { members: (await members()).map((m) => ({ id: m.id, name: m.name })), timeZone: turn.rctx.timeZone }
+    const hasTask = items.some((i) => i.type === "task")
+    const hasDeal = items.some((i) => i.type === "deal")
+    if (!hasTask && !hasDeal) return undefined
+    const o: ActionOptions = { members: (await members()).map((m) => ({ id: m.id, name: m.name })), timeZone: turn.rctx.timeZone }
+    if (hasDeal) {
+      const d = await dealOptions()
+      o.stages = d.stages
+      o.dealTypes = d.dealTypes.map((t) => ({ id: t.id, name: t.name }))
+    }
+    return o
   }
 
   /** New action row + card, or add the items to a card of this answer. */
@@ -398,7 +418,38 @@ export function buildActionTools(turn: ActionTurn) {
     }
 
     const dealRef = (input.dealRef ?? "").trim()
-    if (dealRef) {
+    // A deal card of this answer: by draftId, by name, or by an open deal it shows as a
+    // match (the user picks «new» or «existing» there; the task follows the choice).
+    const dealCard = dealRef
+      ? [...drafts.values()].find(
+          (p) =>
+            p.draft.items.some((i) => i.type === "deal") &&
+            (p.actionId === dealRef ||
+              p.draft.items.some(
+                (i) => i.type === "deal" && (itemLabel(i).toLowerCase() === dealRef.toLowerCase() || i.matches.some((m) => m.id === dealRef)),
+              )),
+        )
+      : (() => {
+          // No deal named: the only deal card of this answer on the SAME company
+          // (or any deal card when the task names no company / contact).
+          const cards = [...drafts.values()].filter((p) => p.draft.items.some((i) => i.type === "deal"))
+          const same = cards.filter((p) =>
+            p.draft.items.some((i) => {
+              if (i.type !== "deal") return false
+              const d = i.values as DealValues
+              return (!!v.companyId && d.companyId === v.companyId) || (!!v.companyKey && into === p && d.companyKey === v.companyKey)
+            }),
+          )
+          if (same.length === 1) return same[0]
+          return !input.companyRef && !input.contactRef && cards.length === 1 ? cards[0] : undefined
+        })()
+    if (dealCard && (!into || into === dealCard)) {
+      into = dealCard
+      const di = dealCard.draft.items.find((i) => i.type === "deal")!
+      v.dealKey = di.key
+      v.dealName = itemLabel(di)
+      g.meta.dealName = { source: "input" }
+    } else if (dealRef) {
       const d = (await dealInOrg(turn.orgId, dealRef)) ?? null
       const live = d && d.status === "active" ? d : null
       const byName = live ? null : await findDealByName(turn.orgId, dealRef)
@@ -536,6 +587,197 @@ export function buildActionTools(turn: ActionTurn) {
         }),
     }),
 
+    readSignals: tool({
+      description:
+        "Read the business signals of the user's latest message and files with the org's signal model, and what the org's funnel rules suggest (create a deal of type X at stage Y, move an open deal, …). " +
+        "Call it ONCE before draftDeal when the user reports a client's request, a meeting or an agreement. Nothing is stored. Returns codes with quotes and `suggestion`.",
+      inputSchema: z.object({
+        companyRef: z.string().optional().describe("ref / name of the company the message is about, if known (to see its open deals)"),
+      }),
+      execute: (input) =>
+        serial(async () => {
+          if (!asked) return NOT_ASKED
+          status("readSignals", input)
+          try {
+            const last = lastUser
+            if (!last) return { error: "Нет сообщения пользователя." }
+            const files = await readChatAttachmentContents(
+              turn.orgId,
+              attachmentIds(last).filter((a) => a.status === "parsed").map((a) => a.itemId),
+            )
+            const text = [textOf(last), ...files.map((f) => `### Вложение: ${f.name}\n${f.content.slice(0, 6000)}`)].join("\n\n").trim()
+            if (!text) return { error: "В сообщении нет текста." }
+            const co = await resolveCompany((input.companyRef ?? "").trim(), await index(), false)
+            const me = (await members()).find((m) => m.id === turn.userId)
+            const r = await readTurnSignals({
+              orgId: turn.orgId,
+              userId: turn.userId,
+              userName: me?.name ?? "сотрудник",
+              text,
+              clientId: co.kind === "existing" ? co.id : null,
+              now: turn.rctx.now,
+            })
+            if ("error" in r) return r
+            turnSignals = r
+            return {
+              signals: r.codes.filter((c) => c.counted || c.confidence !== "low").slice(0, 8).map((c) => ({ label: c.label, quote: c.evidence })),
+              amounts: r.amounts,
+              deadlines: r.deadlines,
+              suggestion: r.suggestion
+                ? { action: r.suggestion.action, dealType: r.suggestion.dealTypeName || null, stage: r.suggestion.stageName || null, dealRef: r.suggestion.dealId, rule: r.suggestion.ruleNote }
+                : null,
+              note: r.note,
+            }
+          } catch (e) {
+            console.error("[chat/actions] readSignals failed", e)
+            return { error: "Не удалось прочитать сигналы — продолжай без них." }
+          }
+        }),
+    }),
+
+    draftDeal: tool({
+      description:
+        "Prepare a NEW deal card for the user to confirm (nothing is created until the user clicks «Создать»). " +
+        "companyRef: a draftId of a company card of this answer, a ref of an existing company, or its name. " +
+        "The amount must be the user's own words (valueText). Stage / type: leave empty to use the org funnel rules (readSignals) or the first stage. " +
+        "Then add the next step as draftTask with dealRef = the returned draftId. Returns draftId and status: ready | needs_input | duplicate.",
+      inputSchema: z.object({
+        name: z.string().describe("«<Компания> — <предмет>», e.g. «Вектор — поставка 200 позиций»"),
+        description: z.string().max(1500).optional().describe("What was agreed — a short list from the input"),
+        companyRef: z.string().optional(),
+        contactRefs: z.array(z.string()).max(10).optional().describe("draftIds / refs / names of the people of the deal"),
+        valueText: z.string().optional().describe("The user's OWN words for the amount, copied exactly («бюджет ~2 млн», «150 тыс. ₽»). Omit when no amount is named."),
+        dealType: z.string().optional().describe("A deal type of the org (name or id) only when the user names it"),
+        stage: z.string().optional().describe("A stage (name or id) only when the user names it"),
+      }),
+      execute: (input) =>
+        serial(async () => {
+          if (!asked) return NOT_ASKED
+          if (tooMany()) return LIMIT
+          count++
+          status("draftDeal", input)
+          try {
+            const g = groundDeal(input, await sources())
+            const v = g.values
+            const idx = await index()
+            const opts = await dealOptions()
+            const notes: string[] = []
+            let into: ChatDraftPart | undefined
+
+            const co = await resolveCompany((input.companyRef ?? "").trim(), idx, true)
+            if (co.kind === "card") {
+              into = co.part
+              v.companyKey = co.key
+              v.companyName = co.name
+              g.meta.companyName = { source: "input" }
+            } else if (co.kind === "existing") {
+              v.companyId = co.id
+              v.companyName = co.name
+              g.meta.companyName = { source: "input" }
+            } else if (co.kind === "many") notes.push(`Компаний «${input.companyRef}» несколько — уточни у пользователя.`)
+            else if (co.kind === "none") notes.push(`Компания «${input.companyRef}» не найдена в CRM. Если она новая — сначала draftCompany, затем draftDeal с companyRef = draftId.`)
+            else {
+              const page = await pageClient()
+              if (page) {
+                v.companyId = page.id
+                v.companyName = page.name
+                g.meta.companyName = { source: "page" }
+              }
+            }
+
+            // No subject named → a neutral name the user can edit (do not ask for it).
+            if (!v.name && v.companyName) {
+              v.name = `${v.companyName} — новая сделка`
+              g.meta.name = { source: "default" }
+            }
+
+            // Contacts: cards of this answer (same card only) or existing ones.
+            for (const ref of input.contactRefs ?? []) {
+              const ct = resolveContact(ref.trim(), idx)
+              if (ct.kind === "card" && (!into || into === ct.part)) {
+                into = ct.part
+                v.contactKeys.push(ct.key)
+                v.contactNames.push(ct.name)
+              } else if (ct.kind === "existing") {
+                v.contactIds.push(ct.id)
+                v.contactNames.push(ct.name)
+              } else if (ct.kind !== "card") notes.push(`Контакт «${ref}» не найден — сделка без него.`)
+            }
+            if (into && !v.contactKeys.length && !v.contactIds.length) {
+              for (const p of into.draft.items.filter((i) => i.type === "contact")) {
+                v.contactKeys.push(p.key)
+                v.contactNames.push(itemLabel(p))
+              }
+            }
+            if (v.contactNames.length) g.meta.contactNames = { source: "input" }
+
+            // Type and stage: the user's words → the funnel rules (readSignals) → defaults.
+            const byName = <T extends { id: string; name: string }>(list: T[], q: string) =>
+              list.find((x) => x.id === q) ?? list.find((x) => x.name.toLowerCase() === q.toLowerCase()) ?? list.find((x) => x.name.toLowerCase().includes(q.toLowerCase()))
+            const sug = turnSignals?.suggestion?.action === "create" ? turnSignals.suggestion : null
+            const t = input.dealType?.trim() ? byName(opts.dealTypes, input.dealType.trim()) : undefined
+            if (t) {
+              v.dealTypeId = t.id
+              v.dealTypeName = t.name
+              g.meta.dealTypeName = { source: "input" }
+            } else if (sug?.dealTypeId) {
+              v.dealTypeId = sug.dealTypeId
+              v.dealTypeName = sug.dealTypeName
+              g.meta.dealTypeName = { source: "rule" }
+            } else if (opts.dealTypes.length === 1) {
+              v.dealTypeId = opts.dealTypes[0].id
+              v.dealTypeName = opts.dealTypes[0].name
+              g.meta.dealTypeName = { source: "default" }
+            }
+            const st = input.stage?.trim() ? byName(opts.stages, input.stage.trim()) : undefined
+            if (st) {
+              v.stageId = st.id
+              v.stageName = st.name
+              g.meta.stageName = { source: "input" }
+            } else if (sug?.stageId && opts.stages.some((x) => x.id === sug.stageId)) {
+              v.stageId = sug.stageId
+              v.stageName = sug.stageName
+              v.ruleNote = sug.ruleNote
+              g.meta.stageName = { source: "rule" }
+            } else if (opts.stages[0]) {
+              v.stageId = opts.stages[0].id
+              v.stageName = opts.stages[0].name
+              g.meta.stageName = { source: "default" }
+            }
+
+            // «An open deal of the same company and type exists» (§9).
+            const matches: DraftMatch[] = []
+            if (v.companyId) {
+              for (const d of await openDealsOfClient(turn.orgId, v.companyId)) {
+                const same = (d.dealTypeId ?? null) === (v.dealTypeId ?? null)
+                matches.push({
+                  kind: same ? "exact" : "similar",
+                  type: "deal",
+                  id: d.id,
+                  title: d.name,
+                  subtitle: d.stageName,
+                  reason: same ? "открытая сделка той же компании и того же типа" : "другая открытая сделка компании",
+                })
+              }
+              matches.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "exact" ? -1 : 1))
+            }
+            const item: DraftItem = {
+              key: nextKey(into, [], "d"),
+              type: "deal",
+              values: v,
+              meta: g.meta,
+              removed: g.removed,
+              matches: matches.slice(0, 5),
+              missing: missingFields({ type: "deal", values: v }),
+              refused: null,
+            }
+            return modelView(await saveDraft([item], into), notes.join(" ") || undefined)
+          } catch (e) {
+            return failed(e)
+          }
+        }),
+    }),
+
     draftTask: tool({
       description:
         "Prepare ONE new task card for the user to confirm (nothing is created until the user clicks «Создать»). " +
@@ -597,7 +839,7 @@ export function buildActionTools(turn: ActionTurn) {
   }
 }
 
-export const ACTION_TOOLS = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks"])
+export const ACTION_TOOLS = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals"])
 
 function unlinkKeys(item: DraftItem) {
   const v = item.values as TaskValues

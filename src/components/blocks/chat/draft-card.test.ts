@@ -1,7 +1,7 @@
 import { createElement } from "react"
 import { renderToReadableStream } from "react-dom/server"
 import { describe, expect, test } from "vitest"
-import type { ChatDraftPart, TaskValues } from "@/lib/chat/actions"
+import type { ChatDraftPart, DealValues, TaskValues } from "@/lib/chat/actions"
 import { DraftCard } from "./draft-card"
 
 async function render(part: ChatDraftPart): Promise<string> {
@@ -221,7 +221,136 @@ function task(v: Partial<TaskValues>): TaskValues {
     contactKey: null,
     contactName: "",
     dealId: null,
+    dealKey: null,
     dealName: "",
     ...v,
   }
 }
+
+function deal(v: Partial<DealValues>): DealValues {
+  return {
+    name: "",
+    description: "",
+    companyId: null,
+    companyKey: null,
+    companyName: "",
+    contactIds: [],
+    contactKeys: [],
+    contactNames: [],
+    value: "",
+    valueText: "",
+    currency: "",
+    dealTypeId: null,
+    dealTypeName: "",
+    stageId: null,
+    stageName: "",
+    ruleNote: "",
+    ...v,
+  }
+}
+
+const DEAL_OPTIONS = {
+  members: [{ id: "u1", name: "Анна Иванова" }],
+  timeZone: "Europe/Vienna",
+  stages: [
+    { id: "s1", name: "Квалификация" },
+    { id: "s2", name: "КП отправлено" },
+  ],
+  dealTypes: [{ id: "dt1", name: "Поставка" }],
+}
+
+function dealGroup(dealValues: Partial<DealValues>, matches: ChatDraftPart["draft"]["items"][number]["matches"] = []): ChatDraftPart {
+  const company = draft().draft.items[0]
+  return {
+    actionId: "act-4",
+    kind: "group",
+    status: "draft",
+    options: DEAL_OPTIONS,
+    draft: {
+      files: [],
+      items: [
+        {
+          key: "t1",
+          type: "task",
+          values: task({ title: "Отправить КП", dueDate: "2026-11-20T18:00", assigneeId: "u1", assigneeName: "Анна Иванова", companyKey: "c1", dealKey: "d1" }),
+          meta: {},
+          removed: [],
+          matches: [],
+          missing: [],
+          refused: null,
+        },
+        {
+          key: "d1",
+          type: "deal",
+          values: deal({ name: "Вектор — поставка 200 позиций", companyKey: "c1", ...dealValues }),
+          meta: { name: { source: "model" }, stageId: { source: "rule" } },
+          removed: [],
+          matches,
+          missing: [],
+          refused: null,
+        },
+        { ...company, matches: [] },
+      ],
+    },
+  }
+}
+
+describe("DraftCard — deals", () => {
+  test("group card: company + deal (open deal match, rule note) + task linked to the deal", async () => {
+    const html = await render(
+      dealGroup(
+        {
+          value: "2000000",
+          valueText: "бюджет ~2 млн",
+          currency: "RUB",
+          dealTypeId: "dt1",
+          dealTypeName: "Поставка",
+          stageId: "s2",
+          stageName: "КП отправлено",
+          ruleNote: "по правилу воронки: КП отправлено",
+        },
+        [{ kind: "exact", type: "deal", id: "deal-9", title: "Вектор — поставка", subtitle: "Квалификация", reason: "та же компания и тип" }],
+      ),
+    )
+    expect(html).toContain("Новые записи")
+    // Order: company → deal → task.
+    expect(html.indexOf("Создать: компания")).toBeLessThan(html.indexOf("Создать: сделка"))
+    expect(html.indexOf("Создать: сделка")).toBeLessThan(html.indexOf("Создать: задача"))
+    expect(html).toContain("Есть открытая сделка «Вектор — поставка» (Квалификация) — та же компания и тип")
+    expect(html).toContain("Использовать существующую")
+    expect(html).toContain("Всё равно создать новую")
+    expect(html).toContain('value="2000000"')
+    expect(html).toContain("из сообщения: бюджет ~2 млн")
+    expect(html).toContain("валюта компании")
+    expect(html).toContain("— без типа —")
+    expect(html).toContain("Поставка")
+    expect(html).toContain("КП отправлено")
+    expect(html).toContain("по правилу воронки: КП отправлено")
+    expect(html).toContain("по правилу воронки")
+    expect(html).toContain("Что обсудили")
+    expect(html).toContain("Сделка из этой карточки:")
+    expect(html).toContain("Вектор — поставка 200 позиций")
+    expect(html).not.toContain("Выберите стадию")
+    // «Создать всё» is enabled: its <button> tag has no disabled attribute.
+    const createAll = /<button[^>]*>(?:(?!<\/button>).)*Создать всё/.exec(html)?.[0] ?? ""
+    expect(createAll).toContain("Создать всё")
+    expect(createAll).not.toContain('disabled=""')
+  })
+
+  test("deal without a stage disables «Создать всё»", async () => {
+    const html = await render(dealGroup({}))
+    expect(html).toContain("Выберите стадию")
+    expect(html).toContain("— выберите —")
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Создать всё/)
+  })
+
+  test("deal result line", async () => {
+    const html = await render({
+      ...draft(),
+      status: "created",
+      results: [{ type: "deal", id: "dl-1", title: "Вектор — поставка", href: "/deals?openDeal=dl-1" }],
+    })
+    expect(html).toContain("Сделка «Вектор — поставка»")
+    expect(html).toContain('href="/deals?openDeal=dl-1"')
+  })
+})

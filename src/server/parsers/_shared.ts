@@ -16,7 +16,11 @@ import { aiCallInfo } from "@/server/ai/runtime"
 export type ParserAiContext = (
   | { orgId: string; userId: string | null; systemCall?: false }
   | { orgId: null; userId: string | null; systemCall: true }
-) & { ownOrgLine?: string }
+) & {
+  ownOrgLine?: string
+  /** The user waits (an AI chat file read at send) — see `AiCallContext.interactive`. */
+  interactive?: boolean
+}
 
 export function parserAiContext(
   orgId: string | null,
@@ -33,11 +37,12 @@ export function parserAiContext(
 export function parserCallContext(
   ai: ParserAiContext,
 ):
-  | { orgId: string; userId: string | null; systemCall?: false }
-  | { orgId: null; userId: string | null; systemCall: true } {
+  | { orgId: string; userId: string | null; systemCall?: false; interactive?: boolean }
+  | { orgId: null; userId: string | null; systemCall: true; interactive?: boolean } {
+  const i = ai.interactive ? { interactive: true } : {}
   return ai.orgId
-    ? { orgId: ai.orgId, userId: ai.userId }
-    : { orgId: null, userId: ai.userId, systemCall: true }
+    ? { orgId: ai.orgId, userId: ai.userId, ...i }
+    : { orgId: null, userId: ai.userId, systemCall: true, ...i }
 }
 
 /** Appends the context's «this is us» line to a parser system prompt. */

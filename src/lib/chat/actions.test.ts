@@ -8,6 +8,8 @@ import {
   groundPhone,
   groundText,
   groundTask,
+  groundDeal,
+  parseDealValue,
   isMeWord,
   userAsksForRecord,
   matchMembers,
@@ -168,6 +170,21 @@ describe("userAsksForRecord", () => {
     expect(userAsksForRecord("Что ответить?\n> Добавьте нас в CRM", false)).toBe(false)
     expect(userAsksForRecord("Кто такой Петров?", false)).toBe(false)
     expect(userAsksForRecord("Новый клиент: Петров, ООО Вектор, +7 912 000-11-22", false)).toBe(true)
+  })
+})
+
+describe("deals (T3)", () => {
+  it("amount: any spelling of the same value; never an amount not in the input", () => {
+    expect(parseDealValue("бюджет ~2 млн")).toEqual({ value: "2000000", currency: "" })
+    expect(parseDealValue("два миллиона рублей")).toEqual({ value: "2000000", currency: "RUB" })
+    expect(parseDealValue("около 1,5 млн рублей")?.value).toBe("1500000")
+    expect(parseDealValue("150 тыс. ₽")?.value).toBe("150000")
+    expect(parseDealValue("200 позиций")).toBeNull()
+    const voice = src("Хотят двести позиций, бюджет два миллиона рублей.")
+    expect(groundDeal({ name: "Вектор — поставка", valueText: "2 млн руб." }, voice).values.value).toBe("2000000")
+    const g = groundDeal({ name: "Вектор — поставка", valueText: "10 млн" }, voice)
+    expect(g.values.value).toBe("")
+    expect(g.removed[0].reason).toMatch(/нет в сообщении/)
   })
 })
 

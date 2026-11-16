@@ -93,3 +93,27 @@ describe("segment helpers", () => {
     expect(chatIngestDue({ lastMessageAt: at("2026-11-16T10:00:00Z"), oldestPendingAt: null }, now)).toBe(false)
   })
 })
+
+describe("segmentActions (ai-chat-tools Q18)", () => {
+  it("collects what confirmed cards created in the segment", async () => {
+    const { segmentActions } = await import("./ingest")
+    const msgs = [
+      { parts: [{ type: "text", text: "Оформи сделку" }] },
+      {
+        parts: [
+          { type: "text", text: "Готово" },
+          { type: "data-draft", id: "a1", data: {} },
+          {
+            type: "data-action-result",
+            id: "result-a1",
+            data: { actionId: "a1", status: "created", results: [{ type: "deal", id: "d1", title: "Вектор — поставка", href: "/deals?openDeal=d1" }, { type: "client", id: "c1", title: "Вектор", href: "", existing: true }] },
+          },
+        ],
+      },
+    ]
+    expect(segmentActions(msgs)).toEqual([
+      { type: "deal", id: "d1", title: "Вектор — поставка" },
+      { type: "client", id: "c1", title: "Вектор", existing: true },
+    ])
+  })
+})

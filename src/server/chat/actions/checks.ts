@@ -20,6 +20,9 @@ import { searchRecords, type RecordsContext } from "@/server/chat/records"
 import { getOwnOrgContext, type OwnOrgContext } from "@/server/identity/own-org"
 import { ownOrgIdentityFromContext } from "@/server/org-identity"
 import { humanUsersOnly } from "@/server/topics/system-actor"
+import { getOrgFunnel } from "@/server/deal-engine"
+import { listDealTypes } from "@/server/deal-types"
+import { stageDisplayLabel } from "@/lib/deal-funnel"
 
 // Checks of a chat draft (docs/specs/ai-chat-tools §8.3): duplicates of
 // existing companies / contacts (exact = e-mail / phone / domain / Telegram;
@@ -296,4 +299,39 @@ export async function findDealByName(orgId: string, name: string): Promise<{ id:
     .where(and(eq(deal.organizationId, orgId), eq(deal.status, "active"), sql`lower(${deal.name}) = ${n}`))
     .limit(3)
   return rows.length === 1 ? rows[0] : rows.length > 1 ? "many" : null
+}
+
+// ── Deals (T3) ────────────────────────────────────────────────────────
+
+export type DealOptions = {
+  /** Working stages (role active, not hidden), in funnel order. */
+  stages: { id: string; name: string }[]
+  dealTypes: { id: string; name: string; code: string }[]
+}
+
+export async function loadDealOptions(orgId: string): Promise<DealOptions> {
+  const [stages, types] = await Promise.all([getOrgFunnel(orgId), listDealTypes(orgId)])
+  return {
+    stages: stages
+      .filter((s) => s.role === "active" && !s.isHidden)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((s) => ({ id: s.id, name: stageDisplayLabel(s.name, s.displayName) })),
+    dealTypes: types.map((t) => ({ id: t.id, name: t.labelRu, code: t.code })),
+  }
+}
+
+/** Open deals (active / paused, not won / lost) of a company — the «same company and type» check (§9). */
+export async function openDealsOfClient(
+  orgId: string,
+  clientId: string,
+): Promise<{ id: string; name: string; dealTypeId: string | null; stageName: string }[]> {
+  const stages = await getOrgFunnel(orgId)
+  const rows = await db
+    .select({ id: deal.id, name: deal.name, dealTypeId: deal.dealTypeId, stageId: deal.funnelStageId })
+    .from(deal)
+    .where(and(eq(deal.organizationId, orgId), eq(deal.clientId, clientId), inArray(deal.status, ["active", "paused"])))
+  return rows
+    .map((r) => ({ r, s: stages.find((x) => x.id === r.stageId) }))
+    .filter(({ s }) => !s || (s.role !== "won" && s.role !== "lost"))
+    .map(({ r, s }) => ({ id: r.id, name: r.name, dealTypeId: r.dealTypeId, stageName: s ? stageDisplayLabel(s.name, s.displayName) : "" }))
 }

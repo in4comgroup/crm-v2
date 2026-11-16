@@ -450,9 +450,12 @@ video, text and recorded voice messages are uploaded in parts of ≤ 4 MB
 (`/api/chat/files`), stored as «AI Chat» source items and read by the parser of
 their type when the message is sent; the chat model gets only their text.
 Draft cards (ai-chat-tools T1, T2): from a message, a business card, a voice
-note or meeting notes the chat prepares NEW companies, contacts and tasks (one
-task or a checklist) as an editable card in the answer (`draftCompany` /
-`draftContact` / `draftTask` / `draftTasks`); task deadlines come from the
+note or meeting notes the chat prepares NEW companies, contacts, deals and tasks
+(one task or a checklist) as an editable card in the answer (`draftCompany` /
+`draftContact` / `draftDeal` / `draftTask` / `draftTasks`); before a deal the
+chat reads the message's signals and the org's funnel rules (`readSignals`) to
+pick the deal type and stage; an open deal of the same company and type is
+offered instead of a duplicate; task deadlines come from the
 user's own words («до пятницы») and are computed in the org time zone — no
 words, no date (the card asks); assignee by a colleague's name; code removes every value that is not in the
 user's own text or files, shows existing records with the same e-mail / phone /

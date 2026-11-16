@@ -3,7 +3,7 @@ import "server-only"
 import { randomUUID } from "node:crypto"
 import { and, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { card, cardClient, cardContact, client, contact, sourceItem, topic } from "@/db/schema"
+import { card, cardClient, cardContact, client, contact, sourceItem, task, topic } from "@/db/schema"
 import type { TopicAttention } from "@/lib/topics/attention-types"
 import {
   CARD_DECIDED_STATUSES,
@@ -340,6 +340,9 @@ export async function buildCardInput(args: {
       })()
     : null
 
+  // ai-chat-tools Q18: tasks the user already made from the AI chat for this company / contact.
+  const existingTasks = await chatCreatedOpenTasks(orgId, row.clientId, row.contactId)
+
   const input: CardWriterInput = {
     topicId: row.id,
     sourceItemId: links[0]?.itemId ?? null,
@@ -365,6 +368,7 @@ export async function buildCardInput(args: {
     overdue: attention.overdue,
     current: ct,
     force: args.force,
+    ...(existingTasks.length ? { existingTasks } : {}),
     ...(orgPrompt
       ? {
           org: { roleLine: orgPrompt.roleLine, productsLine: orgPrompt.productsLine },
@@ -381,6 +385,34 @@ export async function buildCardInput(args: {
     orderRequest,
     lastItemId: links[0]?.itemId ?? null,
   }
+}
+
+/**
+ * Open tasks (≤ 30 days old) of the company / contact that a confirmed AI-chat
+ * card created — «Отправить КП (до 20.11.2026)». The card writer must not
+ * suggest them again (ai-chat-tools Q18).
+ */
+export async function chatCreatedOpenTasks(orgId: string, clientId: string | null, contactId: string | null): Promise<string[]> {
+  if (!clientId && !contactId) return []
+  const who = [clientId ? eq(task.clientId, clientId) : undefined, contactId ? eq(task.contactId, contactId) : undefined].filter(
+    (x): x is NonNullable<typeof x> => !!x,
+  )
+  const rows = await db
+    .select({ name: task.name, dueDate: task.dueDate })
+    .from(task)
+    .where(
+      and(
+        eq(task.organizationId, orgId),
+        or(...who),
+        inArray(task.status, ["todo", "in_progress"]),
+        sql`${task.createdAt} > now() - interval '30 days'`,
+        sql`exists (select 1 from ai_chat_action a where a.organization_id = ${orgId}
+          and a.results @> jsonb_build_array(jsonb_build_object('type', 'task', 'id', "task"."id")))`,
+      ),
+    )
+    .orderBy(task.dueDate)
+    .limit(8)
+  return rows.map((r) => `${r.name} (до ${r.dueDate.toISOString().slice(0, 10).split("-").reverse().join(".")})`)
 }
 
 // ── Card writes ───────────────────────────────────────────────────────────

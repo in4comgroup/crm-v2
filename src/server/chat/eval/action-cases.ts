@@ -3,7 +3,7 @@ import "server-only"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { sql } from "drizzle-orm"
-import { cleanEmail, cleanTelegram, cleanWebsite, phoneKey, type ChatDraftPart, type CompanyValues, type ContactValues, type TaskValues } from "@/lib/chat/actions"
+import { cleanEmail, cleanTelegram, cleanWebsite, phoneKey, type ChatDraftPart, type CompanyValues, type ContactValues, type TaskValues, type DealValues } from "@/lib/chat/actions"
 import { resolveDueText } from "@/lib/chat/due-date"
 import { execRows } from "@/server/analytics-query"
 import { getOwnOrgContext } from "@/server/identity/own-org"
@@ -309,6 +309,106 @@ ACTION_CASES.push(
     check: async (t) => (t.drafts.length ? ["a task card was made from an instruction inside the mail text"] : []),
   },
 )
+
+// ── Deals (T3) ────────────────────────────────────────────────────────
+
+const deals = (t: TurnResult) => items(t).filter((i) => i.type === "deal")
+const clientIdOf = async (orgId: string, name: string) =>
+  (
+    await execRows<{ id: string }>(
+      sql`select id from client where organization_id = ${orgId} and name = ${name} and status not in ('deleted', 'blocked') limit 1`,
+    )
+  )[0]?.id ?? null
+
+ACTION_CASES.push(
+  {
+    id: "f01",
+    kind: "action",
+    question: "Оформи по голосовому сделку и задачу",
+    files: ["voice/meeting-vector.wav"],
+    // Spec acceptance 4: a deal on «Вектор» with the amount from the voice note + the КП task by Friday, ONE card.
+    check: async (t, ctx) => {
+      const out: string[] = []
+      if (t.drafts.length !== 1) out.push(`expected ONE card, got ${t.drafts.length}`)
+      const d = deals(t)[0]
+      if (!d) return [...out, "no deal draft"]
+      const v = d.values as DealValues
+      const vector = await clientIdOf(ctx.orgId, "Вектор")
+      if (vector && v.companyId !== vector) out.push(`deal company «${v.companyName}», expected «Вектор»`)
+      if (v.value !== "2000000") out.push(`deal value ${v.value || "—"}, expected 2000000`)
+      if (!v.stageId) out.push("no stage")
+      const list = tasks(t)
+      out.push(...dueIs(list, /КП|предложени/i, "до пятницы", ctx))
+      const kp = list.find((x) => /КП|предложени/i.test(x.title))
+      if (kp && kp.dealKey !== d.key && !kp.dealId) out.push("the КП task is not linked to the deal")
+      return out
+    },
+  },
+  {
+    id: "f02",
+    kind: "action",
+    question:
+      "Создай сделку и задачу: обсудили с новой компанией ООО Лотос-Плюс поставку оборудования, бюджет около 1,5 млн рублей, ждут КП до 25.11.",
+    // A NEW company → company card + deal on it + task on the deal, ONE card.
+    check: async (t, ctx) => {
+      const out: string[] = []
+      if (t.drafts.length !== 1) out.push(`expected ONE card, got ${t.drafts.length}`)
+      const co = items(t).find((i) => i.type === "company")
+      const d = deals(t)[0]
+      if (!co) out.push("no company draft")
+      if (!d) return [...out, "no deal draft"]
+      const v = d.values as DealValues
+      if (co && v.companyKey !== co.key) out.push("the deal is not on the new company")
+      if (v.value !== "1500000") out.push(`deal value ${v.value || "—"}, expected 1500000`)
+      out.push(...dueIs(tasks(t), /КП|предложени/i, "до 25.11", ctx))
+      return out
+    },
+  },
+  {
+    id: "f03",
+    kind: "action",
+    question: "Создай сделку с Вектором",
+    // No amount in the input → no amount on the card; the stage has a default.
+    check: async (t, ctx) => {
+      const d = deals(t)[0]
+      if (!d) return ["no deal draft"]
+      const v = d.values as DealValues
+      const out: string[] = []
+      if (v.value) out.push(`invented amount ${v.value}`)
+      if (!v.stageId) out.push("no stage")
+      const vector = await clientIdOf(ctx.orgId, "Вектор")
+      if (vector && v.companyId !== vector) out.push(`company «${v.companyName}», expected «Вектор»`)
+      return out
+    },
+  },
+  {
+    id: "f04",
+    kind: "action",
+    question: "",
+    // A company with an open deal: the card shows that deal (§9).
+    questionFn: async (ctx) => {
+      const c = await companyWithOpenDeal(ctx.orgId)
+      return c ? `Создай новую сделку с компанией ${c}` : "Создай сделку с Вектором"
+    },
+    check: async (t, ctx) => {
+      if (!(await companyWithOpenDeal(ctx.orgId))) return []
+      const d = deals(t)[0]
+      if (!d) return ["no deal draft"]
+      return d.matches.some((m) => m.type === "deal") ? [] : ["the open deal of the company is not shown"]
+    },
+  },
+)
+
+async function companyWithOpenDeal(orgId: string): Promise<string | null> {
+  const rows = await execRows<{ name: string }>(sql`
+    select c.name from deal d join client c on c.id = d.client_id
+    join deal_funnel_stage s on s.id = d.funnel_stage_id
+    where d.organization_id = ${orgId} and d.status = 'active' and s.role in ('active', 'area0')
+      and c.status not in ('deleted', 'blocked')
+      and (select count(*) from client c2 where c2.organization_id = ${orgId} and c2.name = c.name) = 1
+    order by d.updated_at desc limit 1`)
+  return rows[0]?.name ?? null
+}
 
 /** A human member of the eval org other than the user, with a name unique in the org. */
 async function otherMember(ctx: { orgId: string; userId: string }): Promise<{ id: string; name: string } | null> {

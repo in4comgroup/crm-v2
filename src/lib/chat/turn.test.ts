@@ -115,5 +115,7 @@ describe("claimsDraft", () => {
     expect(claimsDraft("Подготовил карточку компании и контакта по визитке")).toBe(true)
     expect(claimsDraft("Подготовила для вас задачу на завтра")).toBe(true)
     expect(claimsDraft("Нашёл компанию «Вектор» и 2 контакта")).toBe(false)
+    expect(claimsDraft("Подскажите предмет сделки, чтобы я подготовил карточку для подтверждения?")).toBe(false)
+    expect(claimsDraft("Карточку не подготовил: нет компании.")).toBe(false)
   })
 })

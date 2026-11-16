@@ -78,6 +78,12 @@ export type CardWriterInput = {
    * «Название: значение» lines of the client's SHOWN fields ("" / null = none).
    */
   clientFields?: string | null
+  /**
+   * ai-chat-tools Q18: open tasks the user already created from the AI chat
+   * for this company / contact («Отправить КП (до 20.11.2026)»). Absent /
+   * empty → the prompt is unchanged.
+   */
+  existingTasks?: string[] | null
 }
 
 export type CardWriter = (input: CardWriterInput) => Promise<CardWriterOutput>
@@ -143,6 +149,10 @@ export function buildCardWriterPrompt(input: CardWriterInput): string {
   if (t.references.length) lines.push(`Номера документов: ${t.references.join("; ")}`)
   if (t.products.length) lines.push(`Товары: ${t.products.slice(0, 12).join(", ")}`)
   lines.push(`Сроки: ${input.deadlines.length ? input.deadlines.join(", ") : "нет"}${input.overdue ? " (срок просрочен)" : ""}`)
+  if (input.existingTasks?.length) {
+    lines.push("Задачи уже созданы (не предлагай их снова как шаги и как taskTitle):")
+    for (const t of input.existingTasks.slice(0, 8)) lines.push(`- ${t}`)
+  }
   lines.push("")
   lines.push("СИГНАЛЫ (цитаты из сообщений)")
   for (const s of input.signals) {

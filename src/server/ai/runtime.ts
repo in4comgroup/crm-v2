@@ -59,6 +59,10 @@ export type AiCallContext = {
   // Optional business reference stored on the usage event, e.g.
   // { sourceItemId }.
   ref?: Record<string, unknown>
+  // A person waits for this call right now (e.g. a file parsed when an AI
+  // chat message is sent): the DAILY budget gate treats it like an
+  // interactive process. The monthly limit is unchanged.
+  interactive?: boolean
 } & ({ orgId: string; systemCall?: false } | { orgId: null; systemCall: true })
 
 export type AiCallInfo = AiResultInfo & {
@@ -92,7 +96,7 @@ async function enforceBudget(ctx: AiCallContext, resolved: ResolvedProcess) {
   const budget = period === "month" ? status.monthly.budgetUsd : status.budgetUsd
   const spent = period === "month" ? status.monthly.spentUsd : status.spentUsd
   const interactiveStops = resolved.process.stopAtMonthlyLimit === true && monthUsedUp
-  if (resolved.process.kind === "interactive" && !interactiveStops) {
+  if ((resolved.process.kind === "interactive" || (ctx.interactive === true && !monthUsedUp)) && !interactiveStops) {
     console.warn(
       `[ai] ${period === "month" ? "monthly limit" : "daily budget"} used up for org ${ctx.orgId} ($${spent.toFixed(2)} of $${budget}); interactive process ${ctx.process} runs anyway`,
     )
@@ -169,9 +173,9 @@ function applySettings<T extends { temperature?: number; maxOutputTokens?: numbe
 }
 
 function splitContext<T extends AiCallContext>(args: T) {
-  const { process, orgId, userId, requestedModelId, capabilities, systemCall, ref, ...params } = args
+  const { process, orgId, userId, requestedModelId, capabilities, systemCall, ref, interactive, ...params } = args
   return {
-    ctx: { process, orgId, userId, requestedModelId, capabilities, systemCall, ref } as AiCallContext,
+    ctx: { process, orgId, userId, requestedModelId, capabilities, systemCall, ref, interactive } as AiCallContext,
     params,
   }
 }

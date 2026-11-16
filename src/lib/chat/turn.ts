@@ -41,11 +41,15 @@ export const EMPTY_ANSWER_FALLBACK =
 export const STATUS_WRITING: ChatStatus = { stage: "writing", label: "Готовлю ответ…" }
 
 /** Draft tools (ai-chat-tools): a turn that names a card must have called one. */
-export const DRAFT_TOOL_NAMES = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks"])
+export const DRAFT_TOOL_NAMES = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal"])
 
 /** «Подготовил карточку / задачи / список задач …» — the answer says a card is there. */
 export function claimsDraft(text: string): boolean {
-  return /подготовил[аи]?\s+(?:для\s+вас\s+)?(?:\S+\s+){0,3}(карточк|черновик|задач|список задач|чек-?лист)/i.test(text ?? "")
+  const claim = /подготовил[аи]?\s+(?:для\s+вас\s+)?(?:\S+\s+){0,3}(карточк|черновик|задач|список задач|чек-?лист|сделк)/i
+  // A statement, not a question / an offer («…, чтобы я подготовил карточку?», «могу подготовить …»).
+  return (text ?? "")
+    .split(/(?<=[.!?\n])\s+/)
+    .some((s) => claim.test(s) && !/\?\s*$/.test(s.trim()) && !/чтобы|если|могу|можно|хотите|не\s+подготовил/i.test(s))
 }
 
 /** Added when the model claims a card but called no draft tool (no card is shown). */
@@ -76,6 +80,10 @@ export function statusForTool(tool: string, input: unknown, title?: string | nul
       return { stage: "web", label: "Ищу в интернете…" }
     case "draftCompany":
       return { stage: "draft", label: str(i.name) ? `Проверяю, нет ли компании «${cut(str(i.name), 40)}»…` : "Готовлю карточку компании…" }
+    case "draftDeal":
+      return { stage: "draft", label: str(i.name) ? `Готовлю сделку «${cut(str(i.name), 40)}»…` : "Готовлю сделку…" }
+    case "readSignals":
+      return { stage: "draft", label: "Проверяю сигналы и правила воронки…" }
     case "draftTask":
       return { stage: "draft", label: str(i.title) ? `Готовлю задачу «${cut(str(i.title), 40)}»…` : "Готовлю задачу…" }
     case "draftTasks":

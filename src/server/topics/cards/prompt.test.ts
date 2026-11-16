@@ -88,3 +88,14 @@ describe("card writer prompt", () => {
     expect(on).toContain("Профиль клиента «Норлекс»: отрасль: розница\nПоля компании:\nСегмент: A\nИНН: 7700000000\nСтатус:")
   })
 })
+
+describe("existing chat tasks (ai-chat-tools Q18)", () => {
+  it("are listed only when present; the prompt is unchanged without them", () => {
+    const base = buildCardWriterPrompt(input)
+    expect(base).not.toMatch(/Задачи уже созданы/)
+    expect(buildCardWriterPrompt({ ...input, existingTasks: [] })).toBe(base)
+    const p = buildCardWriterPrompt({ ...input, existingTasks: ["Отправить КП Норлексу (до 20.11.2026)"] })
+    expect(p).toMatch(/Задачи уже созданы \(не предлагай их снова/)
+    expect(p).toContain("- Отправить КП Норлексу (до 20.11.2026)")
+  })
+})

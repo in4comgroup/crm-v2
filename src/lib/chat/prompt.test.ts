@@ -18,7 +18,7 @@ describe("buildChatSystemPrompt", () => {
     expect(off).not.toMatch(/draftCompany|draftContact|draftTask/)
     expect(off).toMatch(/изменять данные не могу/)
     const on = buildChatSystemPrompt({ ...base, actions: true })
-    for (const t of ["draftCompany", "draftContact", "draftTask", "draftTasks"]) expect(on).toContain(`\`${t}(`)
+    for (const t of ["draftCompany", "draftContact", "draftTask", "draftTasks", "draftDeal", "readSignals"]) expect(on).toContain(`\`${t}(`)
     expect(on).toMatch(/Never invent, complete or guess/)
     expect(on).not.toMatch(/изменять данные не могу/)
     expect(on).toMatch(/запись создаётся после вашего подтверждения/)

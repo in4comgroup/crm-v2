@@ -57,6 +57,8 @@ export async function runExtraction(args: {
   /** Retired code → successor, applied before the code check (spec §5.4 rule 1). */
   successors?: ReadonlyMap<string, string>
   ref: Record<string, unknown>
+  /** A person waits (AI chat `readSignals`) — see `AiCallContext.interactive`. */
+  interactive?: boolean
 }): Promise<ExtractionRun> {
   const variant = args.variant ?? "single"
   const codeSet = args.promptSet?.codeSet ?? args.codeSet ?? "live"
@@ -74,6 +76,7 @@ export async function runExtraction(args: {
       process: BLOCK_CLASSIFIER_PROCESS,
       orgId: args.orgId,
       userId: null,
+      ...(args.interactive ? { interactive: true } : {}),
       ref: { ...args.ref, pass: 1 },
       output: Output.object({ schema: blockClassifierSchema }),
       instructions: cls.system,
@@ -111,6 +114,7 @@ export async function runExtraction(args: {
     process: EXTRACTION_PROCESS,
     orgId: args.orgId,
     userId: null,
+    ...(args.interactive ? { interactive: true } : {}),
     ref: variant === "two_pass" ? { ...args.ref, pass: 2 } : args.ref,
     output: Output.object({ schema: extractionOutputSchema }),
     instructions: sys.system,

@@ -24,17 +24,22 @@ import {
   type CompanyValues,
   type ConfirmActionInput,
   type ContactValues,
+  type DealValues,
   type DraftItem,
+  type DraftMatch,
   type TaskValues,
 } from "@/lib/chat/actions"
 import { normalizeAddress } from "@/lib/contact-links"
 import { createClient, updateClient } from "@/server/clients"
 import { createContact, updateContact } from "@/server/contacts"
 import { createTask } from "@/server/tasks"
+import { createDeal, updateDeal } from "@/server/deals"
+import { dealActivity } from "@/db/schema"
+import { and, eq, isNull } from "drizzle-orm"
 import { loadRecordsContext } from "@/server/chat/records"
 import { localToUtc } from "@/lib/chat/due-date"
 import { addDocumentLink } from "@/server/documents"
-import { checkCompany, checkContact, clientInOrg, contactsInOrg, loadOrgIndex, loadOrgMembers } from "./checks"
+import { checkCompany, checkContact, clientInOrg, contactsInOrg, dealInOrg, loadDealOptions, loadOrgIndex, loadOrgMembers, openDealsOfClient } from "./checks"
 import { actionPart, claimAction, createdLastHour, finishAction, loadAction, syncActionMessage, type ActionRow } from "./store"
 
 // Confirm of a chat draft (docs/specs/ai-chat-tools §7.4). Runs in the
@@ -56,9 +61,21 @@ export class ChatActionError extends Error {
 
 /** The card's part + (task items) the members and the org time zone for the form. */
 async function withOptions(orgId: string, userId: string, part: ChatDraftPart): Promise<ChatDraftPart> {
-  if (!part.draft.items.some((i) => i.type === "task")) return part
-  const [members, ctx] = await Promise.all([loadOrgMembers(orgId), loadRecordsContext(orgId, userId)])
-  return { ...part, options: { members: members.map((m) => ({ id: m.id, name: m.name })), timeZone: ctx.timeZone } }
+  const hasDeal = part.draft.items.some((i) => i.type === "deal")
+  if (!hasDeal && !part.draft.items.some((i) => i.type === "task")) return part
+  const [members, ctx, deals] = await Promise.all([
+    loadOrgMembers(orgId),
+    loadRecordsContext(orgId, userId),
+    hasDeal ? loadDealOptions(orgId) : Promise.resolve(null),
+  ])
+  return {
+    ...part,
+    options: {
+      members: members.map((m) => ({ id: m.id, name: m.name })),
+      timeZone: ctx.timeZone,
+      ...(deals ? { stages: deals.stages, dealTypes: deals.dealTypes.map((t) => ({ id: t.id, name: t.name })) } : {}),
+    },
+  }
 }
 
 export async function getChatAction(orgId: string, userId: string, id: string): Promise<ChatDraftPart> {
@@ -79,9 +96,9 @@ export async function cancelChatAction(orgId: string, userId: string, id: string
 
 const labelOf = (i: DraftItem) => `${ITEM_TYPE_WORDS[i.type]} «${itemLabel(i)}»`
 
-type Planned = { item: DraftItem; values: CompanyValues | ContactValues | TaskValues; decision: string; existingId?: string }
+type Planned = { item: DraftItem; values: CompanyValues | ContactValues | TaskValues | DealValues; decision: string; existingId?: string }
 
-const ORDER: Record<DraftItem["type"], number> = { company: 0, contact: 1, task: 2 }
+const ORDER: Record<DraftItem["type"], number> = { company: 0, contact: 1, deal: 2, task: 3 }
 
 export async function confirmChatAction(orgId: string, userId: string, input: ConfirmActionInput): Promise<ChatDraftPart> {
   const r = await loadAction(orgId, userId, input.actionId)
@@ -107,7 +124,7 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
   const plannedKeys = new Set(plan.map((p) => p.item.key))
   for (const p of plan) {
     if (p.item.type === "company") continue
-    const v = p.values as ContactValues | TaskValues
+    const v = p.values as ContactValues | TaskValues | DealValues
     if (v.companyKey && !plannedKeys.has(v.companyKey)) {
       v.companyKey = null
       v.companyName = ""
@@ -118,6 +135,16 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
         t.contactKey = null
         t.contactName = ""
       }
+      if (t.dealKey && !plannedKeys.has(t.dealKey)) {
+        t.dealKey = null
+        t.dealName = ""
+      }
+    }
+    if (p.item.type === "deal") {
+      const d = p.values as DealValues
+      const keep = d.contactKeys.map((k, i) => ({ k, n: d.contactNames[d.contactIds.length + i] ?? "" })).filter((x) => plannedKeys.has(x.k))
+      d.contactNames = [...d.contactNames.slice(0, d.contactIds.length), ...keep.map((x) => x.n)]
+      d.contactKeys = keep.map((x) => x.k)
     }
   }
   // Tasks: the org time zone of the due dates; a due date in the past is refused.
@@ -156,6 +183,25 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
     const p = plan.find((x) => x.item.key === item.key)
     if (!p || item.type === "task") {
       fresh.push(p ? { ...item, values: p.values } : item)
+      continue
+    }
+    if (item.type === "deal") {
+      // «An open deal of the same company and type» — again, it may be new since the draft.
+      const d = p.values as DealValues
+      const open = d.companyId ? await openDealsOfClient(orgId, d.companyId) : []
+      const matches: DraftMatch[] = open.map((x) => ({
+        kind: (x.dealTypeId ?? null) === (d.dealTypeId ?? null) ? "exact" : "similar",
+        type: "deal",
+        id: x.id,
+        title: x.name,
+        subtitle: x.stageName,
+        reason: (x.dealTypeId ?? null) === (d.dealTypeId ?? null) ? "открытая сделка той же компании и того же типа" : "другая открытая сделка компании",
+      }))
+      fresh.push({ ...item, values: p.values, matches })
+      const exact = matches.find((m) => m.kind === "exact")
+      if (p.decision === "create" && exact && !duplicate) {
+        duplicate = `${labelOf(item)}: у компании уже есть открытая сделка «${exact.title}» того же типа. Выберите «Использовать существующую» или «Всё равно создать новую».`
+      }
       continue
     }
     const chk =
@@ -287,6 +333,39 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
           byItem.set(p.item.key, { id, name: v.name })
           results.push({ type: "contact", id, title: v.name, href: actionResultHref("contact", id) })
         }
+      } else if (p.item.type === "deal") {
+        // Deal (T3): as the user; contacts of this card or existing ones.
+        const v = p.values as DealValues
+        if (p.decision === "use_existing") {
+          if (!allowed(p.item, p.existingId, ["exact", "similar"])) throw new Error("сделка не из списка совпадений")
+          const d = await dealInOrg(orgId, p.existingId!)
+          if (!d || d.status !== "active") throw new Error("сделка не найдена")
+          byItem.set(p.item.key, { id: d.id, name: d.name })
+          results.push({ type: "deal", id: d.id, title: d.name, href: actionResultHref("deal", d.id), existing: true })
+        } else {
+          const clientId = v.companyKey ? (byItem.get(v.companyKey)?.id ?? null) : v.companyId
+          if (!clientId) throw new Error("у сделки нет компании")
+          const contactIds = [...new Set([...v.contactIds, ...v.contactKeys.map((k) => byItem.get(k)?.id).filter((x): x is string => !!x)])]
+          const { id } = await createDeal({
+            name: v.name,
+            description: v.description || null,
+            funnelStageId: v.stageId!,
+            clientId,
+            contactIds,
+            value: v.value || null,
+            dealTypeId: v.dealTypeId,
+          })
+          if (v.currency) await updateDeal(id, { currency: v.currency })
+          // Provenance (Q15): the input file on the deal's creation row.
+          if (draft.files[0]) {
+            await db
+              .update(dealActivity)
+              .set({ sourceItemId: draft.files[0].itemId })
+              .where(and(eq(dealActivity.dealId, id), isNull(dealActivity.fromStageId)))
+          }
+          byItem.set(p.item.key, { id, name: v.name })
+          results.push({ type: "deal", id, title: v.name, href: actionResultHref("deal", id) })
+        }
       } else {
         // Task (T2): links to records of this card or existing ones; `createTask`
         // checks the org of every link and sends «task.assigned» to another assignee.
@@ -301,7 +380,7 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
           assigneeId: v.assigneeId,
           clientId,
           contactId,
-          dealId: v.dealId,
+          dealId: v.dealKey ? (byItem.get(v.dealKey)?.id ?? null) : v.dealId,
           dueDate: localToUtc(v.dueDate, timeZone)!.toISOString(),
         })
         results.push({ type: "task", id, title: v.title, href: actionResultHref("task", id) })
@@ -316,7 +395,12 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
   // The input file as a document of the record (Q16): the contact (business
   // card), else the company, else every task (meeting notes).
   if (input.attachFile && draft.files.length && results.length) {
-    const party = results.find((x) => x.type === "contact") ?? results.find((x) => x.type === "client")
+    // Meeting notes → the deal; a business card → the contact; else the company; else every task.
+    const party =
+      results.find((x) => x.type === "deal" && !x.existing) ??
+      results.find((x) => x.type === "contact") ??
+      results.find((x) => x.type === "client") ??
+      results.find((x) => x.type === "deal")
     const targets = party ? [party] : results.filter((x) => x.type === "task")
     for (const t of targets) {
       for (const f of draft.files) {

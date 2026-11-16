@@ -279,8 +279,7 @@ export type ClientFeedTab =
 //
 // This runs the tab/sort logic in JS over the org's full client set rather
 // than a single paginated SQL query — acceptable at demo/pilot scale, same
-// posture as `src/server/teardown.ts`'s org-wide resolution and the chat's
-// `searchEverything` tool.
+// posture as `src/server/teardown.ts`'s org-wide resolution.
 export async function listClientsFeed(params: {
   tab: ClientFeedTab
   status?: EntityStatus | "all"

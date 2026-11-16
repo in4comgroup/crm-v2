@@ -1528,9 +1528,11 @@ export const sourceProvider = pgEnum("source_provider", [
   "gdrive",
   "dropoff",
   "whatsapp",
-  // Internal-type provider for AI chat sessions saved from /dashboard via
-  // the "Save Chat" button. No remote sync — items arrive pre-parsed at
-  // save time. Lazy-provisioned per-org on first save (`getOrCreateAiChatSource`).
+  // Internal-type provider for the AI chat as a source (docs/specs/ai-chat
+  // §16.3): chat segments are ingested automatically (src/server/chat/
+  // ingest.ts). No remote sync — items arrive pre-parsed. Lazy-provisioned
+  // per org (`getOrCreateAiChatSource`). Old rows of the removed «Сохранить
+  // чат» button use it too.
   "aichat",
   // Per-org Telegram bot. Push-ingested via webhook (no remote sync/pull):
   // each org's admin creates their own bot via BotFather and stores the
@@ -1675,9 +1677,9 @@ export const sourceItemKind = pgEnum("source_item_kind", [
   "attachment",
   "inline_image",
   "derived_audio",
-  // Saved AI chat session — root row for an entire conversation snapshot
-  // taken via the Save Chat button on /dashboard. File parts attached to
-  // the conversation become `attachment` children pointing at this row.
+  // AI chat segment (since ai-chat CH6: the messages of a chat since the last
+  // ingest; old rows = whole sessions saved by the removed «Сохранить чат»).
+  // Files the user attached become `attachment` children of this row.
   "aichat_session",
 ])
 

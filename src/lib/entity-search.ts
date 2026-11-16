@@ -1,35 +1,16 @@
-// Cross-script search matching for CRM ENTITIES (clients, contacts, deals).
-// Pure string utilities — no DB, no server-only imports, safe to import from
-// client components and from `"use server"` modules alike.
+// Cross-script FILTER matching for CRM entities in UI filter boxes (deals
+// board client picker, document link picker). Pure string utilities — no DB,
+// safe in client components.
 //
-// ── Why this exists ─────────────────────────────────────────────────
-//
-// Products got Search V2 (see refs/search-v2-plan.md + scripts/search-v2/):
-// query and target are both pushed through ONE normalisation pipeline —
-// `lower(immutable_unaccent(translit_cyr_lat(x)))` — then matched with OR
-// semantics over a tsvector plus a pg_trgm `word_similarity >= 0.3` fuzzy
-// retriever. Entities never got that. `searchEverything` matched client /
-// contact / deal names with a raw `name.toLowerCase().includes(q)`, which
-// fails in all the ways V2 was built to fix:
-//
-//   • cross-script     — «Норлекс» never matches the stored «Norleks»
-//   • punctuation      — an em-dash query vs an en-dash stored name scores 0
-//   • word order       — "Богданов Евгений" vs "Евгений Богданов"
-//   • one wrong token  — the whole phrase is the needle, so a single extra
-//                        word ("Norleks Северная Торговая Компания" against
-//                        "Norleks – Северная Торговая Компания") blanks it
-//
-// This module ports the same pipeline to in-memory entity lists: those lists
-// are small (hundreds of rows per org) and already fully loaded by the
-// callers, so a JS implementation avoids the generated columns + GIN indexes
-// V2 needed for a 16.8k-row catalog. The normalisation and the 0.3 trigram
-// gate are deliberately the SAME as the SQL, so the two engines agree about
-// what "matches" means.
+// The normalisation is the SAME as the SQL search (Search V2,
+// `src/server/search/normalise.ts`: `lower(immutable_unaccent(
+// translit_cyr_lat(x)))`), so «Норлекс» finds «Norleks» and an em-dash finds
+// an en-dash in a filter box too. There is deliberately NO fuzzy tail: a fuzzy
+// row in a filter reads as a bug. Ranked / fuzzy search lives in SQL (header
+// search, AI chat records engine); the in-memory ranked scorer of the v1 AI
+// chat (`entitySearchScore`, `entityMatchesSearch`) was removed in ai-chat CH8.
 
 import { transliterateRu } from "@/lib/translit-ru"
-
-// Same fuzzy gate as Search V2's trigram retriever (`word_similarity >= 0.3`).
-export const FUZZY_THRESHOLD = 0.3
 
 // Field weights, mirroring V2's tsvector `setweight` A > B > C > D. A name is
 // what people search by; an alias is a real but secondary spelling; an
@@ -55,66 +36,6 @@ export function searchNormalise(raw: string | null | undefined): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
-}
-
-/** Normalised word tokens. Single characters are dropped as noise. */
-export function searchTokens(raw: string | null | undefined): string[] {
-  const n = searchNormalise(raw)
-  return n ? n.split(" ").filter((t) => t.length > 1) : []
-}
-
-/**
- * pg_trgm-compatible trigram set: each word is padded with two leading and
- * one trailing space before the 3-char windows are taken, exactly as the
- * extension does, so similarity scores line up with the SQL side.
- */
-export function trigrams(normalised: string): Set<string> {
-  const out = new Set<string>()
-  for (const word of normalised.split(" ")) {
-    if (!word) continue
-    const padded = `  ${word} `
-    for (let i = 0; i + 3 <= padded.length; i++) out.add(padded.slice(i, i + 3))
-  }
-  return out
-}
-
-/** pg_trgm `similarity()`: shared trigrams over the union (Jaccard). */
-export function trigramSimilarity(a: string, b: string): number {
-  const A = trigrams(a)
-  const B = trigrams(b)
-  if (A.size === 0 || B.size === 0) return 0
-  let shared = 0
-  for (const t of A) if (B.has(t)) shared++
-  const union = A.size + B.size - shared
-  return union === 0 ? 0 : shared / union
-}
-
-/**
- * pg_trgm `word_similarity(query, target)`: the best `similarity()` between
- * the query and any contiguous run of words in the target. That's what lets a
- * short query score well against a long name — "мартини" against "Martini
- * Rosso Vermouth" — instead of being diluted by the words it never mentioned.
- *
- * Spans are capped just past the query's own word count: a longer run can
- * only add trigrams the query lacks, which lowers the score.
- */
-export function wordSimilarity(
-  queryNorm: string,
-  targetNorm: string,
-): number {
-  if (!queryNorm || !targetNorm) return 0
-  const words = targetNorm.split(" ").filter(Boolean)
-  if (words.length === 0) return 0
-  const maxSpan = Math.min(words.length, queryNorm.split(" ").length + 2)
-  let best = 0
-  for (let start = 0; start < words.length; start++) {
-    for (let len = 1; len <= maxSpan && start + len <= words.length; len++) {
-      const span = words.slice(start, start + len).join(" ")
-      const s = trigramSimilarity(queryNorm, span)
-      if (s > best) best = s
-    }
-  }
-  return best
 }
 
 // Minimum query-token length before PREFIX matching is allowed. An exact
@@ -163,70 +84,6 @@ export type SearchField = {
   value: string | null | undefined
   /** One of FIELD_WEIGHT, or any 0–1 multiplier. */
   weight: number
-}
-
-/**
- * Score one entity against a query. 0 = no match; higher is better.
- *
- * Per field, best-of three signals (V2 fuses its retrievers with RRF; in JS a
- * plain max over comparable 0–1 signals is equivalent in ordering and far
- * easier to reason about):
- *
- *   1. exact normalised equality                      → 1
- *   2. word-boundary containment, either direction        → 0.9
- *      (both directions on purpose: "Norleks" must find "Norleks – Северная …",
- *      and the full stored name pasted back must find it too)
- *   3. token coverage (OR semantics, prefix-tolerant) → up to 0.8
- *      blended with the trigram fuzzy score
- *
- * The field weight then scales the result, so a name hit outranks an email
- * hit of the same strength.
- */
-export function entitySearchScore(
-  query: string,
-  fields: SearchField[],
-): number {
-  const qn = searchNormalise(query)
-  if (!qn) return 0
-  const qTokens = qn.split(" ").filter(Boolean)
-
-  let best = 0
-  for (const f of fields) {
-    const vn = searchNormalise(f.value)
-    if (!vn) continue
-
-    let s: number
-    if (vn === qn) {
-      s = 1
-    } else if (containsAsWords(vn, qn) || containsAsWords(qn, vn)) {
-      s = 0.9
-    } else {
-      const vTokens = vn.split(" ").filter(Boolean)
-      const hits = qTokens.filter((t) => tokenHit(t, vTokens)).length
-      const coverage = qTokens.length === 0 ? 0 : hits / qTokens.length
-      s = Math.max(coverage * 0.8, wordSimilarity(qn, vn))
-    }
-
-    const scored = s * f.weight
-    if (scored > best) best = scored
-  }
-  return best
-}
-
-/**
- * Ranked-search predicate: does this entity match well enough to surface?
- * Uses the same 0.3 gate as Search V2's trigram retriever, so a fuzzy or
- * cross-script hit counts and unrelated rows don't.
- *
- * For a UI *filter* box prefer {@link entityMatchesFilter} — fuzzy hits in a
- * filter read as a bug ("why is this row here?"), whereas in a search they're
- * the point.
- */
-export function entityMatchesSearch(
-  query: string,
-  fields: SearchField[],
-): boolean {
-  return entitySearchScore(query, fields) >= FUZZY_THRESHOLD
 }
 
 /**

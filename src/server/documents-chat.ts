@@ -1,8 +1,9 @@
 import "server-only"
 
 // Documents for the AI chat (docs/specs/attachments §9): the linked documents
-// of the companies / contacts / deals `searchEverything` matched, as compact
-// `{ name, summary }` rows. Org-explicit; read-only.
+// of a company / contact / deal for its record detail (section «Документы»,
+// src/server/chat/records/), as compact `{ name, summary }` rows.
+// Org-explicit; read-only.
 
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"

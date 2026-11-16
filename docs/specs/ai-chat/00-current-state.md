@@ -1,6 +1,8 @@
 # 00 — Current state of the AI chat (2026-11-16)
 
-What exists today, and the gap against each of the 7 requirements of this spec.
+> **Historical** — the state of chat v1 BEFORE this spec was built. v1 (`searchEverything`, `<SearchResultsCard>`, «Сохранить чат», tool blocks in the UI) was replaced by v2 in CH4–CH8 on 2026-11-16; the current state is in `src/lib/AGENTS.md` § "AI Chat" and [04-development-plan.md](04-development-plan.md).
+
+What existed before v2, and the gap against each of the 7 requirements of this spec.
 
 ## 1. What exists
 

@@ -172,11 +172,10 @@ Unchanged: 7-day sessions, expiry extended once a day, signed cookie cache of
 
 ## 7. Email delivery
 
-`sendEmails()` routes by `EMAIL_PROVIDER`: `nylas` (default; sends from the
-mailbox of `NYLAS_GRANT_ID`, which needs a send scope) or `resend` (needs
-`RESEND_API_KEY`). The Resend client is now created on first use, not at
-import. Before this fix a missing `RESEND_API_KEY` crashed every page that
-imports `auth.ts`, even in Nylas mode.
+`sendEmails()` sends through Nylas, from the mailbox of `NYLAS_GRANT_ID`
+(the grant needs a send scope). The former Resend alternative
+(`EMAIL_PROVIDER`, `RESEND_API_KEY`) was removed 2026-11-16 — Nylas is the
+only provider.
 
 If email delivery fails, the send endpoint returns an error and the form shows
 «Не удалось отправить код» (Could not send the code). Nobody can sign in while

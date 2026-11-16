@@ -27,7 +27,7 @@ typing as possible:
   to the client through a no-login confirmation link.
 - It **reports** on sales (booked orders) and answers analytics questions in
   natural language.
-- An **AI chat panel** on every page searches the CRM and the web.
+- An **AI chat panel** on every page searches all CRM records and the web, shows found records as a list and statistics as charts, keeps each user's chats, and passes what users tell it to the org's sources.
 - It **notifies** each person in the bell («Уведомления»): task reminders,
   deal risks, topics that need attention, AI limits and process errors (owners).
 - It **keeps people over time**: a contact can move to another company or work
@@ -69,8 +69,8 @@ Step by step:
 1. **Connect a source.** An org owner adds a source from a template on
    «Источники» (Sources) and enters credentials (stored encrypted).
 2. **Ingest.** Items arrive by remote sync (Nylas, IMAP, Google Chat, Drive),
-   by webhook push (Telegram), or by upload (Drop Off, WhatsApp archive, AI chat
-   save). Each item is a `source_item` row; attachments become child rows.
+   by webhook push (Telegram), by upload (Drop Off, WhatsApp archive), or from
+   the AI chat (automatic: what users tell the chat becomes chat-note items). Each item is a `source_item` row; attachments become child rows.
 3. **Process.** Each item is parsed by an LLM (via the Vercel AI Gateway; the
    model per kind of content is chosen by the admin, default Gemini 2.5 Flash)
    into Markdown, then uploaded to object storage (Cloudflare R2). The daily cron runs

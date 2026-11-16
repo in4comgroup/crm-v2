@@ -47,4 +47,4 @@ change set because it broke sign-up — see
 | `src/app/(auth)/layout.tsx` | Redirects signed-in users away from `/sign-in` and `/sign-up` |
 | `src/lib/get-session.ts` | Cached server session + active-organization backfill |
 | `src/proxy.ts` | Central sign-in gate for every page and API route |
-| `src/lib/email.ts` | `sendEmails` dispatcher (Nylas default, Resend optional) |
+| `src/lib/email.ts` | `sendEmails` — Nylas only (Resend removed 2026-11-16) |

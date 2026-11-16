@@ -16,7 +16,7 @@
 | AI UI | ai-elements, streamdown, json-render (`@json-render/*`) | Chat rendering and structured AI output. |
 | Background jobs | Vercel Workflow SDK (`workflow`) + Vercel Cron | Daily workflow: AI model catalog sync + usage cost check, then source sync → parse → upload. Hourly workflow: topics engine (`runTopicsPipeline`; needs Vercel Pro). Hourly route (no workflow): notification checks for every org (`runNotificationChecks`). |
 | Data viz / tables | Recharts 3 (shadcn charts), @tanstack/react-table, @dnd-kit (kanban) | |
-| Integrations | Nylas SDK v8, imapflow + mailparser, node-ical, googleapis, grammY (Telegram), Resend | |
+| Integrations | Nylas SDK v8, imapflow + mailparser, node-ical, googleapis, grammY (Telegram) | |
 | File parsing | mammoth (.docx), jszip + @xmldom/xmldom (.pptx), ExcelJS (price-list export) | PDF, image, audio, video go to Gemini as file parts. |
 | Package manager | pnpm | |
 
@@ -114,7 +114,7 @@ Documented exceptions to "one org only":
 - Sessions last 7 days; a 5-minute signed cookie cache avoids a DB hit per
   request. Server code reads the session through `src/lib/get-session.ts`.
 - OTP and invitation emails go through `sendEmails` in `src/lib/email.ts`
-  (Nylas by default, Resend as alternative).
+  (Nylas only; Resend was removed 2026-11-16).
 - Full detail: [../specs/auth/README.md](../specs/auth/README.md).
 
 ## Background pipeline
@@ -160,7 +160,6 @@ caps (for example 50 items, concurrency 3) sized for one serverless request.
 | IMAP servers | Email source without Nylas | `src/lib/imap.ts`, `src/server/sync/imap.ts`, `src/server/parsers/imap.ts` |
 | Google Chat / Drive APIs | Chat and Drive sources (service account, optional domain-wide delegation) | `src/lib/google-*.ts`, `src/server/sync/{gchat,gdrive}.ts` |
 | Telegram Bot API | Telegram source (webhook + manual fetch) | `src/lib/telegram.ts`, `src/server/ingest/telegram.ts` |
-| Resend | Alternative system-email provider | `src/lib/email.ts` |
 | Vercel | Hosting, Cron, Workflow | `vercel.ts`, `next.config.ts` (`withWorkflow`) |
 
 ## Component diagram
@@ -190,5 +189,5 @@ flowchart TB
   SRV --> GW[Vercel AI Gateway<br/>Gemini / GPT / Claude]
   SRV --> EXT[Nylas, IMAP, Google APIs, Telegram]
   TG[Telegram] -->|webhook| API
-  AUTH --> MAIL[Nylas / Resend email]
+  AUTH --> MAIL[Nylas email]
 ```

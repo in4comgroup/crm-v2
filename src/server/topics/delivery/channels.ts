@@ -7,7 +7,7 @@ import type { DeliveryChannelKey } from "./store"
 // new channel plugs into the run without touching the content or the
 // schedule:
 //   email    — built: platform system mail through `sendEmails`
-//              (src/lib/email.ts, Nylas / Resend). A topics digest is system
+//              (src/lib/email.ts, Nylas). A topics digest is system
 //              mail from the platform, never mail from an org mailbox.
 //   telegram — STUB (open part of phase 7): always `skipped: "telegram not
 //              configured"`. The real channel will send through the org's

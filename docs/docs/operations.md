@@ -61,10 +61,8 @@ Names only. Values live in `.env` locally and in Vercel project settings.
 
 | Variable | Meaning |
 | --- | --- |
-| `EMAIL_PROVIDER` | `nylas` (default) or `resend` |
 | `NYLAS_API_KEY`, `NYLAS_API_URI` | Platform Nylas application; also fallback app for email sources without their own `apiKey`/`apiUri` |
 | `NYLAS_GRANT_ID` | Platform mailbox that sends system mail; fallback grant for un-migrated email sources (logs a warning) |
-| `RESEND_API_KEY`, `RESEND_FROM` | Resend provider and sender address (only when `EMAIL_PROVIDER=resend`) |
 
 ### Storage and secrets
 

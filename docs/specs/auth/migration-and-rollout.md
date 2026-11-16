@@ -35,7 +35,7 @@ own inventory in [../billing/polar-removal.md](../billing/polar-removal.md).
 | File | Change |
 | --- | --- |
 | `src/lib/auth.ts` | OTP-only config, sign-up enabled for OTP, name fallback hook, removed password/OAuth/verification/oAuthProxy/lastLoginMethod |
-| `src/lib/email.ts` | Resend client created lazily |
+| `src/lib/email.ts` | Resend client created lazily (later, 2026-11-16: Resend removed, Nylas only) |
 | `src/components/forms/form-sign-in.tsx` | Rewritten on `EmailOtpForm` |
 | `src/components/forms/form-sign-up.tsx` | Rewritten on `EmailOtpForm`, keeps the invitation guard |
 | `src/app/accept-invitation/[id]/accept-invitation-content.tsx` | Sign-up branch uses `EmailOtpForm` |
@@ -61,11 +61,11 @@ address and receives a code. No user action is needed beyond that.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | **Remove** (OAuth gone) |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | **Remove** (OAuth gone) |
 | `NEXT_PUBLIC_PRODUCTION_URL` | **Remove** (was used only by `oAuthProxy`) |
-| `RESEND_API_KEY` | Optional; needed only when `EMAIL_PROVIDER=resend` |
+| `RESEND_API_KEY`, `RESEND_FROM` | **Remove** (Resend removed 2026-11-16; Nylas only) |
 | `BETTER_AUTH_SECRET` | Required. **Generate a new one** for the new deployment (`openssl rand -base64 32`). Changing it signs out all users |
 | `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL` | Required; must be the real HTTPS origin in production (invitation links use `NEXT_PUBLIC_APP_URL`) |
-| `NYLAS_API_KEY`, `NYLAS_API_URI`, `NYLAS_GRANT_ID` | Required for sending codes in the default Nylas mode; the grant needs a send scope |
-| `EMAIL_PROVIDER` | Optional: `nylas` (default) or `resend` |
+| `NYLAS_API_KEY`, `NYLAS_API_URI`, `NYLAS_GRANT_ID` | Required for sending codes (Nylas is the only provider); the grant needs a send scope |
+| `EMAIL_PROVIDER` | **Remove** (no longer read; Nylas only) |
 
 Local `.env` is already cleaned. Vercel env vars still need the same cleanup.
 

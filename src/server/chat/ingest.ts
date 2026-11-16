@@ -306,7 +306,7 @@ async function moveIngested(threadId: string, from: number, to: number) {
     .where(and(eq(aiChatThread.id, threadId), lte(aiChatThread.ingestedSeq, from)))
 }
 
-/** Files the user attached → parsed child items (drop-off parsers), like the old «Сохранить чат». */
+/** Files the user attached → parsed child items (drop-off parsers). */
 async function insertFileChildren(
   orgId: string,
   sourceId: string,

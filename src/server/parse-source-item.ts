@@ -410,7 +410,7 @@ function dispatchParse(ctx: ParseContext): Promise<ParseResult> {
       // parseStatus='complete' and the analysis already on metadata_json).
       // The unified parse pipeline has nothing to re-run for them.
       throw new Error(
-        "AI-chat session items are saved pre-parsed via the dashboard Save Chat button; nothing to re-parse",
+        "AI chat segment items are stored pre-parsed by the chat ingest; nothing to re-parse",
       )
     default: {
       const _exhaustive: never = ctx.provider

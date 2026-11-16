@@ -343,6 +343,17 @@ Rules for absence, time-based and trend codes (Q24-6, Q24-11):
 - Agency (phase 9): `PITCH_FEEDBACK_MISSING` needs an agreed feedback deadline or a direct confirmation that substantive feedback is absent.
 - **Insufficient data never produces a definitive warning.**
 
+
+### 5.7 AI chat notes (source `aichat`, docs/specs/ai-chat §16.3, built 2026-11-16)
+
+The AI chat is one of the org's sources: the new messages of a chat become ONE source item («AI Chat» source, `external_type = aichat_session`, `thread_key = aichat:<threadId>`, `org_attribution = own_org`). How the engine reads them:
+
+- **Evidence = only the employee's words.** The item's `## Content` = the user's messages first, then the AI answers as ONE quoted block «> Ответы ИИ (не являются новой информацией): …», so the own-text rule of §5.4 (text before the first quote) keeps AI answers out of the evidence — no «echo» of data the engine already has.
+- **Gate before extraction** (cheap model `chat.session_analysis`): no new business information from the employee → `signal_status = skipped`, `signal_reason = no_new_info` (new skip reason, label «ИИ чат: нет новой информации от сотрудника»).
+- **Relayed note** (ai-chat Q22): the envelope says «Заметка сотрудника из ИИ чата (пересказ). Ответы ИИ в цитате — не новая информация.», `forwardedBy` = the employee, `originalAuthor` = the counterparty the employee named (`metadata_json.chatNote.relayedFrom`) or «не указан»; post-processing takes the direction from the model (attribution `unknown`), so inbound codes (e.g. a client request) can fire; `allInternal` is never set.
+- **When it counts** (ai-chat Q25): in topics mode `shadow` always; in mode `on` only when the platform admin switch «Чат в сигналах» (`org_setting` `topics.chatSignals`, default off; «Темы» → «Режим тем по организациям») is on — after the notes were checked. Before that, chat items stay with `signal_status` null and are picked up (within the §5.1 window) when the switch goes on.
+- Live check (ai-chat CH6): a relayed client request gave `SALES_OFFER_REQUESTED` + `SALES_BUDGET_MENTIONED` with evidence only from the employee's words; an AI answer that stated a request + a complaint, followed by «Ок, спасибо», gave no instance even when forced through extraction.
+
 ---
 
 ## 6. Thread normalisation and topic resolution

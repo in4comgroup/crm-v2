@@ -23,7 +23,7 @@
 | T17 | `/forgot-password`, `/sign-in/otp` | 404 |
 | T18 | Re-registration of a deleted email | Succeeds (it failed while Polar created customers at sign-up — see [../billing/polar-removal.md](../billing/polar-removal.md)) |
 | T19 | `/profile` | No «Сменить пароль»; email status shown; admin email change shows the "verified at next sign-in" note |
-| T20 | `RESEND_API_KEY` unset, `EMAIL_PROVIDER` unset | App loads; codes go out via Nylas |
+| T20 | (obsolete 2026-11-16: Resend removed; codes always go out via Nylas) | — |
 
 ## 2. How to test locally without a real inbox
 

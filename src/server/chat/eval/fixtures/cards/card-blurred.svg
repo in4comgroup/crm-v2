@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560">
+<defs><filter id="b"><feGaussianBlur stdDeviation="10"/></filter></defs>
+<rect width="1000" height="560" fill="#ffffff"/>
+<rect x="0" y="0" width="16" height="560" fill="#2a5d9f"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#111111" filter="url(#b)">
+<text x="70" y="100" font-size="48" >ООО Гранит-Тест</text>
+<text x="70" y="250" font-size="42" >Сергей Николаевич Орлов</text>
+<text x="70" y="300" font-size="30" >Начальник склада</text>
+<text x="70" y="400" font-size="30" >тел.: +7 495 000-98-76</text>
+<text x="70" y="450" font-size="30" >e-mail: s.orlov@granit-test.ru</text>
+<text x="70" y="500" font-size="30" >www.granit-test.ru</text>
+</g>
+</svg>

@@ -21,10 +21,11 @@ import {
 } from "@/lib/chat/records"
 import type { StatsResult } from "@/lib/chat/stats"
 import type { ChatAttachmentPart } from "@/lib/chat/files"
+import type { ChatActionResultPart, ChatDraftPart } from "@/lib/chat/actions"
 
 // ── Status (§9) ───────────────────────────────────────────────────────
 
-export type ChatStatusStage = "thinking" | "crm" | "list" | "record" | "reading" | "stats" | "web" | "writing"
+export type ChatStatusStage = "thinking" | "crm" | "list" | "record" | "reading" | "stats" | "web" | "draft" | "writing"
 export type ChatStatus = { stage: ChatStatusStage; label: string }
 
 const cut = (s: string, n = 60) => {
@@ -38,6 +39,18 @@ export const STATUS_THINKING: ChatStatus = { stage: "thinking", label: "Дума
 export const EMPTY_ANSWER_FALLBACK =
   "Не получилось сформулировать ответ. Спросите, пожалуйста, ещё раз — например, другими словами."
 export const STATUS_WRITING: ChatStatus = { stage: "writing", label: "Готовлю ответ…" }
+
+/** Draft tools (ai-chat-tools): a turn that names a card must have called one. */
+export const DRAFT_TOOL_NAMES = new Set(["draftCompany", "draftContact", "draftTask", "draftTasks"])
+
+/** «Подготовил карточку / задачи / список задач …» — the answer says a card is there. */
+export function claimsDraft(text: string): boolean {
+  return /подготовил[аи]?\s+(?:для\s+вас\s+)?(?:\S+\s+){0,3}(карточк|черновик|задач|список задач|чек-?лист)/i.test(text ?? "")
+}
+
+/** Added when the model claims a card but called no draft tool (no card is shown). */
+export const FALSE_DRAFT_NOTE =
+  "\n\n_Карточка не была подготовлена — повторите, пожалуйста, запрос (например: «создай задачи по этим заметкам»)._"
 
 /** Russian status of a tool call, from its input only (never the tool name). */
 export function statusForTool(tool: string, input: unknown, title?: string | null): ChatStatus {
@@ -61,6 +74,14 @@ export function statusForTool(tool: string, input: unknown, title?: string | nul
       return { stage: "stats", label: title ? `Считаю статистику: ${cut(title)}…` : "Считаю статистику…" }
     case "searchWeb":
       return { stage: "web", label: "Ищу в интернете…" }
+    case "draftCompany":
+      return { stage: "draft", label: str(i.name) ? `Проверяю, нет ли компании «${cut(str(i.name), 40)}»…` : "Готовлю карточку компании…" }
+    case "draftTask":
+      return { stage: "draft", label: str(i.title) ? `Готовлю задачу «${cut(str(i.title), 40)}»…` : "Готовлю задачу…" }
+    case "draftTasks":
+      return { stage: "draft", label: Array.isArray(i.tasks) ? `Готовлю задачи (${i.tasks.length})…` : "Готовлю задачи…" }
+    case "draftContact":
+      return { stage: "draft", label: str(i.fullName) ? `Готовлю карточку контакта «${cut(str(i.fullName), 40)}»…` : "Готовлю карточку контакта…" }
     default:
       return STATUS_THINKING
   }
@@ -111,6 +132,10 @@ export type ChatDataParts = {
   debug: ChatDebugPart
   /** Files of a user message: what the system read from them (ai-chat-tools Q22). */
   attachment: ChatAttachmentPart
+  /** Draft card of a chat action (ai-chat-tools §7.3; id = action id). */
+  draft: ChatDraftPart
+  /** What a confirmed draft created (added to the assistant message after confirm). */
+  "action-result": ChatActionResultPart
 }
 
 type AnyPart = { type: string; data?: unknown }

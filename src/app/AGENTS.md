@@ -394,6 +394,7 @@ Admin tool to hard-delete selected **threads** of a source — a thread = one to
 
 - `src/server/parsers/image.ts` — `parseImageBytes({ bytes, fileName, mediaType, … })` mirrors the PDF parser: Gemini 2.5 Flash multimodal file part (`{ type: "file", mediaType: "image/png" | "image/jpeg", data: bytes }`), single-pass, universal across source systems. Handles photo-style images (description) and text-heavy images (OCR) with one schema — the model picks the right strategy per image.
 - Supported types come from `PARSER_CONFIG.image.supportedMediaTypes` (`image/jpeg`, `image/png`) + a filename-extension fallback (`.jpg`, `.jpeg`, `.png`) for providers that return `application/octet-stream`.
+- **Unreadable text (2026-11-16, ai-chat-tools T1)**: the prompt tells the model to copy only readable characters and write «[неразборчиво]» instead of guessing a name, phone, e-mail, website or amount. Measured on a heavily blurred synthetic card (Gemini 2.5 Flash): 2 of 3 runs used the marker, 1 of 3 still invented a phone and an e-mail — the chat draft check therefore does not prefill channels from a file with the marker and removes filler numbers (`src/lib/chat/actions.ts`); see `docs/specs/ai-chat-tools/02-open-questions.md` Q23.
 - Size cap from `PARSER_CONFIG.image.maxBytes` (5 MB). Oversize → `ImageTooLargeError`. Wrong type → `UnsupportedImageTypeError`. Both are converted to `skipped` entries by the route.
 
 ### PDF parser (universal)

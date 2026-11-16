@@ -1,0 +1,18 @@
+[
+  { "file": "cards/card-ru.png", "description": "Russian card: company, person, position, phone, e-mail, website",
+    "expected": { "company": { "name": "ООО Ромашка-Тест", "website": "www.romashka-test.ru", "email": "p.petrov@romashka-test.ru", "phone": "+7 495 000-12-34" },
+      "contact": { "name": "Пётр Сергеевич Петров", "position": "Директор по закупкам", "emails": ["p.petrov@romashka-test.ru"], "phones": ["+7 495 000-12-34"] } } },
+  { "file": "cards/card-en.png", "description": "English-only card",
+    "expected": { "company": { "name": "Northwind Test GmbH", "website": "www.northwind-test.example", "email": "anna.keller@northwind-test.example", "phone": "+43 1 000 45 67" },
+      "contact": { "name": "Anna Keller", "position": "Head of Sales", "emails": ["anna.keller@northwind-test.example"], "phones": ["+43 1 000 45 67"] } } },
+  { "file": "cards/card-both.png", "description": "Both scripts: Russian and Latin name and company; Russian position",
+    "expected": { "company": { "name": "Вектор-Тест / Vektor Test", "email": "a.smirnov@vektor-test.ru", "phone": "+7 912 000-33-44" },
+      "contact": { "name": "Алексей Смирнов", "nameNative": "Alexey Smirnov", "position": "Руководитель отдела продаж", "emails": ["a.smirnov@vektor-test.ru"], "phones": ["+7 912 000-33-44"] } } },
+  { "file": "cards/card-two-phones.png", "description": "Russian card with two phones (mobile and office)",
+    "expected": { "company": { "name": "ООО Лотос-Тест", "email": "m.kuznetsova@lotos-test.ru" },
+      "contact": { "name": "Мария Ивановна Кузнецова", "position": "Менеджер по работе с клиентами", "emails": ["m.kuznetsova@lotos-test.ru"], "phones": ["+7 912 000-55-66", "+7 495 000-77-88"] } } },
+  { "file": "cards/card-freemail.png", "description": "Self-employed person, gmail address, Telegram, no company and no website",
+    "expected": { "contact": { "name": "Ирина Волкова", "position": "Дизайнер интерьеров", "emails": ["irina.volkova.test@gmail.com"], "phones": ["+7 912 000-21-21"], "telegram": "@irina_volkova_test" } } },
+  { "file": "cards/card-blurred.png", "description": "Heavily blurred card: phones and e-mails must not be read",
+    "expected": { "unreadable": ["phones", "emails"] } }
+]

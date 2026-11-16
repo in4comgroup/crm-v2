@@ -298,21 +298,8 @@ export async function prepareChatAttachments(
  * add the transcript of their derived audio item.
  */
 export async function readChatAttachments(orgId: string, itemIds: string[], withText: boolean): Promise<ChatAttachmentPart[]> {
-  const rows = await loadItems(orgId, itemIds)
+  const { rows, audio } = await loadWithAudio(orgId, itemIds)
   const byId = new Map(rows.map((r) => [r.id, r]))
-  const audio = itemIds.length
-    ? await db
-        .select({ parentId: sourceItem.parentSourceItemId, parsedMarkdown: sourceItem.parsedMarkdown, markdownR2Key: sourceItem.markdownR2Key })
-        .from(sourceItem)
-        .where(
-          and(
-            eq(sourceItem.organizationId, orgId),
-            inArray(sourceItem.parentSourceItemId, itemIds),
-            eq(sourceItem.externalType, "derived_audio"),
-            eq(sourceItem.parseStatus, "complete"),
-          ),
-        )
-    : []
   const out: ChatAttachmentPart[] = []
   for (const id of itemIds) {
     const r = byId.get(id)
@@ -331,12 +318,7 @@ export async function readChatAttachments(orgId: string, itemIds: string[], with
       })
       continue
     }
-    let text = messageContent(await markdownOf(r))
-    const track = audio.find((a) => a.parentId === id)
-    if (track) {
-      const transcript = messageContent(await markdownOf(track)).trim()
-      if (transcript) text = `${text}\n\n### Расшифровка звука\n${transcript}`
-    }
+    const text = await contentOf(r, audio)
     const meta = (r.metadataJson ?? {}) as {
       summary?: string
       companies?: string[]
@@ -368,4 +350,52 @@ export async function readChatAttachments(orgId: string, itemIds: string[], with
     })
   }
   return out
+}
+
+/**
+ * The parsed CONTENT of chat files (`## Content` + a video's transcript),
+ * without the parser's own summary — what draft values are checked against
+ * (ai-chat-tools §8.2: only text that is in the file counts).
+ */
+export async function readChatAttachmentContents(
+  orgId: string,
+  itemIds: string[],
+): Promise<{ itemId: string; name: string; content: string }[]> {
+  const { rows, audio } = await loadWithAudio(orgId, itemIds)
+  const out: { itemId: string; name: string; content: string }[] = []
+  for (const r of rows) {
+    if (r.parseStatus !== "complete") continue
+    out.push({ itemId: r.id, name: r.filename ?? "file", content: await contentOf(r, audio) })
+  }
+  return out
+}
+
+type AudioRow = { parentId: string | null; parsedMarkdown: string | null; markdownR2Key: string | null }
+
+async function contentOf(r: ItemRow, audio: AudioRow[]): Promise<string> {
+  let text = messageContent(await markdownOf(r))
+  const track = audio.find((a) => a.parentId === r.id)
+  if (track) {
+    const transcript = messageContent(await markdownOf(track)).trim()
+    if (transcript) text = `${text}\n\n### Расшифровка звука\n${transcript}`
+  }
+  return text
+}
+
+async function loadWithAudio(orgId: string, itemIds: string[]): Promise<{ rows: ItemRow[]; audio: AudioRow[] }> {
+  const rows = await loadItems(orgId, itemIds)
+  const audio = itemIds.length
+    ? await db
+        .select({ parentId: sourceItem.parentSourceItemId, parsedMarkdown: sourceItem.parsedMarkdown, markdownR2Key: sourceItem.markdownR2Key })
+        .from(sourceItem)
+        .where(
+          and(
+            eq(sourceItem.organizationId, orgId),
+            inArray(sourceItem.parentSourceItemId, itemIds),
+            eq(sourceItem.externalType, "derived_audio"),
+            eq(sourceItem.parseStatus, "complete"),
+          ),
+        )
+    : []
+  return { rows, audio }
 }

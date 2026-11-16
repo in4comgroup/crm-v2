@@ -427,7 +427,7 @@ one model. Read-only tools: `searchRecords`, `listRecords`, `getRecord`,
 deals, orders, products, tasks, source items; topics and cards in topics mode
 `on`), `queryStats` (statistics engine `src/server/chat/stats/`, orders = the
 /analytics engine) and `searchWeb` (own grounded Google search sub-call, ≤ 3 per
-answer, no e-mails / phones in queries). The model writes only prose; the app
+answer, no e-mails / phones in queries), plus two draft tools (below). The model writes only prose; the app
 shows the found records (`<RecordsBlock>`, detail in the side panel), charts +
 tables (`<StatsBlock>`), «Источники ответа» and «CRM · интернет · N с». Users see
 one status line («Ищу в CRM…») and never tool calls, ids, JSON or reasoning — the
@@ -445,6 +445,22 @@ AI answers quoted — never evidence; a gate model skips parts with no new
 business information); menu «…» → «Передать в источники сейчас» / «Не
 передавать в источники». In topics mode `on`, chat notes get signals only after
 the platform admin switch «Чат в сигналах».
+Files (ai-chat-tools T0): photos (also the phone camera), PDF, DOCX, PPTX, audio,
+video, text and recorded voice messages are uploaded in parts of ≤ 4 MB
+(`/api/chat/files`), stored as «AI Chat» source items and read by the parser of
+their type when the message is sent; the chat model gets only their text.
+Draft cards (ai-chat-tools T1, T2): from a message, a business card, a voice
+note or meeting notes the chat prepares NEW companies, contacts and tasks (one
+task or a checklist) as an editable card in the answer (`draftCompany` /
+`draftContact` / `draftTask` / `draftTasks`); task deadlines come from the
+user's own words («до пятницы») and are computed in the org time zone — no
+words, no date (the card asks); assignee by a colleague's name; code removes every value that is not in the
+user's own text or files, shows existing records with the same e-mail / phone /
+domain («Использовать существующий» / «Всё равно создать новый»), refuses our
+own organisation, staff and blocklisted entries; nothing is created until the
+user clicks «Создать» (`/api/chat/actions`, the normal create functions as the
+user; audit in `ai_chat_action`; the card photo becomes a document of the
+contact).
 
 ## Notifications
 

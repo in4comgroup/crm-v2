@@ -53,6 +53,15 @@ export async function runStatsQuery(ctx: RecordsContext, query: StatsQuery): Pro
   if (query.to && !to) throw new StatsInputError(`Неверная дата конца «${query.to}» (нужно YYYY-MM-DD)`)
   if (from && to && to < from) throw new StatsInputError("Конец периода раньше начала")
 
+  // A period is from / to — a filter on a time dimension («time.quarter =
+  // 2026-Q1») used to match nothing and read as «no data» (CH7 eval h06).
+  const timeFilter = (query.filters ?? []).find((f) => f.value?.trim() && vocab.dimensions[f.dimension]?.isTime)
+  if (timeFilter) {
+    throw new StatsInputError(
+      `Период задаётся через from / to (YYYY-MM-DD, включительно), не фильтром по «${timeFilter.dimension}»: например первый квартал 2026 = from 2026-01-01, to 2026-03-31`,
+    )
+  }
+
   const q: NormalisedQuery = {
     measure: query.measure ?? vocab.defaultMeasure,
     dimension: query.dimension,

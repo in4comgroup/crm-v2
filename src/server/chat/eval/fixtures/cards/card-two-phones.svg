@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560">
+<defs><filter id="b"><feGaussianBlur stdDeviation="0"/></filter></defs>
+<rect width="1000" height="560" fill="#ffffff"/>
+<rect x="0" y="0" width="16" height="560" fill="#2a5d9f"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#111111" >
+<text x="70" y="100" font-size="48" >ООО Лотос-Тест</text>
+<text x="70" y="230" font-size="42" >Мария Ивановна Кузнецова</text>
+<text x="70" y="280" font-size="30" >Менеджер по работе с клиентами</text>
+<text x="70" y="370" font-size="30" >моб.: +7 912 000-55-66</text>
+<text x="70" y="420" font-size="30" >тел.: +7 495 000-77-88</text>
+<text x="70" y="470" font-size="30" >e-mail: m.kuznetsova@lotos-test.ru</text>
+</g>
+</svg>

@@ -93,6 +93,7 @@ import {
 } from "@/components/ai-elements/model-selector"
 import { RecordsBlock } from "@/components/blocks/chat/records-block"
 import { StatsBlock } from "@/components/blocks/chat/stats-block"
+import { DraftCard } from "@/components/blocks/chat/draft-card"
 import {
   ChatErrorLine,
   ChatStatusLine,
@@ -684,6 +685,8 @@ function ChatMessage({
         })}
 
         {!isAssistant && <AttachmentReadStatus items={dataParts(message.parts, "attachment")} />}
+
+        {isAssistant && dataParts(message.parts, "draft").map((p) => <DraftCard key={p.actionId} part={p} />)}
 
         {isAssistant && recordsShown && records && (
           <RecordsBlock data={records} onOpen={(type, id, title) => openRecord(type, id, title)} className="mt-2" />

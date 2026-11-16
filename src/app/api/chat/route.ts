@@ -172,13 +172,27 @@ export async function POST(req: Request) {
           }),
         pageLine(ctx, body.page),
       ])
-      const tools = buildChatTools({ ctx, writer, ai: { orgId, userId } })
+      const pageRef = parsePageRecord(body.page)
+      const tools = buildChatTools({
+        ctx,
+        writer,
+        ai: { orgId, userId },
+        actions: {
+          orgId,
+          userId,
+          threadId: chatId,
+          messageId: assistantId,
+          history,
+          pageClientId: pageRef?.type === "client" ? pageRef.id : null,
+        },
+      })
       const instructions = buildChatSystemPrompt({
         orgCard,
         topicsVisible: ctx.topicsVisible,
         statsSubjects: visibleStatsSubjects(ctx),
         todayLine: todayLine(ctx.now, ctx.timeZone),
         pageLine: page,
+        actions: true,
       })
       const messages = await convertToModelMessages(history, {
         convertDataPart: (part) => dataPartToModelText(part),
@@ -234,6 +248,7 @@ export async function POST(req: Request) {
         const s = filter.summary()
         console.log(`[chat ${requestId}] org ${orgId} model ${servedModel ?? "-"} steps ${s.steps} tools [${s.tools.join(", ")}] ${s.ms} ms`)
         if (s.emptyAnswer) console.warn(`[chat ${requestId}] the model wrote no answer text — fallback shown`)
+        if (s.falseDraftClaim) console.warn(`[chat ${requestId}] the model claimed a draft card without a draft tool call — note shown`)
       })
     },
     onError: (e) => {

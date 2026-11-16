@@ -43,7 +43,7 @@ export function cleanThreadTitle(v: unknown): string | null {
 type Part = { type: string; [k: string]: unknown }
 
 /** Data parts that belong to the stored answer (re-rendered after a reload). */
-const STORED_DATA = new Set(["data-records", "data-stats", "data-evidence", "data-turn", "data-spec", "data-attachment"])
+const STORED_DATA = new Set(["data-records", "data-stats", "data-evidence", "data-turn", "data-spec", "data-attachment", "data-draft", "data-action-result"])
 
 /**
  * Parts of a UI message as they are stored (§16.1): text, files and our data

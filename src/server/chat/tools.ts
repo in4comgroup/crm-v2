@@ -24,6 +24,7 @@ import { StatsInputError, runStatsQuery, visibleStatsSubjects } from "@/server/c
 import { getSourceItemMarkdown } from "@/server/source-items"
 import { messageContent } from "@/server/topics/signals/evidence"
 import { searchWeb } from "@/server/web-search"
+import { ACTION_TOOLS, buildActionTools, type ActionTurn } from "@/server/chat/actions/tools"
 import {
   detailModelView,
   hitFromDetail,
@@ -53,6 +54,8 @@ export type ChatToolsDeps = {
   writer: Writer
   /** Attribution of the web-search sub-call (process `chat.web_search`). */
   ai: { orgId: string; userId: string }
+  /** Draft tools (ai-chat-tools T1); absent = read-only chat (e.g. tests). */
+  actions?: Omit<ActionTurn, "rctx" | "writer">
 }
 
 const CRM_FAILED = "Не удалось выполнить поиск в CRM. Скажи пользователю, что поиск не удался, и предложи повторить."
@@ -83,7 +86,7 @@ function listInputSchema(types: RecordType[]) {
   return z.discriminatedUnion("type", variants as unknown as [z.ZodObject, ...z.ZodObject[]])
 }
 
-export function buildChatTools({ ctx, writer, ai }: ChatToolsDeps) {
+export function buildChatTools({ ctx, writer, ai, actions }: ChatToolsDeps) {
   const types = visibleRecordTypes(ctx)
   const subjects = visibleStatsSubjects(ctx)
   const tz = ctx.timeZone
@@ -265,10 +268,11 @@ export function buildChatTools({ ctx, writer, ai }: ChatToolsDeps) {
         return { findings: r.findings, sources: r.sources, grounded: r.grounded }
       },
     }),
-  } as const
+    ...(actions ? buildActionTools({ ...actions, rctx: ctx, writer }) : {}),
+  }
 }
 
 export type ChatTools = ReturnType<typeof buildChatTools>
 
 /** Tools whose use means the answer used CRM data. */
-export const CRM_TOOLS = new Set(["searchRecords", "listRecords", "getRecord", "readSource", "queryStats"])
+export const CRM_TOOLS = new Set(["searchRecords", "listRecords", "getRecord", "readSource", "queryStats", ...ACTION_TOOLS])

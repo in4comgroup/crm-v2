@@ -2,7 +2,10 @@ import "server-only"
 
 import type { UIMessageChunk } from "ai"
 import {
+  DRAFT_TOOL_NAMES,
   EMPTY_ANSWER_FALLBACK,
+  FALSE_DRAFT_NOTE,
+  claimsDraft,
   STATUS_WRITING,
   type ChatDebugPart,
   type ChatDebugStep,
@@ -60,7 +63,14 @@ export type ChatStreamFilterOptions = {
   now?: () => number
 }
 
-export type ChatStreamSummary = { tools: string[]; steps: number; ms: number; calls: ChatDebugStep[]; emptyAnswer: boolean }
+export type ChatStreamSummary = {
+  tools: string[]
+  steps: number
+  ms: number
+  calls: ChatDebugStep[]
+  emptyAnswer: boolean
+  falseDraftClaim: boolean
+}
 
 export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
   stream: TransformStream<UIMessageChunk, UIMessageChunk>
@@ -76,6 +86,8 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
   let wroteText = false
   let failed = false
   let emptyAnswer = false
+  let falseDraftClaim = false
+  let answer = ""
 
   const stream = new TransformStream<UIMessageChunk, UIMessageChunk>({
     async transform(chunk, controller) {
@@ -122,6 +134,7 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
           return
         case "text-delta":
           if (chunk.delta.trim()) wroteText = true
+          if (answer.length < 4000) answer += chunk.delta
           controller.enqueue(chunk)
           return
         case "error":
@@ -131,6 +144,14 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
         case "finish": {
           // The model ended the turn without a word (seen once in ≈ 250 eval
           // turns): never leave the user with an empty answer.
+          // The model says it prepared a card but called no draft tool → no card
+          // is shown; say so instead of leaving a false claim (ai-chat-tools T2).
+          if (wroteText && !failed && claimsDraft(answer) && !toolNames.some((t) => DRAFT_TOOL_NAMES.has(t))) {
+            falseDraftClaim = true
+            controller.enqueue({ type: "text-start", id: "draft-note" })
+            controller.enqueue({ type: "text-delta", id: "draft-note", delta: FALSE_DRAFT_NOTE })
+            controller.enqueue({ type: "text-end", id: "draft-note" })
+          }
           if (!wroteText && !failed) {
             emptyAnswer = true
             controller.enqueue({ type: "text-start", id: "fallback" })
@@ -163,6 +184,6 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
 
   return {
     stream,
-    summary: () => ({ tools: toolNames, steps: stepCount, ms: now() - opts.startedAt, calls: steps.filter((s) => s.kind === "tool"), emptyAnswer }),
+    summary: () => ({ tools: toolNames, steps: stepCount, ms: now() - opts.startedAt, calls: steps.filter((s) => s.kind === "tool"), emptyAnswer, falseDraftClaim }),
   }
 }

@@ -4074,3 +4074,45 @@ export const aiChatMessage = pgTable(
   },
   (table) => [uniqueIndex("ai_chat_message_thread_seq_uq").on(table.threadId, table.seq)],
 )
+
+// AI chat actions (docs/specs/ai-chat-tools §13, phase T1): one row per draft
+// group the chat prepared (company, contact, company + contacts, …). The model
+// only proposes; a record is created when the user confirms the card
+// (`POST /api/chat/actions`). The row is the audit of what was created from
+// which chat / message / files (decision Q15: no column on the records).
+export const aiChatAction = pgTable(
+  "ai_chat_action",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Kept when the chat is purged (90 days) — the audit row stays.
+    threadId: text("thread_id").references(() => aiChatThread.id, { onDelete: "set null" }),
+    // The assistant message that carries the draft card.
+    messageId: text("message_id"),
+    // company | contact | company_contact (T1); later deal / task / tasks / update / link
+    kind: text("kind").notNull(),
+    // draft | needs_input | created | partly_created | cancelled | expired | failed
+    status: text("status").notNull().default("draft"),
+    // Items with values, per-field source, removed values, matches, checks (src/lib/chat/actions.ts).
+    draft: jsonb("draft").$type<unknown>().notNull(),
+    // What the user confirmed (edited values + decisions).
+    confirmedValues: jsonb("confirmed_values").$type<unknown>(),
+    // [{ type, id, title, existing? }]
+    results: jsonb("results").$type<unknown[]>(),
+    // Chat files (source items) the draft came from.
+    sourceItemIds: text("source_item_ids").array().notNull().default(sql`'{}'::text[]`),
+    error: text("error"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    confirmedAt: timestamp("confirmed_at"),
+  },
+  (table) => [
+    index("ai_chat_action_user_idx").on(table.organizationId, table.userId, table.createdAt),
+    index("ai_chat_action_thread_idx").on(table.threadId),
+  ],
+)

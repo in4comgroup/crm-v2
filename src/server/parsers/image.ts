@@ -139,6 +139,8 @@ export async function parseImageBytes(
     instructions: withOwnOrgLine(
       `You are a precise image parsing assistant. Extract structured metadata and convert the provided image into clean Markdown. For text-heavy images perform OCR faithfully; for photos/diagrams give a detailed description. Never fabricate facts that are not visible in the image.
 
+Blurred, low-resolution or partly hidden text: copy ONLY the characters you can actually read. Never guess, complete or "reconstruct" a name, phone number, e-mail address, website or amount — write «[неразборчиво]» in its place instead (e.g. «тел.: [неразборчиво]»). A wrong phone or e-mail is far worse than a missing one. If most of the text is unreadable, say so in the description.
+
 ${MENTIONED_PEOPLE_PROMPT}
 
 For images specifically: the 'author/sender' is whoever you extract into the \`senders\` field (signature, byline, watermark). Don't include them in mentionedPeople. Only emit third parties visibly named in the image. Business cards / name plates / labelled photos with an organization shown are explicit attribution — confidence='high'. When inferring organization from the document's author, only do so if the image itself states the author's company unambiguously.`,

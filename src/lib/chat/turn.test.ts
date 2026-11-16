@@ -107,3 +107,13 @@ describe("chatErrorText", () => {
     expect(chatErrorText("chat_error:bogus").cls).toBe("unknown")
   })
 })
+
+describe("claimsDraft", () => {
+  it("finds a claim of a card in the answer", async () => {
+    const { claimsDraft } = await import("./turn")
+    expect(claimsDraft("Подготовил список задач по итогам встречи. Проверьте их.")).toBe(true)
+    expect(claimsDraft("Подготовил карточку компании и контакта по визитке")).toBe(true)
+    expect(claimsDraft("Подготовила для вас задачу на завтра")).toBe(true)
+    expect(claimsDraft("Нашёл компанию «Вектор» и 2 контакта")).toBe(false)
+  })
+})

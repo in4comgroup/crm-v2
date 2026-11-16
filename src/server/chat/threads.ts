@@ -148,6 +148,26 @@ export async function appendChatMessage(
 }
 
 /**
+ * Change the stored parts of one message (chat actions: the draft card's
+ * status + the `data-action-result` part after confirm). No-op when the
+ * message is gone (e.g. removed by «Повторить»).
+ */
+export async function updateChatMessageParts(
+  threadId: string,
+  messageId: string,
+  update: (parts: unknown[]) => unknown[],
+): Promise<boolean> {
+  const [m] = await db
+    .select({ parts: aiChatMessage.parts })
+    .from(aiChatMessage)
+    .where(and(eq(aiChatMessage.threadId, threadId), eq(aiChatMessage.id, messageId)))
+  if (!m) return false
+  const parts = partsForStorage(update([...(m.parts ?? [])]))
+  await db.update(aiChatMessage).set({ parts }).where(and(eq(aiChatMessage.threadId, threadId), eq(aiChatMessage.id, messageId)))
+  return true
+}
+
+/**
  * «Повторить» / regenerate: remove the assistant messages after the last
  * user message. Returns the role of the last message left (null = empty).
  */

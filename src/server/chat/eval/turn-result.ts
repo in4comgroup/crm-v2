@@ -1,6 +1,7 @@
 // Parse one chat turn (the UI message stream of POST /api/chat) into what
 // the eval checks (docs/specs/ai-chat/01-specification.md §12). Pure —
 // unit-tested; no server-only import so the test runs plainly.
+import type { ChatDraftPart } from "@/lib/chat/actions"
 
 import {
   CHAT_ERROR_PREFIX,
@@ -31,6 +32,8 @@ export type TurnResult = {
   stats: StatsResult[]
   evidence: ChatEvidencePart | null
   turn: ChatTurnPart | null
+  /** Draft cards of the answer (ai-chat-tools T1), last version per card. */
+  drafts: ChatDraftPart[]
   ms: number
 }
 
@@ -79,13 +82,14 @@ export function turnResult(httpStatus: number, chunks: StreamChunk[], ms: number
     stats: data<StatsResult>("stats"),
     evidence: mergeEvidenceParts(data<ChatEvidencePart>("evidence")),
     turn: data<ChatTurnPart>("turn")[0] ?? null,
+    drafts: [...new Map(data<ChatDraftPart>("draft").map((d) => [d.actionId, d])).values()],
     ms,
   }
 }
 
 // ── Checks every case gets (spec §9, §11, §12) ────────────────────────
 
-export const TOOL_NAMES = ["searchRecords", "listRecords", "getRecord", "readSource", "queryStats", "searchWeb"]
+export const TOOL_NAMES = ["searchRecords", "listRecords", "getRecord", "readSource", "queryStats", "searchWeb", "draftCompany", "draftContact", "draftTask", "draftTasks"]
 
 /** Things a user must never see in the answer text. */
 export function leakProblems(answer: string): string[] {

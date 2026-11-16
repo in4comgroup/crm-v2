@@ -1,6 +1,6 @@
 # 01 — AI chat actions: specification
 
-**Date:** 2026-11-16 · **Status:** all questions decided 2026-11-16 ([02-open-questions.md](02-open-questions.md)); nothing is built
+**Date:** 2026-11-16 · **Status:** Q1–Q23 decided ([02-open-questions.md](02-open-questions.md)); T0–T2 built (see [03-development-plan.md](03-development-plan.md))
 **Surface:** the global «ИИ чат» panel (docs/specs/ai-chat/)
 **Current state:** [00-current-state.md](00-current-state.md)
 
@@ -118,7 +118,7 @@ AI SDK 7 can pause a tool for approval, but approval of a tool call approves **t
 | `draftTask` | `title`, `description?`, `type?`, `dueDate?` (YYYY-MM-DD[THH:MM], org time zone), `assignee?` («me» / a member name), `priority?`, `companyRef?`, `contactRef?`, `dealRef?`, `evidence` |
 | `draftTasks` | a list of the above (meeting notes with several to-dos) |
 
-Each returns the **checked** draft (§8) to the model in compact form (`{ draftId, status: ready | needs_input | duplicate | refused, missing[], matches[] }`) and writes the full draft as a `data-draft` part. The model then writes one or two sentences («Подготовил компанию и контакт по визитке — проверьте и нажмите «Создать»») or asks (§12).
+Built (T1): `draftCompany` / `draftContact` without the `evidence` input — the code grounds every value against the whole input (§8.2), which is more reliable than quotes the model writes; a contact has no comment (no such column). Each returns the **checked** draft (§8) to the model in compact form (`{ draftId, status: ready | needs_input | duplicate | refused, missing[], matches[] }`) and writes the full draft as a `data-draft` part. The model then writes one or two sentences («Подготовил компанию и контакт по визитке — проверьте и нажмите «Создать»») or asks (§12).
 
 ### 7.3 The draft card (UI)
 

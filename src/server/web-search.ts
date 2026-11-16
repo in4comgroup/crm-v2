@@ -4,7 +4,8 @@ import "server-only"
 
 import { isStepCount } from "ai"
 
-import { aiCallInfo, aiGenerateText } from "@/server/ai/runtime"
+import { webQueryPrivacyIssue, webQueryPrivacyMessage } from "@/lib/web-query-privacy"
+import { AiBudgetExceededError, aiCallInfo, aiGenerateText } from "@/server/ai/runtime"
 
 // ── Web search as an explicit tool, not a passthrough ────────────────
 //
@@ -65,6 +66,13 @@ export async function searchWeb(
     return { query, findings: "Empty query.", sources: [], grounded: false }
   }
 
+  // Privacy (docs/specs/ai-chat Q3): contact data never leaves for the
+  // search provider. Refused before any model call; the model is told why.
+  const privacy = webQueryPrivacyIssue(q)
+  if (privacy) {
+    return { query: q, findings: webQueryPrivacyMessage(privacy), sources: [], grounded: false }
+  }
+
   try {
     const research = await aiGenerateText({
       process: "chat.web_search",
@@ -99,6 +107,15 @@ export async function searchWeb(
       grounded: sources.length > 0 || aiCallInfo(research)?.webSearchGrounded === true,
     }
   } catch (error) {
+    // Monthly AI limit (Q15): `chat.web_search` stops at 100 % like the chat.
+    if (error instanceof AiBudgetExceededError && error.period === "month") {
+      return {
+        query: q,
+        findings: "Поиск в интернете не выполнен: месячный лимит ИИ организации исчерпан.",
+        sources: [],
+        grounded: false,
+      }
+    }
     console.error("[web-search] failed:", error)
     return {
       query: q,

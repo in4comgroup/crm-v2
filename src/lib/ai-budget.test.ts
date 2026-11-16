@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { aiLimitStep, aiMonthlyLimitState, nextUtcMonth, startOfUtcMonth } from "./ai-budget"
+import { aiLimitStep, aiMonthlyLimitState, chatMonthlyLimitMessageRu, nextUtcMonth, startOfUtcMonth } from "./ai-budget"
 
 const now = new Date("2026-11-15T10:00:00Z")
 
@@ -60,3 +60,11 @@ describe("aiLimitStep", () => {
     expect(aiLimitStep(Number.NaN)).toBe(0)
   })
 })
+
+describe("chatMonthlyLimitMessageRu", () => {
+  it("names the reset day", () => {
+    expect(chatMonthlyLimitMessageRu("2026-12-01T00:00:00.000Z")).toContain("с 01.12.2026")
+    expect(chatMonthlyLimitMessageRu("garbage")).toContain("с 1-го числа следующего месяца")
+  })
+})
+

@@ -33,6 +33,11 @@ export type AiProcessDefinition = {
   userSelectable?: boolean
   // Allowed list used while the admin has not set one (= today's picker).
   defaultAllowedModelIds?: string[]
+  // Interactive processes normally run past the org's AI limits and only log
+  // (models spec 07 / 08). true = this one is refused like a background
+  // process once the MONTHLY limit is used up (AI chat, docs/specs/ai-chat Q15).
+  // The daily budget keeps the interactive rule.
+  stopAtMonthlyLimit?: boolean
 }
 
 // Today's picker models — kept as the initial allowed list so the switch to
@@ -57,6 +62,7 @@ const DEFINITIONS = [
     defaultModelId: FLASH_LITE,
     userSelectable: true,
     defaultAllowedModelIds: PICKER_DEFAULTS,
+    stopAtMonthlyLimit: true,
   },
   {
     key: "chat.web_search",
@@ -66,6 +72,7 @@ const DEFINITIONS = [
     kind: "interactive",
     requires: ["web_search"],
     defaultModelId: FLASH_LITE,
+    stopAtMonthlyLimit: true,
   },
   {
     key: "chat.session_analysis",

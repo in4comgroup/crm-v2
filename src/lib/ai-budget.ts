@@ -74,3 +74,16 @@ export function aiMonthlyLimitState(spentUsd: number, budgetUsd: number, now: Da
     resetsAt: nextUtcMonth(now).toISOString(),
   }
 }
+
+/**
+ * PURE. What a chat user sees when the org's monthly AI limit is used up
+ * (docs/specs/ai-chat Q15). `resetsAt` = AiMonthlyLimitState.resetsAt (the
+ * first day of the next month, 00:00 UTC) — shown as a calendar day.
+ */
+export function chatMonthlyLimitMessageRu(resetsAt: string): string {
+  const d = new Date(resetsAt)
+  const day = Number.isNaN(d.getTime())
+    ? "1-го числа следующего месяца"
+    : `${String(d.getUTCDate()).padStart(2, "0")}.${String(d.getUTCMonth() + 1).padStart(2, "0")}.${d.getUTCFullYear()}`
+  return `Месячный лимит ИИ вашей организации исчерпан. Чат снова будет доступен с ${day} или после увеличения лимита администратором платформы.`
+}

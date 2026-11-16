@@ -16,7 +16,7 @@ import {
   Component,
   type ReactNode,
 } from "react"
-import { CopyIcon, CheckIcon, Save, Trash2Icon } from "lucide-react"
+import { CopyIcon, CheckIcon, Save, Trash2Icon, CircleAlert } from "lucide-react"
 import { toast } from "sonner"
 import {
   useJsonRenderMessage,
@@ -26,6 +26,8 @@ import {
 
 import { registry } from "@/lib/registry"
 import { usePanelContext } from "@/lib/chat-panel-context"
+import { useGlobalChat } from "@/lib/global-chat-context"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { sanitizeSpec } from "@/lib/json-render-sanitize"
 
 import {
@@ -181,8 +183,38 @@ export function AIChat({ className }: { className?: string }) {
   )
   /* eslint-enable react-hooks/refs */
 
+  // Monthly AI limit of the org (docs/specs/ai-chat Q15): when it is used up
+  // the route refuses with 402 + a Russian message, and the chat shows that
+  // message instead of the input. Checked when the panel opens and on a
+  // refused request.
+  const [limitMessage, setLimitMessage] = useState<string | null>(null)
+  const { open: panelOpen } = useGlobalChat()
+  useEffect(() => {
+    if (!panelOpen) return
+    let cancelled = false
+    fetch("/api/chat/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { limit?: { blocked?: boolean; message?: string | null } } | null) => {
+        if (cancelled || !data?.limit) return
+        setLimitMessage(data.limit.blocked ? (data.limit.message ?? null) : null)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [panelOpen])
+
   const { messages, sendMessage, status, stop, setMessages } = useChat({
     transport,
+    onError: (error) => {
+      // A non-OK response reaches here with the response body as the message.
+      try {
+        const body = JSON.parse(error.message) as { error?: string; message?: string }
+        if (body.error === "monthly_limit") setLimitMessage(body.message ?? "Месячный лимит ИИ исчерпан.")
+      } catch {
+        // Not a JSON body — other error handling is CH4 (error classes).
+      }
+    },
   })
 
   const isStreaming = status === "streaming"
@@ -339,30 +371,37 @@ export function AIChat({ className }: { className?: string }) {
 
       {/* Input area */}
       <div className="border-t p-4">
-        <PromptInputProvider>
-          <PromptInput
-            onSubmit={handleSubmit}
-            accept={ACCEPTED_EXTENSIONS}
-            maxFileSize={MAX_FILE_SIZE}
-            onError={(err) => toast.error(err.message)}
-          >
-            <PromptInputTextarea placeholder="Введите сообщение..." />
-            <PromptInputTools className="pr-3 flex flex-row gap-2">
-              <PromptInputActionMenu>
-                <PromptInputActionMenuTrigger />
-                <PromptInputActionMenuContent>
-                  <PromptInputActionAddAttachments />
-                </PromptInputActionMenuContent>
-              </PromptInputActionMenu>
-              <SpeechInput
-                size="icon-sm"
-                variant="ghost"
-                onTranscriptionChange={handleSpeechTranscription}
-              />
-              <PromptInputSubmit variant="ghost" status={status} onStop={stop} />
-            </PromptInputTools>
-          </PromptInput>
-        </PromptInputProvider>
+        {limitMessage ? (
+          <Alert>
+            <CircleAlert />
+            <AlertDescription>{limitMessage}</AlertDescription>
+          </Alert>
+        ) : (
+          <PromptInputProvider>
+            <PromptInput
+              onSubmit={handleSubmit}
+              accept={ACCEPTED_EXTENSIONS}
+              maxFileSize={MAX_FILE_SIZE}
+              onError={(err) => toast.error(err.message)}
+            >
+              <PromptInputTextarea placeholder="Введите сообщение..." />
+              <PromptInputTools className="pr-3 flex flex-row gap-2">
+                <PromptInputActionMenu>
+                  <PromptInputActionMenuTrigger />
+                  <PromptInputActionMenuContent>
+                    <PromptInputActionAddAttachments />
+                  </PromptInputActionMenuContent>
+                </PromptInputActionMenu>
+                <SpeechInput
+                  size="icon-sm"
+                  variant="ghost"
+                  onTranscriptionChange={handleSpeechTranscription}
+                />
+                <PromptInputSubmit variant="ghost" status={status} onStop={stop} />
+              </PromptInputTools>
+            </PromptInput>
+          </PromptInputProvider>
+        )}
 
         <p className="mt-3 px-6 text-xs leading-snug text-muted-foreground text-left">
           В чате используются большие языковые модели для агентного поиска и

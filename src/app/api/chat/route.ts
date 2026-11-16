@@ -26,7 +26,8 @@ import { getOwnOrgContext } from "@/server/identity/own-org"
 import { loadClientProfileTexts } from "@/server/identity/client-profile-context"
 import { loadCustomValuesText } from "@/server/custom-fields"
 import { loadEntityDocumentsForChat, type ChatDocument } from "@/server/documents-chat"
-import { aiStreamText } from "@/server/ai/runtime"
+import { AiBudgetExceededError, aiStreamText } from "@/server/ai/runtime"
+import { CHAT_LIMIT_ERROR, getChatLimitState } from "@/server/chat/limit"
 import {
   entitySearchScore,
   FIELD_WEIGHT,
@@ -380,6 +381,16 @@ export async function POST(req: Request) {
     return Response.json({ error: "No active organization" }, { status: 403 })
   }
 
+  // Monthly AI limit (docs/specs/ai-chat Q15): at 100 % the chat makes no
+  // model call. 402 + a Russian message the chat panel shows as a banner.
+  const limit = await getChatLimitState(sourceOrgId).catch((e) => {
+    console.error("[chat] limit check failed", e)
+    return null
+  })
+  if (limit?.blocked) {
+    return Response.json({ error: CHAT_LIMIT_ERROR, message: limit.message }, { status: 402 })
+  }
+
   try {
     const {
       messages,
@@ -458,6 +469,14 @@ export async function POST(req: Request) {
 
     return createUIMessageStreamResponse({ stream })
   } catch (error) {
+    // The limit was reached between the pre-check and the call (runtime gate).
+    if (error instanceof AiBudgetExceededError && error.period === "month") {
+      const state = await getChatLimitState(sourceOrgId).catch(() => null)
+      return Response.json(
+        { error: CHAT_LIMIT_ERROR, message: state?.message ?? "Месячный лимит ИИ вашей организации исчерпан." },
+        { status: 402 },
+      )
+    }
     console.error("[chat] Error:", error)
     return new Response(
       JSON.stringify({

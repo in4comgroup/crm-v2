@@ -66,6 +66,25 @@ export type SignalEmittedBy = (typeof SIGNAL_EMITTED_BY)[number]
 export type DisplayProfile = (typeof DISPLAY_PROFILES)[number]
 export type RecipientRole = (typeof RECIPIENT_ROLES)[number]
 export type SignalFamily = (typeof SIGNAL_FAMILIES)[number]
+
+/** Russian labels of signal / topic families (the «Сигналы» tab, the AI chat). */
+export const FAMILY_LABELS_RU: Record<SignalFamily, string> = {
+  offer: "Предложение (КП)",
+  order: "Заказ",
+  invoice: "Счёт",
+  contract: "Договор",
+  complaint: "Жалоба",
+  meeting: "Встреча",
+  contact: "Контакт",
+  pitch: "Питч / тендер",
+  delivery: "Поставка",
+  account: "Аккаунт",
+  market: "Рынок",
+  supplier: "Поставщик",
+  team: "Команда",
+  internal: "Внутреннее",
+  competitor: "Конкурент",
+}
 export type RelationKind = (typeof RELATION_KINDS)[number]
 export type StageRuleEffect = (typeof STAGE_RULE_EFFECTS)[number]
 

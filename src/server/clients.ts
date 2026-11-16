@@ -1,6 +1,7 @@
 "use server"
 
 import { db } from "@/db/drizzle"
+import { clientRelation } from "@/lib/client-relation"
 import {
   client,
   clientProfile,
@@ -377,21 +378,14 @@ export async function listClientsFeed(params: {
     if (!matchesProfile(r.profile)) return false
     if (cfFilters.length && !matchesCustomFilters(r.client.customValues as Record<string, unknown>, cfFilters, cfDefs)) return false
     if (params.tab === "all") return true
-    const kind = r.client.customFields?.companyKind
-    if (kind === "supplier") return params.tab === "supplier"
-    if (kind === "partner") return params.tab === "partner"
-    const closed = hasClosed.has(r.client.id)
-    const open = hasOpen.has(r.client.id)
-    switch (params.tab) {
-      case "customers":
-        return closed
-      case "potential":
-        return !closed && open
-      case "unclassified":
-        return !closed && !open
-      default:
-        return false
-    }
+    // ONE rule for the tabs and the AI chat's «Отношения» (src/lib/client-relation.ts).
+    return (
+      clientRelation({
+        companyKind: r.client.customFields?.companyKind,
+        hasWonDeal: hasClosed.has(r.client.id),
+        hasOpenDeal: hasOpen.has(r.client.id),
+      }) === params.tab
+    )
   })
 
   // Базовый порядок — по дате добавления, новые наверху. Страница грузит

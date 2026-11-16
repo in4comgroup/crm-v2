@@ -2,20 +2,19 @@
 
 import { db } from "@/db/drizzle"
 import { card, client, contact, deal, dealFunnelStage, order } from "@/db/schema"
-import {
-  and,
-  desc,
-  eq,
-  inArray,
-  notInArray,
-  or,
-  sql,
-  type AnyColumn,
-  type SQL,
-} from "drizzle-orm"
+import { and, desc, eq, inArray, notInArray, or, type SQL } from "drizzle-orm"
 import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { getServerSession } from "@/lib/get-session"
 import { userCardFilter } from "@/server/topics/cards/visibility"
+import {
+  containsQuery,
+  matchesQuery,
+  norm,
+  normArray,
+  normJsonText,
+  relevanceOf,
+  textQuery,
+} from "@/server/search/normalise"
 
 async function requireOrgContext() {
   const session = await getServerSession()
@@ -26,35 +25,15 @@ async function requireOrgContext() {
 }
 
 const HITS_PER_ENTITY = 8
-const MIN_QUERY_LENGTH = 2
 
 // ── Normalised, fuzzy matching (Search V2 pipeline) ─────────────────
 //
-// This search used to be `ILIKE '%' || q || '%'` on the raw columns, which
-// fails the way every raw-substring search over this data fails: «Норлекс» never
-// finds the stored «Norleks – Северная Торговая Компания», «НорлексЛаб» never
-// finds «Norleks Lab», and a query typed with an em-dash never finds a name
-// stored with an en-dash. Measured on real org data, four of six realistic
-// queries returned nothing at all.
-//
-// Both sides now go through the SAME pipeline products use (see
-// refs/search-v2-plan.md and scripts/search-v2/01-foundation.ts, which
-// installed these functions): `lower(immutable_unaccent(translit_cyr_lat(x)))`.
-// On top of that, a pg_trgm `word_similarity >= 0.3` arm recovers typos and
-// romanisation drift the exact form can't — the same retriever and the same
-// threshold as the product engine, so the two agree about what "matches".
-//
-// The JS twin of this lives in `src/lib/entity-search.ts` (used by the AI
-// chat's `searchEverything` and the deals-board client picker, which match
-// against lists already in memory). Keep the two in step: same normalisation,
-// same 0.3 gate.
-const FUZZY_THRESHOLD = 0.3
-
-// Fuzzy matching is enabled only from 3 characters up. `word_similarity`
-// against a 2-character query scores high on far too much text; the exact
-// (substring) arm still runs at MIN_QUERY_LENGTH, so short queries keep
-// working — they just stay literal.
-const MIN_FUZZY_QUERY_LENGTH = 3
+// This search used to be `ILIKE '%' || q || '%'` on the raw columns: «Норлекс»
+// never found the stored «Norleks – Северная Торговая Компания» and an
+// em-dash query never found an en-dash name (four of six realistic queries
+// returned nothing). The matching helpers now live in
+// src/server/search/normalise.ts — ONE definition shared with the AI chat
+// records engine (src/server/chat/records/).
 
 export type ClientSearchHit = {
   kind: "client"
@@ -119,44 +98,12 @@ export async function searchAcrossEntities(
   rawQuery: string,
 ): Promise<GlobalSearchResult> {
   const { activeOrgId } = await requireOrgContext()
-  const q = rawQuery.trim()
-  if (q.length < MIN_QUERY_LENGTH) return EMPTY_RESULT(q)
+  const tq = textQuery(rawQuery)
+  if (!tq) return EMPTY_RESULT(rawQuery.trim())
+  const q = tq.q
 
-  const fuzzy = q.length >= MIN_FUZZY_QUERY_LENGTH
-
-  // The query, normalised by the SAME SQL functions applied to the columns —
-  // deliberately not normalised in JS, so the two sides can never drift.
-  const qNorm = sql`lower(immutable_unaccent(translit_cyr_lat(${q})))`
-
-  /** A column, normalised. NULL collapses to '' so it simply never matches. */
-  const norm = (col: AnyColumn): SQL =>
-    sql`lower(immutable_unaccent(translit_cyr_lat(coalesce(${col}, ''))))`
-
-  /**
-   * A `text[]` column, normalised. Joined with spaces rather than cast to
-   * text so the array's own `{`, `}` and `,` punctuation can't wedge itself
-   * between a query and the alias it should match.
-   */
-  const normArray = (col: AnyColumn): SQL =>
-    sql`lower(immutable_unaccent(translit_cyr_lat(coalesce(array_to_string(${col}, ' '), ''))))`
-
-  /** Exact (substring) arm + fuzzy arm for one normalised expression. */
-  const matches = (expr: SQL): SQL =>
-    fuzzy
-      ? sql`(${expr} LIKE '%' || ${qNorm} || '%' OR word_similarity(${qNorm}, ${expr}) >= ${FUZZY_THRESHOLD})`
-      : sql`(${expr} LIKE '%' || ${qNorm} || '%')`
-
-  /**
-   * Relevance for ordering: the best fuzzy score across the entity's
-   * identifying fields. Ranked results matter more here than in the old
-   * version — the fuzzy arm widens the candidate set, so the best match has
-   * to lead rather than merely be present. `updatedAt` stays the tiebreak.
-   */
-  const relevance = (exprs: SQL[]): SQL =>
-    sql`greatest(${sql.join(
-      exprs.map((e) => sql`word_similarity(${qNorm}, ${e})`),
-      sql`, `,
-    )})`
+  const matches = (expr: SQL): SQL => matchesQuery(tq, expr)
+  const relevance = (exprs: SQL[]): SQL => relevanceOf(tq, exprs)
 
   const clientFields = [
     norm(client.name),
@@ -171,7 +118,7 @@ export async function searchAcrossEntities(
   const dealFields = [norm(deal.name), norm(deal.description)]
   // `card.message` is jsonb `{ analysis, recommendation }` — cast to text
   // before normalising, same idiom as source-items.ts's metadata search.
-  const cardMessageNorm: SQL = sql`lower(immutable_unaccent(translit_cyr_lat(coalesce(${card.message}::text, ''))))`
+  const cardMessageNorm: SQL = normJsonText(card.message)
 
   const [clientRows, contactRows, dealRows, orderRows, cardRows] = await Promise.all([
     db
@@ -190,8 +137,8 @@ export async function searchAcrossEntities(
             ...clientFields.map(matches),
             // Email and phone stay literal: normalising them buys nothing
             // (both are already ASCII) and a fuzzy address match is noise.
-            matches(norm(client.email)),
-            matches(norm(client.phone)),
+            containsQuery(tq, norm(client.email)),
+            containsQuery(tq, norm(client.phone)),
           ),
         ),
       )
@@ -213,8 +160,8 @@ export async function searchAcrossEntities(
           notInArray(contact.status, ["deleted", "blocked"]),
           or(
             ...contactFields.map(matches),
-            matches(norm(contact.email)),
-            matches(norm(contact.phone)),
+            containsQuery(tq, norm(contact.email)),
+            containsQuery(tq, norm(contact.phone)),
           ),
         ),
       )

@@ -35,7 +35,6 @@ import type {
   RelationKind,
   SignalEffort,
   SignalEmittedBy,
-  SignalFamily,
   SignalRegistryEntity,
   SignalScoreRule,
   SignalsOrgResponse,
@@ -80,23 +79,8 @@ export const RECIPIENT_LABELS_RU: Record<RecipientRole, string> = {
   events: "Мероприятия",
 }
 
-export const FAMILY_LABELS_RU: Record<SignalFamily, string> = {
-  offer: "Предложение (КП)",
-  order: "Заказ",
-  invoice: "Счёт",
-  contract: "Договор",
-  complaint: "Жалоба",
-  meeting: "Встреча",
-  contact: "Контакт",
-  pitch: "Питч / тендер",
-  delivery: "Поставка",
-  account: "Аккаунт",
-  market: "Рынок",
-  supplier: "Поставщик",
-  team: "Команда",
-  internal: "Внутреннее",
-  competitor: "Конкурент",
-}
+// Moved to src/lib/signals/types.ts (shared with the server); re-exported for this tab's files.
+export { FAMILY_LABELS_RU } from "@/lib/signals/types"
 
 export const RELATION_LABELS_RU: Record<RelationKind, string> = {
   outranks: "Важнее (outranks)",

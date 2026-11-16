@@ -54,8 +54,14 @@ export const PARSER_CONFIG = {
       "audio/aac",
       "audio/ogg",
       "audio/opus",
+      // WAV: the AI chat voice recorder (docs/specs/ai-chat-tools §5) records
+      // 16 kHz mono PCM, because Chrome's MediaRecorder gives WebM, which the
+      // model does not accept.
+      "audio/wav",
+      "audio/x-wav",
+      "audio/wave",
     ] as readonly string[],
-    supportedExtensions: [".mp3", ".m4a", ".aac", ".ogg", ".oga"] as readonly string[],
+    supportedExtensions: [".mp3", ".m4a", ".aac", ".ogg", ".oga", ".wav"] as readonly string[],
   },
   video: {
     // 50 MB handles typical short clips (screen recordings, meeting

@@ -385,7 +385,7 @@ export async function parseSourceItem(
   }
 }
 
-function dispatchParse(ctx: ParseContext): Promise<ParseResult> {
+async function dispatchParse(ctx: ParseContext): Promise<ParseResult> {
   switch (ctx.provider) {
     case "nylas":
       return parseNylasItem(ctx)
@@ -404,14 +404,20 @@ function dispatchParse(ctx: ParseContext): Promise<ParseResult> {
       // org-level drop-off since documents D1) parse like any other file;
       // old rows without bytes cannot be re-parsed (see parseDropoffItem).
       return parseDropoffItem(ctx)
-    case "aichat":
-      // AI-chat segments arrive pre-parsed at ingest time
-      // (`src/server/chat/ingest.ts` inserts the row with
-      // parseStatus='complete' and the analysis already on metadata_json).
-      // The unified parse pipeline has nothing to re-run for them.
+    case "aichat": {
+      // Files of the AI chat (docs/specs/ai-chat-tools §5.2): uploaded with
+      // their original → parsed like a drop-off file (the parser of their
+      // type). AI-chat SEGMENT items arrive pre-parsed by the chat ingest
+      // (`src/server/chat/ingest.ts`); nothing to re-run for them.
+      const [f] = await db
+        .select({ fileStatus: sourceItem.fileStatus })
+        .from(sourceItem)
+        .where(eq(sourceItem.id, ctx.itemId))
+      if (f?.fileStatus === "stored") return parseDropoffItem(ctx)
       throw new Error(
         "AI chat segment items are stored pre-parsed by the chat ingest; nothing to re-parse",
       )
+    }
     default: {
       const _exhaustive: never = ctx.provider
       throw new Error(`Unsupported provider: ${_exhaustive}`)

@@ -61,14 +61,26 @@ describe("partsForStorage", () => {
 })
 
 describe("parseUserMessage", () => {
-  it("accepts a user message with text and files", () => {
+  it("accepts text + uploaded chat files; data URLs are dropped (files are uploaded first)", () => {
     const r = parseUserMessage({
       id: "x",
       role: "user",
-      parts: [{ type: "text", text: "Привет" }, { type: "file", url: "data:,", mediaType: "text/plain" }, { type: "step-start" }],
+      parts: [
+        { type: "text", text: "Привет" },
+        { type: "file", url: "/api/documents/a35c369d-fe21-474e-b64a-c38d9b10092d/file?disposition=inline", mediaType: "image/png", filename: "card.png" },
+        { type: "file", url: "data:,", mediaType: "text/plain" },
+        { type: "step-start" },
+      ],
     })
     expect(r?.text).toBe("Привет")
     expect(r?.parts).toHaveLength(2)
+    expect(r?.fileIds).toEqual(["a35c369d-fe21-474e-b64a-c38d9b10092d"])
+    expect(parseUserMessage({ role: "user", parts: [{ type: "file", url: "https://evil/x.png", mediaType: "image/png" }] })).toBeNull()
+  })
+
+  it("the stored attachment part never keeps the full text", () => {
+    const [p] = partsForStorage([{ type: "data-attachment", id: "i1", data: { itemId: "i1", name: "a.pdf", status: "parsed", excerpt: "кратко", text: "ПОЛНЫЙ ТЕКСТ" } }])
+    expect(p.data).toEqual({ itemId: "i1", name: "a.pdf", status: "parsed", excerpt: "кратко" })
   })
 
   it("refuses other roles, injected data parts, empty and too long messages", () => {
@@ -81,7 +93,7 @@ describe("parseUserMessage", () => {
     // a data part from the browser is dropped, never stored as an answer part
     const r = parseUserMessage({ role: "user", parts: [{ type: "text", text: "q" }, { type: "data-records", data: {} }] })
     expect(r?.parts).toEqual([{ type: "text", text: "q" }])
-    const six = Array.from({ length: 6 }, () => ({ type: "file", url: "data:,", mediaType: "text/plain" }))
+    const six = Array.from({ length: 6 }, (_, i) => ({ type: "file", url: `/api/documents/item-000${i}x/file`, mediaType: "text/plain" }))
     expect(parseUserMessage({ role: "user", parts: six })).toBeNull()
   })
 })

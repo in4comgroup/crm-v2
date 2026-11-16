@@ -60,7 +60,7 @@ const DEFINITIONS = [
     group: "Чат и ассистенты",
     description: "Глобальная панель ИИ чата: ответы с инструментами поиска по источникам и вебу.",
     kind: "interactive",
-    requires: ["tools", "image_input"],
+    requires: ["tools"], // files reach the chat as parsed TEXT only (docs/specs/ai-chat-tools Q22), so no image input
     defaultModelId: FLASH_LITE,
     userSelectable: true,
     defaultAllowedModelIds: PICKER_DEFAULTS,

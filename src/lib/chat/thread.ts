@@ -2,6 +2,8 @@
 // Pure + client-safe: shared by the chat route, the thread store and the
 // chat panel. Unit-tested.
 
+import { chatFileIdFromUrl } from "@/lib/chat/files"
+
 /** Thread ids are made in the browser (a new chat exists before its first send). */
 export const THREAD_ID_RE = /^[A-Za-z0-9_-]{8,64}$/
 export const THREAD_TITLE_MAX = 60
@@ -41,7 +43,7 @@ export function cleanThreadTitle(v: unknown): string | null {
 type Part = { type: string; [k: string]: unknown }
 
 /** Data parts that belong to the stored answer (re-rendered after a reload). */
-const STORED_DATA = new Set(["data-records", "data-stats", "data-evidence", "data-turn", "data-spec"])
+const STORED_DATA = new Set(["data-records", "data-stats", "data-evidence", "data-turn", "data-spec", "data-attachment"])
 
 /**
  * Parts of a UI message as they are stored (§16.1): text, files and our data
@@ -66,13 +68,18 @@ export function partsForStorage(parts: readonly unknown[]): Part[] {
         url: keep ? url : "",
       })
     } else if (STORED_DATA.has(p.type) && p.data != null) {
-      out.push({ type: p.type, ...(typeof p.id === "string" ? { id: p.id } : {}), data: p.data })
+      // An attachment's full text is for the current turn only; the stored part keeps the excerpt.
+      const data =
+        p.type === "data-attachment" && typeof p.data === "object"
+          ? Object.fromEntries(Object.entries(p.data as Record<string, unknown>).filter(([k]) => k !== "text"))
+          : p.data
+      out.push({ type: p.type, ...(typeof p.id === "string" ? { id: p.id } : {}), data })
     }
   }
   return out
 }
 
-export type UserMessageInput = { text: string; parts: Part[] }
+export type UserMessageInput = { text: string; parts: Part[]; fileIds: string[] }
 
 /**
  * The user message the browser sends (role user; text + files only). Returns
@@ -83,6 +90,7 @@ export function parseUserMessage(raw: unknown): UserMessageInput | null {
   const m = raw as { role?: unknown; parts?: unknown }
   if (m.role !== "user" || !Array.isArray(m.parts)) return null
   const parts: Part[] = []
+  const fileIds: string[] = []
   let text = ""
   let files = 0
   for (const p of m.parts as Part[]) {
@@ -93,14 +101,19 @@ export function parseUserMessage(raw: unknown): UserMessageInput | null {
       parts.push({ type: "text", text: p.text })
     } else if (p.type === "file") {
       if (typeof p.url !== "string" || typeof p.mediaType !== "string") return null
+      // Files are uploaded first (docs/specs/ai-chat-tools §5.1) — only a
+      // reference to the stored item is accepted; data URLs are dropped.
+      const id = chatFileIdFromUrl(p.url)
+      if (!id) continue
       if (++files > USER_FILES_MAX) return null
+      fileIds.push(id)
       parts.push({ type: "file", url: p.url, mediaType: p.mediaType, ...(typeof p.filename === "string" ? { filename: p.filename } : {}) })
     }
     // other part types (step-start, …) are ignored
   }
   if (text.length > USER_TEXT_MAX_CHARS) return null
   if (!text.trim() && files === 0) return null
-  return { text, parts }
+  return { text, parts, fileIds }
 }
 
 /** One chat in the panel's list. */

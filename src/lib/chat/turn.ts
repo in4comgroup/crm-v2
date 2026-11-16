@@ -20,6 +20,7 @@ import {
   type RecordType,
 } from "@/lib/chat/records"
 import type { StatsResult } from "@/lib/chat/stats"
+import type { ChatAttachmentPart } from "@/lib/chat/files"
 
 // ── Status (§9) ───────────────────────────────────────────────────────
 
@@ -108,6 +109,8 @@ export type ChatDataParts = {
   evidence: ChatEvidencePart
   turn: ChatTurnPart
   debug: ChatDebugPart
+  /** Files of a user message: what the system read from them (ai-chat-tools Q22). */
+  attachment: ChatAttachmentPart
 }
 
 type AnyPart = { type: string; data?: unknown }

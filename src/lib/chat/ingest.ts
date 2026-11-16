@@ -47,6 +47,23 @@ export function messageText(parts: readonly unknown[]): string {
     .trim()
 }
 
+/** Files of a message already detached + parsed at send (ai-chat-tools §5.2): `data-attachment` parts. */
+export function messageAttachments(parts: readonly unknown[]): { itemId: string; name: string; excerpt: string; parsed: boolean }[] {
+  const out: { itemId: string; name: string; excerpt: string; parsed: boolean }[] = []
+  for (const p of parts as { type?: unknown; data?: unknown }[]) {
+    if (!p || p.type !== "data-attachment" || !p.data || typeof p.data !== "object") continue
+    const d = p.data as { itemId?: unknown; name?: unknown; excerpt?: unknown; status?: unknown }
+    if (typeof d.itemId !== "string") continue
+    out.push({
+      itemId: d.itemId,
+      name: typeof d.name === "string" ? d.name : "file",
+      excerpt: typeof d.excerpt === "string" ? d.excerpt : "",
+      parsed: d.status === "parsed",
+    })
+  }
+  return out
+}
+
 export type SegmentFile = { url: string; mediaType: string; filename: string }
 
 /** Files a user attached that are still stored with their data (data URLs). */
@@ -100,7 +117,8 @@ export function segmentContent(messages: readonly SegmentMessage[], authorName: 
   const answers: string[] = []
   for (const m of messages) {
     const text = messageText(m.parts)
-    const files = m.role === "user" ? messageFiles(m.parts).map((f) => f.filename) : []
+    const files =
+      m.role === "user" ? [...messageFiles(m.parts).map((f) => f.filename), ...messageAttachments(m.parts).map((a) => a.name)] : []
     if (!text && !files.length) continue
     if (m.role === "user") {
       own.push(
@@ -128,8 +146,12 @@ export function segmentTranscript(messages: readonly SegmentMessage[], authorNam
   return messages
     .map((m) => {
       const text = messageText(m.parts)
-      if (!text) return ""
-      return m.role === "user" ? `[Сотрудник ${authorName}]\n${cut(text, CHAT_INGEST_USER_CHARS)}` : `[Ответ ИИ]\n${cut(text, 2_000)}`
+      if (m.role !== "user") return text ? `[Ответ ИИ]\n${cut(text, 2_000)}` : ""
+      // The employee's attachments count as the employee's input (a card, notes, a voice message).
+      const files = messageAttachments(m.parts)
+        .filter((a) => a.parsed && a.excerpt.trim())
+        .map((a) => `[Вложение сотрудника «${a.name}»]\n${a.excerpt}`)
+      return [text ? `[Сотрудник ${authorName}]\n${cut(text, CHAT_INGEST_USER_CHARS)}` : "", ...files].filter(Boolean).join("\n\n")
     })
     .filter(Boolean)
     .join("\n\n")
@@ -137,7 +159,9 @@ export function segmentTranscript(messages: readonly SegmentMessage[], authorNam
 
 /** A segment is worth a source item only when the user wrote something (text or a file). */
 export function segmentHasUserContent(messages: readonly SegmentMessage[]): boolean {
-  return messages.some((m) => m.role === "user" && (messageText(m.parts) || messageFiles(m.parts).length))
+  return messages.some(
+    (m) => m.role === "user" && (messageText(m.parts) || messageFiles(m.parts).length || messageAttachments(m.parts).length),
+  )
 }
 
 /** Is a thread due for ingest (§16.3)? */

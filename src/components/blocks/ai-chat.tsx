@@ -44,6 +44,15 @@ import {
   type ChatThreadSummary,
 } from "@/lib/chat/thread"
 import { ChatSourceMenu, FeedbackButtons, ThreadControls } from "@/components/blocks/chat/thread-ui"
+import {
+  AttachmentReadStatus,
+  CameraMenuItem,
+  InputAttachmentChips,
+  SentFileChip,
+  VoiceAttachButton,
+  uploadChatFiles,
+} from "@/components/blocks/chat/chat-files"
+import { CHAT_FILE_ACCEPT, CHAT_FILES_PER_MESSAGE } from "@/lib/chat/files"
 
 import {
   Conversation,
@@ -101,34 +110,9 @@ import { useAiProcessModels } from "@/lib/use-ai-process-models"
 // Constants
 // ---------------------------------------------------------------------------
 
-const ACCEPTED_FILE_TYPES = [
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-  "application/json",
-]
-
-const ACCEPTED_EXTENSIONS = ".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.csv,.json"
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
-
-function validateFiles(files: FileUIPart[]): FileUIPart[] {
-  const valid: FileUIPart[] = []
-  for (const file of files) {
-    if (!ACCEPTED_FILE_TYPES.includes(file.mediaType)) {
-      toast.error(
-        `Неподдерживаемый тип файла: ${file.mediaType}. Поддерживаются: изображения, .txt, .md, .csv, .json`,
-      )
-      continue
-    }
-    valid.push(file)
-  }
-  return valid
-}
+// Files: any type the parsers read (docs/specs/ai-chat-tools §5); the exact
+// per-type limits are checked on upload (src/lib/chat/files.ts).
+const MAX_FILE_SIZE = 50 * 1024 * 1024
 
 /** The page the user is on (Q12) — the route checks the record in the org. */
 function currentPage(): string | undefined {
@@ -437,7 +421,20 @@ function ChatSession({
     async (message: PromptInputMessage) => {
       clearError()
       setLiveStatus(null)
-      await sendMessage({ text: message.text, files: validateFiles(message.files) })
+      // Files are detached from the chat first (uploaded + stored as source
+      // items); the message carries only their links (ai-chat-tools Q22).
+      let files: FileUIPart[] = []
+      if (message.files.length) {
+        const t = toast.loading(message.files.length > 1 ? `Загружаю файлы (${message.files.length})…` : "Загружаю файл…")
+        try {
+          files = await uploadChatFiles(message.files)
+          toast.dismiss(t)
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Не удалось загрузить файл", { id: t })
+          throw e // keeps the text and the files in the input
+        }
+      }
+      await sendMessage({ text: message.text, files })
     },
     [sendMessage, clearError],
   )
@@ -562,16 +559,19 @@ function ChatSession({
           <PromptInputProvider>
             <PromptInput
               onSubmit={handleSubmit}
-              accept={ACCEPTED_EXTENSIONS}
+              accept={CHAT_FILE_ACCEPT}
               maxFileSize={MAX_FILE_SIZE}
+              maxFiles={CHAT_FILES_PER_MESSAGE}
               onError={(err) => toast.error(err.message)}
             >
-              <PromptInputTextarea placeholder="Введите сообщение..." />
+              <InputAttachmentChips />
+              <PromptInputTextarea placeholder="Введите сообщение или прикрепите файл / голосовое…" />
               <PromptInputTools className="pr-3 flex flex-row gap-2">
                 <PromptInputActionMenu>
                   <PromptInputActionMenuTrigger />
                   <PromptInputActionMenuContent>
-                    <PromptInputActionAddAttachments />
+                    <PromptInputActionAddAttachments label="Прикрепить файл" />
+                    <CameraMenuItem />
                   </PromptInputActionMenuContent>
                 </PromptInputActionMenu>
                 <SpeechInput
@@ -579,6 +579,7 @@ function ChatSession({
                   variant="ghost"
                   onTranscriptionChange={handleSpeechTranscription}
                 />
+                <VoiceAttachButton disabled={isLoading} />
                 <PromptInputSubmit variant="ghost" status={status} onStop={stop} />
               </PromptInputTools>
             </PromptInput>
@@ -662,6 +663,9 @@ function ChatMessage({
               </p>
             )
           }
+          if (part.type === "file" && !part.mediaType?.startsWith("image/")) {
+            return <SentFileChip key={key} url={part.url} mediaType={part.mediaType} name={part.filename ?? "Файл"} />
+          }
           if (part.type === "file" && part.mediaType?.startsWith("image/")) {
             return (
               <div key={key} className="relative max-w-sm">
@@ -678,6 +682,8 @@ function ChatMessage({
           }
           return null
         })}
+
+        {!isAssistant && <AttachmentReadStatus items={dataParts(message.parts, "attachment")} />}
 
         {isAssistant && recordsShown && records && (
           <RecordsBlock data={records} onOpen={(type, id, title) => openRecord(type, id, title)} className="mt-2" />

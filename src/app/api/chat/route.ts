@@ -12,6 +12,8 @@ import { getServerSession } from "@/lib/get-session"
 import { RECORD_TYPE_LABELS } from "@/lib/chat/records"
 import { parsePageRecord } from "@/lib/chat/page-context"
 import { isThreadId, parseUserMessage, threadTitle } from "@/lib/chat/thread"
+import { chatFileIdFromUrl, type ChatAttachmentPart } from "@/lib/chat/files"
+import { prepareChatAttachments, readChatAttachments } from "@/server/chat/files"
 import { buildChatSystemPrompt, todayLine } from "@/lib/chat/prompt"
 import { STATUS_THINKING } from "@/lib/chat/turn"
 import { aiStreamText } from "@/server/ai/runtime"
@@ -66,6 +68,23 @@ async function pageLine(ctx: RecordsContext, page: string | undefined): Promise<
   return `Пользователь сейчас открыл в CRM: ${RECORD_TYPE_LABELS[d.type].one} «${d.title}» (type ${d.type}, ref ${d.id}).`
 }
 
+/**
+ * Put the full text of its files into the `data-attachment` parts of the
+ * latest user message (in memory only — the stored message keeps the
+ * excerpt). New files: the text just parsed; «Повторить»: read again.
+ */
+async function withAttachmentText(orgId: string, msg: UIMessage, current: ChatAttachmentPart[]): Promise<void> {
+  const parts = msg.parts.filter((p) => p.type === "data-attachment") as unknown as { data: ChatAttachmentPart }[]
+  if (!parts.length) return
+  const fresh = new Map(current.filter((a) => a.text).map((a) => [a.itemId, a]))
+  const missing = parts.map((p) => p.data.itemId).filter((id) => !fresh.has(id))
+  if (missing.length) for (const a of await readChatAttachments(orgId, missing, true)) fresh.set(a.itemId, a)
+  for (const p of parts) {
+    const a = fresh.get(p.data.itemId)
+    if (a) p.data = a
+  }
+}
+
 export async function POST(req: Request) {
   // Sign-in + active org before any work: an anonymous caller never reaches
   // the (paid) model or the web-search sub-call.
@@ -99,15 +118,12 @@ export async function POST(req: Request) {
   }
 
   // History (§16.1): the thread is the user's own in the active org; the
-  // user message is stored BEFORE the model call.
+  // user message is stored BEFORE the model call (after its files are read).
   const thread = await ensureChatThread(orgId, userId, chatId, threadTitle(userMessage?.text), body.ingestMode === "off" ? "off" : "on")
   if (!thread) return Response.json({ error: "chat_not_found" }, { status: 404 })
   const lastLeft = regenerate ? await dropTrailingAssistant(chatId) : null
-  if (userMessage && (!regenerate || lastLeft !== "user")) {
-    await appendChatMessage(chatId, { id: crypto.randomUUID(), role: "user", parts: userMessage.parts })
-  }
-  const history = cleanHistory(await loadChatMessages(chatId))
-  if (!history.length || history[history.length - 1].role !== "user") {
+  const appendUser = !!userMessage && (!regenerate || lastLeft !== "user")
+  if (!appendUser && lastLeft !== "user") {
     return Response.json({ error: "Bad request" }, { status: 400 })
   }
   const assistantId = crypto.randomUUID()
@@ -116,11 +132,35 @@ export async function POST(req: Request) {
   const startedAt = Date.now()
 
   const stream = createUIMessageStream({
-    originalMessages: history,
     execute: async ({ writer }) => {
       writer.write({ type: "start", messageId: assistantId })
       // The first status line before any model call (spec §13: ≤ 1 s).
       writer.write({ type: "data-status", data: STATUS_THINKING, transient: true } as UIMessageChunk)
+
+      // Files (docs/specs/ai-chat-tools §5.2, Q22): detached from the chat,
+      // parsed by the parser of their type; the model gets only their TEXT.
+      let current: ChatAttachmentPart[] = []
+      if (appendUser && userMessage) {
+        const messageId = crypto.randomUUID()
+        current = await prepareChatAttachments(orgId, userId, userMessage.fileIds, { threadId: chatId, messageId }, (label) =>
+          writer.write({ type: "data-status", data: { stage: "reading", label }, transient: true } as UIMessageChunk),
+        )
+        const kept = new Set(current.map((a) => a.itemId))
+        await appendChatMessage(chatId, {
+          id: messageId,
+          role: "user",
+          parts: [
+            // Only file parts of files that really are the user's uploads.
+            ...userMessage.parts.filter((p) => p.type !== "file" || kept.has(chatFileIdFromUrl(p.url) ?? "")),
+            ...current.map((a) => ({ type: "data-attachment", id: a.itemId, data: a })),
+          ],
+        })
+        writer.write({ type: "data-status", data: STATUS_THINKING, transient: true } as UIMessageChunk)
+      }
+      const history = cleanHistory(await loadChatMessages(chatId))
+      if (!history.length || history[history.length - 1].role !== "user") throw new Error("chat history does not end with a user message")
+      // The latest user message gets the FULL text of its files (older turns: a short note).
+      await withAttachmentText(orgId, history[history.length - 1], current)
 
       const ctx = await loadRecordsContext(orgId, userId)
       const [orgCard, page] = await Promise.all([

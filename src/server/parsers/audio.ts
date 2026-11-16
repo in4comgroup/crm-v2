@@ -365,6 +365,9 @@ function resolveModelMediaType(mediaType: string, fileName: string): string {
   // bot voice messages are Opus-in-Ogg and report `audio/ogg`, but some
   // clients spell it `audio/opus` or send a bare extension.
   if (mt === "audio/opus" || mt === "audio/ogg") return "audio/ogg"
+  // wav variants → audio/wav (the AI chat voice recorder).
+  if (mt === "audio/x-wav" || mt === "audio/wave" || mt === "audio/wav") return "audio/wav"
+  if (fn.endsWith(".wav") && (!mt || mt === "application/octet-stream")) return "audio/wav"
   if (
     (fn.endsWith(".ogg") || fn.endsWith(".oga")) &&
     (!mt || mt === "application/octet-stream")

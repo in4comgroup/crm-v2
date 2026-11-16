@@ -2,7 +2,7 @@ import "server-only"
 
 import { randomUUID } from "node:crypto"
 import { Output } from "ai"
-import { and, asc, eq, gt, inArray, isNotNull, lte, sql } from "drizzle-orm"
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "@/db/drizzle"
 import { aiChatMessage, aiChatThread, sourceItem, user } from "@/db/schema"
@@ -13,6 +13,7 @@ import {
   chatSegmentExternalId,
   chatThreadKey,
   dataUrlBytes,
+  messageAttachments,
   messageFiles,
   segmentContent,
   segmentHasUserContent,
@@ -288,6 +289,23 @@ export async function ingestChatThread(threadId: string): Promise<ChatIngestOutc
     return { status: "nothing" }
   }
 
+  // Files detached + parsed at send (ai-chat-tools §5.2): they become children
+  // of this segment item — no second parse; the signal extractor reads them
+  // as attachment blocks, like the attachments of a mail.
+  const attachmentIds = msgs.filter((m) => m.role === "user").flatMap((m) => messageAttachments(m.parts).map((a) => a.itemId))
+  if (attachmentIds.length) {
+    await db
+      .update(sourceItem)
+      .set({ parentSourceItemId: itemId })
+      .where(
+        and(
+          eq(sourceItem.organizationId, t.organizationId),
+          inArray(sourceItem.id, attachmentIds),
+          isNull(sourceItem.parentSourceItemId),
+        ),
+      )
+  }
+  // Older messages carried files as data URLs (before ai-chat-tools T0).
   const files = msgs.filter((m) => m.role === "user").flatMap((m) => messageFiles(m.parts))
   if (files.length) {
     await insertFileChildren(t.organizationId, src.id, itemId, externalId, files, now).catch((e) =>

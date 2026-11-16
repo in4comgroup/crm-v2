@@ -2,7 +2,7 @@ import "server-only"
 
 import { tool, type UIMessageStreamWriter } from "ai"
 import { z } from "zod"
-import { RECORD_TYPE_LABELS, type RecordType } from "@/lib/chat/records"
+import { RECORD_TYPE_LABELS, type RecordHit, type RecordType } from "@/lib/chat/records"
 import { STATS_VOCAB, type StatsSubject } from "@/lib/chat/stats"
 import {
   statusForTool,
@@ -120,7 +120,7 @@ export function buildChatTools({ ctx, writer, ai }: ChatToolsDeps) {
 
     listRecords: tool({
       description:
-        "List records of ONE type by structured filters (status, responsible / assignee «me», period, company, amount …) and sort. Use for questions like «мои открытые задачи», «сделки на стадии X», «заказы за октябрь». Returns the total + rows with `ref`. The user sees the rows and the filters as chips.",
+        "List records of ONE type by structured filters (status, responsible / assignee «me», period, company, amount …) and sort. Use for questions like «мои открытые задачи», «сделки на стадии X», «заказы за октябрь». Returns the total + rows with `ref`. The user sees the rows and the filters as chips. NOT for counting («сколько …»): totals above 500 are capped — use queryStats for every count.",
       inputSchema: listInputSchema(types),
       execute: async (input, { toolCallId }) => {
         const i = input as { type: RecordType; filters?: unknown; sort?: string; limit?: number }
@@ -154,10 +154,24 @@ export function buildChatTools({ ctx, writer, ai }: ChatToolsDeps) {
           const d = await getRecord(ctx, type, ref)
           if (!d) return { error: "Запись не найдена или недоступна." }
           writeStatus(writer, statusForTool("getRecord", { type }, d.title))
-          writeData(writer, "records", toolCallId, {
-            counts: { [d.type]: { total: 1, capped: false } },
-            hits: { [d.type]: [hitFromDetail(d)] },
-          })
+          // The record + its linked records (contacts, deals, orders, topics …
+          // of the detail) as list rows (spec §3 example «Компании: 1 ·
+          // Контакты: 2 · Сделки: 1»).
+          const hits: Partial<Record<RecordType, RecordHit[]>> = { [d.type]: [hitFromDetail(d)] }
+          const seen = new Set([`${d.type}:${d.id}`])
+          for (const s of d.sections) {
+            if (s.kind !== "records") continue
+            for (const h of s.items) {
+              if (seen.has(`${h.type}:${h.id}`)) continue
+              seen.add(`${h.type}:${h.id}`)
+              ;(hits[h.type] ??= []).push(h)
+            }
+          }
+          const counts: ChatRecordsPart["counts"] = {}
+          for (const [t, list] of Object.entries(hits) as [RecordType, RecordHit[]][]) {
+            counts[t] = { total: list.length, capped: false }
+          }
+          writeData(writer, "records", toolCallId, { counts, hits })
           return detailModelView(d)
         } catch (e) {
           return fail("getRecord", e)

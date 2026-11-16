@@ -2,6 +2,7 @@ import "server-only"
 
 import type { UIMessageChunk } from "ai"
 import {
+  EMPTY_ANSWER_FALLBACK,
   STATUS_WRITING,
   type ChatDebugPart,
   type ChatDebugStep,
@@ -37,7 +38,7 @@ const DROP = new Set([
 ])
 
 /** Debug text of one tool input / output (admins only). */
-const DEBUG_MAX_CHARS = 2_000
+const DEBUG_MAX_CHARS = 6_000
 
 const json = (v: unknown) => {
   let s: string
@@ -59,7 +60,7 @@ export type ChatStreamFilterOptions = {
   now?: () => number
 }
 
-export type ChatStreamSummary = { tools: string[]; steps: number; ms: number; calls: ChatDebugStep[] }
+export type ChatStreamSummary = { tools: string[]; steps: number; ms: number; calls: ChatDebugStep[]; emptyAnswer: boolean }
 
 export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
   stream: TransformStream<UIMessageChunk, UIMessageChunk>
@@ -72,6 +73,9 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
   const toolNames: string[] = []
   let reasoning = ""
   let stepCount = 0
+  let wroteText = false
+  let failed = false
+  let emptyAnswer = false
 
   const stream = new TransformStream<UIMessageChunk, UIMessageChunk>({
     async transform(chunk, controller) {
@@ -116,7 +120,23 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
           if (stepCount > 1) controller.enqueue({ type: "data-status", data: STATUS_WRITING, transient: true } as UIMessageChunk)
           controller.enqueue(chunk)
           return
+        case "text-delta":
+          if (chunk.delta.trim()) wroteText = true
+          controller.enqueue(chunk)
+          return
+        case "error":
+          failed = true
+          controller.enqueue(chunk)
+          return
         case "finish": {
+          // The model ended the turn without a word (seen once in ≈ 250 eval
+          // turns): never leave the user with an empty answer.
+          if (!wroteText && !failed) {
+            emptyAnswer = true
+            controller.enqueue({ type: "text-start", id: "fallback" })
+            controller.enqueue({ type: "text-delta", id: "fallback", delta: EMPTY_ANSWER_FALLBACK })
+            controller.enqueue({ type: "text-end", id: "fallback" })
+          }
           const turn: ChatTurnPart = { used: [...used], ms: now() - opts.startedAt }
           controller.enqueue({ type: "data-turn", id: "turn", data: turn } as UIMessageChunk)
           if (opts.isAdmin) {
@@ -143,6 +163,6 @@ export function createChatStreamFilter(opts: ChatStreamFilterOptions): {
 
   return {
     stream,
-    summary: () => ({ tools: toolNames, steps: stepCount, ms: now() - opts.startedAt, calls: steps.filter((s) => s.kind === "tool") }),
+    summary: () => ({ tools: toolNames, steps: stepCount, ms: now() - opts.startedAt, calls: steps.filter((s) => s.kind === "tool"), emptyAnswer }),
   }
 }

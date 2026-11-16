@@ -71,6 +71,7 @@ export function listModelView(r: RecordListResult, timeZone = "UTC") {
     total: formatRecordCount({ total: r.total, capped: r.capped }),
     filters: r.applied.map((a) => `${a.label}: ${a.value}`).join("; ") || "нет",
     rows: r.rows.map((h) => hitView(h, timeZone)),
+    ...(r.capped ? { note: "Всего больше 500 — точное число даёт только queryStats." } : {}),
   }
 }
 
@@ -161,6 +162,9 @@ export function statsModelView(r: StatsResult) {
     })),
     ...(m.truncated ? { truncated: "Показаны не все группы (ограничение topN / строк)." } : {}),
     ...(m.warnings.length ? { warnings: m.warnings } : {}),
+    ...(r.scalar == null && !r.rows.length
+      ? { noData: "Результат пустой: данных нет. Скажи об этом и НЕ называй никаких чисел." }
+      : {}),
     shownToUser: "Пользователь видит график и таблицу. Назови 1–3 главных числа, не перечисляй строки.",
   }
 }

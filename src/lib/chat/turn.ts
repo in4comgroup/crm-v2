@@ -32,6 +32,10 @@ const cut = (s: string, n = 60) => {
 }
 
 export const STATUS_THINKING: ChatStatus = { stage: "thinking", label: "Думаю…" }
+
+/** Text of an answer when the model ended the turn without writing anything (rare; CH7 eval). */
+export const EMPTY_ANSWER_FALLBACK =
+  "Не получилось сформулировать ответ. Спросите, пожалуйста, ещё раз — например, другими словами."
 export const STATUS_WRITING: ChatStatus = { stage: "writing", label: "Готовлю ответ…" }
 
 /** Russian status of a tool call, from its input only (never the tool name). */

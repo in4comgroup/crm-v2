@@ -219,6 +219,7 @@ type ChatStatus = { stage: "thinking" | "crm" | "list" | "record" | "reading" | 
 - **Deterministic checks (most of the load):** expected tool + key arguments (type, filters, measure / dimension); expected record ids in the results block; stats numbers equal to a direct SQL run; no id / JSON / tool name in the answer text; web answers have ≥ 1 source when they state external facts.
 - **LLM judge** (a different model from the chat model, one criterion per call, validated on 10 human-scored cases first): grounded (every claim traces to a tool result), specific, honest about "not found" / "no data".
 - **Gate:** run before every prompt, tool or default-model change; ship when deterministic checks ≥ 90 % and no adversarial case fails. Script: `pnpm chat:eval` (local, against the test DB).
+- *Built (CH7):* 42 cases (16 plain, 18 hard incl. 2 product-search cases, 8 adversarial) in `src/server/chat/eval/questions.ts`; judge = process `chat.eval_judge` (default Claude Haiku 4.5, a different vendor than the Gemini chat model), still ADVISORY — the 10 human-scored validation cases are open (needs the product owner). First run 82.5 %; after fixes 84 / 84 = 100 %, gate passed (04 § CH7 result).
 - **Online:** per turn — tools used, status timings, answer length, error class; thumbs up / down on an answer (Q14); weekly look at thumbs-down turns → new eval cases.
 
 ## 13. Budgets

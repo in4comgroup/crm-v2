@@ -193,6 +193,7 @@ export async function POST(req: Request) {
       void served.then(() => {
         const s = filter.summary()
         console.log(`[chat ${requestId}] org ${orgId} model ${servedModel ?? "-"} steps ${s.steps} tools [${s.tools.join(", ")}] ${s.ms} ms`)
+        if (s.emptyAnswer) console.warn(`[chat ${requestId}] the model wrote no answer text — fallback shown`)
       })
     },
     onError: (e) => {

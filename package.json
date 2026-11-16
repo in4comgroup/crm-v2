@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "chat:eval": "vitest run -c vitest.chat-eval.config.mts --silent=false",
     "db:generate": "drizzle-kit generate",
     "db:custom": "drizzle-kit generate --custom",
     "db:migrate": "drizzle-kit migrate",

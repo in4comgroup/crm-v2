@@ -100,13 +100,17 @@ export async function runClientsStats(ctx: RecordsContext, q: NormalisedQuery): 
 
   const applied: AppliedFilter[] = []
   let selected = facts.filter((f) => (!q.from || f.createdAt >= q.from) && (!q.to || f.createdAt <= q.to))
+  // Several values of ONE dimension = OR, different dimensions = AND.
+  const byDimension = new Map<string, string[]>()
   for (const flt of q.filters) {
-    const v = flt.value.trim().toLowerCase()
-    selected = selected.filter((f) => {
-      const p = f.dims[flt.dimension]
-      return p && (p.key.toLowerCase() === v || p.label.toLowerCase() === v)
-    })
+    byDimension.set(flt.dimension, [...(byDimension.get(flt.dimension) ?? []), flt.value.trim().toLowerCase()])
     applied.push({ label: vocab.dimensions[flt.dimension].label, value: flt.value.trim() })
+  }
+  for (const [dim, values] of byDimension) {
+    selected = selected.filter((f) => {
+      const p = f.dims[dim]
+      return !!p && values.some((v) => p.key.toLowerCase() === v || p.label.toLowerCase() === v)
+    })
   }
 
   const metaBase = {

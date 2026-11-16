@@ -240,3 +240,4 @@ are not needed to build a DB.
 - Seven API routes still access the database directly (see
   [architecture.md](./architecture.md#layering-rule)).
 - Unit tests only for a few pure modules (`pnpm test`); type errors do not fail the build.
+- AI chat eval: `pnpm chat:eval` (42 golden questions, real models, test DB; gate deterministic ≥ 90 % and no adversarial failure; report in `.chat-eval/`). Run it before changing the chat prompt, tools or default model.

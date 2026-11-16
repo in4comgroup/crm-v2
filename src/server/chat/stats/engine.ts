@@ -163,14 +163,19 @@ export async function runSqlSubject(
   if (def.dateCol && q.from) conds.push(sql`${def.dateCol} >= ${q.from.toISOString()}`)
   if (def.dateCol && q.to) conds.push(sql`${def.dateCol} <= ${q.to.toISOString()}`)
 
+  // Several values of ONE dimension = OR («выигранные и проигранные»),
+  // different dimensions = AND.
+  const byDimension = new Map<string, SQL[]>()
   for (const f of q.filters) {
     const d = dimFor(ctx, def, subject, f.dimension)
     const v = f.value.trim()
-    conds.push(
+    byDimension.set(f.dimension, [
+      ...(byDimension.get(f.dimension) ?? []),
       d.filter ? await d.filter(ctx, v) : sql`(lower(${d.key}::text) = lower(${v}) or lower(${d.label}::text) = lower(${v}))`,
-    )
+    ])
     applied.push({ label: vocab.dimensions[f.dimension]?.label ?? f.dimension, value: v })
   }
+  for (const ps of byDimension.values()) conds.push(ps.length === 1 ? ps[0] : sql`(${sql.join(ps, sql` or `)})`)
 
   const from = def.from(ctx)
   const where = sql.join(conds, sql` and `)

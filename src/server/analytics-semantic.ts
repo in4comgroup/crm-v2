@@ -308,7 +308,9 @@ export async function runAnalyticsQuery(
   split?.joins.forEach((j) => joins.add(j))
 
   // Filters: same whitelist as grouping, values always bound as parameters.
-  const whereParts: SQL[] = []
+  // Several values of ONE dimension = OR («выигранные и проигранные»),
+  // different dimensions = AND.
+  const byDimension = new Map<string, SQL[]>()
   for (const f of filters) {
     const e = dimensionExpr(f.dimension, grain, ctx)
     e.joins.forEach((j) => joins.add(j))
@@ -316,10 +318,14 @@ export async function runAnalyticsQuery(
     // Match the raw key OR the display label, case-insensitively: name-valued
     // dimensions (seller, client) arrive as names, enum ones as raw values
     // after `resolveFilterValue` has reversed any Russian label.
-    whereParts.push(
+    byDimension.set(f.dimension, [
+      ...(byDimension.get(f.dimension) ?? []),
       sql`(lower(${e.key}::text) = lower(${value}) or lower(${e.label}::text) = lower(${value}))`,
-    )
+    ])
   }
+  const whereParts: SQL[] = [...byDimension.values()].map((ps) =>
+    ps.length === 1 ? ps[0] : sql`(${sql.join(ps, sql` or `)})`,
+  )
 
   const base = withBase(organizationId, from, to)
   const fromTable = grain === "order" ? sql.raw(`o`) : sql.raw(`li`)

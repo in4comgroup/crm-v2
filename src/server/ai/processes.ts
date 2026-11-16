@@ -50,6 +50,8 @@ const PICKER_DEFAULTS = [
 
 const FLASH_LITE = "google/gemini-3.1-flash-lite"
 const PARSER = "google/gemini-2.5-flash"
+// Eval judge of the AI chat (docs/specs/ai-chat §12): a DIFFERENT vendor than the chat model.
+const JUDGE = "anthropic/claude-haiku-4.5"
 
 const DEFINITIONS = [
   {
@@ -83,6 +85,16 @@ const DEFINITIONS = [
     kind: "background",
     requires: ["structured_output"],
     defaultModelId: FLASH_LITE,
+  },
+  {
+    key: "chat.eval_judge",
+    label: "Оценка ИИ чата (eval)",
+    group: "Чат и ассистенты",
+    description:
+      "Судья eval-набора ИИ чата (`pnpm chat:eval`): проверяет ответы по одному критерию. Должна быть модель другого вендора, чем у «ИИ чат». Только для разработки.",
+    kind: "background",
+    requires: ["structured_output"],
+    defaultModelId: JUDGE,
   },
   {
     key: "analytics.assistant",

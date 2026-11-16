@@ -91,4 +91,13 @@ describe("createChatStreamFilter", () => {
     )
     expect(out.map((c) => c.type)).toContain("data-spec")
   })
+
+  it("an answer without text gets the Russian fallback; an error does not", async () => {
+    const { out, summary } = await run([{ type: "start" }, { type: "start-step" }, { type: "finish-step" }, { type: "finish" }], false)
+    const text = out.filter((c) => c.type === "text-delta").map((c) => (c as { delta: string }).delta).join("")
+    expect(text).toMatch(/Не получилось сформулировать ответ/)
+    expect(summary.emptyAnswer).toBe(true)
+    const withError = await run([{ type: "start" }, { type: "error", errorText: "chat_error:timeout" }, { type: "finish" }], false)
+    expect(withError.out.some((c) => c.type === "text-delta")).toBe(false)
+  })
 })

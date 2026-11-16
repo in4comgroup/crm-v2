@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+# AI chat eval reports (`pnpm chat:eval`)
+/.chat-eval/
 
 # next.js
 /.next/

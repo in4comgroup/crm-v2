@@ -420,12 +420,22 @@ cards. Uses the same normalisation as product search plus trigram similarity
 Header button «ИИ чат» on every page; the panel is mounted once in
 `(protected)/layout.tsx`, so the conversation survives navigation.
 `POST /api/chat` (`src/app/api/chat/route.ts`, max 120 s) streams with the Vercel
-AI SDK. Tools: `searchWeb` (own grounded Google search sub-call, always on),
-`searchEverything` and `getSourceItemContent` (org-scoped CRM + source search,
-when a session with an active org exists). Model picker: Gemini 3.1 Flash Lite
-(default), GPT-5 Mini, Claude Sonnet 4.6. Structured output rendered with
-json-render (`src/lib/catalog.ts`, `src/lib/registry.tsx`). «Сохранить чат» (Save chat) stores
-the conversation as an `aichat` source item.
+AI SDK (chat v2, spec `docs/specs/ai-chat/`). The model = AI process «ИИ чат»
+(`chat.assistant`); the model picker shows only when the admin allowed more than
+one model. Read-only tools: `searchRecords`, `listRecords`, `getRecord`,
+`readSource` (records engine `src/server/chat/records/` — companies, contacts,
+deals, orders, products, tasks, source items; topics and cards in topics mode
+`on`), `queryStats` (statistics engine `src/server/chat/stats/`, orders = the
+/analytics engine) and `searchWeb` (own grounded Google search sub-call, ≤ 3 per
+answer, no e-mails / phones in queries). The model writes only prose; the app
+shows the found records (`<RecordsBlock>`, detail in the side panel), charts +
+tables (`<StatsBlock>`), «Источники ответа» and «CRM · интернет · N с». Users see
+one status line («Ищу в CRM…») and never tool calls, ids, JSON or reasoning — the
+route strips them on the server; platform admins get a collapsed «Ход
+рассуждений» and «Отладка» tabs. The page the user is on is context for the
+answer («эта компания»). The chat stops at 100 % of the org monthly AI limit.
+«Сохранить чат» (Save chat) stores the conversation as an `aichat` source item
+(to be replaced by automatic ingest, ai-chat CH6).
 
 ## Notifications
 

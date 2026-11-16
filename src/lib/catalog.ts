@@ -433,3 +433,24 @@ export const catalog = defineCatalog(schema, {
 })
 
 export type AppCatalog = typeof catalog
+
+// ---------------------------------------------------------------------------
+// AI CHAT (v2) — reduced catalog (docs/specs/ai-chat Q6)
+// ---------------------------------------------------------------------------
+// The chat model may compose json-render ONLY for non-CRM content (a
+// comparison it wrote, a checklist, a short reference table). CRM records
+// and statistics are drawn by the app from tool results (<RecordsBlock>,
+// <StatsBlock>) — so no charts, metrics or JSON views here. The registry
+// still renders every component (old messages, the analytics page).
+
+export const chatCatalog = defineCatalog(schema, {
+  components: {
+    Stack: layoutComponents.Stack,
+    Grid: layoutComponents.Grid,
+    Badge: typographyComponents.Badge,
+    KeyValue: typographyComponents.KeyValue,
+    DataTable: dataComponents.DataTable,
+    Markdown: mediaComponents.Markdown,
+  },
+  actions: {},
+})

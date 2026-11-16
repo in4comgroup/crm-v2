@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react"
 import { AIChat } from "@/components/blocks/ai-chat"
 import { RecordDetailView } from "@/components/blocks/chat/record-detail-view"
+import type { RecordDetail } from "@/lib/chat/records"
 import {
   isRecordPanelContent,
   usePanelContext,
@@ -34,13 +35,20 @@ export function AiChatTrigger() {
   )
 }
 
-export function AiChatPanel() {
+/**
+ * `isAdmin` = platform admin (from the layout's session): «Отладка» views
+ * (record JSON, composed spec source) — docs/specs/ai-chat Q5. Never shown
+ * to other users; the chat route also strips debug data for them.
+ */
+export function AiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
   const { open, closeChat } = useGlobalChat()
   const { content, history, closePanel, goBack, openRecord } =
     usePanelContext()
   // Titles of records whose detail has loaded (panel title when the record
   // was opened without one), keyed by "type:id".
   const [recordTitles, setRecordTitles] = useState<Record<string, string>>({})
+  // Last loaded record detail (admin «Отладка» JSON view), keyed by "type:id".
+  const [recordDetails, setRecordDetails] = useState<Record<string, RecordDetail>>({})
 
   useEffect(() => {
     if (!open) return
@@ -94,7 +102,7 @@ export function AiChatPanel() {
             </Button>
           </div>
           <div className="min-h-0 flex-1 p-3">
-            <AIChat className="h-full" />
+            <AIChat className="h-full" isAdmin={isAdmin} />
           </div>
         </div>
 
@@ -126,28 +134,50 @@ export function AiChatPanel() {
             </div>
 
             {record ? (
-              <div className="flex-1 min-h-0 overflow-y-auto p-4">
-                <RecordDetailView
-                  key={`${record.type}:${record.id}`}
-                  type={record.type}
-                  id={record.id}
-                  onOpenRecord={openRecord}
-                  onLoaded={(d) =>
-                    setRecordTitles((t) =>
-                      t[`${d.type}:${d.id}`] === d.title
-                        ? t
-                        : { ...t, [`${d.type}:${d.id}`]: d.title },
-                    )
-                  }
-                />
-              </div>
+              <Tabs
+                key={`${record.type}:${record.id}`}
+                defaultValue="rendered"
+                className="flex-1 min-h-0 flex flex-col"
+              >
+                {isAdmin && (
+                  <div className="px-4 pt-3">
+                    <TabsList>
+                      <TabsTrigger value="rendered">Просмотр</TabsTrigger>
+                      <TabsTrigger value="debug">Отладка</TabsTrigger>
+                    </TabsList>
+                  </div>
+                )}
+                <TabsContent value="rendered" className="flex-1 min-h-0 overflow-y-auto p-4">
+                  <RecordDetailView
+                    type={record.type}
+                    id={record.id}
+                    onOpenRecord={openRecord}
+                    onLoaded={(d) => {
+                      const k = `${d.type}:${d.id}`
+                      setRecordTitles((t) => (t[k] === d.title ? t : { ...t, [k]: d.title }))
+                      if (isAdmin) setRecordDetails((m) => (m[k] === d ? m : { ...m, [k]: d }))
+                    }}
+                  />
+                </TabsContent>
+                {isAdmin && (
+                  <TabsContent value="debug" className="flex-1 min-h-0 overflow-y-auto p-4">
+                    <CodeHighlighter
+                      code={JSON.stringify(recordDetails[`${record.type}:${record.id}`] ?? null, null, 2)}
+                      language="json"
+                      showLineNumbers
+                    />
+                  </TabsContent>
+                )}
+              </Tabs>
             ) : (
             <Tabs defaultValue="rendered" className="flex-1 min-h-0 flex flex-col">
               <div className="px-4 pt-3">
-                <TabsList>
-                  <TabsTrigger value="rendered">Просмотр</TabsTrigger>
-                  <TabsTrigger value="source">Исходный код</TabsTrigger>
-                </TabsList>
+                {isAdmin && (
+                  <TabsList>
+                    <TabsTrigger value="rendered">Просмотр</TabsTrigger>
+                    <TabsTrigger value="source">Отладка</TabsTrigger>
+                  </TabsList>
+                )}
               </div>
 
               <TabsContent
@@ -170,6 +200,7 @@ export function AiChatPanel() {
                 </RendererErrorBoundary>
               </TabsContent>
 
+              {isAdmin && (
               <TabsContent
                 value="source"
                 className="flex-1 min-h-0 overflow-y-auto p-4"
@@ -180,6 +211,7 @@ export function AiChatPanel() {
                   showLineNumbers
                 />
               </TabsContent>
+              )}
             </Tabs>
             )}
           </div>

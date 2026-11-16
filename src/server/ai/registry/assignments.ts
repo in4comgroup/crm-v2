@@ -232,7 +232,10 @@ export type ResolvedProcess = {
   warning?: string
 }
 
-export class AiProcessResolutionError extends Error {}
+export class AiProcessResolutionError extends Error {
+  // Stable name (also for subclasses), read by error classifiers without an import (ai-chat errors).
+  override name = "AiProcessResolutionError"
+}
 export class AiPolicyError extends AiProcessResolutionError {}
 
 /**

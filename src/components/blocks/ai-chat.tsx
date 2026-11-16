@@ -1,12 +1,13 @@
 "use client"
 
+// AI chat v2 (docs/specs/ai-chat/01-specification.md §3, §7–§9). The answer
+// = the model's prose + blocks the app builds from data parts of the route:
+// found records (<RecordsBlock>), statistics (<StatsBlock>), «Источники
+// ответа», «CRM · интернет · N с», and for platform admins «Ход
+// рассуждений». No tool calls, JSON, ids or reasoning reach this component
+// for other users — the route strips them on the server (§9).
 import { useChat } from "@ai-sdk/react"
-import {
-  DefaultChatTransport,
-  isToolUIPart,
-  type FileUIPart,
-  type UIMessage,
-} from "ai"
+import { DefaultChatTransport, type FileUIPart, type UIMessage } from "ai"
 import {
   useState,
   useCallback,
@@ -29,6 +30,13 @@ import { usePanelContext } from "@/lib/chat-panel-context"
 import { useGlobalChat } from "@/lib/global-chat-context"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { sanitizeSpec } from "@/lib/json-render-sanitize"
+import {
+  chatErrorText,
+  dataParts,
+  mergeEvidenceParts,
+  mergeRecordsParts,
+  type ChatStatus,
+} from "@/lib/chat/turn"
 
 import {
   Conversation,
@@ -56,25 +64,6 @@ import {
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input"
 import { SpeechInput } from "@/components/ai-elements/speech-input"
-import { Shimmer } from "@/components/ai-elements/shimmer"
-import {
-  Reasoning,
-  ReasoningTrigger,
-  ReasoningContent,
-} from "@/components/ai-elements/reasoning"
-import {
-  Tool,
-  ToolHeader,
-  ToolContent,
-  ToolInput,
-  ToolOutput,
-} from "@/components/ai-elements/tool"
-import {
-  Sources,
-  SourcesTrigger,
-  SourcesContent,
-  Source,
-} from "@/components/ai-elements/sources"
 import {
   ModelSelector,
   ModelSelectorTrigger,
@@ -87,6 +76,15 @@ import {
   ModelSelectorName,
 } from "@/components/ai-elements/model-selector"
 import { SaveChatDialog } from "@/components/blocks/save-chat-dialog"
+import { RecordsBlock } from "@/components/blocks/chat/records-block"
+import { StatsBlock } from "@/components/blocks/chat/stats-block"
+import {
+  ChatErrorLine,
+  ChatStatusLine,
+  DebugBlock,
+  EvidenceBlock,
+  TurnLine,
+} from "@/components/blocks/chat/turn-ui"
 import { Button } from "@/components/ui/button"
 import {
   Tooltip,
@@ -97,16 +95,11 @@ import {
 import { cn } from "@/lib/utils"
 import Image from "next/image"
 import { BrandMark } from "./brand-mark"
-import { SearchResultsCard } from "@/components/blocks/search-results-card"
 import { useAiProcessModels } from "@/lib/use-ai-process-models"
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-// The picker lists the models the admin allowed for the «ИИ чат» process
-// (/settings → «Процессы ИИ»), from GET /api/ai/models. The server accepts
-// only those ids.
 
 const ACCEPTED_FILE_TYPES = [
   "image/png",
@@ -123,18 +116,10 @@ const ACCEPTED_EXTENSIONS = ".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.csv,.json"
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function isFileTypeSupported(mediaType: string): boolean {
-  return ACCEPTED_FILE_TYPES.includes(mediaType)
-}
-
 function validateFiles(files: FileUIPart[]): FileUIPart[] {
   const valid: FileUIPart[] = []
   for (const file of files) {
-    if (!isFileTypeSupported(file.mediaType)) {
+    if (!ACCEPTED_FILE_TYPES.includes(file.mediaType)) {
       toast.error(
         `Неподдерживаемый тип файла: ${file.mediaType}. Поддерживаются: изображения, .txt, .md, .csv, .json`,
       )
@@ -145,106 +130,116 @@ function validateFiles(files: FileUIPart[]): FileUIPart[] {
   return valid
 }
 
+/** The page the user is on (Q12) — the route checks the record in the org. */
+function currentPage(): string | undefined {
+  if (typeof window === "undefined") return undefined
+  return window.location.pathname + window.location.search
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function AIChat({ className }: { className?: string }) {
+export function AIChat({ className, isAdmin = false }: { className?: string; isAdmin?: boolean }) {
+  // Model picker only when the admin allowed more than one model (Q1).
   const { models, defaultModelId } = useAiProcessModels("chat.assistant")
-  // null = no explicit pick yet → the admin's default for the process.
   const [pickedModel, setPickedModel] = useState<string | null>(null)
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
   const selectedModel =
     (pickedModel && models.some((m) => m.id === pickedModel) ? pickedModel : null) ??
     defaultModelId
-
-  // ONE universal search engine — no toggles. The route registers the
-  // internal-records tools plus the `searchWeb` tool (its own model call,
-  // process «Поиск в интернете (чат)») on every request, and the model
-  // decides which to use.
   const currentModel = models.find((m) => m.id === selectedModel) ?? models[0] ?? null
+  const showPicker = models.length > 1
 
-  // Stable transport that reads the latest model at request time via a ref —
-  // avoids recreating the transport on every state change.
-  const bodyRef = useRef({ model: selectedModel })
+  // Read at request time (ref) so the transport is created once.
+  const bodyRef = useRef<{ model: string | null | undefined }>({ model: selectedModel })
   useEffect(() => {
-    bodyRef.current = { model: selectedModel }
-  }, [selectedModel])
+    bodyRef.current = { model: showPicker ? selectedModel : undefined }
+  }, [selectedModel, showPicker])
 
-  // Ref is read inside the body() closure at request build time, not during render.
   /* eslint-disable react-hooks/refs */
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => bodyRef.current,
+        body: () => ({ ...bodyRef.current, page: currentPage() }),
       }),
     [],
   )
   /* eslint-enable react-hooks/refs */
 
-  // Monthly AI limit of the org (docs/specs/ai-chat Q15): when it is used up
-  // the route refuses with 402 + a Russian message, and the chat shows that
-  // message instead of the input. Checked when the panel opens and on a
-  // refused request.
+  // Monthly AI limit (Q15): checked when the panel opens and on a refused request.
   const [limitMessage, setLimitMessage] = useState<string | null>(null)
   const { open: panelOpen } = useGlobalChat()
-  useEffect(() => {
-    if (!panelOpen) return
-    let cancelled = false
+  const refreshLimit = useCallback(() => {
     fetch("/api/chat/status")
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { limit?: { blocked?: boolean; message?: string | null } } | null) => {
-        if (cancelled || !data?.limit) return
+        if (!data?.limit) return
         setLimitMessage(data.limit.blocked ? (data.limit.message ?? null) : null)
       })
       .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [panelOpen])
+  }, [])
+  useEffect(() => {
+    if (panelOpen) refreshLimit()
+  }, [panelOpen, refreshLimit])
 
-  const { messages, sendMessage, status, stop, setMessages } = useChat({
+  // The status line of the running request (transient data parts, §9).
+  const [liveStatus, setLiveStatus] = useState<ChatStatus | null>(null)
+
+  const { messages, sendMessage, status, stop, setMessages, error, clearError, regenerate } = useChat({
     transport,
-    onError: (error) => {
-      // A non-OK response reaches here with the response body as the message.
-      try {
-        const body = JSON.parse(error.message) as { error?: string; message?: string }
-        if (body.error === "monthly_limit") setLimitMessage(body.message ?? "Месячный лимит ИИ исчерпан.")
-      } catch {
-        // Not a JSON body — other error handling is CH4 (error classes).
+    onData: (part) => {
+      if (part.type === "data-status") setLiveStatus(part.data as ChatStatus)
+    },
+    onError: (err) => {
+      const { cls, text } = chatErrorText(err.message)
+      if (cls === "limit") {
+        setLimitMessage(text)
+        refreshLimit()
       }
     },
   })
 
   const isStreaming = status === "streaming"
   const isLoading = status === "submitted" || isStreaming
+  useEffect(() => {
+    if (!isLoading) setLiveStatus(null)
+  }, [isLoading])
 
-  // ---- Handlers ----
+  const failure = error ? chatErrorText(error.message) : null
 
   const handleSubmit = useCallback(
     async (message: PromptInputMessage) => {
-      const validFiles = validateFiles(message.files)
-      await sendMessage({
-        text: message.text,
-        files: validFiles,
-      })
+      clearError()
+      setLiveStatus(null)
+      await sendMessage({ text: message.text, files: validateFiles(message.files) })
     },
-    [sendMessage],
+    [sendMessage, clearError],
   )
 
   const handleSpeechTranscription = useCallback(
     (text: string) => {
+      clearError()
       sendMessage({ text })
     },
-    [sendMessage],
+    [sendMessage, clearError],
   )
 
-  const handleClear = useCallback(() => {
-    setMessages([])
-  }, [setMessages])
+  const handleRetry = useCallback(() => {
+    clearError()
+    setLiveStatus(null)
+    void regenerate()
+  }, [regenerate, clearError])
 
-  // ---- Render ----
+  const handleClear = useCallback(() => {
+    clearError()
+    setMessages([])
+  }, [setMessages, clearError])
+
+  const last = messages[messages.length - 1]
+  // While the request is sent but no assistant message exists yet.
+  const pendingStatus = isLoading && last?.role === "user"
 
   return (
     <div
@@ -254,62 +249,48 @@ export function AIChat({ className }: { className?: string }) {
       )}
     >
       {/* Header */}
-      <div className="flex items-center justify-end border-b px-4 py-2">
+      <div className="flex min-h-11 items-center justify-end border-b px-4 py-2">
         <div className="flex items-center gap-1">
-          {/* Model selector */}
-          <ModelSelector
-            open={modelSelectorOpen}
-            onOpenChange={setModelSelectorOpen}
-          >
-            <ModelSelectorTrigger asChild>
-              <Button variant="ghost" size="sm" className="gap-2 text-xs">
-                {currentModel?.vendor && (
-                  <ModelSelectorLogo
-                    provider={currentModel.vendor}
-                    className="size-4"
-                  />
-                )}
-                {currentModel?.name ?? "Модель"}
-              </Button>
-            </ModelSelectorTrigger>
-            <ModelSelectorContent>
-              <ModelSelectorInput placeholder="Поиск моделей..." />
-              <ModelSelectorList>
-                <ModelSelectorGroup heading="Доступные модели">
-                  {models.map((model) => (
-                    <ModelSelectorItem
-                      key={model.id}
-                      value={`${model.name} ${model.id}`}
-                      onSelect={() => {
-                        setPickedModel(model.id)
-                        setModelSelectorOpen(false)
-                      }}
-                    >
-                      {model.vendor && (
-                        <ModelSelectorLogo
-                          provider={model.vendor}
-                          className="size-4"
-                        />
-                      )}
-                      <ModelSelectorName>{model.name}</ModelSelectorName>
-                    </ModelSelectorItem>
-                  ))}
-                </ModelSelectorGroup>
-              </ModelSelectorList>
-            </ModelSelectorContent>
-          </ModelSelector>
+          {showPicker && (
+            <ModelSelector open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
+              <ModelSelectorTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-2 text-xs">
+                  {currentModel?.vendor && (
+                    <ModelSelectorLogo provider={currentModel.vendor} className="size-4" />
+                  )}
+                  {currentModel?.name ?? "Модель"}
+                </Button>
+              </ModelSelectorTrigger>
+              <ModelSelectorContent>
+                <ModelSelectorInput placeholder="Поиск моделей..." />
+                <ModelSelectorList>
+                  <ModelSelectorGroup heading="Доступные модели">
+                    {models.map((model) => (
+                      <ModelSelectorItem
+                        key={model.id}
+                        value={`${model.name} ${model.id}`}
+                        onSelect={() => {
+                          setPickedModel(model.id)
+                          setModelSelectorOpen(false)
+                        }}
+                      >
+                        {model.vendor && (
+                          <ModelSelectorLogo provider={model.vendor} className="size-4" />
+                        )}
+                        <ModelSelectorName>{model.name}</ModelSelectorName>
+                      </ModelSelectorItem>
+                    ))}
+                  </ModelSelectorGroup>
+                </ModelSelectorList>
+              </ModelSelectorContent>
+            </ModelSelector>
+          )}
 
-          {/* Clear conversation */}
           {messages.length > 0 && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={handleClear}
-                    disabled={isLoading}
-                  >
+                  <Button variant="ghost" size="icon-sm" onClick={handleClear} disabled={isLoading}>
                     <Trash2Icon className="size-4" />
                   </Button>
                 </TooltipTrigger>
@@ -320,22 +301,13 @@ export function AIChat({ className }: { className?: string }) {
             </TooltipProvider>
           )}
 
-          {/* Save chat to sources — last button in the row, only when
-              there's something to save. */}
+          {/* Replaced by automatic ingest + «Передать в источники сейчас» in CH6 (Q24). */}
           {messages.length > 0 && (
             <SaveChatDialog
               messages={messages}
-              onSaved={() => {
-                // No client-side cleanup needed — we deliberately don't
-                // clear the chat after save (per Q2: non-destructive).
-              }}
+              onSaved={() => {}}
               trigger={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={isLoading}
-                  className="gap-1"
-                >
+                <Button variant="outline" size="sm" disabled={isLoading} className="gap-1">
                   <Save className="size-4" />
                   Сохранить чат
                 </Button>
@@ -351,19 +323,32 @@ export function AIChat({ className }: { className?: string }) {
           {messages.length === 0 ? (
             <ConversationEmptyState
               title=""
-              description="Спрашивайте о чём угодно — я отвечу на вопросы, помогу с анализом данных и не только."
-              icon={
-                <BrandMark className="size-9 rounded-xl" />
-              }
+              description="Спросите о клиентах, сделках, заказах, задачах, письмах или попросите статистику — я найду в CRM и, если нужно, в интернете."
+              icon={<BrandMark className="size-9 rounded-xl" />}
             />
           ) : (
-            messages.map((message) => (
+            messages.map((message, i) => (
               <ChatMessage
                 key={message.id}
                 message={message}
-                isStreaming={isStreaming}
+                isLive={isLoading && i === messages.length - 1 && message.role === "assistant"}
+                liveStatus={liveStatus}
+                isAdmin={isAdmin}
               />
             ))
+          )}
+          {pendingStatus && (
+            <Message from="assistant">
+              <MessageContent>
+                <ChatStatusLine status={liveStatus} />
+              </MessageContent>
+            </Message>
+          )}
+          {failure && !isLoading && (
+            <ChatErrorLine
+              text={failure.text}
+              onRetry={failure.cls === "limit" ? undefined : handleRetry}
+            />
           )}
         </ConversationContent>
         <ConversationScrollButton />
@@ -417,247 +402,104 @@ export function AIChat({ className }: { className?: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Message renderer
+// One message
 // ---------------------------------------------------------------------------
 
 function ChatMessage({
   message,
-  isStreaming,
+  isLive,
+  liveStatus,
+  isAdmin,
 }: {
   message: UIMessage
-  isStreaming: boolean
+  /** The assistant message of the request that is still running. */
+  isLive: boolean
+  liveStatus: ChatStatus | null
+  isAdmin: boolean
 }) {
   const isAssistant = message.role === "assistant"
-  const isLastAssistant = isAssistant && isStreaming
+  const { openRecord, openPanel } = usePanelContext()
 
-  // The `searchEverything` tool result drives a sectioned results view
-  // rendered AFTER the assistant's prose summary (regardless of tool-call
-  // order), so the summary always reads first. Extracted here and skipped
-  // in the inline part map below.
-  const searchPart = message.parts.find((p) => {
-    if (!isToolUIPart(p)) return false
-    const name =
-      p.type === "dynamic-tool"
-        ? (p as { toolName: string }).toolName
-        : p.type.replace("tool-", "")
-    return name === "searchEverything"
-  }) as
-    | { state: string; output?: unknown; errorText?: string }
-    | undefined
-
-  // json-render: extract spec from message parts
   const { spec, hasSpec } = useJsonRenderMessage(message.parts)
-  const { openPanel } = usePanelContext()
+  const records = useMemo(() => mergeRecordsParts(dataParts(message.parts, "records")), [message.parts])
+  const stats = useMemo(() => dataParts(message.parts, "stats"), [message.parts])
+  const evidence = useMemo(() => mergeEvidenceParts(dataParts(message.parts, "evidence")), [message.parts])
+  const turn = dataParts(message.parts, "turn")[0] ?? null
+  const debug = isAdmin ? (dataParts(message.parts, "debug")[0] ?? null) : null
 
-  // Show a "Thinking..." shimmer while the assistant is streaming but
-  // hasn't produced any visible content yet (text, reasoning, tool, file).
-  // Reasoning parts only count when they actually have visible text — some
-  // providers (notably OpenAI via the Responses API on the AI Gateway) emit
-  // reasoning-start/end with encrypted content and no readable delta.
-  const hasVisibleContent = message.parts.some(
-    (p) =>
-      (p.type === "text" && p.text) ||
-      (p.type === "reasoning" && p.text) ||
-      p.type === "file" ||
-      isToolUIPart(p),
-  )
-  const showThinking = isLastAssistant && !hasVisibleContent && !hasSpec
+  const text = message.parts
+    .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
+    .map((p) => p.text)
+    .join("\n")
+  // The status line stays until the answer text starts (§9).
+  const showStatus = isLive && !text
 
-  // Collect sources from parts
-  const sources = message.parts.filter(
-    (part): part is Extract<typeof part, { type: "source-url" }> =>
-      part.type === "source-url",
-  )
+  const recordsShown =
+    records && (Object.values(records.hits).some((l) => l && l.length) || records.applied?.length)
 
   return (
     <Message from={message.role}>
-      <MessageContent className={hasSpec ? "w-full max-w-full" : undefined}>
-        {showThinking && (
-          <Shimmer duration={1} className="text-sm">
-            Думаю...
-          </Shimmer>
-        )}
+      <MessageContent className={isAssistant ? "w-full max-w-full" : undefined}>
+        {showStatus && <ChatStatusLine status={liveStatus} />}
+
         {message.parts.map((part, index) => {
           const key = `${message.id}-${index}`
-
-          switch (part.type) {
-            case "text":
-              if (!part.text) return null
-              return isAssistant ? (
-                <MessageResponse key={key} isAnimating={isLastAssistant}>
-                  {part.text}
-                </MessageResponse>
-              ) : (
-                <p key={key} className="whitespace-pre-wrap">
-                  {part.text}
-                </p>
-              )
-
-            case "reasoning":
-              // Skip encrypted-only reasoning (OpenAI Responses API via gateway
-              // emits reasoning chunks with no readable text — rendering an
-              // empty Reasoning block visually obscures the actual answer).
-              if (!part.text) return null
-              return (
-                <Reasoning key={key} isStreaming={isLastAssistant}>
-                  <ReasoningTrigger />
-                  <ReasoningContent>{part.text}</ReasoningContent>
-                </Reasoning>
-              )
-
-            case "file":
-              if (part.mediaType?.startsWith("image/")) {
-                return (
-                  <div key={key} className="relative max-w-sm">
-                    <Image
-                      src={part.url}
-                      alt="Generated"
-                      width={512}
-                      height={512}
-                      className="rounded-lg"
-                      unoptimized
-                    />
-                  </div>
-                )
-              }
-              return null
-
-            default:
-              // Handle tool parts generically
-              if (isToolUIPart(part)) {
-                const isDynamic = part.type === "dynamic-tool"
-                const toolName = isDynamic
-                  ? (part as { toolName: string }).toolName
-                  : part.type.replace("tool-", "")
-
-                // Internal-search tool rendering:
-                //
-                // `searchEverything` is rendered separately (below the prose
-                // summary) via <SearchResultsCard>, so it's skipped here to
-                // keep "summary first, results below" regardless of when the
-                // model called the tool.
-                //
-                // `getSourceItemContent` calls the model makes for grounding
-                // are hidden entirely — content display is user-driven via
-                // the result cards' buttons. Everything else (google_search,
-                // future tools) falls through to the generic Tool render.
-                if (
-                  toolName === "searchEverything" ||
-                  toolName === "getSourceItemContent"
-                ) {
-                  return null
-                }
-
-                return (
-                  <Tool
-                    key={key}
-                    defaultOpen={part.state !== "output-available"}
-                  >
-                    {isDynamic ? (
-                      <ToolHeader
-                        type="dynamic-tool"
-                        state={part.state}
-                        toolName={toolName}
-                        title={toolName}
-                      />
-                    ) : (
-                      <ToolHeader
-                        type={part.type as `tool-${string}`}
-                        state={part.state}
-                        title={toolName}
-                      />
-                    )}
-                    <ToolContent>
-                      {(part.state === "input-available" ||
-                        part.state === "output-available") && (
-                        <ToolInput
-                          input={part.input as Record<string, unknown>}
-                        />
-                      )}
-                      {part.state === "output-available" && (
-                        <ToolOutput
-                          output={part.output as Record<string, unknown>}
-                          errorText={undefined}
-                        />
-                      )}
-                      {part.state === "output-error" && (
-                        <ToolOutput
-                          output={undefined}
-                          errorText={(part as { errorText?: string }).errorText}
-                        />
-                      )}
-                    </ToolContent>
-                  </Tool>
-                )
-              }
-              return null
+          if (part.type === "text") {
+            if (!part.text) return null
+            return isAssistant ? (
+              <MessageResponse key={key} isAnimating={isLive}>
+                {part.text}
+              </MessageResponse>
+            ) : (
+              <p key={key} className="whitespace-pre-wrap">
+                {part.text}
+              </p>
+            )
           }
+          if (part.type === "file" && part.mediaType?.startsWith("image/")) {
+            return (
+              <div key={key} className="relative max-w-sm">
+                <Image
+                  src={part.url}
+                  alt="Изображение"
+                  width={512}
+                  height={512}
+                  className="rounded-lg"
+                  unoptimized
+                />
+              </div>
+            )
+          }
+          return null
         })}
 
-        {/* Search results (count header + Clients/Contacts/Deals/Sources
-            sections) render below the prose summary, so the summary reads
-            first even though the tool runs before the text streams. */}
-        {searchPart && (
-          <SearchResultsCard
-            state={searchPart.state}
-            output={
-              searchPart.state === "output-available"
-                ? (searchPart as { output?: unknown }).output
-                : undefined
-            }
-            errorText={
-              searchPart.state === "output-error"
-                ? (searchPart as { errorText?: string }).errorText
-                : undefined
-            }
-          />
+        {isAssistant && recordsShown && records && (
+          <RecordsBlock data={records} onOpen={(type, id, title) => openRecord(type, id, title)} className="mt-2" />
         )}
 
-        {/* Render json-render spec if present */}
-        {hasSpec && spec && (
+        {isAssistant && stats.map((s, i) => <StatsBlock key={`${message.id}-stats-${i}`} result={s} />)}
+
+        {isAssistant && hasSpec && spec && (
           <div
             className="w-full rounded-lg border bg-card cursor-pointer hover:border-primary/50 transition-colors mt-3"
-            onClick={() =>
-              openPanel({
-                spec,
-                messageId: message.id,
-                title: "Подробности",
-              })
-            }
+            onClick={() => openPanel({ spec, messageId: message.id, title: "Подробности" })}
           >
             <div className="flex items-center justify-between px-3 py-2 border-b">
-              <span className="text-xs font-medium text-muted-foreground">
-                Интерактивный вид
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Нажмите, чтобы развернуть ↗
-              </span>
+              <span className="text-xs font-medium text-muted-foreground">Подробнее</span>
+              <span className="text-xs text-muted-foreground">Нажмите, чтобы развернуть ↗</span>
             </div>
-            <InlinePreview spec={spec} loading={isLastAssistant} />
+            <InlinePreview spec={spec} loading={isLive} />
           </div>
         )}
 
-        {/* Render sources from Google search grounding */}
-        {sources.length > 0 && (
-          <Sources>
-            <SourcesTrigger count={sources.length} />
-            <SourcesContent>
-              {sources.map((source, i) => (
-                <Source
-                  key={`source-${i}`}
-                  href={source.url}
-                  title={source.title ?? new URL(source.url).hostname}
-                />
-              ))}
-            </SourcesContent>
-          </Sources>
-        )}
+        {isAssistant && evidence && <EvidenceBlock evidence={evidence} onOpen={openRecord} />}
+        {isAssistant && turn && !isLive && <TurnLine turn={turn} />}
+        {isAssistant && debug && !isLive && <DebugBlock debug={debug} />}
       </MessageContent>
 
-      {/* Message actions for assistant messages */}
-      {isAssistant && !isLastAssistant && (
+      {isAssistant && !isLive && text && (
         <MessageActions>
-          <CopyButton text={getMessageText(message)} />
+          <CopyButton text={text} />
         </MessageActions>
       )}
     </Message>
@@ -665,17 +507,11 @@ function ChatMessage({
 }
 
 // ---------------------------------------------------------------------------
-// Inline preview (wraps Renderer and forces a resize tick after mount so
-// Recharts' ResponsiveContainer measures its parent correctly)
+// Inline preview of a composed json-render view (Q6). Forces a resize tick
+// after mount so Recharts' ResponsiveContainer measures its parent.
 // ---------------------------------------------------------------------------
 
-function InlinePreview({
-  spec,
-  loading,
-}: {
-  spec: unknown
-  loading?: boolean
-}) {
+function InlinePreview({ spec, loading }: { spec: unknown; loading?: boolean }) {
   useEffect(() => {
     if (loading) return
     const raf = requestAnimationFrame(() => {
@@ -691,9 +527,7 @@ function InlinePreview({
       <RendererErrorBoundary>
         <JSONUIProvider
           registry={registry}
-          initialState={
-            (safeSpec as { state?: Record<string, unknown> })?.state ?? {}
-          }
+          initialState={(safeSpec as { state?: Record<string, unknown> })?.state ?? {}}
         >
           <Renderer
             spec={safeSpec as Parameters<typeof Renderer>[0]["spec"]}
@@ -706,15 +540,7 @@ function InlinePreview({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-// Error boundary to catch json-render rendering failures
-class RendererErrorBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
+class RendererErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
     super(props)
     this.state = { hasError: false }
@@ -736,13 +562,6 @@ class RendererErrorBoundary extends Component<
   }
 }
 
-function getMessageText(message: UIMessage): string {
-  return message.parts
-    .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
-    .map((p) => p.text)
-    .join("\n")
-}
-
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -754,11 +573,7 @@ function CopyButton({ text }: { text: string }) {
 
   return (
     <MessageAction tooltip="Копировать" onClick={handleCopy}>
-      {copied ? (
-        <CheckIcon className="size-3.5" />
-      ) : (
-        <CopyIcon className="size-3.5" />
-      )}
+      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
     </MessageAction>
   )
 }

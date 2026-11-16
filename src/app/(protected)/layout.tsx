@@ -57,7 +57,7 @@ export default async function DashboardLayout({
           <PanelProvider>
             <GlobalChatProvider>
               {children}
-              <AiChatPanel />
+              <AiChatPanel isAdmin={session.user.role === "admin"} />
             </GlobalChatProvider>
           </PanelProvider>
         </div>

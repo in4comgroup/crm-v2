@@ -95,6 +95,7 @@ Today extraction reads only the root item's own text (`messageContent` of the ro
 6. **Topics.** Nothing else changes: the topic resolver, references (a contract / invoice number in the file becomes a reference), deal rules and cards work from the instances as for any item. A file-only message can open a topic («<Компания> — <matter>» from the file).
 7. **Golden set / eval.** Golden items of messages with attachments get the same input (`item-input.ts` is shared with the golden set). One extraction eval run before / after on items with attachments (mostly mail today) before the change goes on for all orgs.
 8. **Cost.** Only items with parsed attachments get more input tokens (≤ 15,000 characters ≈ 4–5 k tokens).
+9. **Unreadable text in images** (later, 2026-11-16, [ai-chat-tools](../ai-chat-tools/README.md) T1 / Q23): the image parser (`parsing.image`, every source — mail, chat, Telegram, drop-off, AI chat) writes «[неразборчиво]» for text it cannot read instead of guessing a name, phone, e-mail, website or amount. On a heavily blurred image it can still invent a value now and then (Q23 there: accepted). AI chat files: since 2026-11-16 the files a user attaches in the AI chat are children of the chat segment item too, so they join this input the same way.
 
 ## 5. Acceptance checks
 

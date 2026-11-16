@@ -22,7 +22,7 @@ gateway cost and stays hidden).
 
 Both limits are checked by the same runtime gate (`enforceBudget`); background
 AI stops when EITHER is used up. Pure state: `aiMonthlyLimitState` in
-`src/lib/ai-budget.ts` (threshold `AI_MONTHLY_WARN_SHARE` = 0.8, unit-tested).
+`src/lib/ai-budget.ts` (thresholds `AI_MONTHLY_INFO_SHARE` = 0.7, `AI_MONTHLY_WARN_SHARE` = 0.9, unit-tested).
 
 ## 2. Settings
 

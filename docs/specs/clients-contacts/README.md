@@ -12,3 +12,5 @@ Status: **built 2026-11-15** (Q1–Q12 decided): C1 definitions, C2 values + «�
 | [04-contact-company-links.md](04-contact-company-links.md) | Contact ↔ company links over time: history (current / former), a person working with two companies, recognition of a move from the sources (proposals), the person's decision «Перешёл» / «Работает с обеими» / «Другой человек», addresses of one person, contact merge, display on both companies |
 | [05-contact-company-links-questions.md](05-contact-company-links-questions.md) | Q1–Q12 with recommendations; decisions log |
 | [06-contact-company-links-plan.md](06-contact-company-links-plan.md) | Phases L1–L5, estimates |
+
+Related: the AI chat creates companies / contacts, fills empty fields («Дополнить») and links contacts to companies through these rules after the user confirms a draft card — [ai-chat-tools/](../ai-chat-tools/README.md) (built 2026-11-16; 04 §6 «AI chat»).

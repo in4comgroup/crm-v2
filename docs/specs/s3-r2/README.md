@@ -1,7 +1,9 @@
 # Object storage (S3-compatible) specs
 
 Generic, provider-neutral object storage for the files the app keeps outside
-the database (parsed-source markdown, user avatars). Cloudflare R2 is today's
+the database (parsed-source markdown, user avatars; since 2026-11-15 the
+original document files, since 2026-11-16 the AI chat uploads — see
+[01-architecture.md](01-architecture.md) §7 for the key layout). Cloudflare R2 is today's
 only provider, plugged in through a provider registry, so another
 S3-compatible service (AWS S3, Backblaze B2, Wasabi, MinIO, Google Cloud
 Storage interop, …) can be added without touching business code.

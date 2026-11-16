@@ -132,5 +132,9 @@ describe("createNoteLineStripper", () => {
     expect(run(["[ссылка](https://x) и текст\n", "строка"])).toBe("[ссылка](https://x) и текст\nстрока")
     expect(run(["Обычный ", "ответ без заметок."])).toBe("Обычный ответ без заметок.")
     expect(run(["Уже есть.\n\n[Контакт Маргарита (ref: 121146a8-8f5c)]\n[Контакт Margo (ref: a8)]"])).toBe("Уже есть.\n\n")
+    const id = "a824b2ea-54df-438f-a0ca-26a6564e5e7e"
+    expect(run(["*   [Margo (margo@crm.team)](", id.slice(0, 10), id.slice(10) + ") — точное совпадение\n"])).toBe("*   Margo (margo@crm.team) — точное совпадение\n")
+    expect(run([`Контакт Петров (ref: ${id}) уже есть.`])).toBe("Контакт Петров уже есть.")
+    expect(run(["Смотрите [сайт](https://vector.example) и [", "заметки]"])).toBe("Смотрите [сайт](https://vector.example) и [заметки]")
   })
 })

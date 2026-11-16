@@ -33,9 +33,11 @@ against it.
 | `pnpm db:custom --name <what>` | Create an empty custom SQL migration |
 | `pnpm db:migrate` | Apply pending migrations to `DATABASE_URL` |
 | `pnpm db:check` | Check the migration folder |
-| `pnpm test` | Unit tests (vitest, `vitest.config.mts`; `src/**/*.test.ts`; `@/` alias; `server-only` is stubbed so pure server modules can be tested). Today: the Russian mail library `src/lib/ru-mail/` and the topics signal post-processing / gates. |
+| `pnpm test` | Unit tests (vitest, `vitest.config.mts`; `src/**/*.test.ts`; `@/` alias; `server-only` is stubbed so pure server modules can be tested). Pure modules only: e.g. the Russian mail library `src/lib/ru-mail/`, topics post-processing / gates / attention / cards / deal rules, the AI chat contracts (`src/lib/chat/`: grounding, due dates, stream filter) and a few component render tests of the chat. |
+| `pnpm chat:eval` | AI chat eval (`vitest.chat-eval.config.mts`, `src/server/chat/eval/`) through the real `/api/chat` and real models on the `.env` DB — see "Known gaps" below for the gate. Costs money (≈ $1 per full run). |
 
-Unit tests cover only pure functions; there are no integration or UI tests.
+Unit tests cover only pure functions (plus a few render tests of chat
+components); there are no integration or browser UI tests.
 
 ## Environment variables
 
@@ -84,6 +86,17 @@ Names only. Values live in `.env` locally and in Vercel project settings.
 | `CRON_SECRET` | Base64 of 32 random bytes; every `/api/cron/*` route (daily, topics, notifications) requires `Authorization: Bearer <value>` in every environment; unset = every call rejected |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Optional fallback bot for a Telegram source with no stored credentials (both required) |
 
+### AI chat eval only (`pnpm chat:eval`, optional)
+
+| Variable | Meaning |
+| --- | --- |
+| `CHAT_EVAL_ONLY` | Comma list of case ids or prefixes to run (e.g. `p01,d`) |
+| `CHAT_EVAL_REPEAT` | Runs of the whole set (default 1) |
+| `CHAT_EVAL_ACTION_REPEAT` | Runs of each draft-card case (default 3; pass = 2 of 3) |
+| `CHAT_EVAL_MODEL` | Another chat model for this eval run only (no admin setting changes) |
+| `CHAT_EVAL_JUDGE` | `0` = no LLM judge |
+| `CHAT_EVAL_CONCURRENCY` | Cases run at the same time (default 3) |
+
 ### Not read by the application code
 
 These appear in older notes but the current `src/` does not read them:
@@ -93,7 +106,9 @@ These appear in older notes but the current `src/` does not read them:
 `NEXT_PUBLIC_BASE_URL`, `NEXT_PUBLIC_PRODUCTION_URL` (`oAuthProxy` removed),
 `GOOGLE_CHAT_CREDENTIALS`, `GOOGLE_CHAT_IMPERSONATE_USER`,
 `GOOGLE_CHAT_PROJECT_NUMBER` (now per-source credentials; only the one-off
-migration script used them), `NYLAS_CLIENT_ID`, `NYLAS_CALLBACK_URI`.
+migration script used them), `NYLAS_CLIENT_ID`, `NYLAS_CALLBACK_URI`,
+`EMAIL_PROVIDER`, `RESEND_API_KEY`, `RESEND_FROM` (Resend removed 2026-11-16;
+system mail is Nylas only).
 They can be removed from environments after a check.
 
 ## Database changes
@@ -136,7 +151,7 @@ load them on every product query. They exist only in migration `0002`.
 
 **Reference data vs tenant data:** platform reference data (source templates,
 system funnel stages) is in migration `0004`; there are no system rules today (the `rule` table is kept as a data record only).
-Migration `0028_cards_contract_old_columns` drops `source_item.card_analysis_scanned_at` and `source_item.deal_analysis_scanned_at`. The latest migration is `0041` (2026-11-15: `0039` contact ↔ company links, `0040` notifications, `0041` drops `notification_read_state`); all are applied on the test DB.
+Migration `0028_cards_contract_old_columns` drops `source_item.card_analysis_scanned_at` and `source_item.deal_analysis_scanned_at`. The latest migration is `0043` (`0039` contact ↔ company links, `0040` notifications, `0041` drops `notification_read_state` (2026-11-15); `0042` AI chat history `ai_chat_thread` / `ai_chat_message`, `0043` AI chat draft cards `ai_chat_action` (2026-11-16)); all are applied on the test DB.
 Tenant data (organizations, users, companies, products, org-owned stages and
 rules) is never in migrations. The team's old scripts (`scripts/`), reference
 specs (`refs/`) and catalog loader (`data_migration/`) remain git-ignored and
@@ -175,7 +190,8 @@ are not needed to build a DB.
 - Add any new production origin to `trustedOrigins` in `src/lib/auth.ts`.
 - Long-running routes set `maxDuration` (up to 300 s: parse, process, uploads,
   teardown, admin pipeline run, the Telegram webhook and fetch — files are
-  parsed right after a message —, the cron routes).
+  parsed right after a message —, the notifications cron; 120 s: AI chat, chat
+  actions, «Передать в источники сейчас»).
 - Seed data must exist before new orgs are created: the org-creation hook
   creates default sources from `source_template` rows; with no templates the
   new org gets no sources (the error is logged, not raised).
@@ -198,7 +214,8 @@ are not needed to build a DB.
 - After a successful upload the Markdown is removed from
   `source_item.parsed_markdown`; R2 becomes the only copy. Losing the bucket
   loses parsed content (items can be re-parsed only where raw data is still at
-  the provider; not for Drop Off or AI chat items).
+  the provider or a stored original exists — drop-off and AI chat files; not
+  for AI chat segments or WhatsApp items).
 
 ## Credentials encryption key
 
@@ -217,8 +234,9 @@ are not needed to build a DB.
 - Sync reads up to 100 items per call; a large backlog needs repeated syncs (#5).
 - Little sync observability beyond `last_synced_at` and `pipeline_run` (#7).
 - Pipeline schedule and caps are hard-coded constants (#8).
-- AI chat source search is ILIKE over `metadata_json`, not full-text or vector
-  search (#10).
+- AI chat search over source items matches DB columns only (subject, filename,
+  summary / participants in `metadata_json`, Search V2 normalisation), not the
+  stored body; no full-text or vector search (#10).
 - Batch controls have no server-side rate-limit handling; there is a client
   "slow mode" (#11).
 - WhatsApp: one archive source per org; re-import does not detect edited
@@ -235,7 +253,5 @@ are not needed to build a DB.
   at scale (#22).
 - Debug `console.log` calls remain in LLM pipelines (#15).
 - Guest order link has no rate limiting.
-- Seven API routes still access the database directly (see
-  [architecture.md](./architecture.md#layering-rule)).
 - Unit tests only for a few pure modules (`pnpm test`); type errors do not fail the build.
-- AI chat eval: `pnpm chat:eval` (42 golden questions, real models, test DB; gate deterministic ≥ 90 % and no adversarial failure; report in `.chat-eval/`). Run it before changing the chat prompt, tools or default model.
+- AI chat eval: `pnpm chat:eval` (42 golden questions + 36 draft-card cases with synthetic business cards, voice notes, meeting notes and a mail with a prompt injection in `src/server/chat/eval/fixtures/`; real models, test DB; gate: ≥ 90 % of cases (draft-card cases run 3 × and pass at 2 of 3), no adversarial failure in any run, 0 ungrounded contact values; report in `.chat-eval/`; `CHAT_EVAL_MODEL=<id>` answers with another chat model inside the run only). Run it before changing the chat prompt, tools or default model. A full run is ≈ 150 turns, ≈ 15 min, ≈ $1.

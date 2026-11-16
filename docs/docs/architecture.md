@@ -12,10 +12,10 @@
 | Auth | better-auth 1.5 | Email OTP only; plugins `emailOTP`, `organization`, `admin`, `apiKey`, `nextCookies`. |
 | Database | Neon Postgres (serverless HTTP driver) + Drizzle ORM 0.45 | Schema in `src/db/schema.ts`, client in `src/db/drizzle.ts`. No transactions on the HTTP driver. |
 | Object storage | S3-compatible via `@aws-sdk/client-s3`, Cloudflare R2 today | Parsed Markdown, original document files and user avatars. Provider-neutral layer `src/server/storage` (generic S3 core + provider registry, `STORAGE_PROVIDER`); spec `docs/specs/s3-r2/`. |
-| LLM | Vercel AI SDK v6 (`ai`) through the Vercel AI Gateway | Only through the AI layer `src/server/ai` (`aiGenerateText` / `aiStreamText` with a process key). Model per process is chosen on `/settings` «Процессы ИИ» (defaults: Gemini 2.5 Flash for parsing, Gemini 3.1 Flash Lite elsewhere). Every call is recorded with tokens and exact cost (`ai_usage_event`). Spec `docs/specs/models/`. |
-| AI UI | ai-elements, streamdown, json-render (`@json-render/*`) | Chat rendering and structured AI output. |
-| Background jobs | Vercel Workflow SDK (`workflow`) + Vercel Cron | Daily workflow: AI model catalog sync + usage cost check, then source sync → parse → upload. Hourly workflow: topics engine (`runTopicsPipeline`; needs Vercel Pro). Hourly route (no workflow): notification checks for every org (`runNotificationChecks`). |
-| Data viz / tables | Recharts 3 (shadcn charts), @tanstack/react-table, @dnd-kit (kanban) | |
+| LLM | Vercel AI SDK v7 (`ai` 7, `@ai-sdk/react` 4) through the Vercel AI Gateway | Only through the AI layer `src/server/ai` (`aiGenerateText` / `aiStreamText` with a process key). Model per process is chosen on `/settings` «Процессы ИИ» (defaults: Gemini 2.5 Flash for parsing, Gemini 3.1 Flash Lite elsewhere). Every call is recorded with tokens and exact cost (`ai_usage_event`). Daily AI budget and monthly AI limit per org: background processes stop; interactive processes, and calls marked `interactive` (a person waits for them, e.g. a chat file parsed at send), pass the daily budget gate. Spec `docs/specs/models/`. |
+| AI UI | ai-elements (7 copied components), streamdown 2.7 (+ code / math / CJK / mermaid plugins), json-render 0.22 (`@json-render/*`) | Chat rendering and structured AI output. |
+| Background jobs | Vercel Workflow SDK (`workflow` ≥ 4.8) + Vercel Cron | Daily workflow: AI model catalog sync + usage cost check + AI chat segments → source items + AI chat retention, then source sync → parse → upload. Hourly workflow: topics engine (`runTopicsPipeline`; needs Vercel Pro). Hourly route (no workflow): notification checks for every org (`runNotificationChecks`). |
+| Data viz / tables | Recharts 3 (shadcn charts), @tanstack/react-table 9, @dnd-kit (kanban) | |
 | Integrations | Nylas SDK v8, imapflow + mailparser, node-ical, googleapis, grammY (Telegram) | |
 | File parsing | mammoth (.docx), jszip + @xmldom/xmldom (.pptx), ExcelJS (price-list export) | PDF, image, audio, video go to Gemini as file parts. |
 | Package manager | pnpm | |
@@ -66,11 +66,11 @@ UI (client components)  →  src/app/api/**/route.ts  →  src/server/*  →  sr
 - Shared pure logic that both server and browser use lives in `src/lib/`
   (for example `entity-search.ts`, `orders-format.ts`, `client-custom-fields.ts`).
 
-**Current exceptions (rule is not fully met):** seven route files import
-`@/db/drizzle` directly — `api/emails/attachments`, `api/chats/attachments`,
-`api/drive/download`, `api/sources/dropoff/upload`, `api/sources/whatsapp/upload`,
-`api/sources/items/[id]/markdown`, `api/sources/org/instantiate`. The
-`(protected)/layout.tsx` server component also reads the org logo with Drizzle.
+The rule is fully met today: no route, page or layout imports `@/db/*` or
+`drizzle-orm` values (the earlier route exceptions were moved into
+`src/server/`; `(protected)/layout.tsx` reads the org logo through
+`getOrganizationLogo` in `src/server/organizations.ts`). The only allowed
+exception is the better-auth adapter in `src/lib/auth.ts`.
 
 ## Multi-tenancy
 
@@ -121,9 +121,13 @@ Documented exceptions to "one org only":
 
 ```
 Vercel Cron (03:00 UTC, vercel.ts)
-  → GET /api/cron/daily            (checks Bearer CRON_SECRET in production)
+  → GET /api/cron/daily            (checks Bearer CRON_SECRET in every environment)
   → start(dailyPipelineWorkflow)   (src/workflows/daily-pipeline.workflow.ts, Vercel Workflow SDK)
   → runDailyPipeline({trigger})    (src/server/orchestration/daily-pipeline.ts, engine-agnostic)
+       0. syncAllModelCatalogs()   AI model catalog + prices; reconcileUsageCosts() exact costs;
+          ingestDueChatThreads()   AI chat segments → «AI Chat» source items;
+          purgeChatThreads()       chats with no message for 90 days / deleted ≥ 2 days ago
+          (phase 0 errors are logged as phase "catalog" and never stop the run)
        1. runFullSync()            sync every remote-sync source
        2. parseSourceItem() loop   over listPendingParseIds()   (cap 200 per run)
        3. uploadSourceItem() loop  over listPendingUploadIds()  (cap 500 per run)
@@ -145,8 +149,8 @@ Vercel Cron (03:00 UTC, vercel.ts)
 - The cron expression is duplicated in `vercel.ts` and
   `src/server/orchestration/config.ts`; keep them equal.
 
-Other LLM batch jobs (discovery of companies and contacts, batch web
-enrichment) are **not** scheduled. They run when a user clicks a button, with
+Other batch jobs (discovery of companies and contacts — no LLM, it reads the
+parsed metadata —, and the LLM batch web enrichment) are **not** scheduled. They run when a user clicks a button, with
 caps (for example 50 items, concurrency 3) sized for one serverless request.
 
 ## External services
@@ -154,8 +158,8 @@ caps (for example 50 items, concurrency 3) sized for one serverless request.
 | Service | Used for | Code |
 | --- | --- | --- |
 | Neon Postgres | Main database | `src/db/drizzle.ts` (adds `Connection: close` to every request for resilience) |
-| Object storage — Cloudflare R2 today (provider-neutral layer, spec `docs/specs/s3-r2/`) | Parsed Markdown (`org_<orgId>/source_<sourceId>/item_<itemId>.md`), avatars (`avatars/user_<id>`) | `src/server/storage`, `src/server/upload-source-item.ts` |
-| Vercel AI Gateway | All LLM calls (parsing, topics and cards, deals, discovery, chat, analytics assistant, web lookup) | Only through `src/server/ai/runtime.ts` (process key → model from `/settings` «Процессы ИИ» or the code default in `src/server/ai/processes.ts`); Vercel specifics in `src/server/ai/gateways/vercel-ai-gateway/`. ESLint enforces the boundary |
+| Object storage — Cloudflare R2 today (provider-neutral layer, spec `docs/specs/s3-r2/`) | Parsed Markdown (`org_<orgId>/source_<sourceId>/item_<itemId>.md`), original document files incl. AI chat uploads (`org_<orgId>/files/<itemId>/<name>`), avatars (`avatars/user_<id>`) | `src/server/storage`, `src/server/upload-source-item.ts` |
+| Vercel AI Gateway | All LLM calls (parsing, topics and cards, deal state, chat incl. draft cards and chat files, analytics assistant, web lookup and enrichment) | Only through `src/server/ai/runtime.ts` (process key → model from `/settings` «Процессы ИИ» or the code default in `src/server/ai/processes.ts`); Vercel specifics in `src/server/ai/gateways/vercel-ai-gateway/`. ESLint enforces the boundary |
 | Nylas | Email source (read) and system email (send) | `src/lib/nylas.ts`, `src/server/sync/nylas.ts`, `src/lib/email.ts` |
 | IMAP servers | Email source without Nylas | `src/lib/imap.ts`, `src/server/sync/imap.ts`, `src/server/parsers/imap.ts` |
 | Google Chat / Drive APIs | Chat and Drive sources (service account, optional domain-wide delegation) | `src/lib/google-*.ts`, `src/server/sync/{gchat,gdrive}.ts` |

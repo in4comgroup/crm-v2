@@ -117,7 +117,13 @@ the SDK error, unchanged.
 2. Add one line to the registry.
 3. Set `STORAGE_PROVIDER=<key>` + its env vars, copy the objects (keys are
    provider-neutral: `org_<org>/source_<source>/item_<item>.md`,
-   `avatars/user_<id>`), deploy.
+   `avatars/user_<id>`, and — added later — the original document files
+   `org_<org>/files/<item>/<safe name>` ([attachments](../attachments/README.md)
+   §3.2, 2026-11-15) and the AI chat upload parts
+   `org_<org>/chat-uploads/<item>/part-<n>` (≤ 4 MB each, joined into the
+   original through `storeDocumentOriginal` and deleted on «complete»,
+   `src/server/chat/files.ts`; [ai-chat-tools](../ai-chat-tools/README.md) T0,
+   2026-11-16)), deploy.
 
 No business code changes. A generic `s3-compatible` provider (reads
 `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`,

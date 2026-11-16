@@ -63,6 +63,7 @@ Org setting `deals.entryGate`: `none` (default — today) or `go_no_go`. With `g
 - «Go» (= «Создать») creates the deal at the stage the rule targets (normally `s1`; with a strong signal — RFP, order confirmed — the rule's own target, W2 skip), as the user.
 - «No-go» (= reject) requires a reason from the org's no-go list (§3.5) + optional text; kept in the card, the topic journal and a new line in the company history «Отказ от участия: <причина>».
 - Who decides: Q2.
+- Deals a person creates in the AI chat (draft card «Новая сделка», [ai-chat-tools](../ai-chat-tools/README.md) T3) are like deals made in the UI: no gate (ai-chat-tools Q11). The chat's `readSignals` evaluates the org's stage rules to suggest the type / stage, with the gate and the auto-create thresholds off.
 
 ### 3.3 Stage rules (W2–W4)
 
@@ -81,7 +82,7 @@ Unchanged engine, org-scoped rules (`signal_stage_rule`; edited by the org OWNER
 
 ### 3.5 Outcome reasons (W1, W4, Q11)
 
-Org setting `deals.outcomeReasons` = `{ lost: [{ code, label }], noGo: […], withdrawn: […] }` (generic defaults; owner edits in «Настройки стадий» → «Причины»). Used by «Не состоялась» (lost), the no-go reject, «Мы вышли» (withdrawn). The reason code + text are stored (`deal.outcome_reason_code` + existing `outcome_reason`).
+Org setting `deals.outcomeReasons` = `{ lost: [{ code, label }], noGo: […], withdrawn: […] }` (generic defaults; owner edits in «Настройки стадий» → «Причины»). Used by «Не состоялась» (lost), the no-go reject, «Мы вышли» (withdrawn). The reason code + text are stored (`deal.outcome_reason_code` + existing `outcome_reason`). *Also (2026-11-16):* the AI chat card «Перевести сделку» ([ai-chat-tools](../ai-chat-tools/README.md) T5) moves a deal to any stage or to won / lost through `moveDealStage` as the user (the same move + outcome-reason rules); a lost move needs a code of this lost list — the user's words matched to a label, else the card asks.
 
 ### 3.6 Deal types
 

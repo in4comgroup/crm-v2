@@ -22,7 +22,7 @@ All questions are decided. New questions found during the build are added here a
 | Q14 | Thumbs up / down | Yes, stored on the message; down-voted turns feed the eval set | 01 §12, §16.1 |
 | Q15 | Monthly AI limit | **B — the chat stops at 100 % with a message** | 01 §4 |
 | Q16 | Chat history | **Yes. And the chat is one of the org's sources: chat sessions become source items for topics and deals** | 01 §16 |
-| Q17 | Write actions | Separate spec / task (in `docs/todo/README.md`); the only automatic action is Q16 | 01 §2 |
+| Q17 | Write actions | Separate spec / task (in `docs/todo/README.md`); the only automatic action is Q16 → spec [ai-chat-tools/](../ai-chat-tools/README.md), built 2026-11-16 (removed from `docs/todo/`) | 01 §2 |
 | Q18 | TanStack Table 9 | **Yes, if safe for the code** — in the preparation phase with the other library updates | 02 §6, 04 CH0 |
 | Q19 | Stats subjects in the first release | **All 7** | 01 §8 |
 | Q20 | Rollout | **Replace v1 directly for every org**, no version switch | 01 §15 |

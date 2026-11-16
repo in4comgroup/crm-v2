@@ -293,48 +293,63 @@ export function chatErrorText(message: string | null | undefined): { cls: ChatEr
 export const INTERNAL_NOTE_LINE =
   /^\s*\[(?:(?:Черновик|Вопрос пользователю|Пользователь подтвердил|Показано пользователю|Показана статистика|Вложение)[^\n]*|[^\n]*\b(?:ref|draftId)\b[^\n]*)\]\s*$/i
 
+const UUID = String.raw`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
+
+/** «[Маргарита](121146a8-…)» → «Маргарита»; « (ref: …)» and bare record ids are removed. */
+export function cleanIdLinks(text: string): string {
+  return text
+    .replace(new RegExp(String.raw`\[([^\]\n]+)\]\(\s*(?:ref:?\s*)?${UUID}\s*\)`, "gi"), "$1")
+    .replace(new RegExp(String.raw`\s*\((?:ref|id|draftId):?\s*${UUID}\)`, "gi"), "")
+    .replace(new RegExp(String.raw`\b${UUID}\b`, "gi"), "")
+}
+
+/** A «[» of `line` that may still become a link (not closed yet) → its index; -1 = none. */
+function openLinkStart(line: string): number {
+  const i = line.lastIndexOf("[")
+  if (i < 0) return -1
+  const tail = line.slice(i)
+  if (/^\[[^\]\n]*\]\([^)\n]*\)/.test(tail)) return -1 // a complete link
+  if (/^\[[^\]\n]*\][^(]/.test(tail)) return -1 // brackets, not a link
+  return tail.length > 400 ? -1 : i
+}
+
 export function createNoteLineStripper(): { push: (delta: string) => string; end: () => string } {
-  let hold = ""
+  let buf = ""
   let atLineStart = true
+  const fullLine = (line: string): string => {
+    const body = line.replace(/\n$/, "")
+    if (atLineStart && INTERNAL_NOTE_LINE.test(body)) return ""
+    return cleanIdLinks(line)
+  }
   return {
     push(delta: string): string {
-      let s = hold + delta
-      hold = ""
+      buf += delta
       let out = ""
-      while (s) {
-        if (atLineStart && s.trimStart().startsWith("[")) {
-          const nl = s.indexOf("\n")
-          if (nl < 0) {
-            hold = s
-            return out
-          }
-          const line = s.slice(0, nl + 1)
-          if (!INTERNAL_NOTE_LINE.test(line.replace(/\n$/, ""))) out += line
-          s = s.slice(nl + 1)
+      for (;;) {
+        const nl = buf.indexOf("\n")
+        if (nl >= 0) {
+          out += fullLine(buf.slice(0, nl + 1))
+          buf = buf.slice(nl + 1)
           atLineStart = true
           continue
         }
-        if (atLineStart && !s.trim() && !s.includes("\n")) {
-          // Leading spaces of a line: wait for the first visible character.
-          hold = s
-          return out
-        }
-        const nl = s.indexOf("\n")
-        if (nl < 0) {
-          out += s
+        // A partial line: a note line (starts with «[») or leading spaces wait for the line end;
+        // otherwise emit up to a «[» that may still become a link (kept whole).
+        if (atLineStart && (buf.trimStart().startsWith("[") || !buf.trim())) return out
+        const cut = openLinkStart(buf)
+        const emit = cut < 0 ? buf : buf.slice(0, cut)
+        if (emit) {
+          out += cleanIdLinks(emit)
           atLineStart = false
-          return out
         }
-        out += s.slice(0, nl + 1)
-        s = s.slice(nl + 1)
-        atLineStart = true
+        buf = cut < 0 ? "" : buf.slice(cut)
+        return out
       }
-      return out
     },
     end(): string {
-      const rest = hold
-      hold = ""
-      return INTERNAL_NOTE_LINE.test(rest) ? "" : rest
+      const rest = buf
+      buf = ""
+      return rest ? fullLine(rest) : ""
     },
   }
 }

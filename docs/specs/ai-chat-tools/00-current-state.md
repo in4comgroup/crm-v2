@@ -1,6 +1,6 @@
 # 00 — Current state (2026-11-16)
 
-What exists today that the chat actions can build on, and what is missing.
+What existed BEFORE the build that the chat actions could build on, and what was missing. Kept as the starting point; what was built is in [03-development-plan.md](03-development-plan.md) § «T0–T6 result».
 
 ## 1. The chat (docs/specs/ai-chat/, built CH0–CH8)
 

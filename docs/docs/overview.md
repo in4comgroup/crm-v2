@@ -20,14 +20,14 @@ typing as possible:
 - It **raises signals** («карточки», cards) on the home page: short
   "analysis + recommendation" items that an operator accepts (creates a task or
   an order) or rejects.
-- It **tracks deals** on a kanban sales funnel; an LLM can create deals and move
-  them between stages from source material.
+- It **tracks deals** on a kanban sales funnel; the topics engine proposes,
+  creates and moves deals from source material by the org's own funnel rules.
 - It **builds orders** from a product catalog, including an LLM-assisted flow
   that turns a pasted client message into a draft order, and sends the order
   to the client through a no-login confirmation link.
 - It **reports** on sales (booked orders) and answers analytics questions in
   natural language.
-- An **AI chat panel** on every page searches all CRM records and the web, shows found records as a list and statistics as charts, keeps each user's chats, and passes what users tell it to the org's sources.
+- An **AI chat panel** on every page searches all CRM records and the web, shows found records as a list and statistics as charts, keeps each user's chats, and passes what users tell it to the org's sources. It reads files, photos (business cards) and voice messages, and prepares draft cards (new companies, contacts, deals, tasks, order requests, deal moves, task updates) that a person checks and confirms; the chat never writes a record by itself.
 - It **notifies** each person in the bell («Уведомления»): task reminders,
   deal risks, topics that need attention, AI limits and process errors (owners).
 - It **keeps people over time**: a contact can move to another company or work
@@ -70,7 +70,8 @@ Step by step:
    «Источники» (Sources) and enters credentials (stored encrypted).
 2. **Ingest.** Items arrive by remote sync (Nylas, IMAP, Google Chat, Drive),
    by webhook push (Telegram), by upload (Drop Off, WhatsApp archive), or from
-   the AI chat (automatic: what users tell the chat becomes chat-note items). Each item is a `source_item` row; attachments become child rows.
+   the AI chat (automatic: what users tell the chat becomes chat-note items;
+   files uploaded in the chat become items at once). Each item is a `source_item` row; attachments become child rows.
 3. **Process.** Each item is parsed by an LLM (via the Vercel AI Gateway; the
    model per kind of content is chosen by the admin, default Gemini 2.5 Flash)
    into Markdown, then uploaded to object storage (Cloudflare R2). The daily cron runs
@@ -83,7 +84,7 @@ Step by step:
    On «Домашняя» (Home) the operator sees them (topics mode `on`; in `off` /
    `shadow` only the read-only history of old cards). Accepting a card creates a
    task (or, for a `new_order` card, an order draft); rejecting needs a reason.
-6. **Deals.** On «Сделки» (Deals) deals move across the funnel by drag, by the
+6. **Deals.** On «Сделки» (Deals) deals move across the funnel by drag and by
    the topics deal bridge (deal proposals and stage confirmations, see
    [modules.md](./modules.md#deals)).
 7. **Orders.** On «Заказы» (Orders, route `/products`) the rep builds an order
@@ -106,7 +107,7 @@ Step by step:
 | Tasks | Task list/cards, timeline, links to clients, contacts, deals | `/tasks` «Задачи» |
 | Analytics | Sales reporting over booked orders + an analytics AI assistant | `/analytics` «Аналитика» |
 | Global search | Cross-entity search box in every page header | header |
-| AI chat panel | Chat over CRM data and the web, on every page | header button |
+| AI chat panel | Chat over CRM data and the web, on every page; files and voice messages; draft cards that create or change records after a click | header button |
 | Notifications | Bell in the header: stored notifications per user, categories, important / info, hourly checks (tasks, AI limits, profile, sources) | header |
 | Admin tools | Users, orgs, templates, sources, source teardown; AI models registry, model per AI process + model rules, AI usage statistics + markup + daily AI budget; topics engine operations «Темы» (modes, runs, CRM checks, delivery), the signals registry «Сигналы», and «Тесты и отладка» (signal review, topic debug, golden set, eval) | `/settings` «Настройки» |
 | Profile & organization | User profile, org profile, members, invitations, AI usage with markup (owners), notification settings, «Проверка эталона» (golden-set review, owners / admins) | `/profile`, `/account` |
@@ -152,7 +153,9 @@ search), `/cards` and `/docs` (empty placeholder pages), `/review` (redirects to
 | Rule | «Правило» | A stored LLM prompt (`rule` table). No UI edits it any more; old cards still reference it. |
 | Card | «Карточка» | One LLM-made signal: priority, category, analysis, recommendation. |
 | Deal | «Сделка» | A sales opportunity for one company, placed on a funnel stage. |
-| Funnel stage | «Этап» | A deal stage with a closure probability; system stages or org-customised ones. |
+| Funnel stage | «Этап» | A deal stage with a closure probability and a role (`area0` / `active` / `won` / `lost`); system stages or the org's own funnel from «Настройки воронки» (Funnel settings). |
+| Topic | «Тема» | One business question with one counterparty, built by the topics engine from source items; shown in «Сейчас» / «Сводка» / «Неделя» (Now / Digest / Week) in topics mode `on`. |
+| Draft card (AI chat) | «Черновик» | An editable card in a chat answer (new company, contact, deal, task, …); nothing is written until the user clicks «Создать» (Create). Audit row: `ai_chat_action`. |
 | Pre-pipeline stage | «Контакт до запроса», «до воронки» | Optional stage 0 in front of the funnel (contact without a concrete request). |
 | Deal activity | «Хронология», «Лента решений» (Decision feed) | Append-only journal of deal creation and stage moves. |
 | Agent move | «перевёл агент» | A stage move made by the system, not a user. |

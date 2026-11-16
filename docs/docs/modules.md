@@ -43,7 +43,7 @@ and one table «Материалы источников» with a «Разбор�
 | `telegram` | Webhook push (private chats and groups: text, voice notes, files ≤ 20 MB); manual `getUpdates` fetch (dev) | `{ botToken, webhookSecret }`; env fallback | Parse/upload only |
 | `dropoff` | Browser upload, parsed at upload time | none | No |
 | `whatsapp` | Browser folder upload of a chat export | none | No |
-| `aichat` | Automatic: segments of AI chat conversations (user messages; AI answers quoted, never evidence), hourly for topics orgs, daily for all | none | No |
+| `aichat` | Automatic: segments of AI chat conversations (user messages; AI answers quoted, never evidence), hourly for topics orgs, daily for all; files uploaded in the chat (stored original, parsed by the parser of their type when the message is sent) | none | No |
 
 Adding a provider = enum value + metadata entry in `src/lib/sources/providers.ts`
 (client-safe, capability flags) + handler in `src/server/providers/handlers.ts`
@@ -58,7 +58,9 @@ extra `derived_audio` child. A message is marked complete only after its
 attachments are parsed, because attachment text feeds signal extraction for
 every source. Email
 calendar invites (.ics) are folded into the parent email. Decorative inline
-images (logos, tracking pixels) are skipped. Each parse also writes
+images (logos, tracking pixels) are skipped. The image parser never guesses
+unreadable text: it writes «[неразборчиво]» (illegible) in place of a name,
+phone, e-mail, website or amount it cannot read. Each parse also writes
 **own-org attribution** (`own_org` / `external` / `unknown`), using sender
 identity first and an LLM judge only for unclear documents.
 `processSourceItem` = parse if needed, then upload, then upload new children.
@@ -69,21 +71,23 @@ Upload (`src/server/upload-source-item.ts`) writes R2 and clears
 `view=needs_work|done|errors|all`), `api/sources/items/[id]/{parse,process,reparse,markdown}`,
 `api/sources/items/{process-ids,pending-parse-ids}`, `api/sources/r2/{save,pending-ids}`,
 `api/sources/{dropoff,whatsapp}/upload`,
-`api/sources/telegram/fetch`, `api/sources/{options,stored}`,
+`api/sources/telegram/fetch`, `api/sources/{options,stored}`, `api/sources/exclusions` (+ `/[id]`; «Исключения из анализа» (Analysis exclusions), owner edits),
 `api/sources/org` (+ `/config`, `/credentials`, `/identity`, `/instantiate`) for
 owners, `api/webhooks/telegram/[sourceId]`.
 
 **Server modules.** `sources.ts`, `source-items.ts`, `templates.ts`,
 `parse-source-item.ts`, `process-source-item.ts`, `parsers/*`, `sync/*`,
-`providers/*`, `ingest/telegram.ts`, `r2/upload-source-item.ts`,
+`providers/*`, `ingest/telegram.ts`, `upload-source-item.ts`,
 `orchestration/*`, `pipeline-runs.ts`, `chat/ingest.ts` (AI chat segments).
 
 **Key rules.**
 - Credentials are write-only: encrypted on save, never sent back to the browser
   (only a "configured" boolean).
 - Sync merges `metadata_json`; it never resets parse or upload status.
-- Re-parse deletes child rows and clears the analysis stamps. Drop-off and AI
-  chat items cannot be re-parsed (raw bytes are not kept).
+- Re-parse deletes child rows and clears the analysis stamps. Drop-off items
+  and AI chat files are re-parsed from their stored original (a drop-off item
+  without one is refused); AI chat segment items come pre-parsed from the chat
+  ingest, so there is nothing to re-run.
 - A provider 404/410 marks the item `skipped`, not `failed`. A per-item error
   never stops a batch.
 - Telegram: the bot replies (Russian) only in private chats, never in groups;
@@ -144,6 +148,9 @@ topic, `deal_proposal`, `stage_confirmation`, `deal_link` («К какой сд�
 
 **Main API.** `api/cards`: GET list or `?id=`, PUT `action:
 accept|reject|deal_execute` (`deal_link`: + `dealId`), DELETE. No manual create, no generic update.
+`api/topics` (topic lists «Сейчас» / «Сводка» / «Неделя» (Now / Digest / Week),
+counts, one topic, user actions — mode `on` only), `api/topics/related` (topics of
+one company / contact / deal for the «Темы» tabs).
 
 **Server modules.** `cards.ts`; topic cards in `src/server/topics/cards/`.
 
@@ -181,7 +188,7 @@ columns + «Фильтр по полям»; owner: «Настроить поля
 PUT), `api/clients/[id]/responsible` (PUT: owner assigns / handover to owner),
 `api/clients/[id]/content` (company materials), `api/clients/[id]/lookup`
 (web lookup, 60 s), `api/clients/enrich/{pending,review}`,
-`api/clients/[id]/enrich` and `/enrich/resolve`; `api/clients/[id]/profile`
+`api/clients/[id]/enrich` and `/enrich/resolve`, `api/clients/enrich/settings` (org setting `clients.enrichOnCreate`); `api/clients/[id]/profile`
 («Профиль компании»: view / save / confirm / proposals / «Заполнить из
 интернета»); `api/contacts`; `api/custom-fields*` + `api/custom-values`
 (custom fields; feed filters `?cf=` on `api/clients` / `api/contacts`);
@@ -427,7 +434,8 @@ one model. Read-only tools: `searchRecords`, `listRecords`, `getRecord`,
 deals, orders, products, tasks, source items; topics and cards in topics mode
 `on`), `queryStats` (statistics engine `src/server/chat/stats/`, orders = the
 /analytics engine) and `searchWeb` (own grounded Google search sub-call, ≤ 3 per
-answer, no e-mails / phones in queries), plus two draft tools (below). The model writes only prose; the app
+answer, no e-mails / phones in queries), plus 12 action tools (below) that only
+prepare drafts. The model writes only prose; the app
 shows the found records (`<RecordsBlock>`, detail in the side panel), charts +
 tables (`<StatsBlock>`), «Источники ответа» and «CRM · интернет · N с». Users see
 one status line («Ищу в CRM…») and never tool calls, ids, JSON or reasoning — the
@@ -448,7 +456,10 @@ the platform admin switch «Чат в сигналах».
 Files (ai-chat-tools T0): photos (also the phone camera), PDF, DOCX, PPTX, audio,
 video, text and recorded voice messages are uploaded in parts of ≤ 4 MB
 (`/api/chat/files`), stored as «AI Chat» source items and read by the parser of
-their type when the message is sent; the chat model gets only their text.
+their type when the message is sent; the chat model gets only their text
+(≤ 5 files per message; the user message keeps only an excerpt). These parses
+and `readSignals` are marked `interactive`, so they still run when the org's
+DAILY AI budget is used up (the monthly limit still stops them).
 Draft cards (ai-chat-tools T1, T2): from a message, a business card, a voice
 note or meeting notes the chat prepares NEW companies, contacts, deals and tasks
 (one task or a checklist) as an editable card in the answer (`draftCompany` /
@@ -469,7 +480,20 @@ domain («Использовать существующий» / «Всё рав�
 own organisation, staff and blocklisted entries; nothing is created until the
 user clicks «Создать» (`/api/chat/actions`, the normal create functions as the
 user; audit in `ai_chat_action`; the card photo becomes a document of the
-contact).
+contact). The draft tools are `draftCompany`, `draftContact`, `draftTask`,
+`draftTasks`, `draftDeal`, `draftUpdate`, `draftLink`, `draftOrderRequest`,
+`draftDealMove`, `draftTaskUpdate`, plus `readSignals` and `askUser` (question
+with buttons) — `src/server/chat/actions/` (`tools.ts`, `checks.ts`, `store.ts`,
+`confirm.ts`, `signals.ts`). The chat model stays Gemini 3.1 Flash Lite
+(decision ai-chat-tools Q24, after the eval of stronger models).
+API: `api/chat` (stream), `api/chat/status` (monthly limit banner),
+`api/chat/threads` (+ `/[id]`, `/[id]/ingest`), `api/chat/feedback`,
+`api/chat/records` (record detail for the side panel), `api/chat/files` (+
+`/[id]/parts/[n]`, `/[id]/complete`), `api/chat/actions` (draft card: GET,
+POST confirm, PATCH cancel; max 120 s), `api/ai/models` (model picker).
+Server: `src/server/chat/` (`tools.ts`, `records/`, `stats/`, `threads.ts`,
+`history.ts`, `stream.ts`, `files.ts`, `ingest.ts`, `limit.ts`, `actions/`,
+eval in `eval/`); contracts in `src/lib/chat/`.
 
 ## Notifications
 
@@ -500,10 +524,10 @@ Visible only to platform admins (`user.role === 'admin'`). Tabs:
 | «Источники» (Sources) | One tab, three blocks. «Шаблоны источников» (Source templates): CRUD of source templates (`api/admin/templates`, `templates.ts`). «Источники» (Sources): create/edit any source, credentials, config, auto-parse; filter by organization («Системные» = no owner org) (`api/admin/sources` (+ `/config`, `/credentials`), `admin-sources.ts`). «Сброс источника» (Source reset, bottom): teardown: hard delete selected threads of a source plus the cards, companies, contacts, deals, tasks and orders that only they produced; typed confirmation; audited in `teardown_log`. All admin tables on `/settings` use the shared pager `table-pager.tsx` (10 / 25 / 50, default 10) | `api/admin/templates`, `api/admin/sources`, `api/admin/teardown/{sources,preview,execute}`, `templates.ts`, `admin-sources.ts`, `teardown.ts` |
 | «Модели» (Models) | Read-only AI model registry: every model of each AI gateway with prices and capabilities; filters (gateway, type, vendor, capabilities, search, available only), sortable, server-paginated with the shared pager `table-pager.tsx` (10 / 25 / 50, default 10), detail drawer (full pricing, price history, data source per field); «Синхронизировать» (Sync) button. Spec: `docs/specs/models/02-model-registry.md` | `api/admin/ai/models`, `api/admin/ai/catalog/sync`; `src/server/ai/{registry,catalog}` |
 | «Процессы ИИ» (AI processes) | The model of every place that calls AI (22 processes, grouped; old `ai_usage_event` rows keep the raw key of removed processes and the usage page shows it when the label is unknown): primary + up to 3 fallbacks, picked only from compatible models (capabilities, vendor web-search tool), cheapest first; for the AI chat also the list users may pick from; reset to default; warnings when a chosen model became unavailable; «≈ $ / 1 000 вызовов» and 30-day usage per process; «Правила выбора моделей» (ZDR only, no training only, allowed vendors — a save that would leave a process without a compliant model is refused). Changes apply within a minute, no deploy. Spec: `docs/specs/models/03-processes-and-model-selection.md` | `api/admin/ai/processes`; `src/server/ai/registry/assignments.ts` |
-| «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost chart stacked by process or model with its own scale («По дням» / «По месяцам» / «По годам») and range «с … по …» (the range replaces only the page period; the other filters apply), breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history), block «Лимиты ИИ по организациям» (daily budget in gateway cost + MONTHLY limit in end-user cost, default $20; defaults + per-org overrides, spend today / this month). Specs: `docs/specs/models/04-usage-and-cost.md`, `07-daily-budget.md`, `08-monthly-limit.md` | `api/admin/ai/usage`; `src/server/ai/usage.ts`, `usage-stats.ts` |
+| «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost chart stacked by process or model with its own scale («По дням» / «По месяцам» / «По годам») and range «с … по …» (the range replaces only the page period; the other filters apply), breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history), block «Лимиты ИИ по организациям» (daily budget in gateway cost + MONTHLY limit in end-user cost, default $20; defaults + per-org overrides, spend today / this month). Specs: `docs/specs/models/04-usage-and-cost.md`, `07-daily-budget.md`, `08-monthly-limit.md` | `api/admin/ai/usage`, `api/admin/ai/settings` (markup + model rules); `src/server/ai/usage.ts`, `usage-stats.ts` |
 | «Темы» (Topics) | Operations of the topics engine: topics mode per org (off / shadow / on; switching to shadow / on is refused until the org profile minimum is complete — admin override with a reason; columns «Профиль» and «Профиль в промптах» = `identity.promptContext`), hourly run history + «Запустить сейчас», «Проверки CRM» (CRM checks + watchdogs, preview, switches), «Рассылка» (email digests). Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
 | «Сигналы» (Signals) | Signals registry: table with filters, full code editor (all fields, validated, versioned), per-org pack activation / overrides / stage rules / risk guards (preset mechanism kept, no presets defined — one generic set for every org, R22), attributes, relations, risk types, rule templates, history, Markdown export | `api/admin/signals*`; `src/server/signals/` |
-| «Тесты и отладка» (Tests and debugging) | Quality checks and debugging of the topics engine, apart from operations («Темы») and the registry («Сигналы»): «Сигналы сообщений» (signal review of scanned items + «Извлечь заново»), «Темы (отладка)» (topic debug + actions), «Эталонный набор» (golden set), «Оценка извлечения (eval)» (eval / model spike with the option «С профилем организации», stored metrics, quality gate; grouping eval). Component `admin-topics-testing.tsx` | `api/admin/topics/{signals,topics,golden,spike}` |
+| «Тесты и отладка» (Tests and debugging) | Quality checks and debugging of the topics engine, apart from operations («Темы») and the registry («Сигналы»): «Сигналы сообщений» (signal review of scanned items + «Извлечь заново»), «Темы (отладка)» (topic debug + actions), «Эталонный набор» (golden set), «Оценка извлечения (eval)» (eval / model spike with the option «С профилем организации», stored metrics, quality gate; grouping eval). Component `admin-topics-testing.tsx` | `api/admin/topics/{signals,topics,golden,spike,grouping}` |
 
 Also admin-only: `POST /api/admin/pipeline/run`, `GET /api/admin/pipeline/stats`.
 The model catalog also refreshes daily, as phase 0 of the daily pipeline.
@@ -537,5 +561,8 @@ source reset.
   email already has a pending invite.
 - Server: `organizations.ts`, `invitations.ts`, `user-avatar.ts`,
   `api-keys.ts` (member management goes through the better-auth organization
-  plugin); API: `api/organization`, `api/auth/keys`, `api/invitations/*`,
-  `api/account/ai-usage`.
+  plugin), `identity/org-profile.ts`; API: `api/organization`, `api/auth/keys`,
+  `api/invitations/*`, `api/account/ai-usage`, `api/org-profile` («Профиль
+  организации»), `api/org-identity*`, `api/account/topic-delivery` (topics email
+  choices), `api/account/notification-prefs`, `api/topics/golden` («Проверка
+  эталона»).

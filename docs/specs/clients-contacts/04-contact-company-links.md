@@ -82,7 +82,7 @@ Manual at any time in the contact drawer, block «Компании»: «Доба
 - **Contact drawer**: block «Компании» — current links (primary first, relation, position, since) and «Ранее» (company, period, «перешёл в …»). Badge «Перешёл из X» for 90 days.
 - **Company drawer → «Контакты»**: current contacts; group «Бывшие» (period, «теперь в Y» as a link); a two-company contact shows «также: Y (консультант)».
 - **Contacts list**: the company column = primary («+1» when more current links); the company filter matches every CURRENT link; toggle «Включая бывших» (Q11).
-- **AI chat**: the contact detail includes the link history.
+- **AI chat**: the contact detail includes the link history. *Since 2026-11-16* ([ai-chat-tools](../ai-chat-tools/README.md) T1 / T4) the chat also WRITES through the same rules, always after the user confirms a draft card: a new contact's 2nd+ phones / e-mails become `contact_address` rows (source `manual`), a Telegram name an alias «@name»; «Дополнить» adds only empty fields, new extra phones / e-mails (`applyLinkAction` `addAddress`), a new Telegram, a new company name — never an overwrite (ai-chat-tools Q3); «Связать» = `applyLinkAction` `add` (+ `primary` for «теперь работает в …»).
 
 ## 7. Effects on the engine
 

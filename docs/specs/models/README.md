@@ -8,7 +8,7 @@ Status: **P1–P4 implemented** (2026-11-13): registry, catalog sync,
 call sites migrated, ESLint boundaries, «Процессы ИИ» tab; usage ledger with
 exact gateway cost, «Использование ИИ» tab, manual price + cost sync; global
 markup, owner usage tab on `/account`, model policy (ZDR / no training /
-vendors). 2026-11-15: the owner tab shows the admin views for its own org (cost with markup, model names — 05 §7) and the monthly AI limit per org ([08](08-monthly-limit.md), default $20). Follow-ups: [06 §4](06-rollout-and-questions.md). All questions
+vendors). 2026-11-15: the owner tab shows the admin views for its own org (cost with markup, model names — 05 §7) and the monthly AI limit per org ([08](08-monthly-limit.md), default $20). 2026-11-16: the AI chat stops at the monthly limit (`stopAtMonthlyLimit`, ai-chat Q15); a call flag `interactive: true` lets a background parser a user waits for pass the daily budget ([07](07-daily-budget.md)); the process catalog changed (03 § «Catalog today»). Follow-ups: [06 §4](06-rollout-and-questions.md). All questions
 (Q1–Q8) decided by the product owner on 2026-11-13 (see
 [06-rollout-and-questions.md](06-rollout-and-questions.md)).
 
@@ -34,7 +34,7 @@ vendors). 2026-11-15: the owner tab shows the admin views for its own org (cost 
 | [05-markup-and-end-user-cost.md](05-markup-and-end-user-cost.md) | Global markup %, how end-user prices are computed and shown |
 | [06-rollout-and-questions.md](06-rollout-and-questions.md) | Phases, migrations, testing, risks, open questions |
 | [07-daily-budget.md](07-daily-budget.md) | Daily AI budget per organization (background AI stops at the cap) — implemented 2026-11-13 |
-| [08-monthly-limit.md](08-monthly-limit.md) | Monthly AI limit per organization in end-user cost (default $20): warnings for the owner from 80 %, background AI stops at 100 %; admin defaults + per-org overrides |
+| [08-monthly-limit.md](08-monthly-limit.md) | Monthly AI limit per organization in end-user cost (default $20): info for the owner from 70 %, warning from 90 %, background AI (and the AI chat) stops at 100 %; admin defaults + per-org overrides |
 
 ## Terms
 

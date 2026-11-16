@@ -2,7 +2,7 @@
 
 Org-specific deal funnel: stages with their meaning, entry conditions and signals, the entry gate (go / no-go), automatic stage moves from client actions, outcomes with reasons, and forecast rules — configurable per organization and used by the topics deal bridge. First org: the test account **IN4COM GmbH** (`1dNkC4rBtl9FEvnK95Svlfs63oSU57Ni`), with the funnel of the requirements document; every other org keeps its funnel unchanged.
 
-Status: **built 2026-11-15** (Q1–Q13; Q4 generic codes for every org; Q10 owner self-service incl. rules, templates, validation, preview). Migrations `0037_custom_funnel` + `0038_funnel_codes_and_templates` applied on the test DB; IN4COM GmbH runs «Тендеры и конкурсы» (applied from `in4com-funnel.json`). Not deployed. Open: F5 golden-set eval before relying on the new codes.
+Status: **built 2026-11-15** (Q1–Q13; Q4 generic codes for every org; Q10 owner self-service incl. rules, templates, validation, preview). Migrations `0037_custom_funnel` + `0038_funnel_codes_and_templates` applied on the test DB; IN4COM GmbH runs «Тендеры и конкурсы» (applied from `in4com-funnel.json`). Not deployed. Open: F5 golden-set eval before relying on the new codes. 2026-11-16: the AI chat creates deals (no gate) and moves deals with the org's lost reasons after the user confirms a card ([ai-chat-tools](../ai-chat-tools/README.md); 01 §3.2, §3.5).
 
 | File | Content |
 |---|---|

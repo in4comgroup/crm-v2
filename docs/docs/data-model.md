@@ -2,7 +2,7 @@
 
 [Back to index](./README.md)
 
-Source: `src/db/schema.ts` (Drizzle). Database: Neon Postgres. 33 tables.
+Source: `src/db/schema.ts` (Drizzle). Database: Neon Postgres. 93 tables.
 Column names below use the TypeScript (camelCase) names; the SQL columns are
 snake_case (for example `organizationId` → `organization_id`).
 
@@ -49,9 +49,10 @@ Managed mostly by better-auth (`src/lib/auth.ts`).
 
 | Table | Purpose | Key columns / relations |
 | --- | --- | --- |
-| `deal_funnel_stage` | Funnel stages | `name` (English, stable key), `displayName` (org rename), `closureProbability` (numeric 0–1), `sortOrder`, `isSystem`, `ownerOrganizationId`, `isActive`, `isPrePipeline`, `isHidden`, `staleNormDays` (norm for the card badge «N дн без активности», null = 14) |
-| `deal` | Sales opportunity | `name`, `description`, `funnelStageId` (**restrict**), `clientId` (**restrict**), `value` (numeric), `currency`, `status` (`deal_status`), `position` (fractional index for manual order in a column), `reasoning` / `changes` (LLM provenance, card display), `lastMovedBy` (`user` / `agent`); topics phase 5: `dealTypeId` (→ `deal_type`, **set null**), `pausedUntil` / `pauseReason` (status `paused`), `outcomeReason` (won / lost / withdrawn / undo reason), `createdByAgent` (badge «создал агент»); topics phase 5a: `stateText` («Текущее состояние», ≤ 3 sentences / 50 words), `stateSourceItemIds`, `stateUpdatedAt` (start of the last run), `stateDirtyAt` (new deal information, R16; index with the org). Index (org, client, type) = auto-create dedupe |
+| `deal_funnel_stage` | Funnel stages | `name` (English, stable key), `displayName` (org rename), `closureProbability` (numeric 0–1), `sortOrder`, `isSystem`, `ownerOrganizationId`, `isActive`, `isPrePipeline`, `isHidden`, `staleNormDays` (norm for the card badge «N дн без активности», null = 14); custom funnel (migration `0037`, spec `docs/specs/funnel/`): `role` (`area0` / `active` / `won` / `lost` — the stage MEANING, never the name), `code` (stable key per org), `description`, `entryCondition`, `signalsHint`, `inForecast`, `probabilityMode` (`stage` / `expert`) |
+| `deal` | Sales opportunity | `name`, `description`, `funnelStageId` (**restrict**), `clientId` (**restrict**), `value` (numeric), `currency`, `status` (`deal_status`), `position` (fractional index for manual order in a column), `reasoning` / `changes` (LLM provenance, card display), `lastMovedBy` (`user` / `agent`); topics phase 5: `dealTypeId` (→ `deal_type`, **set null**), `pausedUntil` / `pauseReason` (status `paused`), `outcomeReason` (won / lost / withdrawn / undo reason), `createdByAgent` (badge «создал агент»); topics phase 5a: `stateText` («Текущее состояние», ≤ 3 sentences / 50 words), `stateSourceItemIds`, `stateUpdatedAt` (start of the last run), `stateDirtyAt` (new deal information, R16; index with the org); custom funnel: `expertProbability` (0–100) + `expertProbabilityByUserId` (**set null**) / `expertProbabilityAt`, `briefBudget` (never in the forecast), `outcomeReasonCode` (code of the org's outcome reason list). Index (org, client, type) = auto-create dedupe |
 | `deal_type` | Per-org deal types (tenant data, topics phase 5, R13 / R22) | `organizationId`, `code` (unique per org; generic: `new_location`, `listing`, `tender`, `supply_agreement`, `renewal`), `labelRu`, `sort`, `isHidden`. Created by `ensureDefaultDealTypes` (`src/server/deal-types.ts`), never by a migration; never deleted (hide instead) |
+| `funnel_template` | Platform funnel templates for «Настройки воронки» (reference data: table in migration `0037`, rows `b2b_standard`, `tenders_5` in `0038`) | PK `code`, `labelRu`, `description`, `sort`, `config` (jsonb funnel config), `isActive` |
 | `deal_contact` | Deal ↔ contact (many-to-many) | PK `(dealId, contactId)`, `role` (`deal_contact_role`) |
 | `deal_activity` | Append-only deal journal | `dealId`, `actor` (`user` / `agent`), `actorUserId`, `fromStageId`, `toStageId`, `note`, `reasoning`, `createdAt`; topics phase 5 provenance: `topicId`, `sourceItemId`, `ruleId` (→ `signal_stage_rule`), `evidence` (all **set null**). Non-move events (link, pause, resume, undo) have from = to = the current stage. Source of the drawer «Хронология» / «Происхождение» and the «Лента решений» feed. |
 | `deal_state_version` | Append-only history of «Текущее состояние» (phase 5a) | `dealId` (**cascade**), `decision` (UPDATE / NOOP / FIXED / REJECTED / USER), `text`, `reason` (check failures, fixed-text cause), `sourceItemIds`, `topicIds`, `actor` (agent / user), `actorUserId` (**set null**), `model`, `aiUsageEventId` |
@@ -60,7 +61,7 @@ Managed mostly by better-auth (`src/lib/auth.ts`).
 Stage resolution is **org-or-system**: if the org has its own active stages, only
 those are used; otherwise the system stages (seeded: Qualification 0.05,
 Discovery 0.20, Pilot 0.50, Proposal 0.60, Negotiations 0.80, Closed 1.0,
-Rejected 0.0).
+Rejected 0.0). Won / lost / area 0 are read from `role`, not from these names.
 
 ## 4. Catalog and orders
 
@@ -68,7 +69,8 @@ Rejected 0.0).
 | --- | --- | --- |
 | `product` | Catalog item | `name`, `category`, `price` (numeric), `webPageUrl`, `imageUrl`, `totalStock`, `accountingMetadata` (jsonb: code, barcode), `additionalMetadata` (jsonb: color, country, region, …), `stockMetadata` (jsonb: per-location stock), `status` |
 | `product_alias` | Brand alias dictionary for search | `aliasNorm` → `canonical`, `kind` (default `brand`); unique `(org, aliasNorm)` |
-| `order` | Client order | `orderDate`, `description`, `status` (`order_status`), `totalAmount` (pre-discount subtotal), `discountPercent` (snapshot of the client's discount), `currency` (default `RUB`), `clientId` (**restrict**), `userId` |
+| `order` | Client order | `orderDate`, `description`, `status` (`order_status`), `totalAmount` (pre-discount subtotal), `discountPercent` (snapshot of the client's discount), `currency` (default `RUB`), `clientId` (**restrict**), `userId`, `topicId` (→ `topic`, **set null**; topics phase 10, migration `0027`) |
+| `product_watch_state` | Last seen price / status / stock / vintage of each product for the CRM checks `price_change` / `product_status` (topics phase 8, migration `0027`; no row = first sight, no signal) | `productId`, `organizationId`, `price`, `status`, `totalStock`, `vintage`, `firstSeenAt`, `checkedAt` |
 | `order_item` | Order line | `orderId` (**cascade**), `productId` (**restrict**), `quantity`, `unitPrice` (snapshot), `positionPrice` |
 | `order_access_link` | Guest confirmation link grant | `orderId` (**cascade**), `tokenHash` (sha256, unique — raw token never stored), `recipientEmail`, `status` (`order_link_status`), `expiresAt`, `lastAccessedAt`, `confirmedAt`; partial unique index: at most one `active` grant per order |
 | `order_request` | One pasted client message for "order from request" | `rawText`, `comment`, `status` (`order_request_status`), `parseError`, `clientId` (**restrict**), `orderId` (**set null**) |
@@ -97,7 +99,7 @@ the AI chat read these fields. The full Markdown body is not in
 The three `*_scanned_at` columns are per-feature "already looked at" stamps.
 Re-parsing an item clears them so the item is re-analysed.
 
-## 6. Cards, rules and notifications
+## 6. Cards, rules, notifications and AI chat
 
 Custom-rule card generation was removed (topics plan phase 12). Topic cards come from the topics engine; the `rule` table and the old card columns and junctions (`category`, `message`, `accepted`, `rejectionReason`, `sourceItemId`, `ruleId`, `card_client`, `card_user`, `card_contact`) are kept: topic cards write some of them and the «История карточек» tab reads all. No UI edits rules.
 
@@ -111,7 +113,8 @@ Custom-rule card generation was removed (topics plan phase 12). Topic cards come
 | `notification` | In-app notification, one row per recipient (spec `docs/specs/notifications/`, migration `0040`) | `organizationId` (null = platform), `userId`, `kind`, `category`, `priority` (important / info), `title`, `body`, `href`, `entityType` / `entityId`, `dedupeKey` (unique per user), `payload`, `readAt`, `dismissedAt`, `resolvedAt`, `expiresAt` |
 | `notification_pref` | Notification categories a user switched off, per org | PK `(organizationId, userId)`, `categories` jsonb |
 | `ai_chat_thread` | One AI chat conversation of one user in one org (spec `docs/specs/ai-chat/` §16.1, migration `0042`); id made in the browser | `organizationId`, `userId`, `title` (first question ≤ 60 chars, user can rename), `lastMessageAt`, `ingestMode` (on / off, CH6), `ingestedSeq` (CH6), `deletedAt` (soft delete; the daily pipeline removes the row after 2 days, and threads with no message for 90 days) |
-| `ai_chat_message` | One UI message of a thread | `threadId` (cascade), `seq` (unique per thread), `role` (user / assistant), `parts` jsonb (text, files ≤ 700 k chars else name only, data parts records / stats / evidence / turn / spec — never tool calls, reasoning or admin debug), `feedback` (up / down), `feedbackComment`, `feedbackAt` |
+| `ai_chat_message` | One UI message of a thread | `threadId` (cascade), `seq` (unique per thread), `role` (user / assistant), `parts` jsonb (text, file links of chat uploads, data parts records / stats / evidence / turn / spec / attachment (excerpt only) / draft / question / action-result — never tool calls, reasoning or admin debug), `feedback` (up / down), `feedbackComment`, `feedbackAt` |
+| `ai_chat_action` | One draft card of the chat (spec `docs/specs/ai-chat-tools/` §13, migration `0043`) — the audit of what the chat created | `organizationId`, `userId`, `threadId` (set null when the chat is purged), `messageId`, `kind` (company / contact / company_contact / task / tasks / deal / update / link / order_request / deal_move / task_update / group), `status` (draft / needs_input / confirming / created / partly_created / cancelled / expired / failed), `draft` (items, per-field source, removed values, matches), `confirmedValues`, `results` (created / used record ids), `sourceItemIds` (chat files), `error`, `confirmedAt` |
 
 ## 7. AI model registry
 
@@ -125,7 +128,7 @@ models.dev schema; gateway-specific data only in jsonb (`raw`, `cost_raw`).
 | `ai_model_price_history` | One row per price change of a model (reporting) | `gateway_id`, `model_id`, `valid_from`, `cost_*` |
 | `ai_process_assignment` | Admin's model choice per AI process (the process catalog itself is code: `src/server/ai/processes.ts`; no row = code default) | `process_key` (PK), `gateway_id`, `primary_model_id`, `fallback_model_ids` (≤3, ordered), `allowed_model_ids` (user-selectable processes), `settings`, `updated_by_user_id` |
 | `ai_usage_event` | AI usage ledger: one row per model call (OTel GenAI column names). No FKs on purpose (outlives deleted orgs/users) | `organization_id`, `user_id`, `process_key`, `request_model`, `response_model`, `response_id(s)`, `status`, token counts, `web_search_count`, `steps`, `duration_ms`, `cost_estimate_usd`, `cost_actual_usd` (exact, from the gateway), `markup_percent` |
-| `platform_setting` | Platform-wide settings, key → jsonb (keys, types, defaults declared in `src/server/platform-settings.ts`; no row = default). Today: `ai.markup_percent`, `ai.policy.zdr_only`, `ai.policy.no_training_only`, `ai.policy.allowed_vendors` | `key` (PK), `value`, `updated_by_user_id`, `updated_at` |
+| `platform_setting` | Platform-wide settings, key → jsonb (keys, types, defaults declared in `src/server/platform-settings.ts`; no row = default). Today: `ai.markup_percent`, `ai.policy.zdr_only`, `ai.policy.no_training_only`, `ai.policy.allowed_vendors`, `ai.budget.daily_usd`, `ai.budget.monthly_usd`, and the topics / deals defaults (`attention.params`, `delivery.params`, `checks.params`, `deals.*`) | `key` (PK), `value`, `updated_by_user_id`, `updated_at` |
 | `platform_setting_log` | Append-only change log of platform settings | `key`, `old_value`, `new_value`, `changed_by_user_id`, `changed_at` |
 | `ai_process_assignment_log` | Append-only change log of assignments | `process_key`, `changed_by_user_id`, `changed_at`, `before`, `after` (jsonb snapshots; `after` null = reset) |
 
@@ -144,7 +147,7 @@ migrations: `0011` tables, `0012` seed v1, `0013` fixes, `0014` one pack
 7 vertical-specific codes deleted, blocks DS1–DS7 renamed O–U, neutral texts, no
 presets), `0017_signals_activate_onhold_drop_retired` (R23: every `onHold`
 code `active`, retired codes deleted). Topics phase
-0: `org_setting` (+ log; `topics.enabled`, `ai.budget.daily_usd`), `topics_run`,
+0: `org_setting` + `org_setting_log` (`topics.enabled`, `ai.budget.daily_usd`, …), `topics_run`,
 `topics_golden_item`, `topics_eval_result`.
 
 Topics phase 2 (signal extraction, migration `0015`; text value lists validated
@@ -179,7 +182,7 @@ for the columns, `0020_work_calendar_ru_2026_2027` for the calendar seed; spec
 | `topic_event` (new type) | Journal of list changes | `type = attention_changed`, `payload` { from, to, reason, escalations, score, profile } |
 | `topic_event` (phase 5 types) | Deal bridge journal | `deal_decision` (one per decided signal instance = idempotency marker: `payload.instanceId`, `code`, `confidence`, `topicScore`, `dryRun`, `results[{ ruleId, effect, action, reason, dealId, cardId, stageId }]`), `deal_context` (in-stage code: `dealId`, `code`, `evidence`), `deal_undone`, `deal_proposal_accepted` / `_rejected`, `stage_confirmed` / `stage_confirmation_rejected` |
 | `topic_event` (phase 5a type) | Deal risk journal on the trigger topic | `deal_risk`, `payload` { action: activated / cleared, riskId, riskType, labelRu, severity, occurrences, dealId, triggerInstanceIds / by, reason, clearInstanceId } |
-| `card` (phase 5 kinds) | Deal cards | `kind` = `deal_proposal` or `stage_confirmation`, `proposal` (jsonb `DealCardProposal`, `src/lib/topics/cards.ts`: action, rule, code, evidence, client, type, target / from stage, deal), `dealId` (created / moved deal, **set null**); one open card per topic and kind |
+| `card` (phase 5 kinds) | Deal cards | `kind` = `deal_proposal`, `stage_confirmation` or `deal_link` («К какой сделке относится тема?», `proposal.dealOptions`; spec topics/10), `proposal` (jsonb `DealCardProposal`, `src/lib/topics/cards.ts`: action, rule, code, evidence, client, type, target / from stage, deal), `dealId` (created / moved deal, **set null**); one open card per topic and kind |
 | `work_calendar_day` | Russian production calendar (platform reference data, one custom migration per year) | PK (`region` = RU, `day`), `is_working`, `is_short` (pre-holiday, −1 h), `note`. Only exceptions of Mon–Fri are stored; a year with no rows = plain Mon–Fri. Seeded: 2026, 2027 |
 
 Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
@@ -243,12 +246,13 @@ Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
   `restrict`, so deleting a referenced row fails loudly.
 - **`client.custom_fields` (jsonb).** Extensible per-client bag, typed in
   `src/lib/client-custom-fields.ts` and validated in `src/server/clients.ts`.
-  Keys today: `type` (only for one specific org), `discount` (whole percent
-  0–100, used for orders), `companyKind` (`supplier` / `partner`, drives the
+  Keys today: `discount` (whole percent 0–100, used for orders), `companyKind` (`supplier` / `partner`, drives the
   Companies tabs), `responsibleHandover` (`{ reason, at }` of a PENDING
   handover to the owner — server-controlled, never taken from the edit form,
   removed when an owner assigns the company). Unknown keys are dropped by the
-  server.
+  server. The old `type` key of one org was converted into an org custom field
+  «Тип клиента» (`custom_field.config.systemKey = client_type`); org-defined
+  values live in `client.custom_values` / `contact.custom_values`.
 - **Denormalised `organization_id` on `source_item`**, copied from the source
   at insert / parse, so tenant filters need no join.
 - **Snapshots on orders.** `order_item.unit_price` and `order.discount_percent`

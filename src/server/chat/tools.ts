@@ -1,6 +1,6 @@
 import "server-only"
 
-import { tool, type UIMessageStreamWriter } from "ai"
+import { asSchema, jsonSchema, tool, type JSONSchema7, type Schema, type UIMessageStreamWriter } from "ai"
 import { z } from "zod"
 import { RECORD_TYPE_LABELS, type RecordHit, type RecordType } from "@/lib/chat/records"
 import { STATS_VOCAB, type StatsSubject } from "@/lib/chat/stats"
@@ -86,6 +86,45 @@ function listInputSchema(types: RecordType[]) {
   return z.discriminatedUnion("type", variants as unknown as [z.ZodObject, ...z.ZodObject[]])
 }
 
+/**
+ * The `listRecords` input as ONE object schema: Anthropic models refuse a tool
+ * schema without a top-level `type: "object"` and with `anyOf` at the top
+ * level — the whole chat failed on any Claude model with the discriminated
+ * union (found in ai-chat-tools T6). Top level = { type, filters, sort, limit };
+ * `filters` = `anyOf` of the per-type filter schemas (nested `anyOf` is
+ * accepted); validation = the same strict per-type union.
+ */
+function listToolSchema(types: RecordType[]): Schema<unknown> {
+  const union = asSchema(listInputSchema(types))
+  return jsonSchema<unknown>(
+    async () => {
+      const filters = await Promise.all(
+        types.map(async (t) => {
+          const js = (await asSchema(recordListSpec(t).filterSchema as z.ZodType).jsonSchema) as JSONSchema7
+          return { ...js, description: `Filters when type = "${t}" (${RECORD_TYPE_LABELS[t].many})` } as JSONSchema7
+        }),
+      )
+      const sorts = [...new Set(types.flatMap((t) => [...recordListSpec(t).sortKeys]))]
+      return {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: types, description: "Record type" },
+          filters: { anyOf: filters, description: "Filters of THIS type (keys differ per type)" },
+          sort: {
+            type: "string",
+            enum: sorts,
+            description: types.map((t) => `${t}: ${recordListSpec(t).sortKeys.join(" / ")}`).join("; "),
+          },
+          limit: { type: "integer", minimum: 1, maximum: 50, description: "Rows, 1–50 (default 20)" },
+        },
+        required: ["type"],
+        additionalProperties: false,
+      } as JSONSchema7
+    },
+    { validate: (v) => union.validate!(v) },
+  )
+}
+
 export function buildChatTools({ ctx, writer, ai, actions }: ChatToolsDeps) {
   const types = visibleRecordTypes(ctx)
   const subjects = visibleStatsSubjects(ctx)
@@ -124,7 +163,7 @@ export function buildChatTools({ ctx, writer, ai, actions }: ChatToolsDeps) {
     listRecords: tool({
       description:
         "List records of ONE type by structured filters (status, responsible / assignee «me», period, company, amount …) and sort. Use for questions like «мои открытые задачи», «сделки на стадии X», «заказы за октябрь». «Мои», «у меня», «мне», «на мне» ALWAYS = the filter 'me' (tasks: assignee 'me'; deals: owner 'me'; companies: responsible 'me') — e.g. «мои просроченные задачи» = type task, filters { assignee: 'me', overdue: true }. Returns the total + rows with `ref`. The user sees the rows and the filters as chips. NOT for counting («сколько …»): totals above 500 are capped — use queryStats for every count.",
-      inputSchema: listInputSchema(types),
+      inputSchema: listToolSchema(types),
       execute: async (input, { toolCallId }) => {
         const i = input as { type: RecordType; filters?: unknown; sort?: string; limit?: number }
         writeStatus(writer, statusForTool("listRecords", i))

@@ -23,6 +23,14 @@ Last update: 2026-11-16.
 | O3 | Pipeline import from spreadsheets | Import deals / pipeline from XLSX / Google Sheets | Spec 01 §1.2 |
 | O4 | Finance integration (1С) | Invoices, payments, debts from 1С as system-of-record data (would feed INVOICE_* codes and the CLIENT_DEBT risk) | Spec 01 §1.2 |
 
+## AI chat (`docs/specs/ai-chat/`, `docs/specs/ai-chat-tools/`)
+
+Write actions from the chat (former O5) are built: [ai-chat-tools/](../specs/ai-chat-tools/README.md), 2026-11-16.
+
+| # | Item | What | Source |
+|---|---|---|---|
+| A1 | Overwrite existing values from the chat | «Дополнить» today only fills empty fields and adds extra addresses / aliases (Q3 B). Later: also change a filled value, with an old → new diff in the card | [ai-chat-tools/02-open-questions.md](../specs/ai-chat-tools/02-open-questions.md) Q3 («C later») |
+
 ## Tests and commercial setup
 
 | # | Item | What | Source | Notes |

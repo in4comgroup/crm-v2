@@ -53,6 +53,13 @@ Initial catalog (from the inventory in 00):
 Defaults = today's models, so the switch to the new layer changes nothing
 until the admin changes an assignment.
 
+**Catalog today (2026-11-16, 22 processes; the code `src/server/ai/processes.ts` is the source of truth).** Changes since the initial catalog:
+- `chat.assistant` requires `tools` only (no `image_input`): files reach the chat as parsed text only (ai-chat-tools Q22). Default stays `google/gemini-3.1-flash-lite` (ai-chat-tools Q24). `chat.assistant` + `chat.web_search` stop at the monthly limit (`stopAtMonthlyLimit`, [08](08-monthly-limit.md)).
+- `chat.session_analysis` = «ИИ чат → источники», kind `background` (ai-chat CH6: the gate before signal extraction of chat segments).
+- New: `chat.eval_judge` «Оценка ИИ чата (eval)», background, default `anthropic/claude-haiku-4.5` (ai-chat CH7); the group «Темы и сигналы» — `topics.signal_extraction`, `topics.signal_block_classifier`, `topics.topic_match`, `topics.card_writer`, `deals.state_summary` (topics spec).
+- Removed: `cards.generation`, `deals.discovery` (topics phase 12; old usage rows keep the raw key).
+- A background process called with `interactive: true` while a user waits (a chat file parsed at send, the chat's `readSignals`) passes the daily budget like an interactive one ([07](07-daily-budget.md)).
+
 ## 3. Compatibility rule
 
 A model is **compatible** with a process when:

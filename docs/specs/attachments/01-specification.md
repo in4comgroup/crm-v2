@@ -87,6 +87,11 @@ Storage cap per file **50 MB** (Q9; uploads and source attachments); parser caps
 
 The AI chat: for a company / contact / deal it can list the entity's documents with their summaries and read one (existing `getSourceItemContent`). No change to the topics prompts.
 
+*Changed 2026-11-16* ([ai-chat](../ai-chat/README.md) v2 + [ai-chat-tools](../ai-chat-tools/README.md)):
+- The v1 tool `getSourceItemContent` is gone: the record detail of a company / contact / deal (`getRecord`) lists ≤ 5 documents, and `readSource` reads one.
+- **Files attached in the AI chat are documents' source items too**: each file is a source item of the org's «AI Chat» source (`external_type = attachment`, `metadata_json.chatUpload`), uploaded in parts of ≤ 4 MB (`POST /api/chat/files`), the original stored through `storeDocumentOriginal` (`file_key` as in §3.2), parsed when the message is sent; the chat ingest makes it a child of the chat segment item. Limits are the chat's own (ai-chat-tools §5: images 5 MB, PDF / Office 20 MB, audio 10 MB, video 50 MB, text 2 MB, ≤ 5 files per message).
+- When the user confirms a chat draft card, the file becomes a document of the created / chosen record (business card → the contact, meeting notes → each created task, a voice note or file → the deal; `addDocumentLink`, origin `manual`, created by the user); the card's «Прикрепить файл к записи» checkbox turns this off. A deal's creation row also carries the file (`deal_activity.source_item_id`). Document lists show the source «ИИ чат».
+
 ## 10. Acceptance checks
 
 1. A mail with a PDF from a known contact: after parsing the PDF is linked to the contact and the company (A1), with the reason; it shows in both views; preview and download work.

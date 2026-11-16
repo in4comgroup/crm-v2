@@ -76,7 +76,7 @@ export async function runExtraction(args: {
       userId: null,
       ref: { ...args.ref, pass: 1 },
       output: Output.object({ schema: blockClassifierSchema }),
-      system: cls.system,
+      instructions: cls.system,
       prompt,
       temperature: 0,
     })
@@ -99,8 +99,8 @@ export async function runExtraction(args: {
         codeBlockChars: 0,
         systemChars: 0,
         taxonomyVersion: promptSet.taxonomyVersion,
-        inputTokens: pass1.totalUsage.inputTokens ?? null,
-        outputTokens: pass1.totalUsage.outputTokens ?? null,
+        inputTokens: pass1.usage.inputTokens ?? null,
+        outputTokens: pass1.usage.outputTokens ?? null,
         durationMs: Date.now() - started,
       }
     }
@@ -113,7 +113,7 @@ export async function runExtraction(args: {
     userId: null,
     ref: variant === "two_pass" ? { ...args.ref, pass: 2 } : args.ref,
     output: Output.object({ schema: extractionOutputSchema }),
-    system: sys.system,
+    instructions: sys.system,
     prompt,
     temperature: 0,
   })
@@ -133,8 +133,8 @@ export async function runExtraction(args: {
     codeBlockChars: sys.codeBlockChars,
     systemChars: sys.systemChars,
     taxonomyVersion: sys.taxonomyVersion,
-    inputTokens: result.totalUsage.inputTokens ?? null,
-    outputTokens: result.totalUsage.outputTokens ?? null,
+    inputTokens: result.usage.inputTokens ?? null,
+    outputTokens: result.usage.outputTokens ?? null,
     durationMs: Date.now() - started,
   }
 }

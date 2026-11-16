@@ -90,7 +90,7 @@ export function createLlmTopicMatcher(orgId: string): TopicMatcher {
       userId: null,
       ref: { sourceItemId: input.itemId },
       output: Output.object({ schema: topicMatchSchema }),
-      system: await system,
+      instructions: await system,
       prompt: buildTopicMatchPrompt(input),
       temperature: 0,
     })

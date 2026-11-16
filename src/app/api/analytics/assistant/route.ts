@@ -1,6 +1,8 @@
 import {
   convertToModelMessages,
-  stepCountIs,
+  createUIMessageStreamResponse,
+  isStepCount,
+  toUIMessageStream,
   type UIMessage,
 } from "ai"
 import { getServerSession } from "@/lib/get-session"
@@ -44,22 +46,26 @@ export async function POST(req: Request) {
       ? new Date(new Date(`${bounds.last}T00:00:00.000Z`).getTime() + 86_400_000)
       : new Date()
 
+    const tools = buildAnalyticsTools(organizationId, { from, to })
     const result = await aiStreamText({
       process: "analytics.assistant",
       orgId: organizationId,
       userId: session.user.id,
-      system: buildAnalyticsSystemPrompt({
+      instructions: buildAnalyticsSystemPrompt({
         from: bounds.first ?? "—",
         to: bounds.last ?? "—",
       }),
       messages: await convertToModelMessages(messages),
-      tools: buildAnalyticsTools(organizationId, { from, to }),
+      tools,
       // One query + one answer is the intended shape; a couple of extra steps
       // give room for a genuinely two-part question.
-      stopWhen: stepCountIs(5),
+      stopWhen: isStepCount(5),
     })
 
-    return result.toUIMessageStreamResponse()
+    // AI SDK 7: stateless helpers (result.toUIMessageStreamResponse() is deprecated).
+    return createUIMessageStreamResponse({
+      stream: toUIMessageStream({ stream: result.stream, tools }),
+    })
   } catch (error) {
     console.error("[analytics-assistant] Error:", error)
     return Response.json(

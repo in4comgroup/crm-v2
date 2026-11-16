@@ -141,7 +141,7 @@ export async function parseOfficeBytes(
     process: "parsing.office",
     ...parserCallContext(ai),
     output: Output.object({ schema: officeAnalysisSchema }),
-    system: withOwnOrgLine(
+    instructions: withOwnOrgLine(
       `You are a precise document parsing assistant. Convert the provided pre-extracted document content into clean Markdown and extract structured metadata. Never fabricate facts that are not present in the input. Preserve the document's structure faithfully.
 
 ${MENTIONED_PEOPLE_PROMPT}

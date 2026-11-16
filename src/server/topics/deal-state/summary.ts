@@ -96,7 +96,7 @@ export function createLlmDealStateModel(): DealStateModel {
       userId: null,
       ref: { dealId },
       output: Output.object({ schema: dealStateSchema }),
-      system: DEAL_STATE_SYSTEM,
+      instructions: DEAL_STATE_SYSTEM,
       prompt: buildDealStatePrompt(input),
       temperature: 0.2,
     })

@@ -86,7 +86,7 @@ export async function parseTelegramMessage(
     process: "parsing.chat_message",
     ...parserCallContext(ai),
     output: Output.object({ schema: analysisSchema }),
-    system: withOwnOrgLine(
+    instructions: withOwnOrgLine(
       `You are a precise Telegram message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.
 
 ${MENTIONED_PEOPLE_PROMPT}

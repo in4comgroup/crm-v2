@@ -163,7 +163,7 @@ async function extractAnalysis(
     orgId: ai.orgId,
     userId: ai.userId,
     output: Output.object({ schema: analysisSchema }),
-    system:
+    instructions:
       "You are a precise AI-chat session analysis assistant. Extract structured metadata from a saved conversation between a user and an AI assistant. Never fabricate facts — only return what is present in the transcript.",
     prompt: [
       "--- BEGIN AI CHAT TRANSCRIPT ---",

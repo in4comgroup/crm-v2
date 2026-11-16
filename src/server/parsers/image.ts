@@ -136,7 +136,7 @@ export async function parseImageBytes(
     process: "parsing.image",
     ...parserCallContext(ai),
     output: Output.object({ schema: imageAnalysisSchema }),
-    system: withOwnOrgLine(
+    instructions: withOwnOrgLine(
       `You are a precise image parsing assistant. Extract structured metadata and convert the provided image into clean Markdown. For text-heavy images perform OCR faithfully; for photos/diagrams give a detailed description. Never fabricate facts that are not visible in the image.
 
 ${MENTIONED_PEOPLE_PROMPT}

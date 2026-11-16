@@ -629,7 +629,7 @@ async function runMetadataExtraction(
     process: "parsing.document_metadata",
     ...parserCallContext(ai),
     output: Output.object({ schema: metadataOnlySchema }),
-    system: withOwnOrgLine(
+    instructions: withOwnOrgLine(
       `${args.systemHint} Never fabricate facts that are not present in the provided content.
 
 ${MENTIONED_PEOPLE_PROMPT}

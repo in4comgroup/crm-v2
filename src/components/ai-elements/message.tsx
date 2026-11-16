@@ -331,6 +331,10 @@ export const MessageResponse = memo(
         className
       )}
       plugins={streamdownPlugins}
+      // Streamdown 2.6+ caps tables at 300 px and code at 400 px by default;
+      // 0 = no cap, as before the upgrade (callers may still override).
+      tableMaxHeight={0}
+      codeBlockMaxHeight={0}
       {...props}
     />
   ),

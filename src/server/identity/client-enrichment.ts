@@ -17,7 +17,7 @@ import { and, eq } from "drizzle-orm"
 import { after } from "next/server"
 import { request as httpsRequest } from "node:https"
 import { request as httpRequest } from "node:http"
-import { Output, stepCountIs } from "ai"
+import { Output, isStepCount } from "ai"
 import { z } from "zod"
 import { db } from "@/db/drizzle"
 import { client, clientProfile, contact, member } from "@/db/schema"
@@ -634,11 +634,11 @@ Write 2–4 short paragraphs of research notes summarising what you found. If mu
     process: "clients.enrichment_research",
     ...aiCtx,
     capabilities: ["web_search"],
-    system:
+    instructions:
       "You are a precise company-research assistant. Use the web search tool to find authoritative information about the given company. Prefer official websites, LinkedIn company pages, and corporate registries over social media or aggregators. Never invent details — if a field can't be confirmed by the search results, say so explicitly.",
     prompt: researchPrompt,
     // Bound the search → fetch → answer loop so the model can't spiral.
-    stopWhen: stepCountIs(5),
+    stopWhen: isStepCount(5),
     // Same input must give the same answer: two runs of this lookup used to
     // return a different address and drop the phone entirely.
     temperature: 0,
@@ -692,7 +692,7 @@ ${profileInstructions(industries)}`
     process: "clients.enrichment_extract",
     ...aiCtx,
     output: Output.object({ schema: lookupExtractSchema }),
-    system:
+    instructions:
       "You convert research notes and raw company-website text into structured candidate records. Never invent fields — if neither the research notes nor the website text confirms a value, return an empty string for that field. When raw website text is provided it is primary-source evidence and outranks the research notes. Operator-confirmed parameters outrank third-party sources. Use empty arrays for the candidates list if no plausible match was found.",
     prompt: extractPrompt,
     temperature: 0,

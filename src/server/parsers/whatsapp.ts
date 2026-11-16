@@ -445,7 +445,7 @@ export async function parseWhatsAppGroup(
     process: "parsing.chat_message",
     ...parserCallContext(ai),
     output: Output.object({ schema: analysisSchema }),
-    system: withOwnOrgLine(
+    instructions: withOwnOrgLine(
       `You are a precise WhatsApp chat parsing assistant. Extract structured metadata from a multi-message group transcript. Never fabricate facts — only return what is present in the conversation.
 
 ${MENTIONED_PEOPLE_PROMPT}

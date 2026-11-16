@@ -32,11 +32,14 @@ import type {
 // The SDK result is returned unchanged; aiCallInfo(result) tells what ran.
 
 type AnyOutput = Output.Output
+// AI SDK 7 added a RUNTIME_CONTEXT type parameter (shared state for tools /
+// prepareStep). The runtime does not use it, so it is the SDK default shape.
+type RuntimeContext = Record<string, unknown>
 type GenerateParams<TOOLS extends ToolSet, OUTPUT extends AnyOutput> = Parameters<
-  typeof generateText<TOOLS, OUTPUT>
+  typeof generateText<TOOLS, RuntimeContext, OUTPUT>
 >[0]
 type StreamParams<TOOLS extends ToolSet, OUTPUT extends AnyOutput> = Parameters<
-  typeof streamText<TOOLS, OUTPUT>
+  typeof streamText<TOOLS, RuntimeContext, OUTPUT>
 >[0]
 
 /**
@@ -174,12 +177,14 @@ export async function aiGenerateText<
   OUTPUT extends AnyOutput = Output.Output<string, string>,
 >(
   args: AiCallContext & Omit<GenerateParams<TOOLS, OUTPUT>, "model">,
-): Promise<GenerateTextResult<TOOLS, OUTPUT>> {
+): Promise<GenerateTextResult<TOOLS, RuntimeContext, OUTPUT>> {
   const { ctx, params } = splitContext(args)
   const resolved = await resolveProcess(ctx.process, ctx.requestedModelId)
   await enforceBudget(ctx, resolved)
   const base = applySettings(
-    params as GenerateParams<TOOLS, OUTPUT>,
+    // Pass-through: the caller's params are the SDK params minus `model`
+    // (v7's prompt-or-messages union does not survive Omit, hence unknown).
+    params as unknown as Omit<GenerateParams<TOOLS, OUTPUT>, "model">,
     resolved.assignmentSettings,
   )
 
@@ -199,12 +204,12 @@ export async function aiGenerateText<
         base.tools as ToolSet | undefined,
         base.providerOptions,
       )
-      const result = await generateText<TOOLS, OUTPUT>({
+      const result = await generateText<TOOLS, RuntimeContext, OUTPUT>({
         ...base,
         model,
         ...(tools ? { tools: tools as TOOLS } : {}),
         providerOptions,
-      })
+      } as GenerateParams<TOOLS, OUTPUT>)
       callInfo.set(result, { resolved: { ...resolved, modelId } })
       await recordUsageEvent({
         resolved,
@@ -213,7 +218,8 @@ export async function aiGenerateText<
         ref: ctx.ref,
         startedAt,
         status: "ok",
-        usage: result.totalUsage as UsageLike,
+        // v7: `usage` is the total over all steps (v6 `totalUsage`).
+        usage: result.usage as UsageLike,
         steps: result.steps.length,
         info: resolved.adapter.readResult(result, resolved.gateway),
         requestModel: modelId,
@@ -245,12 +251,12 @@ export async function aiStreamText<
   OUTPUT extends AnyOutput = Output.Output<string, string, never>,
 >(
   args: AiCallContext & Omit<StreamParams<TOOLS, OUTPUT>, "model">,
-): Promise<StreamTextResult<TOOLS, OUTPUT>> {
+): Promise<StreamTextResult<TOOLS, RuntimeContext, OUTPUT>> {
   const { ctx, params } = splitContext(args)
   const resolved = await resolveProcess(ctx.process, ctx.requestedModelId)
   await enforceBudget(ctx, resolved)
   const base = applySettings(
-    params as StreamParams<TOOLS, OUTPUT>,
+    params as unknown as Omit<StreamParams<TOOLS, OUTPUT>, "model">,
     resolved.assignmentSettings,
   )
   // Streams rely on gateway-side fallbacks only (a mid-stream retry would
@@ -278,19 +284,24 @@ export async function aiStreamText<
       requestModel: resolved.modelId,
       ...extra,
     })
-  const { onFinish, onError, onAbort } = base
-  const result = streamText<TOOLS, OUTPUT>({
+  // v7 renamed onFinish → onEnd (onFinish is a deprecated alias). Callers
+  // may still pass either; both run after the usage row is written.
+  const { onEnd, onFinish, onError, onAbort } = base
+  const result = streamText<TOOLS, RuntimeContext, OUTPUT>({
     ...base,
     model,
     ...(tools ? { tools: tools as TOOLS } : {}),
     providerOptions,
     // Usage recording wraps the caller's own callbacks (which still run).
-    onFinish: async (event) => {
+    onFinish: undefined,
+    onEnd: async (event) => {
       await record("ok", {
-        usage: event.totalUsage as UsageLike,
+        // v7: `usage` is the total over all steps (v6 `totalUsage`).
+        usage: event.usage as UsageLike,
         steps: event.steps.length,
         info: resolved.adapter.readResult(event, resolved.gateway),
       })
+      await onEnd?.(event)
       await onFinish?.(event)
     },
     onError: async (event) => {
@@ -310,7 +321,7 @@ export async function aiStreamText<
       })
       await onAbort?.(event)
     },
-  })
+  } as StreamParams<TOOLS, OUTPUT>)
   callInfo.set(result, { resolved })
   return result
 }

@@ -130,6 +130,8 @@ export type AiResultInfo = {
 
 // The subset of an AI SDK result an adapter may read.
 export type AiResultLike = {
+  /** AI SDK 7: the last step. Its top-level twins below are deprecated. */
+  finalStep?: { providerMetadata?: unknown; response?: { id?: string; modelId?: string } }
   providerMetadata?: unknown
   response?: { id?: string; modelId?: string }
   sources?: unknown[]

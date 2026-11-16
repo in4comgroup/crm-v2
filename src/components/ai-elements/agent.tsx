@@ -103,7 +103,8 @@ export const AgentTool = memo(
         {...props}
       >
         <AccordionTrigger className="px-3 py-2 text-sm hover:no-underline">
-          {tool.description ?? "No description"}
+          {/* AI SDK 7: a tool description may also be a function of the context. */}
+          {typeof tool.description === "string" ? tool.description : "No description"}
         </AccordionTrigger>
         <AccordionContent className="px-3 pb-3">
           <div className="rounded-md bg-muted/50">

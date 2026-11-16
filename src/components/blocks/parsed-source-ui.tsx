@@ -212,7 +212,9 @@ export function ParsedBlock({
       <div
         className="rounded-md border bg-muted/30 p-4 prose prose-sm dark:prose-invert max-w-none overflow-x-auto wrap-break-word [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_img]:max-w-full [&_img]:h-auto"
       >
-        <Streamdown>{renderableMarkdown(markdown)}</Streamdown>
+        <Streamdown tableMaxHeight={0} codeBlockMaxHeight={0}>
+          {renderableMarkdown(markdown)}
+        </Streamdown>
       </div>
       <details className="rounded-md border bg-muted/10">
         <summary className="px-3 py-2 text-xs cursor-pointer select-none">

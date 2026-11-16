@@ -61,7 +61,10 @@ export const vercelAiGatewayAdapter: AiGatewayAdapter = {
 
   readResult(result) {
     const str = (v: unknown) => (typeof v === "string" && v ? v : undefined)
-    const meta = obj(result.providerMetadata)
+    // AI SDK 7: last-step data lives on `finalStep` (the top-level fields
+    // are deprecated aliases; aborted streams pass a plain step).
+    const last = result.finalStep ?? result
+    const meta = obj(last.providerMetadata)
     const gw = obj(meta?.gateway)
     const routing = obj(gw?.routing)
     // The model that actually answered (after a gateway model fallback) is
@@ -71,7 +74,7 @@ export const vercelAiGatewayAdapter: AiGatewayAdapter = {
 
     // Per step: generation id, inline cost, grounding. A multi-step call
     // (tools) is several gateway generations.
-    const steps = result.steps?.length ? result.steps : [{ providerMetadata: result.providerMetadata, response: result.response }]
+    const steps = result.steps?.length ? result.steps : [{ providerMetadata: last.providerMetadata, response: last.response }]
     const responseIds: string[] = []
     let costUsd: number | undefined = 0
     let webSearchCount = 0
@@ -92,9 +95,9 @@ export const vercelAiGatewayAdapter: AiGatewayAdapter = {
     }
 
     return {
-      responseId: responseIds.at(-1) ?? str(gw?.generationId) ?? str(result.response?.id),
+      responseId: responseIds.at(-1) ?? str(gw?.generationId) ?? str(last.response?.id),
       responseIds,
-      responseModel: str(served?.canonicalSlug) ?? str(result.response?.modelId),
+      responseModel: str(served?.canonicalSlug) ?? str(last.response?.modelId),
       providerName: str(routing?.finalProvider) ?? str(routing?.resolvedProvider),
       webSearchGrounded: (result.sources?.length ?? 0) > 0 || webSearchCount > 0,
       webSearchCount,

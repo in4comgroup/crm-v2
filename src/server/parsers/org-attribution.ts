@@ -292,7 +292,7 @@ async function judgeOrgAuthorship(
       process: "parsing.org_attribution",
       ...parserCallContext(ai),
       output: Output.object({ schema: judgeSchema }),
-      system: JUDGE_SYSTEM,
+      instructions: JUDGE_SYSTEM,
       prompt: buildJudgePrompt(orgIdentity, staffNames, markdown),
     })
     return {

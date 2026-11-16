@@ -388,7 +388,7 @@ export async function analyzeAndAssembleEmail(
     process: "parsing.email",
     ...parserCallContext(ai),
     output: Output.object({ schema: analysisSchema }),
-    system: withOwnOrgLine(SYSTEM_PROMPT, ai),
+    instructions: withOwnOrgLine(SYSTEM_PROMPT, ai),
     prompt: buildLlmPrompt({
       subject,
       senders,

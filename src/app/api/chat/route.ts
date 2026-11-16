@@ -2,7 +2,8 @@ import {
   convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
-  stepCountIs,
+  isStepCount,
+  toUIMessageStream,
   tool,
   UIMessage,
 } from "ai"
@@ -433,7 +434,7 @@ export async function POST(req: Request) {
       orgId: sourceOrgId,
       userId: session.user.id,
       requestedModelId,
-      system: buildSystemPrompt({
+      instructions: buildSystemPrompt({
         internal: sourceTools !== undefined,
         web: true,
         orgCard,
@@ -443,12 +444,15 @@ export async function POST(req: Request) {
       // Bound the tool-call loop so the model can't spiral. A combined
       // question is the longest chain: searchEverything →
       // getSourceItemContent ×N → google_search → answer.
-      stopWhen: stepCountIs(10),
+      stopWhen: isStepCount(10),
     })
 
     const stream = createUIMessageStream({
       execute: async ({ writer }) => {
-        writer.merge(pipeJsonRender(result.toUIMessageStream()))
+        // AI SDK 7: stateless helper (result.toUIMessageStream() is deprecated).
+        writer.merge(
+          pipeJsonRender(toUIMessageStream({ stream: result.stream, tools })),
+        )
       },
     })
 

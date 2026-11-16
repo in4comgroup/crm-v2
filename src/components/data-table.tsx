@@ -2,12 +2,21 @@
 
 import { useState, useMemo } from "react"
 import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
-  getPaginationRowModel,
-  getFilteredRowModel,
+  columnFilteringFeature,
+  createFilteredRowModel,
+  createPaginatedRowModel,
+  createSortedRowModel,
+  filterFn_includesString,
   flexRender,
+  globalFilteringFeature,
+  rowPaginationFeature,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_basic,
+  sortFn_datetime,
+  sortFn_text,
+  tableFeatures,
+  useTable,
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table"
@@ -39,6 +48,29 @@ interface DataTableComponentProps {
   searchable?: boolean
   pageSize?: number
 }
+
+type Row = Record<string, unknown>
+
+// TanStack Table v9: features and row models are registered explicitly
+// (module level = stable). Same behaviour as the v8 table: sorting (the
+// "auto" sort picks one of the registered sort functions), global search
+// ("auto" = includesString) and pagination.
+const features = tableFeatures({
+  rowSortingFeature,
+  columnFilteringFeature, // required by globalFilteringFeature
+  globalFilteringFeature,
+  rowPaginationFeature,
+  sortedRowModel: createSortedRowModel(),
+  filteredRowModel: createFilteredRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  sortFns: {
+    alphanumeric: sortFn_alphanumeric,
+    basic: sortFn_basic,
+    datetime: sortFn_datetime,
+    text: sortFn_text,
+  },
+  filterFns: { includesString: filterFn_includesString },
+})
 
 function formatCellValue(value: unknown, type?: string): string {
   if (value == null) return "—"
@@ -74,7 +106,7 @@ export function DataTableComponent({
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState("")
 
-  const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(
+  const columns = useMemo<ColumnDef<typeof features, Row>[]>(
     () =>
       columnConfigs.map((col) => ({
         accessorKey: col.key,
@@ -104,22 +136,18 @@ export function DataTableComponent({
                 : ""
           return <span className={alignClass}>{formatted}</span>
         },
-        size: col.width,
       })),
     [columnConfigs, sortable],
   )
 
-  const table = useReactTable({
+  const table = useTable({
+    features,
     data: rows,
     columns,
     state: { sorting, globalFilter },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    initialState: { pagination: { pageSize } },
+    initialState: { pagination: { pageIndex: 0, pageSize } },
   })
 
   return (
@@ -160,7 +188,7 @@ export function DataTableComponent({
             {table.getRowModel().rows.length ? (
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
+                  {row.getAllCells().map((cell) => (
                     <TableCell key={cell.id}>
                       {flexRender(
                         cell.column.columnDef.cell,
@@ -187,7 +215,7 @@ export function DataTableComponent({
       {table.getPageCount() > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            Page {table.getState().pagination.pageIndex + 1} of{" "}
+            Page {table.state.pagination.pageIndex + 1} of{" "}
             {table.getPageCount()}
           </p>
           <div className="flex gap-1">

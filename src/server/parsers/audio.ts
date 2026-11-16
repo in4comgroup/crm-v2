@@ -149,7 +149,7 @@ export async function parseAudioBytes(
     process: "parsing.audio",
     ...parserCallContext(ai),
     output: Output.object({ schema: audioAnalysisSchema }),
-    system: withOwnOrgLine(
+    instructions: withOwnOrgLine(
       `You are a precise audio parsing assistant. Transcribe the provided recording faithfully, diarise it by speaker, and extract structured metadata. Keep speaker labels stable across segments. Do not invent content that is not present in the audio.
 
 ${MENTIONED_PEOPLE_PROMPT}

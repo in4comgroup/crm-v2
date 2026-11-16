@@ -492,7 +492,9 @@ export const { registry } = defineRegistry(catalog, {
     // --- Media ---
     Markdown: ({ props }) => (
       <div className="prose prose-sm dark:prose-invert max-w-none">
-        <Streamdown>{props.content}</Streamdown>
+        <Streamdown tableMaxHeight={0} codeBlockMaxHeight={0}>
+          {props.content}
+        </Streamdown>
       </div>
     ),
 

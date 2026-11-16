@@ -2,7 +2,7 @@
 
 Work that is decided but **not scheduled**. Each item names its source in the specs. When an item is scheduled, move it into the spec folder of its topic (`docs/specs/<topic>/`) and delete it here.
 
-Last update: 2026-11-15.
+Last update: 2026-11-16.
 
 ## Topics engine (`docs/specs/topics/`)
 
@@ -22,6 +22,7 @@ Last update: 2026-11-15.
 | O2 | Contact groups | Alumni, expert club, contractors as contact groups | Spec 01 §1.2 |
 | O3 | Pipeline import from spreadsheets | Import deals / pipeline from XLSX / Google Sheets | Spec 01 §1.2 |
 | O4 | Finance integration (1С) | Invoices, payments, debts from 1С as system-of-record data (would feed INVOICE_* codes and the CLIENT_DEBT risk) | Spec 01 §1.2 |
+| O5 | Write actions from the AI chat | Create / change records from the chat (client, contact, task, deal, stage move) with a confirmation step per action (AI SDK `toolApproval`) and an audit trail — needs its own spec | [ai-chat/03-open-questions.md](../specs/ai-chat/03-open-questions.md) Q17 (decided 2026-11-16: separate spec) |
 
 ## Tests and commercial setup
 

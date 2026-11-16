@@ -111,7 +111,7 @@ export async function parsePdfBytes(
     process: "parsing.pdf",
     ...parserCallContext(ai),
     output: Output.object({ schema: pdfAnalysisSchema }),
-    system: withOwnOrgLine(
+    instructions: withOwnOrgLine(
       `You are a precise document parsing assistant. Extract structured metadata and convert the provided PDF into clean Markdown. Do not invent facts. Aggressively strip repeating headers, footers, page numbers, and watermark boilerplate — they are noise, not content.
 
 ${MENTIONED_PEOPLE_PROMPT}

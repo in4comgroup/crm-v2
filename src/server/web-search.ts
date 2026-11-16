@@ -2,7 +2,7 @@
 // `server-only` keeps the module out of the client bundle.
 import "server-only"
 
-import { stepCountIs } from "ai"
+import { isStepCount } from "ai"
 
 import { aiCallInfo, aiGenerateText } from "@/server/ai/runtime"
 
@@ -71,7 +71,7 @@ export async function searchWeb(
       orgId: ai.orgId,
       userId: ai.userId,
       capabilities: ["web_search"],
-      system: RESEARCH_SYSTEM,
+      instructions: RESEARCH_SYSTEM,
       prompt:
         `Research this on the web and report what you find: ${q}\n\n` +
         `Search in the local language of the subject as well as in English — ` +
@@ -80,7 +80,7 @@ export async function searchWeb(
         `each concrete claim say which source it came from. State plainly ` +
         `whatever the search did NOT confirm.`,
       // Bound the search → read → answer loop so it can't spiral.
-      stopWhen: stepCountIs(5),
+      stopWhen: isStepCount(5),
       // Same question, same answer — the client lookup needs this for the
       // same reason (two runs used to disagree on a company's address).
       temperature: 0,

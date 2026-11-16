@@ -353,7 +353,7 @@ export async function createAndParseOrderRequest(
       // results" for an identical request. temperature 0 removes that drift.
       temperature: 0,
       output: Output.object({ schema: llmParseSchema }),
-      system:
+      instructions:
         "You are a precise order-intake assistant for a company that sells " +
         "to business clients. You split one informal Russian client message into " +
         "structured product intent items. You never invent catalog filter " +

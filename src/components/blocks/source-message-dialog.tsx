@@ -115,7 +115,7 @@ export function SourceMessageDialog({
           {body !== null &&
             (body ? (
               <div className="text-sm wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_img]:h-auto [&_img]:max-w-full">
-                <Streamdown>{body}</Streamdown>
+                <Streamdown tableMaxHeight={0} codeBlockMaxHeight={0}>{body}</Streamdown>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">Текста нет.</p>

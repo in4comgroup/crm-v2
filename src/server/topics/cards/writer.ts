@@ -36,7 +36,7 @@ export function createLlmCardWriter(orgId: string): CardWriter {
       userId: null,
       ref: { topicId: input.topicId, ...(input.sourceItemId ? { sourceItemId: input.sourceItemId } : {}) },
       output: Output.object({ schema: cardWriterSchema }),
-      system: CARD_WRITER_SYSTEM,
+      instructions: CARD_WRITER_SYSTEM,
       prompt: buildCardWriterPrompt(input),
       temperature: 0.2,
     })

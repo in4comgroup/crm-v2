@@ -164,7 +164,7 @@ export async function parseVideoBytes(
     process: "parsing.video",
     ...parserCallContext(ai),
     output: Output.object({ schema: videoAnalysisSchema }),
-    system: withOwnOrgLine(
+    instructions: withOwnOrgLine(
       `You are a precise video parsing assistant. Analyse the provided video both visually and aurally. Produce a faithful visual description AND a faithful diarised transcript of any speech. Extract structured metadata. Never fabricate facts that are not present in the video.
 
 ${MENTIONED_PEOPLE_PROMPT}

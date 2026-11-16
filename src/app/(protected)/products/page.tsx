@@ -625,6 +625,21 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Deep-link /products?q=<text> (a product from the AI chat — a product has
+  // no page of its own, spec ai-chat §6.1 / Q8): prefill the catalog search
+  // box; the usual debounce runs the search. Then strip the param.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    const q = url.searchParams.get("q")
+    if (q === null) return
+    url.searchParams.delete("q")
+    window.history.replaceState(null, "", url.pathname + url.search)
+    if (!q.trim()) return
+    setSearchInput(q.trim())
+    setTab("catalog")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Deep-link from the dashboard's own New Order dialog
   // (/products?assembleRequest=<requestId>&cardId=<cardId>): the request was
   // already created + parsed from the dashboard (see dashboard/page.tsx's

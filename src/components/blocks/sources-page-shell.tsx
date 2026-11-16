@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { toast } from "sonner"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TableSourceItems } from "@/components/tables/table-source-items"
@@ -13,6 +14,7 @@ import { ProcessRunBar } from "@/components/blocks/process-controls"
 import { useProcessRun } from "@/components/blocks/use-process-run"
 import { WorkflowStatistics } from "@/components/blocks/workflow-statistics"
 import { AnalysisExclusionsSection } from "@/components/blocks/analysis-exclusions-section"
+import { ParsedMarkdownDialog } from "@/components/blocks/parsed-markdown-dialog"
 import type { SourceSummary } from "@/server/sources"
 import { usePersistentTab } from "@/lib/use-persistent-tab"
 
@@ -82,6 +84,37 @@ export function SourcesPageShell({
   const [tab, setTab] = usePersistentTab<SourcesTab>("sources", "org", {
     allowed: allowedTabs,
   })
+
+  // Deep link /sources?item=<id> (AI chat «Открыть в CRM», spec ai-chat §6.1):
+  // open that item's parsed content in the same viewer the table's «Показать»
+  // uses, on the «Источники организации» tab, then strip the param. The title
+  // + the org check come from GET /api/chat/records (org from the session); an
+  // item of another org / a missing one opens nothing.
+  const [linkedItem, setLinkedItem] = useState<{ id: string; title: string } | null>(null)
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    const itemId = url.searchParams.get("item")
+    if (!itemId) return
+    url.searchParams.delete("item")
+    window.history.replaceState(null, "", url.pathname + url.search)
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/chat/records?type=source_item&id=${encodeURIComponent(itemId)}`,
+        )
+        const data = res.ok ? await res.json() : null
+        if (!data?.detail) {
+          toast.error("Источник не найден или недоступен")
+          return
+        }
+        setTab("org")
+        setLinkedItem({ id: itemId, title: data.detail.title || "Источник" })
+      } catch {
+        toast.error("Не удалось открыть источник")
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once on mount
+  }, [])
 
   return (
     <Tabs
@@ -167,6 +200,14 @@ export function SourcesPageShell({
         open={whatsAppOpen}
         onOpenChange={setWhatsAppOpen}
         onUploaded={bumpRefresh}
+      />
+      <ParsedMarkdownDialog
+        itemId={linkedItem?.id ?? null}
+        title={linkedItem?.title ?? ""}
+        open={linkedItem !== null}
+        onOpenChange={(o) => {
+          if (!o) setLinkedItem(null)
+        }}
       />
     </Tabs>
   )

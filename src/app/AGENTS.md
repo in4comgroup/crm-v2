@@ -1435,7 +1435,7 @@ Seventh tab on `/analytics`. Ask a question in Russian, get a short written take
 - The prompt forbids ASCII charts and re-listing every row — the user already sees them in the chart and table.
 - **Refusals matter more than coverage in a demo**: questions outside the model (margin, cost price, stock, plan, the text of an email) get an explicit "нет таких данных" plus the nearest answerable question. Verified — the assistant declines margin and correspondence questions instead of inventing.
 
-Charts reuse `buildSeries` (synthetic CSS-safe series keys) and the validated palette; forms follow the same rules as the tabs (donut ≤6 slices, one hue for ranked bars, stacked for composition).
+The chart switch is the exported `AnalyticsAnswerChart` (`analytics-answer-card.tsx`, takes a value formatter), shared with the AI chat's `<StatsBlock>` (`src/components/blocks/chat/stats-block.tsx`, CH3 of docs/specs/ai-chat) — change it once for both. Charts reuse `buildSeries` (synthetic CSS-safe series keys) and the validated palette; forms follow the same rules as the tabs (donut ≤6 slices, one hue for ranked bars, stacked for composition).
 
 **Not yet wired into the dashboard chat.** The same tool could be registered there alongside `searchEverything` + `searchWeb` (the dashboard chat is now one universal engine with no toggles — see `src/lib/AGENTS.md` § "AI Chat"); it was staged second on purpose — the general agent must not reach for `searchEverything` when it should aggregate.
 

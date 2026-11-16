@@ -49,7 +49,11 @@ import {
   seriesColor,
 } from "@/lib/analytics-format"
 import { buildSeries } from "./analytics-charts"
-import type { AnalyticsQueryResult } from "@/lib/analytics-semantic"
+import type {
+  AnalyticsQueryResult,
+  AnalyticsResultRow,
+  AnswerChart,
+} from "@/lib/analytics-semantic"
 import { AlertTriangle } from "lucide-react"
 
 const GRID = "var(--border)"
@@ -72,10 +76,8 @@ export function AnalyticsAnswerCard({
 
   // A scalar is prose, not a picture — the model states it in the answer.
   if (!rows.length) {
-    return meta.warnings.length ? <Warnings warnings={meta.warnings} /> : null
+    return meta.warnings.length ? <AnswerWarnings warnings={meta.warnings} /> : null
   }
-
-  const split = Boolean(meta.splitLabel)
 
   return (
     <div className="bg-card mt-2 w-full overflow-hidden rounded-xl border">
@@ -96,15 +98,7 @@ export function AnalyticsAnswerCard({
       </div>
 
       <div className="px-1 pt-2 sm:px-3">
-        {split ? (
-          <StackedAnswer result={result} fmt={fmt} fmtFull={fmtFull} />
-        ) : meta.chart === "donut" ? (
-          <DonutAnswer result={result} fmtFull={fmtFull} />
-        ) : meta.chart === "line" || meta.chart === "area" ? (
-          <TrendAnswer result={result} fmt={fmt} fmtFull={fmtFull} />
-        ) : meta.chart === "table" ? null : (
-          <RankedAnswer result={result} fmt={fmt} fmtFull={fmtFull} />
-        )}
+        <AnalyticsAnswerChart result={result} fmt={fmt} fmtFull={fmtFull} />
       </div>
 
       <AnswerTable result={result} fmtFull={fmtFull} />
@@ -114,12 +108,12 @@ export function AnalyticsAnswerCard({
           Показаны только первые {meta.rowCount} — остальные значения меньше.
         </p>
       ) : null}
-      {meta.warnings.length ? <Warnings warnings={meta.warnings} inline /> : null}
+      {meta.warnings.length ? <AnswerWarnings warnings={meta.warnings} inline /> : null}
     </div>
   )
 }
 
-function Warnings({
+export function AnswerWarnings({
   warnings,
   inline,
 }: {
@@ -142,12 +136,53 @@ function Warnings({
 
 // ── Forms ────────────────────────────────────────────────────────────
 
+/**
+ * What the chart forms read from a result — `AnalyticsQueryResult` and the AI
+ * chat's `StatsResult` (src/lib/chat/stats.ts) both fit, so the chat's
+ * `<StatsBlock>` draws with this same code instead of a second chart.
+ */
+export type ChartableResult = {
+  rows: AnalyticsResultRow[]
+  meta: {
+    measureLabel: string
+    splitLabel: string | null
+    total: number
+    chart: AnswerChart
+  }
+}
+
+/** Value formatters: `fmt` = compact (axes, bar labels), `fmtFull` = exact (tooltips). */
+export type ChartValueFormat = {
+  fmt: (n: number) => string
+  fmtFull: (n: number) => string
+}
+
+/** The chart of one result, picked by `meta.chart` (nothing for `table`). */
+export function AnalyticsAnswerChart({
+  result,
+  fmt,
+  fmtFull,
+}: { result: ChartableResult } & ChartValueFormat) {
+  const { meta } = result
+  if (meta.splitLabel) {
+    return <StackedAnswer result={result} fmt={fmt} fmtFull={fmtFull} />
+  }
+  if (meta.chart === "donut") {
+    return <DonutAnswer result={result} fmtFull={fmtFull} />
+  }
+  if (meta.chart === "line" || meta.chart === "area") {
+    return <TrendAnswer result={result} fmt={fmt} fmtFull={fmtFull} />
+  }
+  if (meta.chart === "table") return null
+  return <RankedAnswer result={result} fmt={fmt} fmtFull={fmtFull} />
+}
+
 function TrendAnswer({
   result,
   fmt,
   fmtFull,
 }: {
-  result: AnalyticsQueryResult
+  result: ChartableResult
   fmt: (n: number) => string
   fmtFull: (n: number) => string
 }) {
@@ -229,7 +264,7 @@ function RankedAnswer({
   fmt,
   fmtFull,
 }: {
-  result: AnalyticsQueryResult
+  result: ChartableResult
   fmt: (n: number) => string
   fmtFull: (n: number) => string
 }) {
@@ -302,7 +337,7 @@ function DonutAnswer({
   result,
   fmtFull,
 }: {
-  result: AnalyticsQueryResult
+  result: ChartableResult
   fmtFull: (n: number) => string
 }) {
   const series = useMemo(
@@ -370,7 +405,7 @@ function StackedAnswer({
   fmt,
   fmtFull,
 }: {
-  result: AnalyticsQueryResult
+  result: ChartableResult
   fmt: (n: number) => string
   fmtFull: (n: number) => string
 }) {

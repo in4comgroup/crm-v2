@@ -6,9 +6,13 @@
 // level so it survives page navigation and never remounts <AIChat/> (which
 // would reset the conversation) — it's always in the DOM, just translated
 // off-screen via CSS when closed, not conditionally rendered.
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { AIChat } from "@/components/blocks/ai-chat"
-import { usePanelContext } from "@/lib/chat-panel-context"
+import { RecordDetailView } from "@/components/blocks/chat/record-detail-view"
+import {
+  isRecordPanelContent,
+  usePanelContext,
+} from "@/lib/chat-panel-context"
 import { useGlobalChat } from "@/lib/global-chat-context"
 import { Renderer, JSONUIProvider } from "@json-render/react"
 import { registry } from "@/lib/registry"
@@ -32,7 +36,11 @@ export function AiChatTrigger() {
 
 export function AiChatPanel() {
   const { open, closeChat } = useGlobalChat()
-  const { content, history, closePanel, goBack } = usePanelContext()
+  const { content, history, closePanel, goBack, openRecord } =
+    usePanelContext()
+  // Titles of records whose detail has loaded (panel title when the record
+  // was opened without one), keyed by "type:id".
+  const [recordTitles, setRecordTitles] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!open) return
@@ -43,7 +51,15 @@ export function AiChatPanel() {
     return () => document.removeEventListener("keydown", onKeyDown)
   }, [open, closeChat])
 
-  const safeSpec = content?.spec ? sanitizeSpec(content.spec) : null
+  const record = isRecordPanelContent(content) ? content : null
+  const specContent =
+    content && !isRecordPanelContent(content) ? content : null
+  const safeSpec = specContent?.spec ? sanitizeSpec(specContent.spec) : null
+  const panelTitle = record
+    ? record.title ||
+      recordTitles[`${record.type}:${record.id}`] ||
+      "Загрузка…"
+    : content?.title || "Подробности"
 
   return (
     <>
@@ -88,19 +104,44 @@ export function AiChatPanel() {
             <div className="flex items-center justify-between px-4 py-2 border-b">
               <div className="flex items-center gap-2">
                 {history.length > 0 && (
-                  <Button variant="ghost" size="icon-sm" onClick={goBack}>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={goBack}
+                    aria-label="Назад"
+                  >
                     <ArrowLeftIcon className="size-4" />
                   </Button>
                 )}
-                <h3 className="text-sm font-semibold">
-                  {content.title || "Подробности"}
-                </h3>
+                <h3 className="truncate text-sm font-semibold">{panelTitle}</h3>
               </div>
-              <Button variant="ghost" size="icon-sm" onClick={closePanel}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={closePanel}
+                aria-label="Закрыть панель"
+              >
                 <XIcon className="size-4" />
               </Button>
             </div>
 
+            {record ? (
+              <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                <RecordDetailView
+                  key={`${record.type}:${record.id}`}
+                  type={record.type}
+                  id={record.id}
+                  onOpenRecord={openRecord}
+                  onLoaded={(d) =>
+                    setRecordTitles((t) =>
+                      t[`${d.type}:${d.id}`] === d.title
+                        ? t
+                        : { ...t, [`${d.type}:${d.id}`]: d.title },
+                    )
+                  }
+                />
+              </div>
+            ) : (
             <Tabs defaultValue="rendered" className="flex-1 min-h-0 flex flex-col">
               <div className="px-4 pt-3">
                 <TabsList>
@@ -134,12 +175,13 @@ export function AiChatPanel() {
                 className="flex-1 min-h-0 overflow-y-auto p-4"
               >
                 <CodeHighlighter
-                  code={JSON.stringify(content.spec, null, 2)}
+                  code={JSON.stringify(specContent?.spec, null, 2)}
                   language="json"
                   showLineNumbers
                 />
               </TabsContent>
             </Tabs>
+            )}
           </div>
         )}
       </div>

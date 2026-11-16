@@ -3,6 +3,7 @@
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
+import { toast } from "sonner"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -288,13 +289,18 @@ function TasksPageContent() {
   >([])
 
   // Открытие конкретной задачи по ссылке (?openTask=<id>) — например, из
-  // карточки задачи в дровере сделки. Диалог открывается сам, как только
-  // задача появится в загруженном списке.
+  // карточки задачи в дровере сделки или из ИИ чата. Диалог открывается сам,
+  // как только задача появится в загруженном списке; параметр сразу убираем
+  // из адреса, чтобы обновление страницы не открывало её снова.
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
+  const [deepLinkTaskId, setDeepLinkTaskId] = useState<string | null>(null)
   useEffect(() => {
     const id = searchParams.get("openTask")
-    if (id) setOpenTaskId(id)
-  }, [searchParams])
+    if (!id) return
+    setOpenTaskId(id)
+    setDeepLinkTaskId(id)
+    router.replace("/tasks", { scroll: false })
+  }, [searchParams, router])
   const openTask = useMemo(
     () => tasks.find((t) => t.id === openTaskId) ?? null,
     [tasks, openTaskId],
@@ -310,6 +316,17 @@ function TasksPageContent() {
   // Отличаем «реально пусто» от «запрос не выполнился» (сеть/БД) — иначе
   // сбой рендерится как «задач нет», что читается как потеря данных.
   const [loadError, setLoadError] = useState(false)
+
+  // Задачи из ссылки нет в списке организации (удалена / чужая) — сообщаем
+  // и ничего не открываем.
+  useEffect(() => {
+    if (loading || !deepLinkTaskId) return
+    if (!loadError && !tasks.some((t) => t.id === deepLinkTaskId)) {
+      toast.error("Задача не найдена или недоступна")
+      setOpenTaskId((cur) => (cur === deepLinkTaskId ? null : cur))
+    }
+    setDeepLinkTaskId(null)
+  }, [loading, loadError, tasks, deepLinkTaskId])
 
   const [statusFilter, setStatusFilter] = useState<string>(ALL)
   const [typeFilter, setTypeFilter] = useState<string>(ALL)

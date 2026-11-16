@@ -155,8 +155,8 @@ type RecordDetail = {
 |---|---|---|
 | `orders` | = today's `MEASURES` of `src/lib/analytics-semantic.ts` (revenue, orders, average check, SKUs, …) — the existing engine `runAnalyticsQuery` is called as is | = today's 17 `DIMENSIONS` |
 | `deals` | count, sum amount, average amount, win rate, average days to close | stage, status, owner, type, company, created month / quarter, closed month, outcome reason |
-| `tasks` | count, overdue, done, done on time % | status, assignee, type, company, due week / month, created month |
-| `clients` | count, new | tab, industry, responsible, size band, segment (A / B / C), created month |
+| `tasks` | count, open, overdue, done (no «done on time»: a task has no completion time) | status, assignee, type, priority, company, due week / month / quarter / year |
+| `clients` | count (new = count with a period on the date added) | relationship (the «Компании» tabs), industry, responsible, size band, segment (A / B / C), added week / month / quarter / year |
 | `sources` | count of items | provider, source, month / week, direction, company, own-org vs external |
 | `topics` (mode `on`) | count, open, resolved, average time to resolve | list, band, family, status, company, owner, created week |
 | `products` | count, in stock, average price | category, country, region, color |

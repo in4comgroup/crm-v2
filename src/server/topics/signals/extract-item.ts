@@ -360,7 +360,10 @@ export async function extractSignalsForItem(
     // Own text = message without quoted history + the attachment blocks.
     ownText: input.ownText,
     date: itemDate,
-    orgAttribution: row.orgAttribution,
+    // A relayed AI chat note is written by our employee but carries what a
+    // counterparty said: the direction comes from the model (like a
+    // forward), so inbound codes can fire (docs/specs/ai-chat Q22).
+    orgAttribution: envelope.relayedNote ? "unknown" : row.orgAttribution,
     allInternal: envelope.allInternal === true,
   })
   const facts: SignalItemFacts = {

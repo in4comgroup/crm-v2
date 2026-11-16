@@ -19,7 +19,7 @@ import {
 // the SESSION. A thread belongs to one user in one org; every read checks
 // both, so another user — also of the same org — gets "not found".
 
-export type ChatThreadRow = ChatThreadSummary
+export type ChatThreadRow = ChatThreadSummary & { ingestMode: "on" | "off" }
 
 const DAY_MS = 86_400_000
 
@@ -31,12 +31,13 @@ export async function listChatThreads(orgId: string, userId: string, limit = 50)
       title: aiChatThread.title,
       createdAt: aiChatThread.createdAt,
       lastMessageAt: aiChatThread.lastMessageAt,
+      ingestMode: aiChatThread.ingestMode,
     })
     .from(aiChatThread)
     .where(and(eq(aiChatThread.organizationId, orgId), eq(aiChatThread.userId, userId), isNull(aiChatThread.deletedAt)))
     .orderBy(desc(aiChatThread.lastMessageAt))
     .limit(Math.min(Math.max(limit, 1), 200))
-  return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString(), lastMessageAt: r.lastMessageAt.toISOString() }))
+  return rows.map((r) => ({ ...r, ingestMode: r.ingestMode === "off" ? "off" : "on", createdAt: r.createdAt.toISOString(), lastMessageAt: r.lastMessageAt.toISOString() }))
 }
 
 /** One thread of the user (not deleted) or null. */
@@ -47,6 +48,7 @@ export async function getChatThread(orgId: string, userId: string, threadId: str
       title: aiChatThread.title,
       createdAt: aiChatThread.createdAt,
       lastMessageAt: aiChatThread.lastMessageAt,
+      ingestMode: aiChatThread.ingestMode,
     })
     .from(aiChatThread)
     .where(
@@ -58,7 +60,9 @@ export async function getChatThread(orgId: string, userId: string, threadId: str
       ),
     )
     .limit(1)
-  return r ? { ...r, createdAt: r.createdAt.toISOString(), lastMessageAt: r.lastMessageAt.toISOString() } : null
+  return r
+    ? { ...r, ingestMode: r.ingestMode === "off" ? "off" : "on", createdAt: r.createdAt.toISOString(), lastMessageAt: r.lastMessageAt.toISOString() }
+    : null
 }
 
 /**
@@ -71,10 +75,11 @@ export async function ensureChatThread(
   userId: string,
   threadId: string,
   title: string,
+  ingestMode: "on" | "off" = "on",
 ): Promise<{ created: boolean } | null> {
   const inserted = await db
     .insert(aiChatThread)
-    .values({ id: threadId, organizationId: orgId, userId, title })
+    .values({ id: threadId, organizationId: orgId, userId, title, ingestMode })
     .onConflictDoNothing({ target: aiChatThread.id })
     .returning({ id: aiChatThread.id })
   if (inserted.length) return { created: true }
@@ -118,11 +123,14 @@ export async function appendChatMessage(
   if (!parts.length) return null
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      // Never below what was already sent to sources (CH6): after «Повторить»
+      // removed an ingested answer, a new message must still count as new.
       const [m] = await db
-        .select({ seq: max(aiChatMessage.seq) })
-        .from(aiChatMessage)
-        .where(eq(aiChatMessage.threadId, threadId))
-      const seq = (m?.seq ?? 0) + 1
+        .select({ seq: max(aiChatMessage.seq), ingested: max(aiChatThread.ingestedSeq) })
+        .from(aiChatThread)
+        .leftJoin(aiChatMessage, eq(aiChatMessage.threadId, aiChatThread.id))
+        .where(eq(aiChatThread.id, threadId))
+      const seq = Math.max(m?.seq ?? 0, m?.ingested ?? 0) + 1
       const now = new Date()
       await db.batch([
         db.insert(aiChatMessage).values({ id: msg.id, threadId, seq, role: msg.role, parts }),
@@ -160,6 +168,28 @@ export async function renameChatThread(orgId: string, userId: string, threadId: 
   const r = await db
     .update(aiChatThread)
     .set({ title, updatedAt: new Date() })
+    .where(
+      and(
+        eq(aiChatThread.id, threadId),
+        eq(aiChatThread.organizationId, orgId),
+        eq(aiChatThread.userId, userId),
+        isNull(aiChatThread.deletedAt),
+      ),
+    )
+    .returning({ id: aiChatThread.id })
+  return r.length > 0
+}
+
+/** «Не передавать в источники» (§16.3): on = segments go to the org's «AI Chat» source. */
+export async function setChatThreadIngestMode(
+  orgId: string,
+  userId: string,
+  threadId: string,
+  mode: "on" | "off",
+): Promise<boolean> {
+  const r = await db
+    .update(aiChatThread)
+    .set({ ingestMode: mode, updatedAt: new Date() })
     .where(
       and(
         eq(aiChatThread.id, threadId),

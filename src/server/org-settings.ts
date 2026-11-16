@@ -88,6 +88,11 @@ export const ORG_SETTINGS = {
   // matcher, card writer, deal state). Default false — switched on per org by
   // a platform admin after the golden-set eval shows no drop in quality.
   "identity.promptContext": { schema: z.boolean(), default: false },
+  // AI chat as a source (docs/specs/ai-chat Q22): chat notes get signals in
+  // topics mode `on` only after a platform admin checked them in `shadow` /
+  // the review (switch «Чат в сигналах»). Default false. In `shadow` they
+  // always get signals (invisible to users).
+  "topics.chatSignals": { schema: z.boolean(), default: false },
   // Identity I6 (Q6): web enrichment of a NEW client right after create.
   // Default false — expensive (AI + web search per client).
   "clients.enrichOnCreate": { schema: z.boolean(), default: false },

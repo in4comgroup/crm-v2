@@ -43,7 +43,7 @@ and one table «Материалы источников» with a «Разбор�
 | `telegram` | Webhook push (private chats and groups: text, voice notes, files ≤ 20 MB); manual `getUpdates` fetch (dev) | `{ botToken, webhookSecret }`; env fallback | Parse/upload only |
 | `dropoff` | Browser upload, parsed at upload time | none | No |
 | `whatsapp` | Browser folder upload of a chat export | none | No |
-| `aichat` | "Save chat" from the AI chat panel | none | No |
+| `aichat` | Automatic: segments of AI chat conversations (user messages; AI answers quoted, never evidence), hourly for topics orgs, daily for all | none | No |
 
 Adding a provider = enum value + metadata entry in `src/lib/sources/providers.ts`
 (client-safe, capability flags) + handler in `src/server/providers/handlers.ts`
@@ -68,7 +68,7 @@ Upload (`src/server/upload-source-item.ts`) writes R2 and clears
 **Main API.** `api/sources/sync`, `api/sources/items` (list with
 `view=needs_work|done|errors|all`), `api/sources/items/[id]/{parse,process,reparse,markdown}`,
 `api/sources/items/{process-ids,pending-parse-ids}`, `api/sources/r2/{save,pending-ids}`,
-`api/sources/{dropoff,whatsapp}/upload`, `api/sources/aichat/save`,
+`api/sources/{dropoff,whatsapp}/upload`,
 `api/sources/telegram/fetch`, `api/sources/{options,stored}`,
 `api/sources/org` (+ `/config`, `/credentials`, `/identity`, `/instantiate`) for
 owners, `api/webhooks/telegram/[sourceId]`.
@@ -76,7 +76,7 @@ owners, `api/webhooks/telegram/[sourceId]`.
 **Server modules.** `sources.ts`, `source-items.ts`, `templates.ts`,
 `parse-source-item.ts`, `process-source-item.ts`, `parsers/*`, `sync/*`,
 `providers/*`, `ingest/telegram.ts`, `r2/upload-source-item.ts`,
-`orchestration/*`, `pipeline-runs.ts`, `save-chat-session.ts`.
+`orchestration/*`, `pipeline-runs.ts`, `chat/ingest.ts` (AI chat segments).
 
 **Key rules.**
 - Credentials are write-only: encrypted on save, never sent back to the browser
@@ -439,8 +439,12 @@ Chat history (CH5): each user has a list of own chats in the panel header
 (`ai_chat_thread` / `ai_chat_message`) and loads the history itself — the browser
 sends only the new message; a chat continues after a reload; thumbs up / down on
 answers; chats with no message for 90 days are deleted by the daily pipeline.
-«Сохранить чат» (Save chat) stores the conversation as an `aichat` source item
-(to be replaced by automatic ingest, ai-chat CH6).
+The chat is a source of the org (CH6): after 30 quiet minutes the new messages
+of a chat become one source item of the «AI Chat» source (user messages first,
+AI answers quoted — never evidence; a gate model skips parts with no new
+business information); menu «…» → «Передать в источники сейчас» / «Не
+передавать в источники». In topics mode `on`, chat notes get signals only after
+the platform admin switch «Чат в сигналах».
 
 ## Notifications
 

@@ -78,6 +78,8 @@ export type OrgTopicsModeRow = {
   profile: { done: number; total: number; complete: boolean; missing: CompletenessItem[] }
   /** Identity I4 «Профиль в промптах» (`identity.promptContext`, default off). */
   promptContext: boolean
+  /** AI chat notes get signals in mode `on` (`topics.chatSignals`, docs/specs/ai-chat Q22). */
+  chatSignals: boolean
 }
 
 function asMode(v: unknown): TopicsMode | null {
@@ -86,16 +88,18 @@ function asMode(v: unknown): TopicsMode | null {
 
 /** Every org with its topics mode and the last change (admin «Темы» tab). */
 export async function listOrgTopicsModes(): Promise<OrgTopicsModeRow[]> {
-  const [orgs, stored, promptStored] = await Promise.all([
+  const [orgs, stored, promptStored, chatStored] = await Promise.all([
     db
       .select({ id: organization.id, name: organization.name, slug: organization.slug })
       .from(organization)
       .orderBy(asc(organization.name)),
     listOrgsWithSetting("topics.enabled"),
     listOrgsWithSetting("identity.promptContext"),
+    listOrgsWithSetting("topics.chatSignals"),
   ])
   const modes = new Map(stored.map((s) => [s.organizationId, s.value]))
   const promptContext = new Map(promptStored.map((s) => [s.organizationId, s.value]))
+  const chatSignals = new Map(chatStored.map((s) => [s.organizationId, s.value]))
   return Promise.all(
     orgs.map(async (o) => {
       const [[last], completeness] = await Promise.all([
@@ -117,6 +121,7 @@ export async function listOrgTopicsModes(): Promise<OrgTopicsModeRow[]> {
           : null,
         profile: profileSummary(completeness),
         promptContext: promptContext.get(o.id) ?? false,
+        chatSignals: chatSignals.get(o.id) ?? false,
       }
     }),
   )
@@ -129,6 +134,15 @@ export async function listOrgTopicsModes(): Promise<OrgTopicsModeRow[]> {
  */
 export async function setOrgPromptContext(organizationId: string, enabled: boolean, userId: string): Promise<boolean> {
   return setOrgSetting(organizationId, "identity.promptContext", enabled, userId)
+}
+
+/**
+ * «Чат в сигналах» (docs/specs/ai-chat Q22): AI chat notes of one org get
+ * signals in topics mode `on` (in `shadow` always). Switch on after the
+ * chat notes were checked (shadow review / golden set). Logged.
+ */
+export async function setOrgChatSignals(organizationId: string, enabled: boolean, userId: string): Promise<boolean> {
+  return setOrgSetting(organizationId, "topics.chatSignals", enabled, userId)
 }
 
 function profileSummary(c: Completeness): OrgTopicsModeRow["profile"] {

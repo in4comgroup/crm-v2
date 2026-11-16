@@ -1,4 +1,5 @@
 import "server-only"
+import { CHAT_NOTE_ENVELOPE } from "@/lib/chat/ingest"
 import { z } from "zod"
 import type { AntiCue } from "@/lib/signals/types"
 import { getTopicsOrgPrompt } from "@/server/identity/prompt-context"
@@ -341,6 +342,12 @@ export type ExtractionEnvelope = {
   counterpartyLine?: string | null
   forwardedBy?: string | null
   originalAuthor?: string | null
+  /**
+   * AI chat note (docs/specs/ai-chat §16.3, Q22): an employee relays to the
+   * chat what a counterparty said — read like a forward (`forwardedBy` = the
+   * employee, `originalAuthor` = the counterparty named in the text).
+   */
+  relayedNote?: boolean
   synthetic?: boolean
 }
 
@@ -360,6 +367,7 @@ export function buildItemPrompt(envelope: ExtractionEnvelope, text: string): str
   add("Переслал (наш сотрудник)", envelope.forwardedBy)
   add("Исходный автор", envelope.originalAuthor)
   add("Авторство (автопроверка)", envelope.orgAttribution)
+  if (envelope.relayedNote) env.push(`${CHAT_NOTE_ENVELOPE}. Ответы ИИ в цитате — не новая информация.`)
   if (envelope.allInternal) env.push("Внутренняя переписка (все участники — наши сотрудники)")
   if (envelope.synthetic) env.push("Тестовое сообщение: да")
   let body = text

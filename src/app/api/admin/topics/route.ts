@@ -8,6 +8,7 @@ import {
   listOrgTopicsModes,
   organizationExists,
   setOrgPromptContext,
+  setOrgChatSignals,
   setTopicsModeGated,
   type OrgTopicsModeRow,
   type TopicsMode,
@@ -23,6 +24,8 @@ import {
 //       spec I3): `shadow` / `on` need the org profile minimum; `override`
 //       with a reason ≥ 10 chars switches anyway (logged in org_setting_log
 //       as `topics.enabled.override`). 400 when the reason is too short.
+//   PUT { organizationId, chatSignals: boolean } (no `mode`) → «Чат в
+//       сигналах» (`topics.chatSignals`, docs/specs/ai-chat Q22).
 //   PUT { organizationId, promptContext: boolean } (no `mode`)
 //       → { organizationId, promptContext } — identity I4 «Профиль в
 //       промптах» (`identity.promptContext`, logged in org_setting_log).
@@ -50,6 +53,7 @@ export type AdminTopicsModeUpdateResponse = {
 }
 
 export type AdminTopicsPromptContextResponse = { organizationId: string; promptContext: boolean }
+export type AdminTopicsChatSignalsResponse = { organizationId: string; chatSignals: boolean }
 
 /** 409 / 400 body of the identity gate. */
 export type AdminTopicsModeGateError = { error: string; missing: CompletenessItem[] }
@@ -85,6 +89,22 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json(res)
     } catch (error) {
       console.error("[admin/topics] PUT promptContext error:", error)
+      return NextResponse.json({ error: "Failed to save the setting" }, { status: 500 })
+    }
+  }
+  // docs/specs/ai-chat Q22: the «Чат в сигналах» switch (no mode in the body).
+  if (organizationId && mode === undefined && typeof body?.chatSignals === "boolean") {
+    try {
+      if (!(await organizationExists(organizationId))) {
+        return NextResponse.json({ error: "Organization not found" }, { status: 404 })
+      }
+      const res: AdminTopicsChatSignalsResponse = {
+        organizationId,
+        chatSignals: await setOrgChatSignals(organizationId, body.chatSignals, auth.userId),
+      }
+      return NextResponse.json(res)
+    } catch (error) {
+      console.error("[admin/topics] PUT chatSignals error:", error)
       return NextResponse.json({ error: "Failed to save the setting" }, { status: 500 })
     }
   }

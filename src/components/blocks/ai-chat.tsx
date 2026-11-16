@@ -17,7 +17,7 @@ import {
   Component,
   type ReactNode,
 } from "react"
-import { CopyIcon, CheckIcon, Save, CircleAlert, Paperclip } from "lucide-react"
+import { CopyIcon, CheckIcon, CircleAlert, Paperclip } from "lucide-react"
 import { toast } from "sonner"
 import {
   useJsonRenderMessage,
@@ -43,7 +43,7 @@ import {
   type ChatMessageMetadata,
   type ChatThreadSummary,
 } from "@/lib/chat/thread"
-import { FeedbackButtons, ThreadControls } from "@/components/blocks/chat/thread-ui"
+import { ChatSourceMenu, FeedbackButtons, ThreadControls } from "@/components/blocks/chat/thread-ui"
 
 import {
   Conversation,
@@ -82,7 +82,6 @@ import {
   ModelSelectorLogo,
   ModelSelectorName,
 } from "@/components/ai-elements/model-selector"
-import { SaveChatDialog } from "@/components/blocks/save-chat-dialog"
 import { RecordsBlock } from "@/components/blocks/chat/records-block"
 import { StatsBlock } from "@/components/blocks/chat/stats-block"
 import {
@@ -162,7 +161,7 @@ function recallThread(): string | null {
   }
 }
 
-type OpenChat = { id: string; messages: UIMessage[]; saved: boolean }
+type OpenChat = { id: string; messages: UIMessage[]; saved: boolean; ingestOff: boolean }
 
 export function AIChat({ className, isAdmin = false }: { className?: string; isAdmin?: boolean }) {
   const { open: panelOpen } = useGlobalChat()
@@ -182,7 +181,7 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
   }, [])
 
   const newChat = useCallback(() => {
-    setCurrent({ id: crypto.randomUUID(), messages: [], saved: false })
+    setCurrent({ id: crypto.randomUUID(), messages: [], saved: false, ingestOff: false })
     rememberThread(null)
   }, [])
 
@@ -191,8 +190,8 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
       try {
         const r = await fetch(`/api/chat/threads/${encodeURIComponent(id)}`)
         if (!r.ok) throw new Error(String(r.status))
-        const data = (await r.json()) as { messages: UIMessage[] }
-        setCurrent({ id, messages: data.messages ?? [], saved: true })
+        const data = (await r.json()) as { messages: UIMessage[]; thread?: ChatThreadSummary }
+        setCurrent({ id, messages: data.messages ?? [], saved: true, ingestOff: data.thread?.ingestMode === "off" })
         rememberThread(id)
       } catch {
         toast.error("Не удалось открыть чат")
@@ -243,6 +242,36 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
     newChat()
   }, [current, newChat])
 
+  // «Не передавать в источники»: a chat not yet on the server keeps it
+  // locally and creates the thread with it on the first send.
+  const toggleIngest = useCallback(
+    async (off: boolean, onServer: boolean) => {
+      if (!current) return
+      if (onServer) {
+        const r = await fetch(`/api/chat/threads/${encodeURIComponent(current.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ingestMode: off ? "off" : "on" }),
+        }).catch(() => null)
+        if (!r?.ok) {
+          toast.error("Не удалось изменить настройку чата")
+          return
+        }
+      }
+      setCurrent((c) => (c && c.id === current.id ? { ...c, ingestOff: off } : c))
+      toast.success(off ? "Эта беседа не будет передаваться в источники" : "Беседа снова передаётся в источники")
+    },
+    [current],
+  )
+
+  const ingestNow = useCallback(async () => {
+    if (!current) return
+    const r = await fetch(`/api/chat/threads/${encodeURIComponent(current.id)}/ingest`, { method: "POST" }).catch(() => null)
+    const data = (await r?.json().catch(() => null)) as { message?: string; error?: string } | null
+    if (!r?.ok) toast.error(data?.error ?? "Не удалось передать чат в источники")
+    else toast.success(data?.message ?? "Передано в источники")
+  }, [current])
+
   if (!current) {
     return (
       <div
@@ -263,6 +292,16 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
       isAdmin={isAdmin}
       threadId={current.id}
       initialMessages={current.messages}
+      ingestOff={current.ingestOff}
+      renderMenu={({ busy, hasMessages }) => (
+        <ChatSourceMenu
+          ingestOff={current.ingestOff}
+          canIngestNow={current.saved || hasMessages}
+          disabled={busy}
+          onIngestNow={() => void ingestNow()}
+          onToggleIngest={(off) => void toggleIngest(off, current.saved || hasMessages)}
+        />
+      )}
       renderControls={({ busy, hasMessages }) => (
         <ThreadControls
           title={title}
@@ -296,14 +335,19 @@ function ChatSession({
   isAdmin,
   threadId,
   initialMessages,
+  ingestOff,
   renderControls,
+  renderMenu,
   onAnswered,
 }: {
   className?: string
   isAdmin: boolean
   threadId: string
   initialMessages: UIMessage[]
+  /** «Не передавать в источники» (sent when the first message creates the thread). */
+  ingestOff: boolean
   renderControls: (s: { busy: boolean; hasMessages: boolean }) => ReactNode
+  renderMenu: (s: { busy: boolean; hasMessages: boolean }) => ReactNode
   onAnswered: () => void
 }) {
   // Model picker only when the admin allowed more than one model (Q1).
@@ -317,10 +361,13 @@ function ChatSession({
   const showPicker = models.length > 1
 
   // Read at request time (ref) so the transport is created once.
-  const bodyRef = useRef<{ model: string | null | undefined }>({ model: selectedModel })
+  const bodyRef = useRef<{ model: string | null | undefined; ingestMode: "on" | "off" }>({
+    model: selectedModel,
+    ingestMode: ingestOff ? "off" : "on",
+  })
   useEffect(() => {
-    bodyRef.current = { model: showPicker ? selectedModel : undefined }
-  }, [selectedModel, showPicker])
+    bodyRef.current = { model: showPicker ? selectedModel : undefined, ingestMode: ingestOff ? "off" : "on" }
+  }, [selectedModel, showPicker, ingestOff])
 
   /* eslint-disable react-hooks/refs */
   const transport = useMemo(
@@ -459,19 +506,7 @@ function ChatSession({
             </ModelSelector>
           )}
 
-          {/* Replaced by automatic ingest + «Передать в источники сейчас» in CH6 (Q24). */}
-          {messages.length > 0 && (
-            <SaveChatDialog
-              messages={messages}
-              onSaved={() => {}}
-              trigger={
-                <Button variant="outline" size="sm" disabled={isLoading} className="gap-1">
-                  <Save className="size-4" />
-                  Сохранить чат
-                </Button>
-              }
-            />
-          )}
+          {renderMenu({ busy: isLoading, hasMessages: messages.length > 0 })}
         </div>
       </div>
 
@@ -481,7 +516,11 @@ function ChatSession({
           {messages.length === 0 ? (
             <ConversationEmptyState
               title=""
-              description="Спросите о клиентах, сделках, заказах, задачах, письмах или попросите статистику — я найду в CRM и, если нужно, в интернете."
+              description={
+                ingestOff
+                  ? "Спросите о клиентах, сделках, заказах, задачах, письмах или попросите статистику. Эта беседа не передаётся в источники."
+                  : "Спросите о клиентах, сделках, заказах, задачах, письмах или попросите статистику. Беседы с ИИ попадают в источники организации."
+              }
               icon={<BrandMark className="size-9 rounded-xl" />}
             />
           ) : (

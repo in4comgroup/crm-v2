@@ -45,6 +45,7 @@ import type {
   AdminTopicsModeUpdateResponse,
   AdminTopicsOrgsResponse,
   AdminTopicsPromptContextResponse,
+  AdminTopicsChatSignalsResponse,
 } from "@/app/api/admin/topics/route"
 import { COMPLETENESS_LABELS_RU, type CompletenessItem } from "@/lib/identity/org-profile"
 import { TOPICS_GATE_OVERRIDE_MIN_REASON } from "@/lib/identity/topics-gate"
@@ -192,6 +193,7 @@ export function AdminTopics() {
   const [orgsError, setOrgsError] = useState<string | null>(null)
   const [savingOrgId, setSavingOrgId] = useState<string | null>(null)
   const [savingPromptOrgId, setSavingPromptOrgId] = useState<string | null>(null)
+  const [savingChatOrgId, setSavingChatOrgId] = useState<string | null>(null)
   // Identity gate (identity spec I3): a 409 opens this dialog with the
   // missing profile items and the «Включить без профиля» override.
   const [gate, setGate] = useState<{
@@ -278,6 +280,30 @@ export function AdminTopics() {
       toast.error(`Не удалось сохранить режим: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSavingOrgId(null)
+    }
+  }
+
+  // docs/specs/ai-chat Q22 «Чат в сигналах» (`topics.chatSignals`).
+  const saveChatSignals = async (org: OrgRow, chatSignals: boolean) => {
+    setSavingChatOrgId(org.organizationId)
+    try {
+      const res = await fetch("/api/admin/topics", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId: org.organizationId, chatSignals }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
+      const saved = data as AdminTopicsChatSignalsResponse
+      setOrgs((prev) =>
+        prev?.map((o) => (o.organizationId === saved.organizationId ? { ...o, chatSignals: saved.chatSignals } : o)) ??
+        prev,
+      )
+      toast.success(`«${org.name}»: чат в сигналах ${saved.chatSignals ? "включён" : "выключен"}`)
+    } catch (e) {
+      toast.error(`Не удалось сохранить: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSavingChatOrgId(null)
     }
   }
 
@@ -381,7 +407,8 @@ export function AdminTopics() {
             Выключено — движок не работает. Тень — движок обрабатывает данные каждый час, но
             пользователи их не видят. Включено — темы видны организации. «Профиль в промптах» —
             профиль организации и профиль клиента в промптах тем (извлечение сигналов, сопоставление
-            тем, карточки, состояние сделки).
+            тем, карточки, состояние сделки). «Чат в сигналах» — заметки сотрудников из ИИ чата
+            дают сигналы в режиме «Включено» (в тени — всегда, для проверки).
           </p>
         </div>
         <Card className="py-0">
@@ -392,25 +419,26 @@ export function AdminTopics() {
                 <TableHead className="w-48">Режим</TableHead>
                 <TableHead className="w-32">Профиль</TableHead>
                 <TableHead className="w-44">Профиль в промптах</TableHead>
+                <TableHead className="w-40">Чат в сигналах</TableHead>
                 <TableHead>Последнее изменение</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {orgsError ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-red-500">
+                  <TableCell colSpan={6} className="py-10 text-center text-red-500">
                     Не удалось загрузить организации: {orgsError}
                   </TableCell>
                 </TableRow>
               ) : !orgs ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center">
+                  <TableCell colSpan={6} className="py-10 text-center">
                     <Loader className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
                   </TableCell>
                 </TableRow>
               ) : orgs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                     Организаций нет.
                   </TableCell>
                 </TableRow>
@@ -461,6 +489,20 @@ export function AdminTopics() {
                         )}
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">Включать после оценки на эталоне</div>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={o.chatSignals}
+                          onCheckedChange={(v) => void saveChatSignals(o, v)}
+                          disabled={savingChatOrgId === o.organizationId}
+                          aria-label={`Чат в сигналах: ${o.name}`}
+                        />
+                        {savingChatOrgId === o.organizationId && (
+                          <Loader className="h-4 w-4 animate-spin text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">Включать после проверки заметок в тени</div>
                     </TableCell>
                     <TableCell className="text-sm">
                       {o.lastChange ? (
@@ -632,7 +674,7 @@ export function AdminTopics() {
                       {open && (
                         <TableRow className={`hover:bg-transparent ${zebra}`}>
                           <TableCell />
-                          <TableCell colSpan={6} className="whitespace-normal pb-4">
+                          <TableCell colSpan={5} className="whitespace-normal pb-4">
                             <div className="flex flex-col gap-2">
                               {r.orgs.length === 0 ? (
                                 <div className="text-sm text-muted-foreground">

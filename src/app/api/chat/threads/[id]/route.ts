@@ -5,11 +5,12 @@ import {
   getChatThread,
   loadChatMessages,
   renameChatThread,
+  setChatThreadIngestMode,
 } from "@/server/chat/threads"
 
 // One chat of the signed-in user (docs/specs/ai-chat §16.1):
 //   GET    → { thread, messages } (UI messages, last 60; feedback in metadata)
-//   PATCH  { title } → rename
+//   PATCH  { title } → rename | { ingestMode: on|off } → «Не передавать в источники» (CH6)
 //   DELETE → «Удалить чат» (hidden at once; source items made from it stay, Q23)
 // Another user's chat — also of the same org — is 404, like a missing one.
 
@@ -41,15 +42,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const c = await context(params)
   if ("res" in c) return c.res
-  const body = (await req.json().catch(() => null)) as { title?: unknown } | null
-  const title = cleanThreadTitle(body?.title)
-  if (!title) return Response.json({ error: "Введите название чата" }, { status: 400 })
+  const body = (await req.json().catch(() => null)) as { title?: unknown; ingestMode?: unknown } | null
   try {
+    // «Не передавать в источники» (CH6, §16.3).
+    if (body?.ingestMode === "on" || body?.ingestMode === "off") {
+      if (!(await setChatThreadIngestMode(c.orgId, c.userId, c.id, body.ingestMode))) {
+        return Response.json(NOT_FOUND, { status: 404 })
+      }
+      return Response.json({ ok: true, ingestMode: body.ingestMode })
+    }
+    const title = cleanThreadTitle(body?.title)
+    if (!title) return Response.json({ error: "Введите название чата" }, { status: 400 })
     if (!(await renameChatThread(c.orgId, c.userId, c.id, title))) return Response.json(NOT_FOUND, { status: 404 })
     return Response.json({ ok: true, title })
   } catch (error) {
-    console.error("[chat/threads] rename failed", error)
-    return Response.json({ error: "Не удалось переименовать чат" }, { status: 500 })
+    console.error("[chat/threads] update failed", error)
+    return Response.json({ error: "Не удалось изменить чат" }, { status: 500 })
   }
 }
 

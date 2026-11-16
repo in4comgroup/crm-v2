@@ -5,7 +5,7 @@
 // thumbs up / down of an answer (Q14).
 import { useState } from "react"
 import { toast } from "sonner"
-import { Check, ChevronDown, History, Pencil, Plus, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react"
+import { Check, ChevronDown, History, MoreHorizontal, Pencil, Plus, Send, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react"
 import { MessageAction } from "@/components/ai-elements/message"
 import {
   AlertDialog,
@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -270,5 +271,49 @@ export function FeedbackButtons({
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * The chat as a source (docs/specs/ai-chat §16.3, Q21, Q24): «Передать в
+ * источники сейчас» and the per-chat switch «Не передавать в источники».
+ */
+export function ChatSourceMenu({
+  ingestOff,
+  canIngestNow,
+  disabled,
+  onIngestNow,
+  onToggleIngest,
+}: {
+  ingestOff: boolean
+  /** The chat has messages on the server. */
+  canIngestNow: boolean
+  disabled: boolean
+  onIngestNow: () => void
+  onToggleIngest: (off: boolean) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" disabled={disabled} aria-label="Чат и источники" title="Чат и источники">
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuItem disabled={ingestOff || !canIngestNow} onSelect={onIngestNow}>
+          <Send className="size-4" />
+          Передать в источники сейчас
+        </DropdownMenuItem>
+        <DropdownMenuCheckboxItem checked={ingestOff} onCheckedChange={(v) => onToggleIngest(v === true)}>
+          Не передавать в источники
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuSeparator />
+        <p className="text-muted-foreground px-2 py-1.5 text-xs leading-snug">
+          {ingestOff
+            ? "Эта беседа не передаётся в источники организации."
+            : "Ваши сообщения из этой беседы попадают в источники организации (раздел «Источники»), из них — в темы и сделки. Ответы ИИ новой информацией не считаются."}
+        </p>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

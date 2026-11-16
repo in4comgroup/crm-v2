@@ -2,7 +2,7 @@
 
 The global AI chat panel «ИИ чат» (AI chat), opened from the header of every page: answers on the model the admin set for the process, web search for any model, one read-only search over all CRM records of the org (clients, contacts, deals, products, tasks, orders, source items, topics, cards), app-rendered lists, record details and statistics (chart + table), a status line instead of internal steps, chat history, the chat as a source of the org (user statements → topics and deals), and the library upgrade it needs (AI SDK 7, json-render 0.23, Streamdown 2.7, TanStack Table 9).
 
-Status: **spec 2026-11-16** — all questions Q1–Q24 decided. **CH0 (library upgrade), CH1 (records engine), CH2 (web-search privacy, monthly limit stop), CH3 (statistics, records + stats views) CH4 (chat v2 route + UI, replaces v1) and CH5 (chat history: migration `0042`, chat list, thumbs) built 2026-11-16** ([02-libraries.md](02-libraries.md) §8, [04-development-plan.md](04-development-plan.md) § CH1–CH5 result); CH6–CH8 open.
+Status: **spec 2026-11-16** — all questions Q1–Q24 decided. **CH0 (library upgrade), CH1 (records engine), CH2 (web-search privacy, monthly limit stop), CH3 (statistics, records + stats views) CH4 (chat v2 route + UI, replaces v1) CH5 (chat history: migration `0042`, chat list, thumbs) and CH6 (the chat as a source of the org) built 2026-11-16** ([02-libraries.md](02-libraries.md) §8, [04-development-plan.md](04-development-plan.md) § CH1–CH6 result; build decision Q25 in [03](03-open-questions.md) §2); CH7–CH8 open.
 
 | File | Content |
 |---|---|

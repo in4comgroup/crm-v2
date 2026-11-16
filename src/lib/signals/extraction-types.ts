@@ -47,6 +47,7 @@ export const SIGNAL_SKIP_REASONS = {
   bounce: "Недоставленное письмо",
   out_of_office: "Автоответ «нет на месте»",
   calendar_reply: "Ответ на приглашение",
+  no_new_info: "ИИ чат: нет новой информации от сотрудника",
 } as const
 export type SignalSkipReason = keyof typeof SIGNAL_SKIP_REASONS
 

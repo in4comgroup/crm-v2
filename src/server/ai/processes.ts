@@ -76,10 +76,11 @@ const DEFINITIONS = [
   },
   {
     key: "chat.session_analysis",
-    label: "Сохранение чата",
+    label: "ИИ чат → источники",
     group: "Чат и ассистенты",
-    description: "Анализ диалога при сохранении чата в источники.",
-    kind: "interactive",
+    description:
+      "Анализ части беседы с ИИ чатом перед передачей в источники: есть ли новая деловая информация от сотрудника, факты, от кого она.",
+    kind: "background",
     requires: ["structured_output"],
     defaultModelId: FLASH_LITE,
   },

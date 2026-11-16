@@ -430,9 +430,9 @@ export async function updateOwnerOrgSourceCredentials(
 
 // ── Lazy provisioning of internal sources ────────────────────────────
 
-// Look up (or insert on first call) the per-org "AI Chat" source. Used
-// by `/api/sources/aichat/save` so users don't need an admin step before
-// hitting the Save Chat button on /dashboard.
+// Look up (or insert on first call) the per-org "AI Chat" source. Used by
+// the AI chat ingest (`src/server/chat/ingest.ts`, docs/specs/ai-chat §16.3)
+// so no admin step is needed before a chat becomes a source.
 //
 // Phase 2: this is now a thin wrapper around `instantiateFromTemplate`
 // — it finds the active aichat template (`provider='aichat'`,

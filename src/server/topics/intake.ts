@@ -10,6 +10,7 @@ import { syncSource } from "@/server/sync"
 import type { TopicsPhaseContext, TopicsPhaseResult } from "@/server/topics/phases"
 import { signalHistoryStart } from "@/server/topics/signals/runner"
 import { backfillThreadKeys } from "@/server/topics/thread-key-backfill"
+import { ingestDueChatThreads } from "@/server/chat/ingest"
 import { mapPool } from "@/server/topics/signals/item-input"
 import { uploadSourceItem } from "@/server/upload-source-item"
 
@@ -79,7 +80,25 @@ export async function runIntakePhase(ctx: TopicsPhaseContext): Promise<TopicsPha
     uploadFailed: 0,
     threadKeysFilled: 0,
     threadKeysRemaining: 0,
+    chatThreads: 0,
+    chatIngested: 0,
+    chatNewInfo: 0,
+    chatFailed: 0,
   }
+
+  // 0. AI chat segments → source items of the «AI Chat» source (docs/specs/
+  //    ai-chat §16.3): before «signals», so a note gets signals in this run.
+  try {
+    const chat = await ingestDueChatThreads(orgId)
+    counts.chatThreads = chat.threads
+    counts.chatIngested = chat.ingested
+    counts.chatNewInfo = chat.newInfo
+    counts.chatFailed = chat.failed
+  } catch (e) {
+    counts.chatFailed++
+    console.error("[topics/intake] chat ingest failed", orgId, message(e))
+  }
+
   for (const s of sources) {
     try {
       const r = await syncSource(s.id)

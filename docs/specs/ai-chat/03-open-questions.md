@@ -1,6 +1,6 @@
 # 03 — Questions and decisions
 
-All questions are decided. New questions found during the build are added here as Q25+.
+All questions are decided. New questions found during the build are added here as Q25+ (§2).
 
 ## 1. Decisions (2026-11-16, product owner)
 
@@ -30,3 +30,9 @@ All questions are decided. New questions found during the build are added here a
 | Q22 | How topics read a user's statement about a counterparty | Like a relayed message: reuse the forward model of the extractor (`forwardedBy` = the user, original author = the counterparty), so inbound codes can fire; golden-set check before topics mode `on` uses it | 01 §16.3 |
 | Q23 | A user deletes a chat | Source items already made from it stay (org data) | 01 §16.3 |
 | Q24 | The «Сохранить чат» button | Replaced by a small menu item «Передать в источники сейчас» (ingest now, no dialog) | 01 §16.1 |
+
+## 2. Decisions made during the build
+
+| # | Question | Decision | Where |
+|---|---|---|---|
+| Q25 | How is «golden-set check before topics mode `on` uses chat notes» (Q22) enforced? | Build decision 2026-11-16 (CH6), the product owner may change it: chat notes get signals in mode `shadow` always (users see nothing; the admin reviews them in «Сигналы сообщений»), in mode `on` only after the platform admin switch «Чат в сигналах» (`org_setting` `topics.chatSignals`, default **off**). Notes are ingested as source items in every mode. | 01 §16.3, 04 § CH6 result |

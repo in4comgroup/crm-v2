@@ -222,7 +222,15 @@ export function envelopeFromItem(item: {
   let forwardedBy: string | null = null
   let originalAuthor: string | null = null
   const tgOrigin = tg.forwardOrigin ?? tg.forward_origin ?? null
-  if (tgOrigin) {
+  // AI chat note (docs/specs/ai-chat §16.3, Q22): the employee relays what a
+  // counterparty said → like a forward; the counterparty from the gate model.
+  const chatNote = item.provider === "aichat" && m.chatNote && typeof m.chatNote === "object"
+    ? (m.chatNote as { relayedFrom?: unknown })
+    : null
+  if (chatNote) {
+    forwardedBy = from
+    originalAuthor = str(chatNote.relayedFrom) ?? "не указан"
+  } else if (tgOrigin) {
     forwardedBy = from
     originalAuthor = telegramForwardAuthor(tgOrigin) ?? "скрыт"
   } else if (text && (item.provider === "nylas" || item.provider === "imap")) {
@@ -246,6 +254,7 @@ export function envelopeFromItem(item: {
     allInternal: storedAllInternal(item.metadataJson) === true && !forwardedBy && !originalAuthor,
     forwardedBy,
     originalAuthor,
+    ...(chatNote ? { relayedNote: true } : {}),
   }
 }
 

@@ -6,6 +6,7 @@ import { db } from "@/db/drizzle"
 import { pipelineRun, sourceItem, type PipelineRunTrigger } from "@/db/schema"
 import { parseSourceItem } from "@/server/parse-source-item"
 import { purgeChatThreads } from "@/server/chat/threads"
+import { ingestDueChatThreads } from "@/server/chat/ingest"
 import { uploadSourceItem } from "@/server/upload-source-item"
 import { runFullSync } from "./run-full-sync"
 import {
@@ -123,6 +124,17 @@ export async function runDailyPipeline(
     })
   }
 
+  // AI chat as a source (docs/specs/ai-chat §16.3): due chat segments of
+  // every org → source items (orgs in topics `shadow` / `on` get them hourly
+  // too; the external id makes a double run harmless). Before retention, so
+  // a deleted thread's last segment is not lost. Isolated.
+  try {
+    const chat = await ingestDueChatThreads(null, { maxThreads: 500 })
+    if (chat.threads) console.log(`[daily] AI chat segments: ${chat.ingested} of ${chat.threads} threads`)
+    if (chat.failed) pushError(errors, { phase: "catalog", message: `chat ingest: ${chat.failed} thread(s) failed` })
+  } catch (e) {
+    pushError(errors, { phase: "catalog", message: `chat ingest: ${e instanceof Error ? e.message : String(e)}` })
+  }
   // AI chat history retention (docs/specs/ai-chat §16.1): threads with no
   // message for 90 days, and threads the user deleted, are removed. Isolated.
   try {

@@ -12,7 +12,7 @@ import { getHandler } from "@/server/providers/handlers"
 // throws with a clear message instead of silently no-op'ing. Their
 // items arrive via dedicated upload routes
 // (`/api/sources/{dropoff,whatsapp}/upload`) or are written directly at
-// save time (aichat via `save-chat-session`).
+// ingest time (aichat segments via `src/server/chat/ingest.ts`).
 export async function syncSource(
   sourceId: string,
   opts?: SyncOptions,

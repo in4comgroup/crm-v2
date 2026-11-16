@@ -405,9 +405,9 @@ function dispatchParse(ctx: ParseContext): Promise<ParseResult> {
       // old rows without bytes cannot be re-parsed (see parseDropoffItem).
       return parseDropoffItem(ctx)
     case "aichat":
-      // AI-chat sessions arrive pre-parsed at save time (Save Chat button
-      // on /dashboard runs `saveChatSession()` which inserts the row
-      // with parseStatus='complete' and analysis already on metadata_json).
+      // AI-chat segments arrive pre-parsed at ingest time
+      // (`src/server/chat/ingest.ts` inserts the row with
+      // parseStatus='complete' and the analysis already on metadata_json).
       // The unified parse pipeline has nothing to re-run for them.
       throw new Error(
         "AI-chat session items are saved pre-parsed via the dashboard Save Chat button; nothing to re-parse",

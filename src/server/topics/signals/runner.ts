@@ -1,9 +1,10 @@
 import "server-only"
 
-import { and, asc, eq, gte, isNull, lt, or, sql } from "drizzle-orm"
+import { and, asc, eq, gte, isNull, lt, ne, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { sourceItem } from "@/db/schema"
 import { getOrgBudgetStatus } from "@/server/ai/budget"
+import { getOrgSetting } from "@/server/org-settings"
 import { ORCHESTRATION_CONFIG } from "@/server/orchestration/config"
 import { getTopicsStartedAt } from "@/server/topics/mode"
 import { SignalsNotEnabledError } from "@/server/topics/prompt/extraction"
@@ -31,12 +32,23 @@ export async function countPendingSignalItems(orgId: string, since: Date): Promi
   const [r] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(sourceItem)
-    .where(eligibleWhere(orgId, since))
+    .where(eligibleWhere(orgId, since, true))
   return r?.n ?? 0
 }
 
-function eligibleWhere(orgId: string, since: Date) {
+/**
+ * AI chat notes (docs/specs/ai-chat Q22) get signals in mode `shadow`
+ * (users see nothing — the admin reviews them) and in mode `on` only after
+ * the platform admin switch «Чат в сигналах» (`topics.chatSignals`).
+ */
+export async function chatNotesGetSignals(orgId: string, mode: string): Promise<boolean> {
+  if (mode === "shadow") return true
+  return getOrgSetting(orgId, "topics.chatSignals").catch(() => false)
+}
+
+function eligibleWhere(orgId: string, since: Date, includeChat: boolean) {
   return and(
+    includeChat ? undefined : ne(sourceItem.externalType, "aichat_session"),
     eq(sourceItem.organizationId, orgId),
     isNull(sourceItem.parentSourceItemId),
     eq(sourceItem.parseStatus, "complete"),
@@ -75,7 +87,7 @@ export async function runSignalsPhase(ctx: TopicsPhaseContext): Promise<TopicsPh
   const ids = await db
     .select({ id: sourceItem.id })
     .from(sourceItem)
-    .where(eligibleWhere(orgId, since))
+    .where(eligibleWhere(orgId, since, await chatNotesGetSignals(orgId, ctx.mode)))
     .orderBy(asc(sql`coalesce(${sourceItem.sourceCreatedAt}, ${sourceItem.createdAt})`), asc(sourceItem.id))
     .limit(ORCHESTRATION_CONFIG.topics.maxItemsPerOrgPerRun)
   if (ids.length === 0) return { eligible: 0 }

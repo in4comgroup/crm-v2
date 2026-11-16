@@ -1,7 +1,7 @@
 import { createElement, type ReactElement } from "react"
 import { renderToReadableStream } from "react-dom/server"
 import { describe, expect, test } from "vitest"
-import { FeedbackButtons, ThreadControls } from "./thread-ui"
+import { ChatSourceMenu, FeedbackButtons, ThreadControls } from "./thread-ui"
 
 async function render(el: ReactElement): Promise<string> {
   const s = await renderToReadableStream(el)
@@ -40,5 +40,12 @@ describe("chat history controls", () => {
     const html = await render(createElement(FeedbackButtons, { messageId: "m1", initial: "down" }))
     expect((html.match(/fill-current/g) ?? []).length).toBe(1)
     expect(html).not.toContain("Что не так с ответом?")
+  })
+
+  test("source menu trigger renders (content opens on click)", async () => {
+    const html = await render(
+      createElement(ChatSourceMenu, { ingestOff: false, canIngestNow: true, disabled: false, onIngestNow: () => {}, onToggleIngest: () => {} }),
+    )
+    expect(html).toContain('aria-label="Чат и источники"')
   })
 })

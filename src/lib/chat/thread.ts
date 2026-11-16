@@ -109,6 +109,8 @@ export type ChatThreadSummary = {
   title: string
   createdAt: string
   lastMessageAt: string
+  /** CH6: off = «Не передавать в источники». */
+  ingestMode?: "on" | "off"
 }
 
 export type ChatFeedback = "up" | "down"

@@ -161,7 +161,8 @@ are not needed to build a DB.
   `src/server/orchestration/config.ts`; change both together. Set
   `CRON_SECRET` as a Vercel env var — Vercel then sends the bearer header.
   The daily run first syncs the AI model catalog (prices) and fetches exact
-  costs still missing in the AI usage ledger, deletes AI chat threads with no
+  costs still missing in the AI usage ledger, turns due AI chat segments into
+  source items, deletes AI chat threads with no
   message for 90 days (and threads users deleted ≥ 2 days ago), then runs
   sync → parse → upload. When the cron did not run (local dev, a failed run), use
   `/settings` → «Использование ИИ» → «Синхронизировать цены и стоимость»

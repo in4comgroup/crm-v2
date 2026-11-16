@@ -49,6 +49,8 @@ type ChatRequest = {
   message?: UIMessage
   /** "regenerate-message" = «Повторить»: answer the last user message again. */
   trigger?: string
+  /** «Не передавать в источники» chosen before the first message (used only when the thread is created). */
+  ingestMode?: string
   /** A model id from GET /api/ai/models?process=chat.assistant; others are ignored by the runtime. */
   model?: string
   /** Address of the page the user is on (Q12), e.g. "/clients/abc". */
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
 
   // History (§16.1): the thread is the user's own in the active org; the
   // user message is stored BEFORE the model call.
-  const thread = await ensureChatThread(orgId, userId, chatId, threadTitle(userMessage?.text))
+  const thread = await ensureChatThread(orgId, userId, chatId, threadTitle(userMessage?.text), body.ingestMode === "off" ? "off" : "on")
   if (!thread) return Response.json({ error: "chat_not_found" }, { status: 404 })
   const lastLeft = regenerate ? await dropTrailingAssistant(chatId) : null
   if (userMessage && (!regenerate || lastLeft !== "user")) {

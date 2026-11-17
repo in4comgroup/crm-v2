@@ -39,7 +39,8 @@ import { userCardFilter } from "@/server/topics/cards/visibility"
 //   • задачи компании (task.updated_at);
 //   • сделки компании (deal.updated_at — переходы стадий, правки);
 //   • заказы компании (order.updated_at);
-//   • контакты компании (contact.updated_at — парсер дописывает их из писем).
+//   • контакты компании (contact.updated_at — парсер дописывает их из писем);
+//   • сообщения Telegram о компании (единое правило, docs/specs/telegram/04 §8).
 // Org-скоуп — явным аргументом; вызывающий уже проверил сессию.
 export async function loadClientLastActivity(
   organizationId: string,
@@ -138,7 +139,32 @@ export async function loadClientLastActivity(
     for (const r of rows) bump(r.clientId, r.at)
   }
   await bumpFromSourceParticipants(organizationId, ids, bump)
+  await bumpFromTelegram(organizationId, ids, bump)
   return out
+}
+
+// Telegram messages (docs/specs/telegram/04 §8.3): the companies of the ONE
+// rule's result (`metadata_json.telegram.resolved.counterpartyClientIds`).
+async function bumpFromTelegram(
+  organizationId: string,
+  clientIds: string[],
+  bump: (clientId: string | null, at: Date | string | null) => void,
+) {
+  const rows = await db.execute<{ client_id: string; at: string | null }>(sql`
+    SELECT c.client_id, max(si.source_created_at) AS at
+    FROM source_item si,
+      jsonb_array_elements_text(
+        CASE WHEN jsonb_typeof(si.metadata_json->'telegram'->'resolved'->'counterpartyClientIds') = 'array'
+          THEN si.metadata_json->'telegram'->'resolved'->'counterpartyClientIds' ELSE '[]'::jsonb END
+      ) AS c(client_id)
+    WHERE si.organization_id = ${organizationId}
+      AND si.parent_source_item_id IS NULL
+      AND si.source_created_at IS NOT NULL
+      AND si.metadata_json->'telegram'->'resolved' IS NOT NULL
+      AND c.client_id IN (${sql.join(clientIds.map((id) => sql`${id}`), sql`, `)})
+    GROUP BY 1
+  `)
+  for (const r of rows.rows) bump(r.client_id, r.at)
 }
 
 // Последняя дата сообщения по каждому email-участнику исходников орги →

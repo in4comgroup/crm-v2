@@ -3883,8 +3883,14 @@ export const contactAddress = pgTable(
     // active | old
     status: text("status").notNull().default("active"),
     clientId: text("client_id").references(() => client.id, { onDelete: "set null" }),
-    // manual | proposal | merge | discovery
+    // manual | proposal | merge | discovery | learned (Telegram id from a message) | contact_card (Telegram contact card)
     source: text("source").notNull().default("manual"),
+    // Kind telegram (docs/specs/telegram/04 §6): the numeric Telegram user id
+    // (never changes; the username can). `value` = the username without «@»,
+    // or «tg:<id>» for a person with no username.
+    externalId: text("external_id"),
+    // A person confirmed the id («Связать с контактом») or a contact card gave it.
+    verifiedAt: timestamp("verified_at"),
     firstSeenAt: timestamp("first_seen_at"),
     lastSeenAt: timestamp("last_seen_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -3892,6 +3898,9 @@ export const contactAddress = pgTable(
   (table) => [
     uniqueIndex("contact_address_contact_value_uq").on(table.contactId, table.kind, table.value),
     index("contact_address_org_value_idx").on(table.organizationId, table.kind, table.value),
+    index("contact_address_org_external_idx")
+      .on(table.organizationId, table.kind, table.externalId)
+      .where(sql`${table.externalId} is not null`),
   ],
 )
 

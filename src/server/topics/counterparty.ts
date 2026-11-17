@@ -118,6 +118,8 @@ export type ItemPeer = {
   name: string | null
   /** Telegram username without «@». */
   handle: string | null
+  /** Telegram: the contact found by the ONE rule (`metadata_json.telegram.resolved`, docs/specs/telegram/04 §8) — wins over handle / name. */
+  contactId?: string | null
 }
 
 export type ResolvedCounterparty = {
@@ -183,7 +185,8 @@ export function resolveCounterparty(
   // contact only if the peer belongs to that client.
   if (peer && !(clientId && contactId)) {
     let pc: string | null = null
-    if (peer.email) pc = unique(idx.contactsByEmail.get(peer.email.trim().toLowerCase()))
+    if (peer.contactId && idx.contacts.has(peer.contactId)) pc = peer.contactId
+    if (!pc && peer.email) pc = unique(idx.contactsByEmail.get(peer.email.trim().toLowerCase()))
     if (!pc && peer.handle) pc = unique(idx.contactsByHandle.get(peer.handle.toLowerCase()))
     if (!pc && peer.name) pc = unique(idx.contactsByPersonKey.get(personMatchKey(peer.name)))
     const p = pc ? idx.contacts.get(pc)! : null

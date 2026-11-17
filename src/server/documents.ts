@@ -1,5 +1,7 @@
 import "server-only"
 
+import { readTelegramResolved } from "@/lib/telegram/resolve"
+
 // Documents of CRM entities (docs/specs/attachments/01-specification.md).
 // Org-explicit core functions + the session gate `documentsSession()`.
 //   - storeDocumentFile: original bytes → storage (`source_item.file_*`, Q1, 50 MB)
@@ -346,7 +348,14 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
   // Telegram (docs/specs/telegram §4.3, Q11 / Q14): the author by Telegram
   // name — for a forward the ORIGINAL author; our member (the «us» registry)
   // never; a contact by alias «@name» or «Адреса» → Telegram (unique hit).
-  const tgHandle = telegramAuthorHandle(pm)
+  // The ONE rule (docs/specs/telegram/04 §8.3) first: a resolved author contact
+  // (by id or name) + its company; a member never. Older items: by name.
+  const tgResolved = readTelegramResolved(pm)
+  const tgHandle = tgResolved ? null : telegramAuthorHandle(pm)
+  if (tgResolved?.author.kind === "contact" && tgResolved.author.contactId) {
+    const cid = tgResolved.author.contactId
+    if (!participants.some((p) => p.contactId === cid)) participants.push({ contactId: cid, clientId: tgResolved.counterpartyClientIds[0] ?? null, role: "sender" })
+  }
   if (tgHandle && !own.identity.staffTelegram.includes(tgHandle)) {
     const hit = await contactByTelegramHandle(orgId, tgHandle)
     if (hit && !participants.some((p) => p.contactId === hit.id)) {

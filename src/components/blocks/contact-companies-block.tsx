@@ -65,7 +65,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { ParsedMarkdownDialog } from "@/components/blocks/parsed-markdown-dialog"
+import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 import { cn } from "@/lib/utils"
+import { telegramAddressLabel } from "@/lib/telegram/resolve"
 import {
   ADDRESS_KINDS,
   ADDRESS_KIND_LABELS,
@@ -1268,8 +1270,9 @@ function AddressesSection({
                   a.status === "old" && "text-muted-foreground line-through decoration-muted-foreground/40",
                 )}
               >
-                {a.value}
+                {a.kind === "telegram" ? telegramAddressLabel(a.value) : a.value}
               </span>
+              {a.kind === "telegram" && a.telegramId && <TelegramIdBadge verified={!!a.verified} />}
               {a.status === "old" && (
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                   старый
@@ -1375,6 +1378,23 @@ function AddressesSection({
         </div>
       )}
     </section>
+  )
+}
+
+// «id»: the Telegram address carries the numeric Telegram id
+// (docs/specs/telegram/04 §6.1–§6.2).
+function TelegramIdBadge({ verified }: { verified: boolean }) {
+  const tip = useAnchorTooltip()
+  const text = verified
+    ? "Telegram id подтверждён — сообщения связываются, даже если человек сменит имя пользователя"
+    : "Telegram id найден по сообщению"
+  return (
+    <>
+      <Badge variant="outline" className="text-[10px] px-1.5 py-0" aria-label={text} {...tip.bind}>
+        id
+      </Badge>
+      <AnchorTooltip text={text} open={tip.open} virtualRef={tip.virtualRef} />
+    </>
   )
 }
 

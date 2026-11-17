@@ -3,6 +3,8 @@ import "server-only"
 import { randomUUID } from "node:crypto"
 import { and, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
+import { loadTelegramDirectory, resolveInputOf, stampTelegramResolved } from "@/server/telegram/directory"
+import { resolveTelegramMessage, type TelegramDirectory, type TgPerson } from "@/lib/telegram/resolve"
 import {
   signalInstance,
   source,
@@ -280,6 +282,11 @@ type ParseContext = {
   // telegram §4.6), else by `markParsed`.
   orgAttributionValue?: OrgAttribution
   primedAttribution?: OrgAttributionResult
+  // Telegram (docs/specs/telegram/04 §8, TI1): the org's Telegram directory of
+  // this parse, and «the author is our member by a VERIFIED binding id» for
+  // the attribution (rule 1d0, before the typed-handle rule 1d).
+  telegramDirectory?: TelegramDirectory
+  telegramStaffVia?: "staff_binding" | null
   // Who every model call of this parse is for: the item's organization +
   // the signed-in user on manual paths (null for cron / webhook).
   ai: ParserAiContext
@@ -1146,8 +1153,35 @@ async function parseWhatsAppItem(ctx: ParseContext): Promise<ParseResult> {
 // `metadata_json.rawText` (stamped by the webhook ingest). Like WhatsApp,
 // parse is a pure local render + one LLM metadata pass — no remote API to
 // call. Phase 1 produces no children (attachments land in Phase 2).
+/**
+ * The author of a Telegram item by the ONE rule (docs/specs/telegram/04 §8):
+ * loads the org's directory once per parse; a member found by a binding id
+ * makes the attribution `own_org` (rule 1d0). Best effort.
+ */
+async function prepareTelegramIdentity(ctx: ParseContext): Promise<void> {
+  if (!ctx.organizationId) return
+  try {
+    ctx.telegramDirectory = await loadTelegramDirectory(ctx.organizationId)
+    const { resolved } = resolveTelegramMessage(resolveInputOf(ctx.metadataJson), ctx.telegramDirectory)
+    ctx.telegramStaffVia = resolved.author.kind === "member" && resolved.author.via === "staff_binding" ? "staff_binding" : null
+  } catch (err) {
+    console.warn(`[parse] telegram identity of ${ctx.itemId} failed:`, err)
+  }
+}
+
+/** After the parse: store `metadata_json.telegram.resolved` + learn ids (§6.2). Best effort. */
+async function finishTelegramIdentity(ctx: ParseContext, groupPeer: TgPerson | null): Promise<void> {
+  if (!ctx.organizationId) return
+  try {
+    await stampTelegramResolved(ctx.organizationId, ctx.itemId, ctx.metadataJson, ctx.telegramDirectory, groupPeer)
+  } catch (err) {
+    console.warn(`[parse] telegram resolution of ${ctx.itemId} failed:`, err)
+  }
+}
+
 async function parseTelegramItem(ctx: ParseContext): Promise<ParseResult> {
   const meta = ctx.metadataJson
+  await prepareTelegramIdentity(ctx)
 
   // Voice / audio message: the bytes aren't in the DB — re-resolve them from
   // the stored Telegram `file_id` and run them through the audio parser. The
@@ -1206,7 +1240,8 @@ async function parseTelegramItem(ctx: ParseContext): Promise<ParseResult> {
   }
 
   await markParsed(ctx, parsed.markdown, parsed.analysis, parsed.parserModel)
-  await stampTelegramGroupPeer(ctx)
+  const groupPeer = await stampTelegramGroupPeer(ctx)
+  await finishTelegramIdentity(ctx, groupPeer)
 
   return {
     parentStatus: "complete",
@@ -1222,15 +1257,15 @@ async function parseTelegramItem(ctx: ParseContext): Promise<ParseResult> {
 // `metadata_json.telegram.groupPeer` = the author of the latest earlier
 // non-own message of the same chat (≤ 7 days), so the topics matcher uses it
 // like the first recipient of an outbound mail. Best effort.
-async function stampTelegramGroupPeer(ctx: ParseContext): Promise<void> {
+async function stampTelegramGroupPeer(ctx: ParseContext): Promise<TgPerson | null> {
   try {
     const tg = (ctx.metadataJson.telegram ?? {}) as Record<string, unknown>
-    if (tg.chatType !== "group" && tg.chatType !== "supergroup") return
+    if (tg.chatType !== "group" && tg.chatType !== "supergroup") return null
     const [self] = await db
       .select({ attribution: sourceItem.orgAttribution, at: sourceItem.sourceCreatedAt })
       .from(sourceItem)
       .where(eq(sourceItem.id, ctx.itemId))
-    if (!self || self.attribution !== "own_org" || !ctx.threadExternalId) return
+    if (!self || self.attribution !== "own_org" || !ctx.threadExternalId) return null
     const at = self.at ?? new Date()
     const [prev] = await db
       .select({ meta: sourceItem.metadataJson })
@@ -1249,13 +1284,16 @@ async function stampTelegramGroupPeer(ctx: ParseContext): Promise<void> {
       .orderBy(desc(sourceItem.sourceCreatedAt))
       .limit(1)
     const from = ((prev?.meta as Record<string, unknown> | undefined)?.telegram as Record<string, unknown> | undefined)?.from
-    if (!from || typeof from !== "object") return
+    if (!from || typeof from !== "object") return null
     await db
       .update(sourceItem)
       .set({ metadataJson: sql`jsonb_set(${sourceItem.metadataJson}, '{telegram,groupPeer}', ${JSON.stringify(from)}::jsonb, true)` })
       .where(eq(sourceItem.id, ctx.itemId))
+    const f = from as { id?: number | string; username?: string | null; firstName?: string | null; lastName?: string | null }
+    return { id: f.id != null ? String(f.id) : null, username: f.username ?? null, name: [f.firstName, f.lastName].filter(Boolean).join(" ") || null }
   } catch (err) {
     console.warn(`[parse] telegram group peer of ${ctx.itemId} failed:`, err)
+    return null
   }
 }
 
@@ -1339,6 +1377,7 @@ async function parseTelegramVoiceItem(
   ctx: ParseContext,
   media: TelegramMediaMeta,
 ): Promise<ParseResult> {
+  await prepareTelegramIdentity(ctx)
   const creds = getTelegramCredentials(ctx.sourceId, ctx.credentialsRef)
   const { bytes } = await downloadTelegramFile(creds.botToken, media.fileId)
 
@@ -1376,6 +1415,7 @@ async function parseTelegramVoiceItem(
     parsed.parserModel,
     metadataPatch,
   )
+  await finishTelegramIdentity(ctx, await stampTelegramGroupPeer(ctx))
 
   return {
     parentStatus: "complete",
@@ -1767,6 +1807,7 @@ async function computeOrgAttribution(
   const result = await resolveOrgAttribution({
     authorEmails,
     authorTelegram: extractAuthorTelegramHandle(ctx.metadataJson),
+    authorTelegramStaffVia: ctx.telegramStaffVia ?? null,
     contentHaystack: markdown,
     orgIdentity,
     organizationId: ctx.organizationId,

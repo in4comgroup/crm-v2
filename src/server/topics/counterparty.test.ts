@@ -33,6 +33,14 @@ describe("counterparty resolution (spec §6.2 step 1)", () => {
     expect(resolveCounterparty("Квант-Сервис", null, idx).clientId).toBeNull()
   })
 
+  it("Telegram: the contact of the ONE rule (peer.contactId) wins over the name / handle (telegram/04 §8.3)", () => {
+    const r = resolveCounterparty("какая-то фирма", { email: null, name: "Иван Петров", handle: "someone_else", contactId: "p-anna" }, idx)
+    expect(r).toMatchObject({ clientId: "c-acme", contactId: "p-anna" })
+    expect(r.via).toContain("peer_contact")
+    // An unknown id (deleted contact) → the old matching.
+    expect(resolveCounterparty("", { email: null, name: null, handle: "ivan_buyer", contactId: "p-gone" }, idx).contactId).toBe("p-ivan")
+  })
+
   it("unknown string + known sender email → the sender's contact and client", () => {
     const r = resolveCounterparty("какая-то фирма", { email: "anna@acme.example", name: "Anna", handle: null }, idx)
     expect(r).toMatchObject({ clientId: "c-acme", contactId: "p-anna" })

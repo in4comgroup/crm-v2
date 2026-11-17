@@ -6,7 +6,9 @@
 // split message, voice as the question, the CSV button, a draft card
 // confirmed by its button (as the member, without a browser session), group
 // messages (never the AI chat), `/stop`, the Telegram copy of an important
-// notification and topic pushes with «Готово» / «Отложить до завтра».
+// notification, topic pushes with «Готово» / «Отложить до завтра», and the
+// identity by Telegram id (TI1 + TI5: learned ids, renames, «Связать с
+// контактом», contact cards, our member by binding id, «Дубли Telegram»).
 //
 // Env: CHAT_EVAL_ONLY=tg (run only this file's cases: any id prefix «tg»).
 // Writes on the test DB, all removed at the end: a binding, its chats, chat
@@ -20,6 +22,9 @@ import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm"
 import type { Update } from "grammy/types"
 import { db } from "@/db/drizzle"
 import {
+  client,
+  contact,
+  contactAddress,
   topic,
   topicDelivery,
   aiChatAction,
@@ -119,6 +124,16 @@ let oldConfig: unknown = null
 let ctx: NonNullable<Awaited<ReturnType<typeof resolveTelegramWebhookContext>>>
 const threads = new Set<string>()
 const TEST_TOPIC = `tg-eval-topic-${TG_USER}`
+// TI1 + TI5 (identity by Telegram id): a test company, two contacts and three client Telegram users.
+const T = `tgev${TG_USER % 100000}`
+const CL = { id: `${T}-client`, name: `Eval Телеграм ${T}` }
+const CT1 = { id: `${T}-c1`, name: "Пётр Eval", handle: `${T}_petr`, phone: `+7900${String(TG_USER).slice(-7)}` }
+const CT2 = { id: `${T}-c2`, name: "Ольга Eval" }
+const CT3 = { id: `${T}-c3`, name: "Дубль Eval" }
+const TG_PETR = TG_USER + 1
+const TG_NONAME = TG_USER + 2
+const TG_CARD = TG_USER + 3
+const clientChats = [TG_PETR, TG_NONAME, TG_CARD]
 const testNotificationKeys: string[] = []
 const groupChat = -100_000_000 - Math.floor(Math.random() * 1_000_000)
 
@@ -210,11 +225,13 @@ describe.skipIf(!run)("AI chat over Telegram (mocked Bot API, real router / work
       await db.delete(telegramOutMessage).where(inArray(telegramOutMessage.aiChatThreadId, threadIds))
       await db.delete(aiChatThread).where(inArray(aiChatThread.id, threadIds))
     }
+    for (const c of [CT1, CT2, CT3]) await db.delete(contact).where(eq(contact.id, c.id))
+    await db.delete(client).where(eq(client.id, CL.id))
     // Messages stored as source items (ingest path): the group message and the private one after `/stop`.
     const items = await db
       .select({ id: sourceItem.id, r2: sourceItem.markdownR2Key, fileKey: sourceItem.fileKey })
       .from(sourceItem)
-      .where(and(eq(sourceItem.sourceId, sourceId), or(like(sourceItem.externalId, `${groupChat}:%`), like(sourceItem.externalId, `${TG_USER}:%`))))
+      .where(and(eq(sourceItem.sourceId, sourceId), or(like(sourceItem.externalId, `${groupChat}:%`), like(sourceItem.externalId, `${TG_USER}:%`), ...clientChats.map((c) => like(sourceItem.externalId, `${c}:%`)))))
     const itemKeys = items.flatMap((i) => [i.r2, i.fileKey]).filter((k): k is string => !!k)
     if (itemKeys.length) await deleteObjects(itemKeys).catch((e) => console.error("tg eval cleanup: storage", e))
     if (items.length) await db.delete(sourceItem).where(inArray(sourceItem.id, items.map((i) => i.id)))
@@ -396,6 +413,100 @@ describe.skipIf(!run)("AI chat over Telegram (mocked Bot API, real router / work
     await new Promise((r) => setTimeout(r, 1100))
     const r3 = await push(new Date())
     expect(r3).toMatchObject({ sent: 0, limited: 1 })
+  })
+
+  // ── TI1 + TI5: identity by Telegram id ──────────────────────────────────
+
+  const person = (id: number, username: string | null, first: string) => ({ id, is_bot: false, first_name: first, ...(username ? { username } : {}) })
+  const fromUpdate = (p: ReturnType<typeof person>, extra: Record<string, unknown>, chat: Record<string, unknown> = { id: p.id, type: "private", first_name: p.first_name }): Update =>
+    ({ update_id: ++updateId, message: { message_id: ++msgId, date: Math.floor(Date.now() / 1000), chat, from: p, ...extra } }) as unknown as Update
+  async function itemResolved(chatId: number, messageId: number) {
+    const [it] = await db
+      .select({ meta: sourceItem.metadataJson, attribution: sourceItem.orgAttribution, parse: sourceItem.parseStatus })
+      .from(sourceItem)
+      .where(and(eq(sourceItem.sourceId, sourceId), eq(sourceItem.externalId, `${chatId}:${messageId}`)))
+    const tg = ((it?.meta ?? {}) as { telegram?: { resolved?: { author: { kind: string; contactId?: string; via: string }; counterpartyClientIds: string[] } } }).telegram
+    return { resolved: tg?.resolved ?? null, attribution: it?.attribution ?? null, parse: it?.parse ?? null, meta: it?.meta }
+  }
+  async function tgAddresses(contactId: string) {
+    return db.select({ value: contactAddress.value, status: contactAddress.status, externalId: contactAddress.externalId, source: contactAddress.source, verifiedAt: contactAddress.verifiedAt }).from(contactAddress).where(and(eq(contactAddress.contactId, contactId), eq(contactAddress.kind, "telegram")))
+  }
+
+  it("tg12 a client writes by the username in «Адреса» → item resolved to the contact + company; the id is learned", async () => {
+    await db.insert(client).values({ id: CL.id, name: CL.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID })
+    await db.insert(contact).values([
+      { id: CT1.id, name: CT1.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: CL.id, phone: null },
+      { id: CT2.id, name: CT2.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: CL.id, phone: CT1.phone },
+      { id: CT3.id, name: CT3.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: null },
+    ])
+    await db.insert(contactAddress).values({ id: `${T}-a1`, organizationId: EVAL_ORG_ID, contactId: CT1.id, kind: "telegram", value: CT1.handle })
+    const u = fromUpdate(person(TG_PETR, CT1.handle, "Пётр"), { text: "Добрый день! Пришлите, пожалуйста, КП на 200 штук до пятницы." })
+    const mid = (u.message as { message_id: number }).message_id
+    await deliver(u)
+    const r = await itemResolved(TG_PETR, mid)
+    expect(r.parse).toBe("complete")
+    expect(r.resolved?.author).toMatchObject({ kind: "contact", contactId: CT1.id, via: "contact_handle" })
+    expect(r.resolved?.counterpartyClientIds).toEqual([CL.id])
+    expect((await tgAddresses(CT1.id)).find((a) => a.value === CT1.handle)?.externalId).toBe(String(TG_PETR))
+    // Company «Последняя активность» counts the Telegram message.
+    const { loadClientLastActivity } = await import("@/server/client-activity")
+    expect((await loadClientLastActivity(EVAL_ORG_ID, [CL.id])).get(CL.id)).toBeTruthy()
+  })
+
+  it("tg13 the same person renamed → matched by id; the new username active, the old one «old»", async () => {
+    const u = fromUpdate(person(TG_PETR, `${CT1.handle}_new`, "Пётр"), { text: "Это снова я, с нового имени пользователя." })
+    const mid = (u.message as { message_id: number }).message_id
+    await deliver(u)
+    const r = await itemResolved(TG_PETR, mid)
+    expect(r.resolved?.author).toMatchObject({ kind: "contact", contactId: CT1.id, via: "contact_id" })
+    const addrs = await tgAddresses(CT1.id)
+    expect(addrs.find((a) => a.value === `${CT1.handle}_new`)).toMatchObject({ status: "active", externalId: String(TG_PETR), source: "learned" })
+    expect(addrs.find((a) => a.value === CT1.handle)).toMatchObject({ status: "old", externalId: null })
+  })
+
+  it("tg14 a person with no username → unknown; «Связать с контактом» → the next message is the contact (by id)", async () => {
+    const u1 = fromUpdate(person(TG_NONAME, null, "Ольга"), { text: "Здравствуйте, это Ольга. Подскажите сроки поставки?" })
+    const m1 = (u1.message as { message_id: number }).message_id
+    await deliver(u1)
+    expect((await itemResolved(TG_NONAME, m1)).resolved?.author.kind).toBe("unknown")
+    const [it] = await db.select({ id: sourceItem.id }).from(sourceItem).where(and(eq(sourceItem.sourceId, sourceId), eq(sourceItem.externalId, `${TG_NONAME}:${m1}`)))
+    const { linkTelegramAuthorToContact, getTelegramItemAuthor } = await import("@/server/telegram/directory")
+    await linkTelegramAuthorToContact(EVAL_ORG_ID, it.id, CT2.id)
+    expect(await getTelegramItemAuthor(EVAL_ORG_ID, it.id)).toMatchObject({ kind: "contact", contactId: CT2.id, via: "contact_id" })
+    expect((await tgAddresses(CT2.id))[0]).toMatchObject({ value: `tg:${TG_NONAME}`, externalId: String(TG_NONAME), source: "manual" })
+    const u2 = fromUpdate(person(TG_NONAME, null, "Ольга"), { text: "И ещё вопрос по оплате." })
+    const m2 = (u2.message as { message_id: number }).message_id
+    await deliver(u2)
+    expect((await itemResolved(TG_NONAME, m2)).resolved?.author).toMatchObject({ kind: "contact", contactId: CT2.id, via: "contact_id" })
+  })
+
+  it("tg15 a contact card (user id + phone) → the contact with that phone gets the Telegram id", async () => {
+    const card = fromUpdate(person(TG_USER + 50, null, "Кто-то"), { contact: { phone_number: CT1.phone, first_name: "Ольга", user_id: TG_CARD } }, { id: groupChat, type: "supergroup", title: "Eval group" })
+    await deliver(card)
+    const addr = (await tgAddresses(CT2.id)).find((a) => a.externalId === String(TG_CARD))
+    expect(addr).toMatchObject({ value: `tg:${TG_CARD}`, source: "contact_card" })
+    expect(addr?.verifiedAt).toBeTruthy()
+  })
+
+  it("tg16 our member (by binding id) in a group → own_org; counterparty = the company of the last client author", async () => {
+    const chat = { id: groupChat, type: "supergroup", title: "Eval group" }
+    const c = fromUpdate(person(TG_PETR, `${CT1.handle}_new`, "Пётр"), { text: "Коллеги, когда ждать счёт?" }, chat)
+    await deliver(c)
+    const m = fromUpdate(person(TG_USER, "zz_no_handle_match", "Eval"), { text: "Пётр, счёт отправим сегодня до 18:00." }, chat)
+    const mid = (m.message as { message_id: number }).message_id
+    await deliver(m)
+    const r = await itemResolved(groupChat, mid)
+    expect(r.attribution).toBe("own_org")
+    expect((r.meta as { orgAttribution?: { matchedOn?: string[] } })?.orgAttribution?.matchedOn).toContain("sender_staff_binding")
+    expect(r.resolved?.author).toMatchObject({ kind: "member", via: "staff_binding" })
+    expect(r.resolved?.counterpartyClientIds).toEqual([CL.id])
+  })
+
+  it("tg17 «Дубли Telegram» lists two contacts with one username", async () => {
+    await db.insert(contactAddress).values({ id: `${T}-a3`, organizationId: EVAL_ORG_ID, contactId: CT3.id, kind: "telegram", value: `${CT1.handle}_new` })
+    const { listTelegramDuplicates } = await import("@/server/telegram/directory")
+    const g = (await listTelegramDuplicates(EVAL_ORG_ID)).find((x) => x.label === `@${CT1.handle}_new`)
+    expect(g?.contacts.map((c) => c.id).sort()).toEqual([CT1.id, CT3.id].sort())
   })
 
   it("tg08 /stop unbinds; the next message is not answered by the AI chat", async () => {

@@ -38,6 +38,7 @@ import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
 import { ContactCard } from "@/components/blocks/contact-card"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { CustomFieldsDialog } from "@/components/blocks/custom-fields-dialog"
+import { TelegramDuplicatesButton } from "@/components/blocks/telegram-duplicates-button"
 import {
   CustomFieldCell,
   CustomFieldFilterChips,
@@ -195,19 +196,22 @@ export default function ContactsPage() {
     }
   }, [])
 
+  // Open one contact by id in the drawer (deep link, «Дубли Telegram»).
+  const openContactById = useCallback(async (contactId: string) => {
+    const res = await fetch(`/api/contacts?id=${encodeURIComponent(contactId)}`)
+    if (!res.ok) return
+    const data = await res.json()
+    if (data.contact) setEditingContact(data.contact)
+  }, [])
+
   // Deep-link from the global search (/contacts?openContact=<id>).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const contactId = params.get("openContact")
     if (!contactId) return
     window.history.replaceState(null, "", window.location.pathname)
-    void (async () => {
-      const res = await fetch(`/api/contacts?id=${encodeURIComponent(contactId)}`)
-      if (!res.ok) return
-      const data = await res.json()
-      if (data.contact) setEditingContact(data.contact)
-    })()
-  }, [])
+    void openContactById(contactId)
+  }, [openContactById])
 
   return (
     <div className="flex flex-col h-[calc(100vh-1rem)] p-4 gap-4">
@@ -268,6 +272,10 @@ export default function ContactsPage() {
           </label>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <TelegramDuplicatesButton
+            onMerged={() => void load()}
+            onOpenContact={(id) => void openContactById(id)}
+          />
           <CustomFieldFiltersButton
             fields={customFields}
             value={customFilters}

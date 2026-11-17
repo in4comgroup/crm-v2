@@ -323,6 +323,13 @@
       "when": 1794920651916,
       "tag": "0045_telegram_pushes_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794922495313,
+      "tag": "0046_contact_telegram_ids",
+      "breakpoints": true
     }
   ]
 }

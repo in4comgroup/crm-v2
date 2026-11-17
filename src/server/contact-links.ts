@@ -186,6 +186,7 @@ export async function getContactLinksView(orgId: string, contactId: string): Pro
         clientId: a.clientId,
         clientName: a.clientId ? (names.get(a.clientId)?.name ?? null) : null,
         source: a.source,
+        ...(a.kind === "telegram" ? { telegramId: a.externalId ?? null, verified: !!a.verifiedAt } : {}),
       }),
     ),
     proposals,

@@ -95,6 +95,8 @@ export function classifyOrgAttribution(input: {
   authorEmails: string[]
   /** Telegram author handle (`extractAuthorTelegramHandle`), if any. */
   authorTelegram?: string | null
+  /** The Telegram author is a member by a VERIFIED binding id (docs/specs/telegram/04 §8, TI1). */
+  authorTelegramStaffVia?: "staff_binding" | null
   contentHaystack: string
   orgIdentity: OrgIdentity | null
 }): OrgAttributionResult {
@@ -137,6 +139,16 @@ export function classifyOrgAttribution(input: {
         matchedOn: ["sender_mailbox"],
         reason: `Sender ${e} is a shared mailbox of the organisation`,
       }
+    }
+  }
+
+  // 1d0. Telegram: the author's numeric id is a member's verified binding → ours, high.
+  if (input.authorTelegramStaffVia === "staff_binding") {
+    return {
+      value: "own_org",
+      confidence: "high",
+      matchedOn: ["sender_staff_binding"],
+      reason: "Telegram author is a member (verified binding)",
     }
   }
 
@@ -310,6 +322,7 @@ async function judgeOrgAuthorship(
 export async function resolveOrgAttribution(input: {
   authorEmails: string[]
   authorTelegram?: string | null
+  authorTelegramStaffVia?: "staff_binding" | null
   contentHaystack: string
   orgIdentity: OrgIdentity | null
   organizationId?: string | null

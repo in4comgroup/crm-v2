@@ -1,5 +1,7 @@
 import "server-only"
 
+import { readTelegramResolved } from "@/lib/telegram/resolve"
+
 import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, gte, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
@@ -181,6 +183,16 @@ export function itemPeer(metadataJson: unknown, direction: SignalDirection): Ite
   const m = (metadataJson ?? {}) as Record<string, unknown>
   type TgUser = { firstName?: string; lastName?: string; username?: string }
   const tg = (m.telegram ?? null) as { from?: TgUser; groupPeer?: TgUser } | null
+  // The ONE rule (docs/specs/telegram/04 §8.3): the resolved contact first.
+  const r = readTelegramResolved(m)
+  if (r && r.counterpartyContactId) {
+    const ours = r.author.kind === "member"
+    if (ours ? direction === "outbound" : direction !== "outbound") {
+      return ours
+        ? { email: null, name: null, handle: null, contactId: r.counterpartyContactId }
+        : { email: null, name: r.author.name, handle: r.author.username, contactId: r.counterpartyContactId }
+    }
+  }
   if (tg?.from && direction !== "outbound") {
     const name = [tg.from.firstName, tg.from.lastName].filter(Boolean).join(" ") || null
     return { email: null, name, handle: tg.from.username ?? null }

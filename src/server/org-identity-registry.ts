@@ -30,6 +30,7 @@ import {
   orgIdentityEntry,
   user,
   type OrgIdentityKind,
+  contactAddress,
 } from "@/db/schema"
 import { getServerSession } from "@/lib/get-session"
 import { companyMatchKey } from "@/lib/translit-ru"
@@ -309,11 +310,23 @@ export async function findIdentityMatches(
       .select({ id: contact.id, name: contact.name, aliases: contact.aliases, phone: contact.phone, status: contact.status })
       .from(contact)
       .where(eq(contact.organizationId, orgId))
+    // Telegram also in contact «Адреса» (docs/specs/telegram/04 §6.3).
+    const tgContacts =
+      channel === "telegram"
+        ? new Set(
+            (
+              await db
+                .select({ id: contactAddress.contactId })
+                .from(contactAddress)
+                .where(and(eq(contactAddress.organizationId, orgId), eq(contactAddress.kind, "telegram"), eq(contactAddress.value, matchKey)))
+            ).map((r) => r.id),
+          )
+        : new Set<string>()
     out.contacts = rows
       .filter((c) => !hidden(c.status))
       .filter((c) =>
         channel === "telegram"
-          ? (c.aliases ?? []).some((a) => a.trim().toLowerCase() === "@" + matchKey)
+          ? tgContacts.has(c.id) || (c.aliases ?? []).some((a) => a.trim().toLowerCase() === "@" + matchKey)
           : channel === "phone"
             ? !!c.phone && normalisePhone(c.phone) === matchKey
             : false,

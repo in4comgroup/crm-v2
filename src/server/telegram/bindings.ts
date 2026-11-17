@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { and, desc, eq, gt, inArray, isNull, ne, or } from "drizzle-orm"
 import type { User as TgUser } from "grammy/types"
 import { db } from "@/db/drizzle"
-import { member, telegramBindCode, telegramBinding, user } from "@/db/schema"
+import { contactAddress, member, telegramBindCode, telegramBinding, user } from "@/db/schema"
 import { notify } from "@/server/notifications/engine"
 import { loadOrgTelegramBot } from "@/server/telegram/source"
 
@@ -119,6 +119,32 @@ export async function redeemTelegramBindCode(sourceId: string, from: TgUser, cha
     await insert
   }
   const [b] = await db.select().from(telegramBinding).where(eq(telegramBinding.id, id))
+
+  // The account was a CONTACT's known Telegram → staff wins: the contact
+  // address becomes «old» and the owners are told (§5.2 step 4, §6.3).
+  const handle = from.username ? from.username.toLowerCase() : null
+  const conflicts = await db
+    .update(contactAddress)
+    .set({ status: "old", externalId: null, lastSeenAt: now })
+    .where(
+      and(
+        eq(contactAddress.organizationId, row.organizationId),
+        eq(contactAddress.kind, "telegram"),
+        eq(contactAddress.status, "active"),
+        handle ? or(eq(contactAddress.externalId, tgUserId), eq(contactAddress.value, handle)) : eq(contactAddress.externalId, tgUserId),
+      ),
+    )
+    .returning({ contactId: contactAddress.contactId })
+  if (conflicts.length) {
+    await notify(row.organizationId, {
+      kind: "telegram.contact_conflict",
+      title: `Telegram сотрудника был у контакта`,
+      body: `Telegram ${from.username ? "@" + from.username : displayName(from)} привязал сотрудник. У контакта этот Telegram отмечен как старый — проверьте карточку контакта.`,
+      href: `/contacts?openContact=${conflicts[0].contactId}`,
+      entity: { type: "contact", id: conflicts[0].contactId },
+      dedupeKey: `telegram.contact_conflict:${id}`,
+    })
+  }
 
   // Notices to our people (telegram/04 §7.6, Q23) — never to clients.
   const who = from.username ? `@${from.username}` : displayName(from)

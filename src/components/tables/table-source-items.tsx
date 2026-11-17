@@ -26,9 +26,12 @@ import {
   Eye,
   RefreshCcw,
   Radar,
+  UserPlus,
 } from "lucide-react"
 import { toast } from "sonner"
 import { ParsedMarkdownDialog } from "@/components/blocks/parsed-markdown-dialog"
+import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
+import { TelegramLinkContactDialog } from "@/components/blocks/telegram-link-contact-dialog"
 import { ProcessAllButton } from "@/components/blocks/process-controls"
 import type { ProcessRunFilters } from "@/components/blocks/use-process-run"
 import type { SourceSummary, SystemSource } from "@/server/sources"
@@ -316,6 +319,8 @@ export function TableSourceItems({
 
   const [showItemId, setShowItemId] = useState<string | null>(null)
   const [showItemTitle, setShowItemTitle] = useState<string>("")
+  // «Связать с контактом» (docs/specs/telegram/04 §6.2): root Telegram rows.
+  const [linkItemId, setLinkItemId] = useState<string | null>(null)
   const [localBump, setLocalBump] = useState(0)
 
   const fetchPage = useCallback(async () => {
@@ -626,7 +631,7 @@ export function TableSourceItems({
               <TableHead>Элемент</TableHead>
               <TableHead className="w-24">Разбор</TableHead>
               <TableHead className="w-24">Загрузка</TableHead>
-              <TableHead className="w-28">Действия</TableHead>
+              <TableHead className="w-36">Действия</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -707,6 +712,7 @@ export function TableSourceItems({
                         onProcess={() => runProcess(row.id)}
                         onReparse={() => runReparse(row.id)}
                         onShow={() => openShow(row)}
+                        onLinkContact={() => setLinkItemId(row.id)}
                         onExtractSignals={
                           canExtractSignals ? () => runExtractSignals(row.id) : undefined
                         }
@@ -727,6 +733,15 @@ export function TableSourceItems({
         onOpenChange={(o) => {
           if (!o) setShowItemId(null)
         }}
+      />
+
+      <TelegramLinkContactDialog
+        itemId={linkItemId}
+        open={linkItemId !== null}
+        onOpenChange={(o) => {
+          if (!o) setLinkItemId(null)
+        }}
+        onLinked={() => setLocalBump((n) => n + 1)}
       />
 
       {/* Pager */}
@@ -772,6 +787,7 @@ function RowActions({
   onProcess,
   onReparse,
   onShow,
+  onLinkContact,
   onExtractSignals,
 }: {
   row: SourceItemRow
@@ -780,6 +796,7 @@ function RowActions({
   onProcess: () => void
   onReparse: () => void
   onShow: () => void
+  onLinkContact: () => void
   // Set only for platform admins.
   onExtractSignals?: () => void
 }) {
@@ -799,6 +816,9 @@ function RowActions({
     ps === "failed" ||
     (ps === "complete" && rs !== "complete")
   const isProcessingServerSide = ps === "processing"
+  // Telegram messages: the author can be linked to a contact (root rows only).
+  const canLinkContact = isRoot && row.sourceProvider === "telegram"
+  const linkTip = useAnchorTooltip()
 
   return (
     <div className="flex items-center gap-1">
@@ -853,6 +873,25 @@ function RowActions({
             <RefreshCcw className="h-3.5 w-3.5" />
           )}
         </Button>
+      )}
+      {canLinkContact && (
+        <>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0"
+            onClick={onLinkContact}
+            aria-label="Связать автора с контактом"
+            {...linkTip.bind}
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+          </Button>
+          <AnchorTooltip
+            text="Связать автора с контактом"
+            open={linkTip.open}
+            virtualRef={linkTip.virtualRef}
+          />
+        </>
       )}
       {canExtractSignals && (
         <Button

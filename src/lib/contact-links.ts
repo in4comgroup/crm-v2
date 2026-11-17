@@ -577,6 +577,10 @@ export type ContactAddressView = {
   clientId: string | null
   clientName: string | null
   source: string
+  /** Kind telegram: the numeric Telegram id (docs/specs/telegram/04 §6); `value` «tg:<id>» = no username. */
+  telegramId?: string | null
+  /** A person confirmed the Telegram id («Связать с контактом» / a contact card). */
+  verified?: boolean
 }
 
 export type ProposalView = {

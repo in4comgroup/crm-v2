@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState, useTransition } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
-import { Building2, FileText, GitMerge, Handshake, Link2Off, Loader, ShoppingCart, Unlink, User, Users, XCircle } from "lucide-react"
+import { Building2, FileText, GitMerge, Handshake, Link2Off, Loader, ShoppingCart, Unlink, User, UserPlus, Users, XCircle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -31,6 +31,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { SourceMessageDialog } from "@/components/blocks/source-message-dialog"
+import { TelegramLinkContactDialog } from "@/components/blocks/telegram-link-contact-dialog"
 import {
   DealCardBlock,
   ListExplanation,
@@ -185,6 +186,8 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
   const [dismissOpen, setDismissOpen] = useState(false)
   const [dismissReason, setDismissReason] = useState("")
   const [sourceItem, setSourceItem] = useState<TopicItemView | null>(null)
+  // «Связать с контактом» of a Telegram message (docs/specs/telegram/04 §6.2).
+  const [linkItemId, setLinkItemId] = useState<string | null>(null)
   const [ownersWanted, setOwnersWanted] = useState(false)
 
   const load = useCallback(async (id: string) => {
@@ -493,6 +496,12 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
                             <FileText className="h-3.5 w-3.5 mr-1" />
                             Открыть
                           </Button>
+                          {i.provider === "telegram" && (
+                            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setLinkItemId(i.sourceItemId)}>
+                              <UserPlus className="h-3.5 w-3.5 mr-1" />
+                              Связать с контактом
+                            </Button>
+                          )}
                           {t.status !== "merged" && (
                             <Button
                               size="sm"
@@ -600,6 +609,14 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <TelegramLinkContactDialog
+          itemId={linkItemId}
+          open={!!linkItemId}
+          onOpenChange={(o) => {
+            if (!o) setLinkItemId(null)
+          }}
+          onLinked={reload}
+        />
         <SourceMessageDialog
           itemId={sourceItem?.sourceItemId ?? null}
           open={!!sourceItem}

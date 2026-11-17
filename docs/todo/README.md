@@ -2,7 +2,7 @@
 
 Work that is decided but **not scheduled**. Each item names its source in the specs. When an item is scheduled, move it into the spec folder of its topic (`docs/specs/<topic>/`) and delete it here.
 
-Last update: 2026-11-16.
+Last update: 2026-11-17.
 
 ## Topics engine (`docs/specs/topics/`)
 
@@ -50,3 +50,5 @@ Steps to do on the deployed environment, once, when the related code ships.
 | D3 | **Own Telegram names** | Each member adds their Telegram name in /profile → «Мои рабочие адреса», so their Telegram messages count as ours (outbound / internal), are never linked as a contact, and give the counterparty of group messages | telegram Q11 |
 | D4 | **Real Telegram test** | Send the bot a PDF in a private chat and in a group (with and without caption), a photo, a file > 20 MB and a voice note. Check: «Документы» of the sender's contact / company (file stored, linked); the reply in the private chat (Russian), no reply in the group; within the hourly run — signals / a topic from the file text; the 20 MB file listed as «больше 20 МБ» | telegram §5 acceptance checks 1–13 |
 | D5 | **Notifications cron** | The new hourly cron `/api/cron/notifications` (`15 * * * *`, in `vercel.ts`) needs the Vercel Pro plan like the topics cron and the same `CRON_SECRET`. After the deploy check in Vercel → Cron Jobs that it runs, and that the bell shows notices (an org profile reminder for an incomplete profile is the first one to expect) | [notifications/01-notifications.md](../specs/notifications/01-notifications.md) §10 |
+| D6 | **Telegram: migration + webhook again for the AI chat** | Run `pnpm db:migrate` against the deployed DB (`0044_telegram_bot_and_chat`) BEFORE the code. Then save the bot credentials of each Telegram source again: the webhook gets `callback_query` + `edited_message` (buttons, edits) and the bot gets its private-chat commands (/new, /help, /stop) | [ai-chat-telegram](../specs/ai-chat-telegram/01-specification.md) §18 |
+| D7 | **Real Telegram test of the AI chat** | Owner: Telegram source → «Настройки провайдера» → switch on «ИИ-чат в Telegram». A member: /profile → «Telegram» → «Подключить Telegram» → open the link → «Start». Then: a question, a long pasted text, an album of photos with a caption, a business card photo → «Создать», a voice question, «Выручка по месяцам» → «📎 CSV», a reply to an answer, `/new`, `/stop`; in a group the bot must not answer. Check the HTML on a phone (tables, links) and the waiting preview | [ai-chat-telegram](../specs/ai-chat-telegram/01-specification.md) §17 |

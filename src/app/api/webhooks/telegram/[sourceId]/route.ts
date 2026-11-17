@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server"
 import type { Update } from "grammy/types"
-import {
-  resolveTelegramWebhookContext,
-  ingestTelegramUpdate,
-  parseAndUploadTelegramItem,
-} from "@/server/ingest/telegram"
+import { resolveTelegramWebhookContext, verifyTelegramSecret } from "@/server/ingest/telegram"
+import { handleTelegramUpdate } from "@/server/telegram/router"
 import {
   MissingCredentialsError,
   InvalidCredentialsError,
@@ -69,20 +66,23 @@ export async function POST(
     "x-telegram-bot-api-secret-token",
   )
 
+  if (!verifyTelegramSecret(ctx.webhookSecret, secretHeader)) {
+    // Secret mismatch — reject the forgery.
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   try {
-    const result = await ingestTelegramUpdate(ctx, update, secretHeader)
-    if (!result.ok) {
-      // Secret mismatch — reject the forgery.
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-    // Fast-path the freshly-ingested message through parse → R2 upload AFTER
-    // the ack is flushed, so it becomes eligible for card / deal generation
-    // within seconds instead of waiting for the daily pipeline. Only for a
-    // genuinely new row (re-deliveries are already parsed); best-effort —
-    // `parseAndUploadTelegramItem` swallows failures and the pipeline retries.
-    if (result.outcome === "ingested" && result.inserted && result.itemId) {
-      const itemId = result.itemId
-      after(() => parseAndUploadTelegramItem(itemId, { userId: null }))
+    // ONE router (docs/specs/telegram/04 §5.5 C2): a button press, a command,
+    // a member's message to the AI chat (docs/specs/ai-chat-telegram) or the
+    // ingest of a source item. Slow work runs AFTER the 200 answer: the AI
+    // chat turn, and the parse → upload fast path of a new item (eligible for
+    // signals within seconds instead of the daily pipeline; best effort, the
+    // pipeline retries).
+    const result = await handleTelegramUpdate(ctx, update, { ack: true })
+    for (const task of result.deferred) {
+      after(() =>
+        task().catch((err) => console.error(`[telegram webhook] deferred work failed for ${sourceId}:`, err)),
+      )
     }
     return NextResponse.json({ ok: true }, { status: 200 })
   } catch (err) {

@@ -79,7 +79,7 @@ import {
   PromptInputSubmit,
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input"
-import { SpeechInput } from "@/components/ai-elements/speech-input"
+import { DictationButton } from "@/components/blocks/chat/dictation-button"
 import {
   ModelSelector,
   ModelSelectorTrigger,
@@ -150,7 +150,7 @@ function recallThread(): string | null {
 type OpenChat = { id: string; messages: UIMessage[]; saved: boolean; ingestOff: boolean }
 
 export function AIChat({ className, isAdmin = false }: { className?: string; isAdmin?: boolean }) {
-  const { open: panelOpen } = useGlobalChat()
+  const { open: panelOpen, openChat } = useGlobalChat()
   const [threads, setThreads] = useState<ChatThreadSummary[]>([])
   const [current, setCurrent] = useState<OpenChat | null>(null)
   const started = useRef(false)
@@ -196,6 +196,21 @@ export function AIChat({ className, isAdmin = false }: { className?: string; isA
     if (last) void openThread(last)
     else newChat()
   }, [panelOpen, refreshThreads, openThread, newChat])
+
+  // Deep link `?chat=<threadId>` (docs/specs/ai-chat-telegram §13, «Изменить в CRM»
+  // from Telegram): open the panel on that chat. Another user's id → the
+  // normal panel (the thread route answers 404). The param is removed at once.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    const id = url.searchParams.get("chat")
+    if (!id) return
+    url.searchParams.delete("chat")
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`)
+    if (!isThreadId(id)) return
+    rememberThread(id)
+    if (started.current) void openThread(id)
+    else openChat()
+  }, [openThread, openChat])
 
   const title = current ? (threads.find((t) => t.id === current.id)?.title ?? NEW_CHAT_TITLE) : NEW_CHAT_TITLE
 
@@ -441,14 +456,6 @@ function ChatSession({
     [sendMessage, clearError],
   )
 
-  const handleSpeechTranscription = useCallback(
-    (text: string) => {
-      clearError()
-      sendMessage({ text })
-    },
-    [sendMessage, clearError],
-  )
-
   // A quick reply of a clarification question = a normal user message (ai-chat-tools §12).
   const handleQuickReply = useCallback(
     (text: string) => {
@@ -588,11 +595,7 @@ function ChatSession({
                     <CameraMenuItem />
                   </PromptInputActionMenuContent>
                 </PromptInputActionMenu>
-                <SpeechInput
-                  size="icon-sm"
-                  variant="ghost"
-                  onTranscriptionChange={handleSpeechTranscription}
-                />
+                <DictationButton />
                 <VoiceAttachButton disabled={isLoading} />
                 <PromptInputSubmit variant="ghost" status={status} onStop={stop} />
               </PromptInputTools>

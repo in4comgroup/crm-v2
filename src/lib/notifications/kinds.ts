@@ -62,6 +62,9 @@ export const NOTIFICATION_KINDS = {
   // Организация (owners)
   "profile.org.incomplete": { category: "organization", priority: "info", recipients: "owners", labelRu: "Профиль организации не заполнен" },
   "member.joined": { category: "organization", priority: "info", recipients: "owners", labelRu: "Новый участник" },
+  // Telegram (docs/specs/telegram/04 §7.6, Q23: notices to our people only)
+  "telegram.bound": { category: "organization", priority: "info", recipients: "user", labelRu: "Telegram привязан" },
+  "telegram.bound_owner": { category: "organization", priority: "info", recipients: "owners", labelRu: "Сотрудник привязал Telegram" },
   // Компании и контакты
   "profile.client.proposals": { category: "clients", priority: "info", recipients: "owners", labelRu: "Предложения для профилей компаний" },
   "client.handover": { category: "clients", priority: "important", recipients: "user", labelRu: "Компания передана вам" },

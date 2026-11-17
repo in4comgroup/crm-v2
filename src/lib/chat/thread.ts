@@ -124,6 +124,8 @@ export type ChatThreadSummary = {
   lastMessageAt: string
   /** CH6: off = «Не передавать в источники». */
   ingestMode?: "on" | "off"
+  /** Where the chat is written (docs/specs/ai-chat-telegram §9): Telegram threads get a mark in the list. */
+  channel?: "web" | "telegram"
 }
 
 export type ChatFeedback = "up" | "down"

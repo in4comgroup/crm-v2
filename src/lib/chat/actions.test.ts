@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  normalizeDealValue,
   buildInputIndex,
   draftNote,
   groundCompany,
@@ -227,5 +228,32 @@ describe("history note", () => {
       draft: { items: [{ type: "company", values: { name: "Ромашка" } }, { type: "contact", values: { name: "Петров" } }], files: [] },
     } as unknown as ChatDraftPart
     expect(draftNote(p)).toBe("[Черновик: компания «Ромашка», контакт «Петров» — ожидает подтверждения пользователем]")
+  })
+})
+
+describe("normalizeDealValue", () => {
+  it("keeps decimals (the web card used to drop the point: «1500000.50» → «150000050»)", () => {
+    expect(normalizeDealValue("1500000.50")).toBe("1500000.5")
+    expect(normalizeDealValue("1500000,5")).toBe("1500000.5")
+    expect(normalizeDealValue("1 500 000,50")).toBe("1500000.5")
+    expect(normalizeDealValue("99.99")).toBe("99.99")
+  })
+  it("digit groups: spaces, «'», 3 digits after «.» or «,»", () => {
+    expect(normalizeDealValue("1 500 000")).toBe("1500000")
+    expect(normalizeDealValue("1.500.000")).toBe("1500000")
+    expect(normalizeDealValue("1,500,000")).toBe("1500000")
+    expect(normalizeDealValue("1'500'000")).toBe("1500000")
+    expect(normalizeDealValue("1.500.000,25")).toBe("1500000.25")
+    expect(normalizeDealValue("1,500,000.25")).toBe("1500000.25")
+  })
+  it("rounds to 2 decimals; empty / not a number → empty", () => {
+    expect(normalizeDealValue("10.4567")).toBe("10.46")
+    expect(normalizeDealValue("")).toBe("")
+    expect(normalizeDealValue("abc")).toBe("")
+    expect(normalizeDealValue("-5")).toBe("")
+    expect(normalizeDealValue("1500.")).toBe("1500")
+  })
+  it("the result passes the confirm schema", () => {
+    for (const v of ["1500000.50", "1 500 000", "10.4567"]) expect(normalizeDealValue(v)).toMatch(/^(\d+(\.\d{1,2})?)?$/)
   })
 })

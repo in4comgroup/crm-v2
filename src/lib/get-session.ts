@@ -1,11 +1,12 @@
 import { auth } from "@/lib/auth"
 import { backfillSessionActiveOrganization } from "@/server/session-org-backfill"
+import { actingMemberSession } from "@/server/acting-member"
 import { headers } from "next/headers"
 import { cache } from "react"
 
 // chache() deduplicates repeated calls for the session, for example, from the header and the page
 
-export const getServerSession = cache(async () => {
+const sessionFromRequest = cache(async () => {
   const session = await auth.api.getSession({
     headers: await headers(),
   })
@@ -41,3 +42,16 @@ export const getServerSession = cache(async () => {
 
   return session
 })
+
+type ServerSession = Awaited<ReturnType<typeof sessionFromRequest>>
+
+/**
+ * The signed-in session — or, inside `runAsMember` (src/server/acting-member.ts),
+ * the scoped session of a member verified by other means (the Telegram bot,
+ * docs/specs/ai-chat-telegram §8). The scoped one wins and never reads headers.
+ */
+export async function getServerSession(): Promise<ServerSession> {
+  const acting = actingMemberSession()
+  if (acting) return acting as unknown as ServerSession
+  return sessionFromRequest()
+}

@@ -29,6 +29,7 @@ import {
   getTelegramUpdates,
   isTelegramWebhookConflict,
   sendTelegramAck,
+  setTelegramPrivateCommands,
   setTelegramWebhook,
   telegramAppOrigin,
   telegramWebhookUrl,
@@ -53,6 +54,8 @@ export type TelegramWebhookContext = {
   botToken: string
   webhookSecret: string
   botUsername: string | null
+  /** «ИИ-чат в Telegram» switch of the org owner (docs/specs/ai-chat-telegram Q1). */
+  aiChatEnabled: boolean
 }
 
 // Load the source the webhook path points at and decrypt its bot creds.
@@ -89,12 +92,14 @@ export async function resolveTelegramWebhookContext(
   const botUsername =
     typeof cfg.botUsername === "string" ? cfg.botUsername : null
 
+  const me = (cfg.telegramBot ?? null) as { username?: string | null } | null
   return {
     sourceId,
     organizationId: row.organizationId,
     botToken,
     webhookSecret,
-    botUsername,
+    botUsername: me?.username || botUsername,
+    aiChatEnabled: cfg.aiChatEnabled === true,
   }
 }
 
@@ -608,7 +613,17 @@ export async function ingestTelegramUpdate(
   if (!verifyTelegramSecret(ctx.webhookSecret, secretHeader)) {
     return { ok: false, reason: "unauthorized" }
   }
+  return ingestVerifiedTelegramUpdate(ctx, update, { ack: true })
+}
 
+// The ingest step of the router (src/server/telegram/router.ts): persist the
+// update as a source item; `ack` = the private-chat reply (off for a forward
+// that the AI chat answers, and for the manual fetch).
+export async function ingestVerifiedTelegramUpdate(
+  ctx: TelegramWebhookContext,
+  update: Update,
+  opts: { ack: boolean },
+): Promise<Extract<TelegramIngestResult, { ok: true }>> {
   const result = await persistTelegramMessage(
     { sourceId: ctx.sourceId, organizationId: ctx.organizationId },
     update,
@@ -618,7 +633,7 @@ export async function ingestTelegramUpdate(
   // Replies only in a private chat (G3: never spam a client's group), one per
   // album (Q9), plus the 20 MB notice (Q6). Russian (Q7).
   try {
-    if (!result.isGroup) {
+    if (!result.isGroup && opts.ack) {
       const firstOfAlbum =
         !result.mediaGroupId ||
         !(await albumSeenBefore(ctx, result.chatId, result.mediaGroupId, result.itemId))
@@ -691,14 +706,16 @@ export async function fetchTelegramUpdates(
   let offset =
     typeof cfg.telegramOffset === "number" ? cfg.telegramOffset : undefined
 
-  const scope = { sourceId, organizationId: row.organizationId }
+  const ctx = await resolveTelegramWebhookContext(sourceId)
+  if (!ctx) throw new Error(`Source ${sourceId} is not an active telegram source`)
+  // The router (docs/specs/telegram/04 §5.5 C2) is loaded lazily: it imports this module.
+  const { handleTelegramUpdate } = await import("@/server/telegram/router")
   let fetched = 0
   let ingested = 0
   let ignored = 0
-  // Newly-inserted item ids to drive through parse → R2 upload at the end, so
-  // a pulled message is immediately eligible for card / deal generation (same
-  // fast-path as the webhook). Re-delivered duplicates aren't collected.
-  const newItemIds: string[] = []
+  // Work of the updates (parse → upload of new items, AI chat turns), run at
+  // the end in order, so a pulled message is immediately eligible for signals.
+  const deferred: (() => Promise<void>)[] = []
 
   for (let page = 0; page < FETCH_DRAIN_PAGES; page++) {
     let updates
@@ -717,11 +734,10 @@ export async function fetchTelegramUpdates(
 
     for (const u of updates) {
       fetched++
-      const r = await persistTelegramMessage(scope, u)
-      if (r.outcome === "ingested") {
-        ingested++
-        if (r.inserted) newItemIds.push(r.itemId)
-      } else ignored++
+      const r = await handleTelegramUpdate(ctx, u, { ack: false, parseUserId: opts.userId })
+      if (r.outcome === "ingested" || r.outcome === "chat") ingested++
+      else ignored++
+      deferred.push(...r.deferred)
       // Next offset = highest seen update_id + 1 (confirms processed ones).
       offset = Math.max(offset ?? 0, u.update_id + 1)
     }
@@ -736,15 +752,11 @@ export async function fetchTelegramUpdates(
       .where(eq(source.id, sourceId))
   }
 
-  // Parse + upload the freshly-pulled messages inline (sequentially) so they're
-  // card/deal-eligible by the time this response returns and the operator can
-  // act on them immediately. Each call is non-throwing; transient failures fall
-  // back to the daily pipeline. Telegram text parses fast, so even a large pull
-  // stays comfortably inside the route's maxDuration.
-  for (const itemId of newItemIds) {
-    await parseAndUploadTelegramItem(itemId, opts)
+  // Each task is non-throwing (parse / upload / chat worker); transient
+  // failures fall back to the daily pipeline.
+  for (const task of deferred) {
+    await task().catch((err) => console.error(`[telegram] fetch: deferred work failed for ${sourceId}:`, err))
   }
-
   return { fetched, ingested, ignored, webhookActive: false }
 }
 
@@ -775,6 +787,9 @@ export async function registerTelegramWebhookForSource(
     url,
     secretToken: ctx.webhookSecret,
   })
+  await setTelegramPrivateCommands(ctx.botToken).catch((err) =>
+    console.warn(`[telegram] setMyCommands failed for source ${sourceId}:`, err),
+  )
   return { registered: true, url }
 }
 

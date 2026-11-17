@@ -238,7 +238,8 @@ export type TelegramProviderConfig = z.infer<
 const SERVER_MANAGED_CONFIG_KEYS: Partial<Record<string, readonly string[]>> = {
   // fetch cursor; groups the bot is in (G7); bot info / privacy check (G1) —
   // docs/specs/telegram §6
-  telegram: ["telegramOffset", "telegramGroups", "telegramBot"],
+  // + the org owner's switch «ИИ-чат в Telegram» (docs/specs/ai-chat-telegram Q1)
+  telegram: ["telegramOffset", "telegramGroups", "telegramBot", "aiChatEnabled"],
 }
 
 /** The validated form config + the server-managed keys of the existing config. */

@@ -6,6 +6,7 @@ import { db } from "@/db/drizzle"
 import { pipelineRun, sourceItem, type PipelineRunTrigger } from "@/db/schema"
 import { parseSourceItem } from "@/server/parse-source-item"
 import { purgeChatThreads } from "@/server/chat/threads"
+import { purgeTelegramRows } from "@/server/telegram/retention"
 import { ingestDueChatThreads } from "@/server/chat/ingest"
 import { uploadSourceItem } from "@/server/upload-source-item"
 import { runFullSync } from "./run-full-sync"
@@ -142,6 +143,15 @@ export async function runDailyPipeline(
     if (purged.deleted) console.log(`[daily] AI chat threads removed: ${purged.deleted}`)
   } catch (e) {
     pushError(errors, { phase: "catalog", message: `chat history retention: ${e instanceof Error ? e.message : String(e)}` })
+  }
+  // Telegram bot rows (handled update ids 7 d, bind codes, buttons, AI chat
+  // inbox 30 d, send log 90 d — src/server/telegram/retention.ts). Isolated.
+  try {
+    const tg = await purgeTelegramRows()
+    const n = Object.values(tg).reduce((a, b) => a + b, 0)
+    if (n) console.log(`[daily] Telegram rows removed: ${JSON.stringify(tg)}`)
+  } catch (e) {
+    pushError(errors, { phase: "catalog", message: `telegram retention: ${e instanceof Error ? e.message : String(e)}` })
   }
 
   // ── Phase 1: Sync ─────────────────────────────────────────────────

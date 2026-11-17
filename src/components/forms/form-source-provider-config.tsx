@@ -30,6 +30,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
+import { TelegramAiChatSettings } from "@/components/blocks/telegram-ai-chat-settings"
 import type { SourceProvider } from "@/db/schema"
 
 type Props = {
@@ -396,6 +397,7 @@ function TelegramFields({
         </p>
       </div>
       <TelegramGroupsInfo config={initialConfig} />
+      <TelegramAiChatSettings sourceId={sourceId} />
       <DialogFooter>
         <Button variant="ghost" type="button" onClick={onClose} disabled={busy}>
           Отмена

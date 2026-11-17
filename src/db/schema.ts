@@ -4042,6 +4042,8 @@ export const aiChatThread = pgTable(
     ingestedSeq: integer("ingested_seq").notNull().default(0),
     // Soft delete by the user; the daily pipeline removes the row later.
     deletedAt: timestamp("deleted_at"),
+    // web | telegram (docs/specs/ai-chat-telegram §5): where the thread is written.
+    channel: text("channel").notNull().default("web"),
   },
   (table) => [
     index("ai_chat_thread_user_list_idx")
@@ -4115,4 +4117,186 @@ export const aiChatAction = pgTable(
     index("ai_chat_action_user_idx").on(table.organizationId, table.userId, table.createdAt),
     index("ai_chat_action_thread_idx").on(table.threadId),
   ],
+)
+
+// ── Telegram: staff binding, router, sender, AI chat over Telegram ──────
+// Specs: docs/specs/telegram/04-identity-and-chats.md §5 / §5.5 and
+// docs/specs/ai-chat-telegram/01-specification.md §5.
+
+// A VERIFIED link member ↔ Telegram account through the org bot (one row per
+// org × member × bot; history kept: a re-bind makes a new row). Gives the
+// inbound identity AND the outbound address. Value lists are text checked in
+// code: status active | blocked (the user blocked the bot) | unbound.
+export const telegramBinding = pgTable(
+  "telegram_binding",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => source.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Numeric Telegram user id (never changes) as text — ids exceed 2^31.
+    tgUserId: text("tg_user_id").notNull(),
+    tgUsername: text("tg_username"),
+    tgName: text("tg_name"),
+    // Private chat id for sending (= tg_user_id).
+    chatId: text("chat_id").notNull(),
+    status: text("status").notNull().default("active"),
+    // The member's current AI chat thread in Telegram (ai-chat-telegram §9).
+    aiChatThreadId: text("ai_chat_thread_id").references(() => aiChatThread.id, { onDelete: "set null" }),
+    // One AI chat worker at a time per member (ai-chat-telegram §5 worker lock).
+    chatLockUntil: timestamp("chat_lock_until"),
+    chatLockToken: text("chat_lock_token"),
+    boundAt: timestamp("bound_at").defaultNow().notNull(),
+    unboundAt: timestamp("unbound_at"),
+    unboundReason: text("unbound_reason"),
+    lastSeenAt: timestamp("last_seen_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("telegram_binding_active_tg_uq")
+      .on(table.sourceId, table.tgUserId)
+      .where(sql`${table.status} <> 'unbound'`),
+    uniqueIndex("telegram_binding_active_user_uq")
+      .on(table.sourceId, table.userId)
+      .where(sql`${table.status} <> 'unbound'`),
+    index("telegram_binding_org_idx").on(table.organizationId, table.status),
+  ],
+)
+
+// One-time binding code of the deep link `t.me/<bot>?start=<code>` (§5.2):
+// stored hashed, single use, 15 minutes.
+export const telegramBindCode = pgTable(
+  "telegram_bind_code",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => source.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("telegram_bind_code_hash_uq").on(table.codeHash)],
+)
+
+// Handled updates per bot (§5.5 C5): Telegram re-sends an update that got no
+// answer — handle each update id once. Rows older than 7 days are removed.
+export const telegramUpdateSeen = pgTable(
+  "telegram_update_seen",
+  {
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => source.id, { onDelete: "cascade" }),
+    updateId: bigint("update_id", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.sourceId, table.updateId] }),
+    index("telegram_update_seen_created_idx").on(table.createdAt),
+  ],
+)
+
+// Inline button ids (§5.5 C6): `callback_data` is ≤ 64 bytes, so a button
+// carries a short random id that maps to the action, the member and an expiry.
+export const telegramButton = pgTable(
+  "telegram_button",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    bindingId: text("binding_id")
+      .notNull()
+      .references(() => telegramBinding.id, { onDelete: "cascade" }),
+    // card_confirm | card_cancel | card_decision | question_option | stats_csv | retry | feedback
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    // The Telegram message that carries the button (edited after a press).
+    tgMessageId: integer("tg_message_id"),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("telegram_button_binding_idx").on(table.bindingId, table.createdAt)],
+)
+
+// Every message the bot sent (one sender, §5.5 C6): status, Telegram message
+// id and what it was about — for replies (ai-chat-telegram Q9), card edits,
+// feedback buttons and the log. kind = binding | chat_answer | chat_card |
+// chat_question | chat_sources | chat_notice | chat_status | chat_csv | system.
+export const telegramOutMessage = pgTable(
+  "telegram_out_message",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => source.id, { onDelete: "cascade" }),
+    bindingId: text("binding_id").references(() => telegramBinding.id, { onDelete: "set null" }),
+    chatId: text("chat_id").notNull(),
+    kind: text("kind").notNull(),
+    // sent | failed | skipped
+    status: text("status").notNull(),
+    error: text("error"),
+    tgMessageId: integer("tg_message_id"),
+    aiChatThreadId: text("ai_chat_thread_id").references(() => aiChatThread.id, { onDelete: "set null" }),
+    aiChatMessageId: text("ai_chat_message_id"),
+    // The record a message is about, e.g. { type: "topic", id } (context of a reply).
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("telegram_out_message_chat_idx").on(table.sourceId, table.chatId, table.tgMessageId),
+    index("telegram_out_message_created_idx").on(table.createdAt),
+  ],
+)
+
+// Inbox of a member's private-chat messages for the AI chat (ai-chat-telegram
+// §5–§6): the router writes one row per update and answers 200 at once; the
+// worker merges close rows into ONE chat turn. status = pending | processing
+// | done | failed. kind = text | voice | file | contact | forward | option.
+export const telegramChatInbox = pgTable(
+  "telegram_chat_inbox",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    bindingId: text("binding_id")
+      .notNull()
+      .references(() => telegramBinding.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => source.id, { onDelete: "cascade" }),
+    tgMessageId: integer("tg_message_id"),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    mediaGroupId: text("media_group_id"),
+    status: text("status").notNull().default("pending"),
+    error: text("error"),
+    aiChatThreadId: text("ai_chat_thread_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    processedAt: timestamp("processed_at"),
+  },
+  (table) => [index("telegram_chat_inbox_binding_idx").on(table.bindingId, table.status, table.createdAt)],
 )

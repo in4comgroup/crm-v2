@@ -1,49 +1,18 @@
-import {
-  convertToModelMessages,
-  createUIMessageStream,
-  createUIMessageStreamResponse,
-  isStepCount,
-  toUIMessageStream,
-  type UIMessage,
-  type UIMessageChunk,
-} from "ai"
-import { pipeJsonRender } from "@json-render/core"
+import { createUIMessageStreamResponse, type UIMessage } from "ai"
 import { getServerSession } from "@/lib/get-session"
-import { RECORD_TYPE_LABELS } from "@/lib/chat/records"
-import { parsePageRecord } from "@/lib/chat/page-context"
-import { isThreadId, parseUserMessage, threadTitle } from "@/lib/chat/thread"
-import { chatFileIdFromUrl, type ChatAttachmentPart } from "@/lib/chat/files"
-import { prepareChatAttachments, readChatAttachments } from "@/server/chat/files"
-import { buildChatSystemPrompt, todayLine } from "@/lib/chat/prompt"
-import { STATUS_THINKING } from "@/lib/chat/turn"
-import { aiStreamText } from "@/server/ai/runtime"
-import { CHAT_LIMIT_ERROR, getChatLimitState } from "@/server/chat/limit"
-import { chatErrorCode, classifyChatError } from "@/server/chat/errors"
-import { cleanHistory, dataPartToModelText } from "@/server/chat/history"
-import {
-  appendChatMessage,
-  dropTrailingAssistant,
-  ensureChatThread,
-  loadChatMessages,
-} from "@/server/chat/threads"
-import { getRecord, loadRecordsContext, type RecordsContext } from "@/server/chat/records"
-import { visibleStatsSubjects } from "@/server/chat/stats"
-import { createChatStreamFilter } from "@/server/chat/stream"
-import { CRM_TOOLS, buildChatTools } from "@/server/chat/tools"
-import { getOwnOrgContext } from "@/server/identity/own-org"
+import { isThreadId, parseUserMessage } from "@/lib/chat/thread"
+import { runChatTurn } from "@/server/chat/turn"
 
 // AI chat v2 (docs/specs/ai-chat/01-specification.md §10). The model comes
 // from the AI process «ИИ чат» (`chat.assistant`): the user's pick from the
 // admin-allowed list, else the admin's choice (Q1). Read-only tools over the
-// org's CRM (records engine, statistics) + web search; the org and user come
-// from the session, never from the request body or the model.
+// org's CRM (records engine, statistics) + web search + draft cards; the org
+// and user come from the session, never from the request body or the model.
+// The turn itself is `runChatTurn` (src/server/chat/turn.ts), shared with the
+// Telegram channel (docs/specs/ai-chat-telegram §5).
 
 export const maxDuration = 120
 
-/** Hard stop of one answer (spec §13); below maxDuration so the stream can end cleanly. */
-const TURN_TIMEOUT_MS = 110_000
-const MAX_STEPS = 8
-const MAX_OUTPUT_TOKENS = 2_000
 type ChatRequest = {
   /** Thread id (browser-made, §16.1); the thread is created on its first send. */
   chatId?: string
@@ -59,32 +28,6 @@ type ChatRequest = {
   page?: string
 }
 
-/** «Пользователь сейчас открыл: Компания «X» …» — only for a record of the org the user can see. */
-async function pageLine(ctx: RecordsContext, page: string | undefined): Promise<string | null> {
-  const ref = parsePageRecord(page)
-  if (!ref) return null
-  const d = await getRecord(ctx, ref.type, ref.id).catch(() => null)
-  if (!d) return null
-  return `Пользователь сейчас открыл в CRM: ${RECORD_TYPE_LABELS[d.type].one} «${d.title}» (type ${d.type}, ref ${d.id}).`
-}
-
-/**
- * Put the full text of its files into the `data-attachment` parts of the
- * latest user message (in memory only — the stored message keeps the
- * excerpt). New files: the text just parsed; «Повторить»: read again.
- */
-async function withAttachmentText(orgId: string, msg: UIMessage, current: ChatAttachmentPart[]): Promise<void> {
-  const parts = msg.parts.filter((p) => p.type === "data-attachment") as unknown as { data: ChatAttachmentPart }[]
-  if (!parts.length) return
-  const fresh = new Map(current.filter((a) => a.text).map((a) => [a.itemId, a]))
-  const missing = parts.map((p) => p.data.itemId).filter((id) => !fresh.has(id))
-  if (missing.length) for (const a of await readChatAttachments(orgId, missing, true)) fresh.set(a.itemId, a)
-  for (const p of parts) {
-    const a = fresh.get(p.data.itemId)
-    if (a) p.data = a
-  }
-}
-
 export async function POST(req: Request) {
   // Sign-in + active org before any work: an anonymous caller never reaches
   // the (paid) model or the web-search sub-call.
@@ -92,17 +35,6 @@ export async function POST(req: Request) {
   if (!session?.user) return Response.json({ error: "Unauthorized" }, { status: 401 })
   const orgId = session.session.activeOrganizationId ?? null
   if (!orgId) return Response.json({ error: "No active organization" }, { status: 403 })
-  const userId = session.user.id
-  const isAdmin = session.user.role === "admin"
-
-  // Monthly AI limit (Q15): at 100 % no model call; the panel shows a banner.
-  const limit = await getChatLimitState(orgId).catch((e) => {
-    console.error("[chat] limit check failed", e)
-    return null
-  })
-  if (limit?.blocked) {
-    return Response.json({ error: CHAT_LIMIT_ERROR, message: limit.message }, { status: 402 })
-  }
 
   let body: ChatRequest
   try {
@@ -117,156 +49,21 @@ export async function POST(req: Request) {
     return Response.json({ error: "Bad request" }, { status: 400 })
   }
 
-  // History (§16.1): the thread is the user's own in the active org; the
-  // user message is stored BEFORE the model call (after its files are read).
-  const thread = await ensureChatThread(orgId, userId, chatId, threadTitle(userMessage?.text), body.ingestMode === "off" ? "off" : "on")
-  if (!thread) return Response.json({ error: "chat_not_found" }, { status: 404 })
-  const lastLeft = regenerate ? await dropTrailingAssistant(chatId) : null
-  const appendUser = !!userMessage && (!regenerate || lastLeft !== "user")
-  if (!appendUser && lastLeft !== "user") {
-    return Response.json({ error: "Bad request" }, { status: 400 })
-  }
-  const assistantId = crypto.randomUUID()
-
-  const requestId = crypto.randomUUID().slice(0, 8)
-  const startedAt = Date.now()
-
-  const stream = createUIMessageStream({
-    execute: async ({ writer }) => {
-      writer.write({ type: "start", messageId: assistantId })
-      // The first status line before any model call (spec §13: ≤ 1 s).
-      writer.write({ type: "data-status", data: STATUS_THINKING, transient: true } as UIMessageChunk)
-
-      // Files (docs/specs/ai-chat-tools §5.2, Q22): detached from the chat,
-      // parsed by the parser of their type; the model gets only their TEXT.
-      let current: ChatAttachmentPart[] = []
-      if (appendUser && userMessage) {
-        const messageId = crypto.randomUUID()
-        current = await prepareChatAttachments(orgId, userId, userMessage.fileIds, { threadId: chatId, messageId }, (label) =>
-          writer.write({ type: "data-status", data: { stage: "reading", label }, transient: true } as UIMessageChunk),
-        )
-        const kept = new Set(current.map((a) => a.itemId))
-        await appendChatMessage(chatId, {
-          id: messageId,
-          role: "user",
-          parts: [
-            // Only file parts of files that really are the user's uploads.
-            ...userMessage.parts.filter((p) => p.type !== "file" || kept.has(chatFileIdFromUrl(p.url) ?? "")),
-            ...current.map((a) => ({ type: "data-attachment", id: a.itemId, data: a })),
-          ],
-        })
-        writer.write({ type: "data-status", data: STATUS_THINKING, transient: true } as UIMessageChunk)
-      }
-      const history = cleanHistory(await loadChatMessages(chatId))
-      if (!history.length || history[history.length - 1].role !== "user") throw new Error("chat history does not end with a user message")
-      // The latest user message gets the FULL text of its files (older turns: a short note).
-      await withAttachmentText(orgId, history[history.length - 1], current)
-
-      const ctx = await loadRecordsContext(orgId, userId)
-      const [orgCard, page] = await Promise.all([
-        getOwnOrgContext(orgId)
-          .then((c) => c.promptCard)
-          .catch((e) => {
-            console.error("[chat] own-org context failed", e)
-            return ""
-          }),
-        pageLine(ctx, body.page),
-      ])
-      const pageRef = parsePageRecord(body.page)
-      const tools = buildChatTools({
-        ctx,
-        writer,
-        ai: { orgId, userId },
-        actions: {
-          orgId,
-          userId,
-          threadId: chatId,
-          messageId: assistantId,
-          history,
-          pageClientId: pageRef?.type === "client" ? pageRef.id : null,
-        },
-      })
-      const instructions = buildChatSystemPrompt({
-        orgCard,
-        topicsVisible: ctx.topicsVisible,
-        statsSubjects: visibleStatsSubjects(ctx),
-        todayLine: todayLine(ctx.now, ctx.timeZone),
-        pageLine: page,
-        actions: true,
-      })
-      const messages = await convertToModelMessages(history, {
-        convertDataPart: (part) => dataPartToModelText(part),
-      })
-
-      let servedModel: string | null = null
-      let resolveServed: () => void = () => {}
-      const served = new Promise<void>((r) => (resolveServed = r))
-
-      const result = await aiStreamText({
-        process: "chat.assistant",
-        orgId,
-        userId,
-        requestedModelId: body.model,
-        instructions,
-        messages,
-        tools,
-        stopWhen: isStepCount(MAX_STEPS),
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        abortSignal: AbortSignal.any([req.signal, AbortSignal.timeout(TURN_TIMEOUT_MS)]),
-        onEnd: (event) => {
-          const last = (event as { finalStep?: { response?: { modelId?: string } }; response?: { modelId?: string } })
-          servedModel = last.finalStep?.response?.modelId ?? last.response?.modelId ?? null
-          resolveServed()
-        },
-      })
-
-      const filter = createChatStreamFilter({
-        isAdmin,
-        startedAt,
-        sourceOf: (t) => (CRM_TOOLS.has(t) ? "crm" : t === "searchWeb" ? "web" : null),
-        model: async () => {
-          await served
-          return servedModel
-        },
-      })
-
-      const ui = toUIMessageStream({
-        stream: result.stream,
-        tools,
-        sendStart: false,
-        onError: (e) => {
-          const cls = classifyChatError(e)
-          const calls = filter.summary().calls.map((c) => (c.kind === "tool" ? `${c.tool} ${c.input}` : "")).join(" | ")
-          console.error(`[chat ${requestId}] stream error (${cls}, org ${orgId}) after [${calls}]`, e)
-          return chatErrorCode(cls)
-        },
-      })
-      writer.merge(pipeJsonRender(ui).pipeThrough(filter.stream))
-
-      // Server log of the turn (never sent to the browser).
-      void served.then(() => {
-        const s = filter.summary()
-        console.log(`[chat ${requestId}] org ${orgId} model ${servedModel ?? "-"} steps ${s.steps} tools [${s.tools.join(", ")}] ${s.ms} ms`)
-        if (s.emptyAnswer) console.warn(`[chat ${requestId}] the model wrote no answer text — fallback shown`)
-        if (s.falseDraftClaim) console.warn(`[chat ${requestId}] the model claimed a draft card without a draft tool call — note shown`)
-      })
-    },
-    onError: (e) => {
-      const cls = classifyChatError(e)
-      console.error(`[chat ${requestId}] failed (${cls}, org ${orgId})`, e)
-      return chatErrorCode(cls)
-    },
-    // The answer is stored at the end — also a broken / stopped one, with
-    // what was produced (§16.1). Admin debug and status parts are not stored.
-    onEnd: async ({ responseMessage }) => {
-      if (responseMessage.role !== "assistant") return
-      try {
-        await appendChatMessage(chatId, { id: assistantId, role: "assistant", parts: responseMessage.parts })
-      } catch (e) {
-        console.error(`[chat ${requestId}] saving the answer failed (thread ${chatId})`, e)
-      }
-    },
+  const turn = await runChatTurn({
+    orgId,
+    userId: session.user.id,
+    isAdmin: session.user.role === "admin",
+    threadId: chatId,
+    userMessage,
+    regenerate,
+    ingestMode: body.ingestMode === "off" ? "off" : "on",
+    model: body.model,
+    page: body.page,
+    channel: "web",
+    abortSignal: req.signal,
   })
-
-  return createUIMessageStreamResponse({ stream })
+  if (!turn.ok) {
+    return Response.json({ error: turn.error, ...(turn.message ? { message: turn.message } : {}) }, { status: turn.status })
+  }
+  return createUIMessageStreamResponse({ stream: turn.stream })
 }

@@ -32,12 +32,19 @@ export async function listChatThreads(orgId: string, userId: string, limit = 50)
       createdAt: aiChatThread.createdAt,
       lastMessageAt: aiChatThread.lastMessageAt,
       ingestMode: aiChatThread.ingestMode,
+      channel: aiChatThread.channel,
     })
     .from(aiChatThread)
     .where(and(eq(aiChatThread.organizationId, orgId), eq(aiChatThread.userId, userId), isNull(aiChatThread.deletedAt)))
     .orderBy(desc(aiChatThread.lastMessageAt))
     .limit(Math.min(Math.max(limit, 1), 200))
-  return rows.map((r) => ({ ...r, ingestMode: r.ingestMode === "off" ? "off" : "on", createdAt: r.createdAt.toISOString(), lastMessageAt: r.lastMessageAt.toISOString() }))
+  return rows.map((r) => ({
+    ...r,
+    ingestMode: r.ingestMode === "off" ? "off" : "on",
+    channel: r.channel === "telegram" ? "telegram" : "web",
+    createdAt: r.createdAt.toISOString(),
+    lastMessageAt: r.lastMessageAt.toISOString(),
+  }))
 }
 
 /** One thread of the user (not deleted) or null. */
@@ -49,6 +56,7 @@ export async function getChatThread(orgId: string, userId: string, threadId: str
       createdAt: aiChatThread.createdAt,
       lastMessageAt: aiChatThread.lastMessageAt,
       ingestMode: aiChatThread.ingestMode,
+      channel: aiChatThread.channel,
     })
     .from(aiChatThread)
     .where(
@@ -61,7 +69,13 @@ export async function getChatThread(orgId: string, userId: string, threadId: str
     )
     .limit(1)
   return r
-    ? { ...r, ingestMode: r.ingestMode === "off" ? "off" : "on", createdAt: r.createdAt.toISOString(), lastMessageAt: r.lastMessageAt.toISOString() }
+    ? {
+        ...r,
+        ingestMode: r.ingestMode === "off" ? "off" : "on",
+        channel: r.channel === "telegram" ? "telegram" : "web",
+        createdAt: r.createdAt.toISOString(),
+        lastMessageAt: r.lastMessageAt.toISOString(),
+      }
     : null
 }
 
@@ -76,10 +90,11 @@ export async function ensureChatThread(
   threadId: string,
   title: string,
   ingestMode: "on" | "off" = "on",
+  channel: "web" | "telegram" = "web",
 ): Promise<{ created: boolean } | null> {
   const inserted = await db
     .insert(aiChatThread)
-    .values({ id: threadId, organizationId: orgId, userId, title, ingestMode })
+    .values({ id: threadId, organizationId: orgId, userId, title, ingestMode, channel })
     .onConflictDoNothing({ target: aiChatThread.id })
     .returning({ id: aiChatThread.id })
   if (inserted.length) return { created: true }
@@ -108,6 +123,16 @@ export async function loadChatMessages(threadId: string, limit = THREAD_LOAD_MAX
       ? { metadata: { feedback: (r.feedback as ChatFeedback | null) ?? null, feedbackComment: r.feedbackComment ?? null } }
       : {}),
   }))
+}
+
+/** One stored message of a thread (call only after an ownership check). */
+export async function getChatMessage(threadId: string, messageId: string): Promise<{ id: string; role: "user" | "assistant"; parts: unknown[] } | null> {
+  const [r] = await db
+    .select({ id: aiChatMessage.id, role: aiChatMessage.role, parts: aiChatMessage.parts })
+    .from(aiChatMessage)
+    .where(and(eq(aiChatMessage.threadId, threadId), eq(aiChatMessage.id, messageId)))
+    .limit(1)
+  return r ? { id: r.id, role: r.role === "assistant" ? "assistant" : "user", parts: (r.parts ?? []) as unknown[] } : null
 }
 
 /**

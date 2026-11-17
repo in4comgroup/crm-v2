@@ -50,6 +50,7 @@ import {
   type TaskUpdateValues,
   type TaskValues,
   type UpdateValues,
+  normalizeDealValue,
 } from "@/lib/chat/actions"
 import { dueLabel, isLocalDateTime } from "@/lib/chat/due-date"
 import { TASK_PRIORITY_LABELS, TASK_TYPE_LABELS } from "@/lib/task-labels"
@@ -432,7 +433,7 @@ function toValues(
       ...deal,
       name: deal.name.trim(),
       description: deal.description.trim(),
-      value: deal.value.replace(/\D/g, ""),
+      value: normalizeDealValue(deal.value),
       companyName: deal.companyName.trim(),
     }
   }
@@ -732,10 +733,10 @@ function FieldRow({
         <div className="flex items-center gap-1">
           <Input
             id={id}
-            inputMode="numeric"
+            inputMode="decimal"
             value={value}
             disabled={disabled}
-            onChange={(e) => onChange({ value: e.target.value.replace(/\D/g, "") })}
+            onChange={(e) => onChange({ value: e.target.value.replace(/[^\d\s.,]/g, "") })}
             className={INPUT_CLASS}
           />
           <select

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildChatSystemPrompt, todayLine } from "./prompt"
+import { TELEGRAM_CHANNEL, buildChatSystemPrompt, todayLine } from "./prompt"
 
 const base = { topicsVisible: false, statsSubjects: ["orders", "deals"] as ("orders" | "deals")[], todayLine: "Сегодня: 16.11.2026, понедельник." }
 
@@ -40,6 +40,15 @@ describe("buildChatSystemPrompt", () => {
     const p = buildChatSystemPrompt({ ...base, orgCard: "О нашей компании: X", pageLine: "Пользователь сейчас открыл: Компания «Вектор»." })
     expect(p.indexOf("О нашей компании")).toBeGreaterThan(p.indexOf("## Statistics"))
     expect(p.trim().endsWith("open it with getRecord.")).toBe(true)
+  })
+
+  it("Telegram channel: one block at the END; the web prompt is byte-identical without it", () => {
+    const web = buildChatSystemPrompt({ ...base, actions: true })
+    expect(buildChatSystemPrompt({ ...base, actions: true, channel: "web" })).toBe(web)
+    const tg = buildChatSystemPrompt({ ...base, actions: true, channel: "telegram" })
+    expect(tg.startsWith(web)).toBe(true)
+    expect(tg.endsWith(TELEGRAM_CHANNEL)).toBe(true)
+    expect(web).not.toContain("Channel: Telegram")
   })
 
   it("todayLine is in the org time zone", () => {

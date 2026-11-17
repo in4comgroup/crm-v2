@@ -207,7 +207,16 @@ export const auth = betterAuth({
           await invalidateOwnOrg(organization?.id ?? member.organizationId)
         },
         afterAddMember: async ({ organization }) => invalidateOwnOrg(organization.id),
-        afterRemoveMember: async ({ organization }) => invalidateOwnOrg(organization.id),
+        afterRemoveMember: async ({ organization, member: removed }) => {
+          await invalidateOwnOrg(organization.id)
+          // A member who left the org loses the Telegram binding (docs/specs/telegram/04 §5.2).
+          try {
+            const { unbindTelegram } = await import("@/server/telegram/bindings")
+            if (removed?.userId) await unbindTelegram(organization.id, removed.userId, "left_org")
+          } catch (e) {
+            console.error("[auth] telegram unbind on member removal failed", e)
+          }
+        },
         afterAcceptInvitation: async ({ organization, user: joined }) => {
           await invalidateOwnOrg(organization.id)
           // Notifications (docs/specs/notifications §5 `member.joined`) → owners.

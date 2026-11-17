@@ -59,7 +59,7 @@ Phases: [03-development-plan.md](03-development-plan.md). The scope of v1 is que
 | Input | How it reaches the server | How it is read |
 |---|---|---|
 | Typed text | the message | as is |
-| Dictation (browser speech-to-text, exists) | the message text | as is |
+| Dictation (browser speech-to-text, exists) | the message text — phrases go into the input field, the user edits and sends; one language per session, «RU» / «EN» toggle (default RU); no button in browsers without the Web Speech API (Firefox) | as is |
 | **Recorded voice message** (new) | record button in the input; recorded in the browser as **WAV 16 kHz mono** (Chrome's MediaRecorder gives WebM, which the audio parser does not accept); ≤ 10 MB ≈ 5 minutes | audio parser (`parsing.audio`): transcript with speakers |
 | Photo / scan (business card, whiteboard, screenshot) — also the phone camera (`capture="environment"`) | file | image parser (OCR text + a description of the picture) |
 | PDF, DOCX, PPTX (meeting notes, a client's mail, a price request) | file | PDF / Office parsers |

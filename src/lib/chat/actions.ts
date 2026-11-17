@@ -1044,6 +1044,27 @@ export function parseDealValue(text: string): { value: string; currency: string 
   return { value: String(Math.round(a.value * 100) / 100), currency: a.currency }
 }
 
+/**
+ * A deal amount as the person typed it in the card → the stored form
+ * (`dealValuesSchema.value`: digits + optional «.» and ≤ 2 decimals; "" =
+ * none / not a number). Spaces and «'» are digit groups; «,» or «.» followed
+ * by 1–2 digits at the end = decimals, followed by 3 digits = a digit group
+ * («1.500.000», «1,500,000», «1 500 000,50», «1500000.50»). More than 3
+ * decimals → rounded to 2.
+ */
+export function normalizeDealValue(input: string): string {
+  const t = (input ?? "").replace(/[\s\u00a0\u202f'’_]/g, "")
+  if (!t || !/^\d[\d.,]*$/.test(t)) return ""
+  const lastSep = Math.max(t.lastIndexOf("."), t.lastIndexOf(","))
+  const after = lastSep >= 0 ? t.slice(lastSep + 1) : ""
+  // 3 digits after the last separator = a digit group; anything else after it = decimals.
+  const decimal = lastSep >= 0 && after.length > 0 && after.length !== 3
+  const intPart = (decimal ? t.slice(0, lastSep) : t).replace(/[.,]/g, "")
+  if (!/^\d+$/.test(intPart) || (decimal && !/^\d+$/.test(after))) return ""
+  const n = decimal ? Math.round(Number(`${intPart}.${after}`) * 100) / 100 : Number(intPart)
+  return Number.isFinite(n) ? String(n) : ""
+}
+
 /** Every amount the text names (any spelling: «2 млн», «два миллиона рублей», «2 000 000 ₽»), as digits. */
 export function amountsIn(text: string): Set<string> {
   return new Set(parseMoneyRu(moneyText(text)).filter((m) => m.value > 0).map((m) => String(Math.round(m.value * 100) / 100)))

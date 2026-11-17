@@ -17,8 +17,22 @@ import type { Update } from "grammy/types"
 // `message` = private chats AND groups (text, voice, files — docs/specs/telegram);
 // `my_chat_member` = the bot added to / removed from a group (G7). A change
 // here reaches a deployed bot only when its webhook is registered again
-// (saving the source credentials does that).
-const ALLOWED_UPDATES = ["message", "my_chat_member"] as const
+// (saving the source credentials does that). `callback_query` = button
+// presses, `edited_message` = an edit of a message still waiting for its AI
+// chat turn (docs/specs/telegram/04 §5.5 C2, docs/specs/ai-chat-telegram §6.1).
+const ALLOWED_UPDATES = ["message", "my_chat_member", "callback_query", "edited_message"] as const
+
+// Commands shown in the private chat with the bot (Bot API scope
+// `all_private_chats`; groups show none). docs/specs/ai-chat-telegram §9.
+const PRIVATE_COMMANDS = [
+  { command: "new", description: "Новый разговор с ИИ" },
+  { command: "help", description: "Что умеет бот" },
+  { command: "stop", description: "Отвязать Telegram от CRM" },
+]
+
+export async function setTelegramPrivateCommands(botToken: string): Promise<void> {
+  await botApi(botToken).setMyCommands(PRIVATE_COMMANDS, { scope: { type: "all_private_chats" } })
+}
 
 function botApi(botToken: string) {
   return new Bot(botToken).api

@@ -5,10 +5,11 @@
 // accept) and delivers a 16 kHz mono 16-bit WAV file.
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Mic, Square, X } from "lucide-react"
+import { AudioLines, Square, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { VOICE_MAX_SECONDS, WAV_SAMPLE_RATE, downsampleTo, encodeWav16, voiceFileName } from "@/lib/chat/wav"
 
 const MIN_SECONDS = 1
@@ -202,17 +203,29 @@ export function VoiceRecorderButton({
 
   if (state === "idle" || state === "starting") {
     return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Записать голосовое сообщение"
-        title="Записать голосовое сообщение"
-        disabled={disabled || state === "starting"}
-        onClick={() => void start()}
-      >
-        <Mic />
-      </Button>
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Записать голосовое сообщение"
+              disabled={disabled || state === "starting"}
+              onClick={() => void start()}
+            >
+              <AudioLines />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-64">
+            <p className="font-medium">Голосовое сообщение</p>
+            <p>
+              Запись до {Math.round(VOICE_MAX_SECONDS / 60)} минут уходит в чат файлом. Сервер расшифрует её точнее
+              диктовки — имена, номера, кто говорит — и сохранит как документ. Удобно для заметок после встречи.
+            </p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     )
   }
 

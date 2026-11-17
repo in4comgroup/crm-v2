@@ -7,6 +7,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 import { Check, ChevronDown, History, MoreHorizontal, Pencil, Plus, Send, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react"
 import { MessageAction } from "@/components/ai-elements/message"
+import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -123,6 +124,7 @@ export function ThreadControls({
                 className={cn("flex items-center gap-2", t.id === currentId && "bg-accent/60")}
               >
                 <span className="min-w-0 flex-1 truncate">{t.title}</span>
+                {t.channel === "telegram" && <TelegramThreadMark />}
                 <span className="text-muted-foreground shrink-0 text-xs">{when(t.lastMessageAt)}</span>
               </DropdownMenuItem>
             ))}
@@ -177,6 +179,23 @@ export function ThreadControls({
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  )
+}
+
+/** Mark of a chat that came from the Telegram bot (docs/specs/ai-chat-telegram §13). */
+function TelegramThreadMark() {
+  const tip = useAnchorTooltip()
+  return (
+    <>
+      <span
+        {...tip.bind}
+        className="text-muted-foreground inline-flex shrink-0 items-center"
+        aria-label="Разговор из Telegram"
+      >
+        <Send className="size-3.5" />
+      </span>
+      <AnchorTooltip text="Разговор из Telegram" open={tip.open} virtualRef={tip.virtualRef} />
+    </>
   )
 }
 

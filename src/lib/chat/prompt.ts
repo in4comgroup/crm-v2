@@ -25,6 +25,8 @@ export type ChatPromptInput = {
   pageLine?: string | null
   /** Draft tools of ai-chat-tools T1 are registered (company / contact cards). */
   actions?: boolean
+  /** The answer goes to Telegram (docs/specs/ai-chat-telegram §12): a channel block at the END; web = no block (prompt unchanged). */
+  channel?: "web" | "telegram"
 }
 
 const CAN_DO = "ищу по CRM (компании, контакты, сделки, заказы, товары, задачи, письма), считаю статистику с графиками, ищу в интернете"
@@ -134,8 +136,17 @@ ${card}`)
   parts.push(`## Now
 
 ${input.todayLine}${input.pageLine ? `\n${input.pageLine} If the question says «эта компания / эта сделка / он / она» without a name, it is about this record — open it with getRecord.` : ""}`)
+  if (input.channel === "telegram") parts.push(TELEGRAM_CHANNEL)
   return parts.join("\n\n")
 }
+
+/**
+ * Telegram channel block (docs/specs/ai-chat-telegram §12). Last, so the
+ * static part of the prompt (and its cache) stays the same as the web chat's.
+ */
+export const TELEGRAM_CHANNEL = `## Channel: Telegram
+
+The user reads your answer in Telegram on a phone. Write short paragraphs or a list, no tables and no headings, usually ≤ 1 500 characters. The app shows the found records, statistics and sources itself — do not list them. Do not write links. There is no page context in Telegram.`
 
 /** «Сегодня: 16.11.2026, понедельник. Часовой пояс организации: Europe/Vienna.» */
 export function todayLine(now: Date, timeZone: string): string {

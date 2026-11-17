@@ -4321,3 +4321,135 @@ export const telegramChatInbox = pgTable(
   },
   (table) => [index("telegram_chat_inbox_binding_idx").on(table.bindingId, table.status, table.createdAt)],
 )
+
+// ── Telegram chats ↔ companies (docs/specs/telegram/04 §7, TI4) ─────────
+// One row per org × bot × chat the bot sees (groups / supergroups) or a
+// company's own Telegram account (a private chat, author step 5). A row can
+// exist BEFORE the bot sees the chat (typed by @name, `chat_id` null =
+// «ждём первое сообщение»). Replaces `provider_config.telegramGroups`.
+// type = private | group | supergroup | channel | unknown;
+// bot_status = member | administrator | left | kicked;
+// mode = auto (identity per author) | clients (bound to companies) | internal (staff only).
+// «Не анализировать» stays the chat exclusion (`analysis_exclusion` kind chat).
+export const telegramChat = pgTable(
+  "telegram_chat",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => source.id, { onDelete: "cascade" }),
+    chatId: text("chat_id"),
+    type: text("type").notNull().default("unknown"),
+    title: text("title"),
+    // Lower-case, without «@».
+    username: text("username"),
+    botStatus: text("bot_status"),
+    migratedFromChatId: text("migrated_from_chat_id"),
+    mode: text("mode").notNull().default("auto"),
+    firstSeenAt: timestamp("first_seen_at"),
+    lastMessageAt: timestamp("last_message_at"),
+    boundByUserId: text("bound_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    boundAt: timestamp("bound_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("telegram_chat_source_chat_uq").on(table.sourceId, table.chatId).where(sql`${table.chatId} is not null`),
+    uniqueIndex("telegram_chat_source_username_uq").on(table.sourceId, table.username).where(sql`${table.username} is not null`),
+    index("telegram_chat_org_idx").on(table.organizationId),
+  ],
+)
+
+// Companies of a chat (mode clients): one or more, exactly one primary.
+export const telegramChatClient = pgTable(
+  "telegram_chat_client",
+  {
+    chatRowId: text("chat_row_id")
+      .notNull()
+      .references(() => telegramChat.id, { onDelete: "cascade" }),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => client.id, { onDelete: "cascade" }),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.chatRowId, table.clientId] }), index("telegram_chat_client_client_idx").on(table.clientId)],
+)
+
+// Change log of a chat's binding (§7.2): who, when, from → to.
+export const telegramChatLog = pgTable(
+  "telegram_chat_log",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    chatRowId: text("chat_row_id")
+      .notNull()
+      .references(() => telegramChat.id, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    // created | mode | clients | suggestion_accepted | suggestion_rejected | migrated
+    action: text("action").notNull(),
+    before: jsonb("before").$type<unknown>(),
+    after: jsonb("after").$type<unknown>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("telegram_chat_log_chat_idx").on(table.chatRowId, table.createdAt)],
+)
+
+// Binding suggestions (§7.3, never automatic): by title or by authors.
+// status = open | accepted | rejected (a rejected pair is not suggested again).
+export const telegramChatSuggestion = pgTable(
+  "telegram_chat_suggestion",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    chatRowId: text("chat_row_id")
+      .notNull()
+      .references(() => telegramChat.id, { onDelete: "cascade" }),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => client.id, { onDelete: "cascade" }),
+    // title | authors
+    reason: text("reason").notNull(),
+    status: text("status").notNull().default("open"),
+    decidedByUserId: text("decided_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("telegram_chat_suggestion_pair_uq").on(table.chatRowId, table.clientId)],
+)
+
+// «Новый контакт в <Компания>?» (Q25): an unknown author in a chat bound to a
+// company. A person creates the contact, links an existing one, or rejects.
+// status = open | created | linked | rejected.
+export const telegramContactProposal = pgTable(
+  "telegram_contact_proposal",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    chatRowId: text("chat_row_id").references(() => telegramChat.id, { onDelete: "set null" }),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => client.id, { onDelete: "cascade" }),
+    tgUserId: text("tg_user_id").notNull(),
+    username: text("username"),
+    name: text("name"),
+    messageCount: integer("message_count").notNull().default(1),
+    firstItemId: text("first_item_id").references(() => sourceItem.id, { onDelete: "set null" }),
+    lastMessageAt: timestamp("last_message_at"),
+    status: text("status").notNull().default("open"),
+    contactId: text("contact_id").references(() => contact.id, { onDelete: "set null" }),
+    decidedByUserId: text("decided_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("telegram_contact_proposal_uq").on(table.organizationId, table.clientId, table.tgUserId)],
+)

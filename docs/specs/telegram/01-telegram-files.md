@@ -141,7 +141,7 @@ Estimate ≈ 1 day on top of the files work (TF5 in the plan).
 | Same order for mail (Nylas, IMAP) and Google Chat: attachments before the root is complete | `src/server/parse-source-item.ts` |
 | Documents: re-fetch by `file_id`; A1 by Telegram name | `src/server/documents-ingest.ts` (`fetchOriginal`), `src/server/documents.ts` (`contactByTelegramHandle`) |
 | Topics: attachment blocks in extraction (every source); counterparty reads «Адреса» → Telegram; outbound group peer | `src/server/topics/signals/attachment-blocks.ts`, `item-input.ts`, `extract-item.ts`, `prompt/extraction.ts` (rule 11), golden set / evals; `topic-store.ts` |
-| Source settings: «Группы» — privacy check result + the bot's groups; a settings save keeps the server-managed keys | `src/components/forms/form-source-provider-config.tsx`, `src/server/providers/handlers.ts` (`mergeServerManagedConfig`) |
+| Source settings: «Группы» — privacy check result + the bot's groups (since telegram/04 TI4: the `telegram_chat` list with bindings); a settings save keeps the server-managed keys | `src/components/forms/form-source-provider-config.tsx`, `src/server/providers/handlers.ts` (`mergeServerManagedConfig`) |
 | Time: webhook and «Fetch» routes `maxDuration` 300 s | `src/app/api/webhooks/telegram/[sourceId]/route.ts`, `src/app/api/sources/telegram/fetch/route.ts` |
 
 Notes and differences:

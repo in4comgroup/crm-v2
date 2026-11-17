@@ -1,5 +1,7 @@
 import "server-only"
 
+import { readTelegramResolved } from "@/lib/telegram/resolve"
+
 import { and, asc, eq, inArray, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
 import { source, sourceItem } from "@/db/schema"
@@ -227,9 +229,18 @@ export function envelopeFromItem(item: {
   const chatNote = item.provider === "aichat" && m.chatNote && typeof m.chatNote === "object"
     ? (m.chatNote as { relayedFrom?: unknown })
     : null
+  // A member's OWN text / voice in a private chat with the bot (docs/specs/
+  // telegram/04 Q20, TI6): a note about a client — read like the AI chat note
+  // (the member relays; the counterparty comes from the text).
+  const tgResolved = readTelegramResolved(m)
+  const memberNote =
+    item.provider === "telegram" && !tgOrigin && tg.chatType === "private" && tgResolved?.author.kind === "member"
   if (chatNote) {
     forwardedBy = from
     originalAuthor = str(chatNote.relayedFrom) ?? "не указан"
+  } else if (memberNote) {
+    forwardedBy = from
+    originalAuthor = "не указан"
   } else if (tgOrigin) {
     forwardedBy = from
     originalAuthor = telegramForwardAuthor(tgOrigin) ?? "скрыт"
@@ -255,6 +266,7 @@ export function envelopeFromItem(item: {
     forwardedBy,
     originalAuthor,
     ...(chatNote ? { relayedNote: true } : {}),
+    ...(memberNote ? { relayedNote: true, relayedNoteChannel: "telegram" as const } : {}),
   }
 }
 

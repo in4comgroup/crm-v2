@@ -185,6 +185,24 @@ export function itemPeer(metadataJson: unknown, direction: SignalDirection): Ite
   const tg = (m.telegram ?? null) as { from?: TgUser; groupPeer?: TgUser } | null
   // The ONE rule (docs/specs/telegram/04 §8.3): the resolved contact first.
   const r = readTelegramResolved(m)
+  // A chat bound to companies (§7.4): the binding decides the company, both directions.
+  if (r?.chat?.mode === "clients" && r.counterpartyClientIds.length) {
+    const contact = r.author.kind === "contact" && r.counterpartyContactId
+    return {
+      email: null,
+      name: contact ? r.author.name : null,
+      handle: contact ? r.author.username : null,
+      contactId: r.counterpartyContactId,
+      clientId: r.counterpartyClientIds[0],
+      allowedClientIds: r.chat.clientIds,
+    }
+  }
+  // Internal chat: our people only — no counterparty.
+  if (r?.internal) return null
+  // A company's own account (author step 5).
+  if (r?.author.kind === "company_account" && direction !== "outbound" && r.counterpartyClientIds.length) {
+    return { email: null, name: r.author.name, handle: r.author.username, clientId: r.counterpartyClientIds[0] }
+  }
   if (r && r.counterpartyContactId) {
     const ours = r.author.kind === "member"
     if (ours ? direction === "outbound" : direction !== "outbound") {

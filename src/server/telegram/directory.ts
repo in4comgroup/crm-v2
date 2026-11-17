@@ -3,12 +3,14 @@ import "server-only"
 import { randomUUID } from "node:crypto"
 import { and, eq, inArray, isNull, ne, notInArray, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { contact, contactAddress, contactCompanyLink, orgIdentityEntry, sourceItem, telegramBinding } from "@/db/schema"
+import { contact, contactAddress, contactCompanyLink, orgIdentityEntry, sourceItem, telegramBinding, telegramChat, telegramChatClient } from "@/db/schema"
 import {
   handleKey,
   isTelegramIdOnlyValue,
   resolveTelegramMessage,
   telegramIdValue,
+  type ChatBinding,
+  type CompanyAccount,
   type ContactTgAddress,
   type ResolveInput,
   type TelegramDirectory,
@@ -25,7 +27,7 @@ import {
 
 /** Every Telegram identity the resolver needs, for one org. */
 export async function loadTelegramDirectory(orgId: string): Promise<TelegramDirectory> {
-  const [bindings, staff, addrRows, aliasRows, links] = await Promise.all([
+  const [bindings, staff, addrRows, aliasRows, links, chatRows] = await Promise.all([
     db
       .select({ tg: telegramBinding.tgUserId, userId: telegramBinding.userId })
       .from(telegramBinding)
@@ -47,6 +49,12 @@ export async function loadTelegramDirectory(orgId: string): Promise<TelegramDire
       .select({ contactId: contactCompanyLink.contactId, clientId: contactCompanyLink.clientId, isPrimary: contactCompanyLink.isPrimary })
       .from(contactCompanyLink)
       .where(and(eq(contactCompanyLink.organizationId, orgId), eq(contactCompanyLink.status, "current"))),
+    // Chat bindings + companies' own accounts (TI4).
+    db
+      .select({ rowId: telegramChat.id, chatId: telegramChat.chatId, type: telegramChat.type, username: telegramChat.username, mode: telegramChat.mode, clientId: telegramChatClient.clientId, isPrimary: telegramChatClient.isPrimary })
+      .from(telegramChat)
+      .leftJoin(telegramChatClient, eq(telegramChatClient.chatRowId, telegramChat.id))
+      .where(and(eq(telegramChat.organizationId, orgId), ne(telegramChat.mode, "auto"))),
   ])
   const addresses: ContactTgAddress[] = addrRows.map((a) => ({
     addressId: a.id,
@@ -73,7 +81,31 @@ export async function loadTelegramDirectory(orgId: string): Promise<TelegramDire
     }
     contactClients.set(l.contactId, list)
   }
+  const chats = new Map<string, ChatBinding>()
+  const accounts = new Map<string, CompanyAccount>()
+  for (const r of chatRows) {
+    if (r.type === "private" || r.type === "unknown") {
+      // A company's own account (bound by @name or by its private chat).
+      if (r.mode !== "clients") continue
+      const a = accounts.get(r.rowId) ?? { tgUserId: r.type === "private" ? r.chatId : null, handle: r.username ?? null, clientIds: [] }
+      if (r.clientId && !a.clientIds.includes(r.clientId)) {
+        if (r.isPrimary) a.clientIds.unshift(r.clientId)
+        else a.clientIds.push(r.clientId)
+      }
+      accounts.set(r.rowId, a)
+      continue
+    }
+    if (!r.chatId) continue
+    const b = chats.get(r.chatId) ?? { rowId: r.rowId, mode: r.mode === "internal" ? "internal" : "clients", clientIds: [] }
+    if (r.clientId && !b.clientIds.includes(r.clientId)) {
+      if (r.isPrimary) b.clientIds.unshift(r.clientId)
+      else b.clientIds.push(r.clientId)
+    }
+    chats.set(r.chatId, b)
+  }
   return {
+    chats,
+    companyAccounts: [...accounts.values()],
     staffById: new Map(bindings.map((b) => [b.tg, b.userId])),
     staffByHandle: new Map(staff.filter((s) => s.userId).map((s) => [s.key, s.userId!])),
     addresses,
@@ -135,7 +167,8 @@ export function resolveInputOf(meta: unknown, groupPeer?: TgPerson | null): Reso
     ? { id: f.id != null ? String(f.id) : null, username: f.username ?? null, name: [f.firstName, f.lastName].filter(Boolean).join(" ") || null }
     : null
   const gp = groupPeer ?? personOf(tg.groupPeer)
-  return { from, forwardOrigin: (tg.forwardOrigin ?? null) as ResolveInput["forwardOrigin"], chatType: typeof tg.chatType === "string" ? tg.chatType : null, groupPeer: gp }
+  const chatId = typeof tg.chatId === "number" || typeof tg.chatId === "string" ? String(tg.chatId) : null
+  return { from, forwardOrigin: (tg.forwardOrigin ?? null) as ResolveInput["forwardOrigin"], chatType: typeof tg.chatType === "string" ? tg.chatType : null, chatId, groupPeer: gp }
 }
 
 function personOf(v: unknown): TgPerson | null {
@@ -153,6 +186,13 @@ export async function stampTelegramResolved(orgId: string, itemId: string, meta:
     .set({ metadataJson: sql`jsonb_set(coalesce(${sourceItem.metadataJson}, '{}'::jsonb), '{telegram,resolved}', ${JSON.stringify(resolved)}::jsonb, true)` })
     .where(and(eq(sourceItem.id, itemId), eq(sourceItem.organizationId, orgId)))
   if (learn.length) await applyTelegramLearning(orgId, learn)
+  // TI4: «Новый контакт в …?» (Q25) and binding suggestions by authors (§7.3). Best effort.
+  try {
+    const { afterTelegramResolution } = await import("@/server/telegram/chats")
+    await afterTelegramResolution(orgId, itemId, resolved, resolveInputOf(meta).chatId ?? null)
+  } catch (e) {
+    console.warn("[telegram/directory] chat follow-ups failed", itemId, e)
+  }
   return resolved
 }
 
@@ -276,7 +316,7 @@ export async function listTelegramDuplicates(orgId: string): Promise<{ key: stri
 export type TelegramItemAuthorView = {
   /** The item is a Telegram message (a root item). */
   telegram: boolean
-  kind: "member" | "contact" | "unknown" | null
+  kind: "member" | "contact" | "company_account" | "unknown" | null
   name: string | null
   username: string | null
   /** The author has a Telegram id (can be linked). */

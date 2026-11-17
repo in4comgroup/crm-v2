@@ -105,3 +105,54 @@ describe("helpers", () => {
     expect(groups).toEqual([{ key: "h:same_name", label: "@same_name", contactIds: ["c_d1", "c_d2"] }])
   })
 })
+
+describe("chat bindings (TI4, §7.4) and company accounts (step 5)", () => {
+  const bound = (mode: "clients" | "internal" | "auto", clientIds: string[]) =>
+    dir({ chats: new Map([["-1001", { rowId: "r1", mode, clientIds }]]), companyAccounts: [{ tgUserId: "700", handle: "alfa_sales", clientIds: ["cl_alfa"] }] })
+  const inGroup = (from: { id: string; username?: string }, d: TelegramDirectory, extra: Record<string, unknown> = {}) =>
+    resolveTelegramMessage({ from: { id: from.id, username: from.username ?? null, name: "X" }, forwardOrigin: null, chatType: "supergroup", chatId: "-1001", ...extra }, d)
+
+  it("check 7: bound to A — unknown author → A + «Новый контакт в A?»; our member → A (no groupPeer guess)", () => {
+    const d = bound("clients", ["cl_alfa"])
+    const u = inGroup({ id: "555" }, d)
+    expect(u.resolved.counterpartyClientIds).toEqual(["cl_alfa"])
+    expect(u.resolved.proposeContactFor).toBe("cl_alfa")
+    expect(u.resolved.chat).toEqual({ rowId: "r1", mode: "clients", clientIds: ["cl_alfa"] })
+    const m = inGroup({ id: "100" }, d, { groupPeer: { id: "300", username: null, name: null } })
+    expect(m.resolved.author.kind).toBe("member")
+    expect(m.resolved.counterpartyClientIds).toEqual(["cl_alfa"])
+    expect(m.resolved.counterpartyContactId).toBeNull()
+  })
+
+  it("check 8: bound to A and B — a contact of B → B first; unknown → the primary; Q19: a contact of C → A, not the topic contact", () => {
+    const d = bound("clients", ["cl_alfa", "cl_beta"])
+    const b = inGroup({ id: "300" }, d)
+    expect(b.resolved.counterpartyClientIds).toEqual(["cl_beta", "cl_alfa"])
+    expect(b.resolved.counterpartyContactId).toBe("c_olga")
+    expect(inGroup({ id: "556" }, d).resolved.counterpartyClientIds).toEqual(["cl_alfa", "cl_beta"])
+    const other = inGroup({ id: "200", username: "petr_iv" }, bound("clients", ["cl_beta"]))
+    expect(other.resolved.author.contactId).toBe("c_petr")
+    expect(other.resolved.counterpartyClientIds).toEqual(["cl_beta"])
+    expect(other.resolved.counterpartyContactId).toBeNull()
+  })
+
+  it("internal chat: no company, internal flag; a non-member → warning (Q28)", () => {
+    const d = bound("internal", [])
+    const m = inGroup({ id: "100" }, d)
+    expect(m.resolved.internal).toBe(true)
+    expect(m.resolved.counterpartyClientIds).toEqual([])
+    expect(m.resolved.warnings).toBeUndefined()
+    expect(inGroup({ id: "555" }, d).resolved.warnings).toEqual(["non_member_in_internal_chat"])
+  })
+
+  it("step 5: a company's own account by id or username; in a DM its company", () => {
+    const d = bound("auto", [])
+    const a = resolveTelegramMessage({ from: { id: "700", username: null, name: "Alfa" }, forwardOrigin: null, chatType: "private", chatId: "700" }, d)
+    expect(a.resolved.author).toMatchObject({ kind: "company_account", clientId: "cl_alfa", via: "company_account" })
+    expect(a.resolved.counterpartyClientIds).toEqual(["cl_alfa"])
+    expect(resolveTelegramMessage({ from: { id: "701", username: "Alfa_Sales", name: null }, forwardOrigin: null, chatType: "private" }, d).resolved.author.kind).toBe("company_account")
+    // A forward of an unknown person in a bound chat → no proposal (the forwarder is not the author).
+    const f = resolveTelegramMessage({ from: { id: "100", username: null, name: null }, forwardOrigin: { type: "user", user: { id: 999, username: null } }, chatType: "supergroup", chatId: "-1001" }, bound("clients", ["cl_alfa"]))
+    expect(f.resolved.proposeContactFor).toBeUndefined()
+  })
+})

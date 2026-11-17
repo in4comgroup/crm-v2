@@ -17,6 +17,7 @@ import { runTelegramChatWorker } from "@/server/telegram/chat/worker"
 import { startNewTelegramThread } from "@/server/telegram/chat/threads"
 import { TELEGRAM_TEXTS } from "@/lib/telegram/texts"
 import { learnFromTelegramContactCard } from "@/server/telegram/directory"
+import { touchTelegramChat } from "@/server/telegram/chats"
 
 // ONE router per bot update (docs/specs/telegram/04 §5.5 C2), BEFORE storage:
 // a button press → button handler; a command → command handler; a private
@@ -134,6 +135,9 @@ export async function handleTelegramUpdate(ctx: TelegramWebhookContext, update: 
   }
 
   const message = update.message
+  // The chat the message is in (TI4): a group refreshes its row; a company
+  // account typed by @name gets its id. Never blocks.
+  if (message) await touchTelegramChat(ctx.sourceId, ctx.organizationId, message)
   // A contact card with a Telegram user id (F2, telegram/04 §6.2): its phone
   // finds ONE contact → that contact gets the id. Any chat; never blocks.
   if (message?.contact?.user_id && !message.from?.is_bot) {

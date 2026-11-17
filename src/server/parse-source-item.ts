@@ -287,6 +287,8 @@ type ParseContext = {
   // the attribution (rule 1d0, before the typed-handle rule 1d).
   telegramDirectory?: TelegramDirectory
   telegramStaffVia?: "staff_binding" | null
+  // A member's message in a chat marked internal (TI4 §7.4) → `allInternal`.
+  telegramAllInternal?: boolean
   // Who every model call of this parse is for: the item's organization +
   // the signed-in user on manual paths (null for cron / webhook).
   ai: ParserAiContext
@@ -1164,6 +1166,7 @@ async function prepareTelegramIdentity(ctx: ParseContext): Promise<void> {
     ctx.telegramDirectory = await loadTelegramDirectory(ctx.organizationId)
     const { resolved } = resolveTelegramMessage(resolveInputOf(ctx.metadataJson), ctx.telegramDirectory)
     ctx.telegramStaffVia = resolved.author.kind === "member" && resolved.author.via === "staff_binding" ? "staff_binding" : null
+    ctx.telegramAllInternal = !!resolved.internal && resolved.author.kind === "member" && !resolved.forward
   } catch (err) {
     console.warn(`[parse] telegram identity of ${ctx.itemId} failed:`, err)
   }
@@ -1822,11 +1825,12 @@ async function computeOrgAttribution(
   const subject = typeof ctx.metadataJson.subject === "string" ? ctx.metadataJson.subject : null
   const allInternal =
     result.value === "own_org" &&
-    !detectForward(markdown, subject).isForward &&
-    computeAllInternal(
-      ctx.metadataJson,
-      (e) => ownCtx.matchEmail(e) !== null,
-    )
+    (ctx.telegramAllInternal === true ||
+      (!detectForward(markdown, subject).isForward &&
+        computeAllInternal(
+          ctx.metadataJson,
+          (e) => ownCtx.matchEmail(e) !== null,
+        )))
   return { ...result, allInternal }
 }
 

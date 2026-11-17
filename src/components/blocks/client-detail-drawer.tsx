@@ -55,6 +55,7 @@ import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
 import { ClientResponsibleField } from "@/components/blocks/client-responsible-field"
 import { ClientProfileBlock } from "@/components/blocks/client-profile-block"
+import { ClientTelegramBlock } from "@/components/blocks/client-telegram-block"
 import { BlacklistEntityButton } from "@/components/blocks/client-blocklist-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
@@ -582,6 +583,11 @@ export function ClientDetailDrawer({
               {/* «Профиль компании» (identity I5 / I6): own API + save, never
                   submits this drawer's form (type="button" everywhere). */}
               <ClientProfileBlock clientId={client.id} />
+
+              {/* «Telegram» (docs/specs/telegram/04 §7.2, Q18): the company's
+                  groups / accounts + «Новые контакты из Telegram»; own API,
+                  type="button" everywhere, never submits this form. */}
+              <ClientTelegramBlock clientId={client.id} onContactsChanged={onContactsChanged} />
 
               <FormField
                 control={editForm.control}

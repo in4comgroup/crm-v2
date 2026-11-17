@@ -120,6 +120,10 @@ export type ItemPeer = {
   handle: string | null
   /** Telegram: the contact found by the ONE rule (`metadata_json.telegram.resolved`, docs/specs/telegram/04 §8) — wins over handle / name. */
   contactId?: string | null
+  /** Telegram: the company of the ONE rule (a chat bound to companies, a company account) — used when nothing else resolved one. */
+  clientId?: string | null
+  /** Telegram chat bound to companies (§7.4, Q19): a company named in the text counts only when it is one of these. */
+  allowedClientIds?: string[] | null
 }
 
 export type ResolvedCounterparty = {
@@ -179,6 +183,15 @@ export function resolveCounterparty(
     }
   }
 
+  // 1b. A chat bound to companies (telegram/04 §7.4): a company from the text
+  // outside the chat's companies is dropped — the binding decides the company.
+  const allowed = peer?.allowedClientIds?.length ? peer.allowedClientIds : null
+  if (allowed && clientId && !allowed.includes(clientId)) {
+    clientId = null
+    contactId = null
+    via.push("chat_binding_filtered")
+  }
+
   // 2. The peer of the item. When the subject string resolved nothing, the
   // peer stands for the counterparty (the usual case: the sender writes
   // about their own company). When it resolved a client, the peer adds the
@@ -206,6 +219,15 @@ export function resolveCounterparty(
         clientId = c
         via.push("peer_domain")
       }
+    }
+  }
+
+  // 2b. The company of the ONE rule (bound chat / company account).
+  if (!clientId && peer?.clientId && idx.clients.has(peer.clientId)) {
+    const cc = contactId ? clientsOf(idx.contacts.get(contactId)!) : []
+    if (!contactId || cc.length === 0 || cc.includes(peer.clientId)) {
+      clientId = peer.clientId
+      via.push("peer_client")
     }
   }
 

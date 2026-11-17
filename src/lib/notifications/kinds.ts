@@ -66,6 +66,9 @@ export const NOTIFICATION_KINDS = {
   "telegram.bound": { category: "organization", priority: "info", recipients: "user", labelRu: "Telegram привязан" },
   "telegram.bound_owner": { category: "organization", priority: "info", recipients: "owners", labelRu: "Сотрудник привязал Telegram" },
   "telegram.contact_conflict": { category: "clients", priority: "info", recipients: "owners", labelRu: "Telegram сотрудника был у контакта" },
+  "telegram.chat_added": { category: "organization", priority: "info", recipients: "owners", labelRu: "Бот добавлен в чат" },
+  "telegram.chat_suggestion": { category: "clients", priority: "info", recipients: "owners", labelRu: "Чат Telegram — это компания?" },
+  "telegram.contact_proposal": { category: "clients", priority: "info", recipients: "user", labelRu: "Новый контакт из Telegram?" },
   // Компании и контакты
   "profile.client.proposals": { category: "clients", priority: "info", recipients: "owners", labelRu: "Предложения для профилей компаний" },
   "client.handover": { category: "clients", priority: "important", recipients: "user", labelRu: "Компания передана вам" },

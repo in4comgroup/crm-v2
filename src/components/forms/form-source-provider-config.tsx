@@ -31,6 +31,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { TelegramAiChatSettings } from "@/components/blocks/telegram-ai-chat-settings"
+import { TelegramChatsSettings } from "@/components/blocks/telegram-chats-settings"
 import type { SourceProvider } from "@/db/schema"
 
 type Props = {
@@ -60,7 +61,7 @@ export function FormSourceProviderConfig({
 }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Настройки провайдера — {sourceName}</DialogTitle>
           <DialogDescription>
@@ -396,7 +397,7 @@ function TelegramFields({
           форме «Учётные данные».
         </p>
       </div>
-      <TelegramGroupsInfo config={initialConfig} />
+      <TelegramGroupsInfo config={initialConfig} sourceId={sourceId} />
       <TelegramAiChatSettings sourceId={sourceId} />
       <DialogFooter>
         <Button variant="ghost" type="button" onClick={onClose} disabled={busy}>
@@ -410,13 +411,12 @@ function TelegramFields({
   )
 }
 
-// Groups (docs/specs/telegram §6 G1 / G7): whether the bot reads every group
-// message (privacy mode off) and the groups it is in. Written by the server
-// (`provider_config.telegramBot` / `telegramGroups`), read-only here.
-function TelegramGroupsInfo({ config }: { config: Record<string, unknown> }) {
+// Groups (docs/specs/telegram §6 G1 / G7, 04 §7.2): whether the bot reads
+// every group message (privacy mode off; `provider_config.telegramBot`,
+// written by the server, read-only here) and the chats of the bot with their
+// company binding (<TelegramChatsSettings>, own API, saved per row).
+function TelegramGroupsInfo({ config, sourceId }: { config: Record<string, unknown>; sourceId: string }) {
   const bot = (config.telegramBot ?? null) as { canReadAllGroupMessages?: boolean; checkedAt?: string } | null
-  const groups = Object.entries((config.telegramGroups ?? {}) as Record<string, { title?: string | null; status?: string }>)
-  const active = groups.filter(([, g]) => g.status === "member" || g.status === "administrator")
   return (
     <div className="space-y-2 rounded-md border p-3 text-sm">
       <div className="font-medium">Группы</div>
@@ -434,11 +434,9 @@ function TelegramGroupsInfo({ config }: { config: Record<string, unknown> }) {
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        {active.length > 0
-          ? `Бот в группах: ${active.map(([id, g]) => g.title || id).join(", ")}.`
-          : "Бот пока не добавлен ни в одну группу."}{" "}
         Бот не отвечает в группах; сообщения и файлы разбираются как в личных чатах.
       </p>
+      <TelegramChatsSettings sourceId={sourceId} />
     </div>
   )
 }

@@ -41,6 +41,16 @@ describe("counterparty resolution (spec §6.2 step 1)", () => {
     expect(resolveCounterparty("", { email: null, name: null, handle: "ivan_buyer", contactId: "p-gone" }, idx).contactId).toBe("p-ivan")
   })
 
+  it("Telegram chat bound to companies (telegram/04 §7.4, Q19): a company from the text outside the set is dropped; the binding's company is used", () => {
+    const peer = { email: null, name: null, handle: null, contactId: null, clientId: "c-norlex", allowedClientIds: ["c-norlex"] }
+    const r = resolveCounterparty("ООО Акме", peer, idx)
+    expect(r).toMatchObject({ clientId: "c-norlex", contactId: null })
+    expect(r.via).toEqual(expect.arrayContaining(["chat_binding_filtered", "peer_client"]))
+    // A company in the set named in the text wins over the primary.
+    const two = resolveCounterparty("Акме", { ...peer, allowedClientIds: ["c-norlex", "c-acme"] }, idx)
+    expect(two.clientId).toBe("c-acme")
+  })
+
   it("unknown string + known sender email → the sender's contact and client", () => {
     const r = resolveCounterparty("какая-то фирма", { email: "anna@acme.example", name: "Anna", handle: null }, idx)
     expect(r).toMatchObject({ clientId: "c-acme", contactId: "p-anna" })

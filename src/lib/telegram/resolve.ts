@@ -9,11 +9,15 @@
 //   2 username   = a staff handle («us» registry person)  → member  `staff_handle`
 //   3 tg user id = a contact's Telegram address id         → contact `contact_id`
 //   4 username   = a contact's Telegram address / alias    → contact `contact_handle` (+ learn the id, §6.2)
-//   5 (company account — needs chat bindings, TI4)
+//   5 tg user id / username = a company's own account (a private chat bound
+//     to a company, TI4)                                  → company_account
 //   6 nothing                                               → unknown
 // A forward: the ORIGINAL author (hidden user / chat → unknown).
-// Counterparty (§8.2): author contact → its current companies; our member in a
-// group → the group peer's companies (the built `groupPeer` guess, until TI4).
+// Counterparty (§8.2 / §7.4): a chat bound to companies (mode clients) decides
+// the COMPANY (Q19): the author contact's company when it is in the set, else
+// the primary; mode internal → none (internal); else (auto) the author
+// contact's / company account's companies, or for OUR message in a group the
+// group peer's (the `groupPeer` guess).
 
 /** «tg:<id>» = a Telegram address of a person with no username. */
 export const TG_ID_PREFIX = "tg:"
@@ -42,6 +46,12 @@ export type TgPerson = { id: string | null; username: string | null; name: strin
 /** One Telegram address of a contact (or a legacy alias «@name», `addressId` null). */
 export type ContactTgAddress = { addressId: string | null; contactId: string; handle: string | null; externalId: string | null; status: "active" | "old" }
 
+/** A chat bound by a person (§7.1): mode + companies (primary first). */
+export type ChatBinding = { rowId: string; mode: "auto" | "clients" | "internal"; clientIds: string[] }
+
+/** A company's own Telegram account (a private chat bound to a company, author step 5). */
+export type CompanyAccount = { tgUserId: string | null; handle: string | null; clientIds: string[] }
+
 export type TelegramDirectory = {
   /** tg user id → member user id (active / blocked bindings). */
   staffById: Map<string, string>
@@ -51,14 +61,20 @@ export type TelegramDirectory = {
   addresses: ContactTgAddress[]
   /** contact id → its current companies (primary first). */
   contactClients: Map<string, string[]>
+  /** Telegram chat id → its binding (groups; TI4). Absent = auto. */
+  chats?: Map<string, ChatBinding>
+  /** Companies' own accounts (TI4). */
+  companyAccounts?: CompanyAccount[]
 }
 
-export type AuthorVia = "staff_binding" | "staff_handle" | "contact_id" | "contact_handle" | "unknown" | "hidden_forward" | "chat_forward" | "no_author"
+export type AuthorVia = "staff_binding" | "staff_handle" | "contact_id" | "contact_handle" | "company_account" | "unknown" | "hidden_forward" | "chat_forward" | "no_author"
 
 export type ResolvedAuthor = {
-  kind: "member" | "contact" | "unknown"
+  kind: "member" | "contact" | "company_account" | "unknown"
   userId?: string
   contactId?: string
+  /** Contact: its own main company; company account: its company. */
+  clientId?: string
   tgUserId: string | null
   username: string | null
   name: string | null
@@ -75,6 +91,14 @@ export type TelegramResolved = {
   /** The author was matched by id (binding / contact id), not by a username. */
   verified: boolean
   forward: boolean
+  /** The chat's binding when it is not auto (TI4). */
+  chat?: ChatBinding | null
+  /** Chat mode internal: our people only (direction internal). */
+  internal?: boolean
+  /** Data-quality notes, e.g. `non_member_in_internal_chat` (Q28). */
+  warnings?: string[]
+  /** Q25: an unknown author with an id in a chat bound to a company → «Новый контакт в …?». */
+  proposeContactFor?: string | null
 }
 
 /** What the server should write after a resolution (§6.2). */
@@ -86,6 +110,8 @@ export type ResolveInput = {
   from: TgPerson | null
   forwardOrigin: { type: string; user?: { id?: number | string | null; username?: string | null; firstName?: string | null; lastName?: string | null }; senderUserName?: string; chat?: { title?: string | null } } | null
   chatType: string | null
+  /** Telegram chat id of the message (its binding, TI4). */
+  chatId?: string | null
   /** Our message in a group: the latest client author of the chat (stamped at parse). */
   groupPeer?: TgPerson | null
 }
@@ -119,7 +145,7 @@ export function resolveTelegramPerson(p: TgPerson, dir: TelegramDirectory): { au
         learn.push({ kind: "rename", contactId, tgUserId: id!, newHandle: handle, oldAddressId: current?.addressId ?? null })
       }
     }
-    return { author: { kind: "contact", contactId, ...base, via: "contact_id" }, learn }
+    return { author: { kind: "contact", contactId, clientId: dir.contactClients.get(contactId)?.[0], ...base, via: "contact_id" }, learn }
   }
 
   if (handle) {
@@ -131,9 +157,14 @@ export function resolveTelegramPerson(p: TgPerson, dir: TelegramDirectory): { au
         const addr = dir.addresses.find((a) => a.contactId === contactId && a.handle === handle && a.addressId) ?? null
         if (!addr || !addr.externalId) learn.push({ kind: "learn_id", contactId, addressId: addr?.addressId ?? null, handle, tgUserId: id })
       }
-      return { author: { kind: "contact", contactId, ...base, via: "contact_handle" }, learn }
+      return { author: { kind: "contact", contactId, clientId: dir.contactClients.get(contactId)?.[0], ...base, via: "contact_handle" }, learn }
     }
   }
+  // 5. A company's own account (TI4): unique hit by id, else by username.
+  const accounts = dir.companyAccounts ?? []
+  const accById = id ? accounts.filter((a) => a.tgUserId === id) : []
+  const acc = accById.length === 1 ? accById[0] : handle ? (accounts.filter((a) => a.handle === handle).length === 1 ? accounts.find((a) => a.handle === handle) : undefined) : undefined
+  if (acc && acc.clientIds.length) return { author: { kind: "company_account", clientId: acc.clientIds[0], ...base, via: "company_account" }, learn }
   return { author: { kind: "unknown", ...base, via: "unknown" }, learn }
 }
 
@@ -163,14 +194,33 @@ export function resolveTelegramMessage(input: ResolveInput, dir: TelegramDirecto
 
   let counterpartyContactId: string | null = null
   let counterpartyClientIds: string[] = []
-  if (author.kind === "contact" && author.contactId) {
+  const chat = input.chatId ? (dir.chats?.get(String(input.chatId)) ?? null) : null
+  const warnings: string[] = []
+  let proposeContactFor: string | null = null
+  const authorClients = author.kind === "contact" && author.contactId ? (dir.contactClients.get(author.contactId) ?? []) : author.kind === "company_account" && author.clientId ? [author.clientId] : []
+
+  if (chat?.mode === "internal") {
+    // Our people only: no company; a non-member is a data-quality note (Q28).
+    if (author.kind !== "member") warnings.push("non_member_in_internal_chat")
+  } else if (chat?.mode === "clients" && chat.clientIds.length) {
+    // The binding decides the COMPANY (Q19); the author decides the PERSON.
+    const own = authorClients.find((c) => chat.clientIds.includes(c)) ?? null
+    const main = own ?? chat.clientIds[0]
+    counterpartyClientIds = [main, ...chat.clientIds.filter((c) => c !== main)]
+    if (author.kind === "contact" && own) counterpartyContactId = author.contactId ?? null
+    if (author.kind === "unknown" && author.tgUserId && !forward) proposeContactFor = chat.clientIds[0]
+  } else if (author.kind === "contact" && author.contactId) {
     counterpartyContactId = author.contactId
-    counterpartyClientIds = dir.contactClients.get(author.contactId) ?? []
+    counterpartyClientIds = authorClients
+  } else if (author.kind === "company_account") {
+    counterpartyClientIds = authorClients
   } else if (author.kind === "member" && !forward && (input.chatType === "group" || input.chatType === "supergroup") && input.groupPeer) {
     const peer = resolveTelegramPerson(input.groupPeer, dir).author
     if (peer.kind === "contact" && peer.contactId) {
       counterpartyContactId = peer.contactId
       counterpartyClientIds = dir.contactClients.get(peer.contactId) ?? []
+    } else if (peer.kind === "company_account" && peer.clientId) {
+      counterpartyClientIds = [peer.clientId]
     }
   }
   return {
@@ -181,6 +231,10 @@ export function resolveTelegramMessage(input: ResolveInput, dir: TelegramDirecto
       counterpartyContactId,
       verified: author.via === "staff_binding" || author.via === "contact_id",
       forward,
+      ...(chat && chat.mode !== "auto" ? { chat } : {}),
+      ...(chat?.mode === "internal" ? { internal: true } : {}),
+      ...(warnings.length ? { warnings } : {}),
+      ...(proposeContactFor ? { proposeContactFor } : {}),
     },
     learn,
   }

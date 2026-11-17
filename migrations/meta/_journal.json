@@ -330,6 +330,13 @@
       "when": 1794922495313,
       "tag": "0046_contact_telegram_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794924402424,
+      "tag": "0047_telegram_chats",
+      "breakpoints": true
     }
   ]
 }

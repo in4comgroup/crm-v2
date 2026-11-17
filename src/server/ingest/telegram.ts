@@ -347,7 +347,12 @@ async function persistTelegramMessage(
 ): Promise<PersistResult> {
   // Bot added to / removed from a group (G7): remembered on the source.
   if (update.my_chat_member) {
-    await recordChatMembership(scope.sourceId, update.my_chat_member)
+    if (scope.organizationId) {
+      const { recordTelegramChatMembership } = await import("@/server/telegram/chats")
+      await recordTelegramChatMembership(scope.sourceId, scope.organizationId, update.my_chat_member).catch((err) =>
+        console.warn(`[telegram] chat membership of source ${scope.sourceId} failed:`, err),
+      )
+    }
     return { outcome: "ignored" }
   }
   const message = update.message
@@ -360,6 +365,10 @@ async function persistTelegramMessage(
   // the old id is carried to the new one.
   if (message.migrate_to_chat_id && scope.organizationId) {
     await carryChatExclusion(scope.organizationId, message.chat.id, message.migrate_to_chat_id)
+    const { migrateTelegramChat } = await import("@/server/telegram/chats")
+    await migrateTelegramChat(scope.sourceId, scope.organizationId, message.chat.id, message.migrate_to_chat_id).catch((err) =>
+      console.warn(`[telegram] chat migration of ${message.chat.id} failed:`, err),
+    )
     return { outcome: "ignored" }
   }
   // Drop Telegram service/system messages (joins, leaves, pins, title/photo
@@ -483,31 +492,8 @@ async function persistTelegramMessage(
   }
 }
 
-// G7: the bot's membership in a group, remembered on the source
-// (`provider_config.telegramGroups[chatId] = { title, status, at }`) so the
-// source settings can list the connected groups. Best effort.
-async function recordChatMembership(
-  sourceId: string,
-  m: NonNullable<Update["my_chat_member"]>,
-): Promise<void> {
-  try {
-    if (!isGroupChat(m.chat.type)) return
-    const [row] = await db
-      .select({ providerConfig: source.providerConfig })
-      .from(source)
-      .where(eq(source.id, sourceId))
-    const cfg = (row?.providerConfig as Record<string, unknown> | null) ?? {}
-    const groups = { ...((cfg.telegramGroups as Record<string, unknown> | undefined) ?? {}) }
-    groups[String(m.chat.id)] = {
-      title: "title" in m.chat ? m.chat.title : null,
-      status: m.new_chat_member.status,
-      at: new Date(m.date * 1000).toISOString(),
-    }
-    await db.update(source).set({ providerConfig: { ...cfg, telegramGroups: groups } }).where(eq(source.id, sourceId))
-  } catch (err) {
-    console.warn(`[telegram] membership record failed for source ${sourceId}:`, err)
-  }
-}
+// G7: the bot's membership in a group → `telegram_chat` (docs/specs/telegram/04
+// §7.1, TI4; was `provider_config.telegramGroups`): src/server/telegram/chats.ts.
 
 // G7: a group became a supergroup (new chat id). An exclusion of the old
 // chat id is copied to the new one (by the org's system actor). Best effort.

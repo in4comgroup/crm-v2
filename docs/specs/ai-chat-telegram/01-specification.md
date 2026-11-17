@@ -290,7 +290,7 @@ Total ≈ **10.5 days** after telegram/04 TI2 + TI3. Migrations: `ai_chat_thread
 
 ## 18. Build notes (2026-11-17)
 
-Built together with the parts of [telegram/04](../telegram/04-identity-and-chats.md) it needs: TI2 (staff binding + router) and the sender of TI3 (topic pushes and important notifications through it are still open). Migration `0044_telegram_bot_and_chat` (applied to the test DB). Code: `src/server/chat/turn.ts`, `src/server/telegram/` (router, bindings, sender, source, account, `chat/` inbox · worker · inputs · buttons · threads), `src/server/acting-member.ts`, `src/lib/telegram/` (inbox, html, render, voice, texts), APIs `api/account/telegram`, `api/sources/telegram/settings`. Details: `src/app/AGENTS.md` § "Telegram Bot (Sources)", `src/lib/AGENTS.md` § "AI Chat".
+Built together with the parts of [telegram/04](../telegram/04-identity-and-chats.md) it needs: TI2 (staff binding + router) and the sender of TI3 (topic pushes and important notifications through it: built later the same day, telegram/04 TI3). Migration `0044_telegram_bot_and_chat` (applied to the test DB). Code: `src/server/chat/turn.ts`, `src/server/telegram/` (router, bindings, sender, source, account, `chat/` inbox · worker · inputs · buttons · threads), `src/server/acting-member.ts`, `src/lib/telegram/` (inbox, html, render, voice, texts), APIs `api/account/telegram`, `api/sources/telegram/settings`. Details: `src/app/AGENTS.md` § "Telegram Bot (Sources)", `src/lib/AGENTS.md` § "AI Chat".
 
 **Differences from the text above**
 

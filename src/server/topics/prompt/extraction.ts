@@ -1,5 +1,8 @@
 import "server-only"
 import { CHAT_NOTE_ENVELOPE } from "@/lib/chat/ingest"
+
+/** A member's own message to the Telegram bot (telegram/04 Q20, TI6). */
+export const TELEGRAM_NOTE_ENVELOPE = "Заметка сотрудника о клиенте, отправленная боту в Telegram (пересказ)"
 import { z } from "zod"
 import type { AntiCue } from "@/lib/signals/types"
 import { getTopicsOrgPrompt } from "@/server/identity/prompt-context"
@@ -348,6 +351,8 @@ export type ExtractionEnvelope = {
    * employee, `originalAuthor` = the counterparty named in the text).
    */
   relayedNote?: boolean
+  /** Where the relayed note came from: the AI chat (default) or a member's own message to the Telegram bot (telegram/04 TI6). */
+  relayedNoteChannel?: "aichat" | "telegram"
   synthetic?: boolean
 }
 
@@ -367,7 +372,13 @@ export function buildItemPrompt(envelope: ExtractionEnvelope, text: string): str
   add("Переслал (наш сотрудник)", envelope.forwardedBy)
   add("Исходный автор", envelope.originalAuthor)
   add("Авторство (автопроверка)", envelope.orgAttribution)
-  if (envelope.relayedNote) env.push(`${CHAT_NOTE_ENVELOPE}. Ответы ИИ в цитате — не новая информация.`)
+  if (envelope.relayedNote) {
+    env.push(
+      envelope.relayedNoteChannel === "telegram"
+        ? `${TELEGRAM_NOTE_ENVELOPE}. Клиент — тот, о ком пишет сотрудник.`
+        : `${CHAT_NOTE_ENVELOPE}. Ответы ИИ в цитате — не новая информация.`,
+    )
+  }
   if (envelope.allInternal) env.push("Внутренняя переписка (все участники — наши сотрудники)")
   if (envelope.synthetic) env.push("Тестовое сообщение: да")
   let body = text

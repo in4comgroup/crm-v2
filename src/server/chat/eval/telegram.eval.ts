@@ -5,7 +5,8 @@
 // binding flow, answers (allowed tags, ≤ 4,096 chars, no ids), the merge of a
 // split message, voice as the question, the CSV button, a draft card
 // confirmed by its button (as the member, without a browser session), group
-// messages (never the AI chat) and `/stop`.
+// messages (never the AI chat), `/stop`, the Telegram copy of an important
+// notification and topic pushes with «Готово» / «Отложить до завтра».
 //
 // Env: CHAT_EVAL_ONLY=tg (run only this file's cases: any id prefix «tg»).
 // Writes on the test DB, all removed at the end: a binding, its chats, chat
@@ -19,6 +20,8 @@ import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm"
 import type { Update } from "grammy/types"
 import { db } from "@/db/drizzle"
 import {
+  topic,
+  topicDelivery,
   aiChatAction,
   aiChatMessage,
   aiChatThread,
@@ -96,6 +99,12 @@ vi.mock("@/lib/telegram", async (orig) => ({
   },
 }))
 
+// Pushes and notification copies go out only inside working hours: the eval forces «working».
+vi.mock("@/server/telegram/delivery", async (orig) => {
+  const m = (await orig()) as typeof import("@/server/telegram/delivery")
+  return { ...m, orgWorkingNow: async (orgId: string, now: Date) => ({ ...(await m.orgWorkingNow(orgId, now)), working: true }) }
+})
+
 const { handleTelegramUpdate } = await import("@/server/telegram/router")
 const { resolveTelegramWebhookContext } = await import("@/server/ingest/telegram")
 const { createTelegramBindLink } = await import("@/server/telegram/bindings")
@@ -109,6 +118,8 @@ let sourceId = ""
 let oldConfig: unknown = null
 let ctx: NonNullable<Awaited<ReturnType<typeof resolveTelegramWebhookContext>>>
 const threads = new Set<string>()
+const TEST_TOPIC = `tg-eval-topic-${TG_USER}`
+const testNotificationKeys: string[] = []
 const groupChat = -100_000_000 - Math.floor(Math.random() * 1_000_000)
 
 const from = { id: TG_USER, is_bot: false, first_name: "Eval", username: `eval_tg_${TG_USER % 100000}` }
@@ -216,6 +227,10 @@ describe.skipIf(!run)("AI chat over Telegram (mocked Bot API, real router / work
     await db.delete(telegramBindCode).where(and(eq(telegramBindCode.sourceId, sourceId), eq(telegramBindCode.userId, EVAL_USER_ID)))
     await db.delete(telegramUpdateSeen).where(and(eq(telegramUpdateSeen.sourceId, sourceId), sql`${telegramUpdateSeen.updateId} > ${Math.floor(Date.now() / 1000) - 7200}`))
     if (b) await db.delete(notification).where(or(like(notification.dedupeKey, `%telegram.bound:${b.id}`), like(notification.dedupeKey, `%telegram.bound_owner:${b.id}`)))
+    for (const k of testNotificationKeys) await db.delete(notification).where(like(notification.dedupeKey, `%${k}`))
+    await db.delete(topicDelivery).where(and(eq(topicDelivery.organizationId, EVAL_ORG_ID), sql`${TEST_TOPIC} = any(${topicDelivery.topicIds})`))
+    await db.delete(notification).where(eq(notification.entityId, TEST_TOPIC))
+    await db.delete(topic).where(eq(topic.id, TEST_TOPIC))
   })
 
   it("tg01 binding: /start <code> binds once; the same code again fails", async () => {
@@ -311,6 +326,76 @@ describe.skipIf(!run)("AI chat over Telegram (mocked Bot API, real router / work
     const [r] = await deliver(msgUpdate({ text: "Коллеги, сколько у нас открытых сделок?" }, { id: groupChat, type: "supergroup", title: "Eval group" }))
     expect(r.outcome).not.toBe("chat")
     expect(sentSince(n)).toHaveLength(0)
+  })
+
+  it("tg09 an important notification → a Telegram copy at once; info → none", async () => {
+    const { notify } = await import("@/server/notifications/engine")
+    const key = `tg-eval:${TG_USER}`
+    testNotificationKeys.push(key, `${key}:info`)
+    const n = tg.calls.length
+    await notify(EVAL_ORG_ID, { kind: "task.overdue", userIds: [EVAL_USER_ID], title: "Задача просрочена: Позвонить в Вектор", body: "Срок был вчера", href: "/tasks", dedupeKey: key })
+    const copy = sentSince(n).find((c) => textOf(c).startsWith("❗"))
+    expect(copy, "a Telegram copy").toBeTruthy()
+    expect(checkMessages([copy!])).toEqual([])
+    const [row] = await db.select({ s: notification.telegramStatus }).from(notification).where(like(notification.dedupeKey, `%${key}`))
+    expect(row.s).toBe("sent")
+    const m = tg.calls.length
+    await notify(EVAL_ORG_ID, { kind: "task.assigned", userIds: [EVAL_USER_ID], title: "Вам назначена задача", dedupeKey: `${key}:info` })
+    expect(sentSince(m)).toHaveLength(0)
+  })
+
+  it("tg10 a topic entering «Сейчас» → one push with Готово / Отложить; «Отложить» snoozes it as the member", async () => {
+    const now = new Date()
+    await db.insert(topic).values({ id: TEST_TOPIC, organizationId: EVAL_ORG_ID, title: "Eval — КП для Вектора", matter: "КП", status: "open", subState: "waiting_on_us", firstSeenAt: now, lastActivityAt: now, ownerUserId: EVAL_USER_ID })
+    const { loadDeliveryContext } = await import("@/server/topics/delivery/run")
+    const { runTelegramTopicPushes } = await import("@/server/topics/delivery/telegram-push")
+    const fake = (cycle: Date) => ({
+      topicId: TEST_TOPIC, title: "Eval — КП для Вектора", matter: "КП", status: "open", subState: "waiting_on_us",
+      clientId: null, clientName: "Вектор", contactId: null, contactName: null, dealId: null, dealName: null, dealOwnerUserId: null,
+      ownerUserId: EVAL_USER_ID, ownerName: null, leadCode: null, leadLabelRu: null, lastActivityAt: now.toISOString(), snoozedUntil: null,
+      attention: { list: "now", profile: "P8", band: "high", class: null, score: 8, deadline: null, overdue: false, escalations: [], section: null, hiddenReason: null, explanation: ["клиент ждёт ответа"], cycleStartedAt: cycle.toISOString(), cycleReason: "created", cardExpiresAt: null },
+      card: null, dealCards: [], marker: null, reminder: null,
+    })
+    const withFake = async (cycle: Date) => {
+      const ctx = await loadDeliveryContext(EVAL_ORG_ID, new Date())
+      ctx.lists.now = [fake(cycle) as never, ...ctx.lists.now.filter((e) => e.topicId !== TEST_TOPIC)]
+      return runTelegramTopicPushes(ctx)
+    }
+    const n = tg.calls.length
+    await withFake(now)
+    const push = sentSince(n).find((c) => textOf(c).includes("Eval — КП для Вектора"))
+    expect(push, "a push").toBeTruthy()
+    expect(keyboardOf(push!).map((k) => k.text)).toEqual(expect.arrayContaining(["✅ Готово", "⏰ Отложить до завтра"]))
+    // The same cycle again → no second push.
+    const m = tg.calls.length
+    await withFake(now)
+    expect(sentSince(m).filter((c) => textOf(c).includes("Eval — КП"))).toHaveLength(0)
+    // «Отложить до завтра» → snoozed, the push edited.
+    const e0 = tg.calls.length
+    await press("topic_snooze")
+    const [t] = await db.select({ snoozedUntil: topic.snoozedUntil }).from(topic).where(eq(topic.id, TEST_TOPIC))
+    expect(t.snoozedUntil && t.snoozedUntil.getTime() > Date.now()).toBe(true)
+    expect(String(tg.calls.slice(e0).find((c) => c.method === "editMessageText")?.args[2] ?? "")).toContain("Отложено до")
+  })
+
+  it("tg11 a new cycle → a second push; «Готово» closes the topic; a third push in 7 days is limited", async () => {
+    const { loadDeliveryContext } = await import("@/server/topics/delivery/run")
+    const { runTelegramTopicPushes } = await import("@/server/topics/delivery/telegram-push")
+    const push = async (cycle: Date) => {
+      const ctx = await loadDeliveryContext(EVAL_ORG_ID, new Date())
+      const base = { topicId: TEST_TOPIC, title: "Eval — КП для Вектора", matter: "", status: "open", subState: "waiting_on_us", clientId: null, clientName: null, contactId: null, contactName: null, dealId: null, dealName: null, dealOwnerUserId: null, ownerUserId: EVAL_USER_ID, ownerName: null, leadCode: null, leadLabelRu: null, lastActivityAt: cycle.toISOString(), snoozedUntil: null, card: null, dealCards: [], marker: null, reminder: null }
+      ctx.lists.now = [{ ...base, attention: { list: "now", profile: "P6", band: "high", class: null, score: 7, deadline: null, overdue: false, escalations: [], section: null, hiddenReason: null, explanation: [], cycleStartedAt: cycle.toISOString(), cycleReason: "reopen", cardExpiresAt: null } } as never]
+      return runTelegramTopicPushes(ctx)
+    }
+    await new Promise((r) => setTimeout(r, 1100))
+    const r2 = await push(new Date())
+    expect(r2).toMatchObject({ sent: 1 })
+    await press("topic_done")
+    const [t] = await db.select({ status: topic.status }).from(topic).where(eq(topic.id, TEST_TOPIC))
+    expect(t.status).toBe("done")
+    await new Promise((r) => setTimeout(r, 1100))
+    const r3 = await push(new Date())
+    expect(r3).toMatchObject({ sent: 0, limited: 1 })
   })
 
   it("tg08 /stop unbinds; the next message is not answered by the AI chat", async () => {

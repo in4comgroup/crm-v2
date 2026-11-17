@@ -6,6 +6,10 @@ import type { RenderedEmail } from "@/lib/topics/delivery-render"
 import type { DeliveryKind } from "@/lib/topics/delivery-routing"
 import { getOrgSetting, listOrgSettingLog } from "@/server/org-settings"
 import { listOrgTopicsModes, type TopicsMode } from "@/server/topics/mode"
+import { renderTopicPush } from "@/lib/telegram/push"
+import { activeBindingsByUser, appUrl, targetFor } from "@/server/telegram/delivery"
+import { sendTelegramHtml } from "@/server/telegram/sender"
+import { loadOrgTelegramBot } from "@/server/telegram/source"
 import { emailChannel, type EmailSender } from "./channels"
 import { appBaseUrl, buildUserEmail, eveningReminders, listsForUser, loadDeliveryContext } from "./run"
 import {
@@ -22,7 +26,7 @@ import {
 // test send to the CURRENT admin's own address. The route
 // `/api/admin/topics/delivery` checks the platform admin role.
 
-export type DeliveryOrgRow = { organizationId: string; name: string; mode: TopicsMode; emailOn: boolean }
+export type DeliveryOrgRow = { organizationId: string; name: string; mode: TopicsMode; emailOn: boolean; telegramOn: boolean }
 
 export async function listDeliveryOrgs(): Promise<DeliveryOrgRow[]> {
   const orgs = await listOrgTopicsModes()
@@ -32,6 +36,7 @@ export async function listDeliveryOrgs(): Promise<DeliveryOrgRow[]> {
       name: o.name,
       mode: o.mode,
       emailOn: await getOrgSetting(o.organizationId, "topics.delivery.email"),
+      telegramOn: await getOrgSetting(o.organizationId, "topics.delivery.telegram"),
     })),
   )
 }
@@ -41,6 +46,9 @@ export type DeliveryAdminView = {
   mode: TopicsMode
   emailOn: boolean
   emailSwitchChange: { at: string; by: string | null } | null
+  /** Topic pushes in Telegram (topics/08 T2 / T6): org switch `topics.delivery.telegram` + the org bot. */
+  telegramOn: boolean
+  telegramBot: { username: string | null } | null
   provider: EmailProviderStatus
   appUrl: string
   params: DeliveryParams & { morningDigestTime: string; weeklyReviewWeekday: number; weeklyReviewTime: string; timeZone: string }
@@ -50,6 +58,8 @@ export type DeliveryAdminView = {
     email: string
     banned: boolean
     prefs: DeliveryPrefs
+    /** The member linked Telegram (active binding on the org bot). */
+    telegramBound: boolean
     /** Topics this user gets today (after routing + P6 daily limit). */
     counts: { now: number; digest: number; week: number }
   }[]
@@ -57,18 +67,23 @@ export type DeliveryAdminView = {
 }
 
 export async function getDeliveryAdminView(orgId: string, now: Date = new Date()): Promise<DeliveryAdminView> {
-  const [ctx, emailOn, log, [lastSwitch], mode] = await Promise.all([
+  const [ctx, emailOn, log, [lastSwitch], mode, telegramOn, bot] = await Promise.all([
     loadDeliveryContext(orgId, now),
     getOrgSetting(orgId, "topics.delivery.email"),
     listDeliveryLog(orgId, 100),
     listOrgSettingLog(orgId, "topics.delivery.email", 1),
     getOrgSetting(orgId, "topics.enabled"),
+    getOrgSetting(orgId, "topics.delivery.telegram"),
+    loadOrgTelegramBot(orgId),
   ])
+  const bound = bot ? await activeBindingsByUser(orgId, bot, ctx.members.map((m) => m.userId)) : new Map()
   return {
     organizationId: orgId,
     mode,
     emailOn,
     emailSwitchChange: lastSwitch ? { at: lastSwitch.changedAt.toISOString(), by: lastSwitch.changedBy ?? null } : null,
+    telegramOn,
+    telegramBot: bot ? { username: bot.botUsername } : null,
     provider: emailProviderStatus(),
     appUrl: appBaseUrl(),
     params: {
@@ -86,6 +101,7 @@ export async function getDeliveryAdminView(orgId: string, now: Date = new Date()
         email: m.email,
         banned: m.banned,
         prefs: ctx.prefs.get(m.userId) ?? DEFAULT_PREFS,
+        telegramBound: bound.has(m.userId),
         counts: { now: l.now.length, digest: l.digest.length, week: l.week.length },
       }
     }),
@@ -156,4 +172,42 @@ export async function sendTestDelivery(
     subject: r.subject,
   })
   return { status: res.status, reason, subject: r.subject }
+}
+
+/**
+ * «Тестовое сообщение в Telegram» (topics/08 T6): the push of the first
+ * «Сейчас» topic of member `previewUserId` (or a short sample when there is
+ * none), sent to the CURRENT admin's OWN Telegram binding in this org —
+ * never to the member. Logged as kind `test`, channel telegram.
+ */
+export async function sendTestTelegramPush(
+  orgId: string,
+  previewUserId: string,
+  adminUserId: string,
+  now: Date = new Date(),
+): Promise<{ status: "sent" | "failed"; reason: string | null }> {
+  const bot = await loadOrgTelegramBot(orgId)
+  if (!bot) throw new DeliveryAdminError("В организации не подключён Telegram-бот", 409)
+  const binding = (await activeBindingsByUser(orgId, bot, [adminUserId])).get(adminUserId)
+  if (!binding) throw new DeliveryAdminError("Привяжите свой Telegram в этой организации: Профиль → Telegram", 409)
+  const ctx = await loadDeliveryContext(orgId, now)
+  if (!ctx.members.some((m) => m.userId === previewUserId)) throw new DeliveryAdminError("Пользователь не участник организации", 404)
+  const first = listsForUser(ctx, previewUserId).now[0]
+  const msg = first
+    ? renderTopicPush(first, { appUrl: appUrl(), timeZone: ctx.ap.timeZone })
+    : { html: "🔔 <b>Тест</b>\nУ этого сотрудника сейчас нет тем в «Сейчас».", buttons: [] }
+  const res = await sendTelegramHtml(targetFor(bot, binding), `[Тест] ${msg.html}`, { kind: "topic_push_test", entity: first ? { type: "topic", id: first.topicId } : null }, { buttons: msg.buttons })
+  const reason = res.ok ? null : res.error
+  await recordDelivery({
+    organizationId: orgId,
+    userId: adminUserId,
+    channel: "telegram",
+    kind: "test",
+    localDate: ctx.localDay,
+    topicIds: first ? [first.topicId] : [],
+    status: res.ok ? "sent" : "failed",
+    error: reason,
+    subject: first ? first.card?.headline || first.title : "Тест",
+  })
+  return { status: res.ok ? "sent" : "failed", reason }
 }

@@ -3516,7 +3516,9 @@ export const topicDeliveryPref = pgTable(
     emailMorning: boolean("email_morning").notNull().default(true),
     emailWeekly: boolean("email_weekly").notNull().default(true),
     emailEvening: boolean("email_evening").notNull().default(true),
-    telegramEnabled: boolean("telegram_enabled").notNull().default(false),
+    // Topic pushes in Telegram (docs/specs/telegram/04 TI3): on by default —
+    // they need an active Telegram binding of the member anyway (opt-in).
+    telegramEnabled: boolean("telegram_enabled").notNull().default(true),
     telegramChatId: text("telegram_chat_id"),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -3991,11 +3993,19 @@ export const notification = pgTable(
     resolvedAt: timestamp("resolved_at"),
     // Hidden after this (info 3 days, important 5 days — Q11).
     expiresAt: timestamp("expires_at").notNull(),
+    // Telegram copy of an important notification (telegram/04 Q21): null = not
+    // decided yet (e.g. outside working hours → the hourly sweep); sent |
+    // failed | blocked | no_binding | opted_out | stale | not_sent.
+    telegramStatus: text("telegram_status"),
+    telegramAt: timestamp("telegram_at"),
   },
   (table) => [
     uniqueIndex("notification_user_dedupe_uq").on(table.userId, table.dedupeKey),
     index("notification_user_list_idx").on(table.userId, table.expiresAt, table.createdAt),
     index("notification_dedupe_idx").on(table.dedupeKey),
+    index("notification_tg_pending_idx")
+      .on(table.createdAt)
+      .where(sql`${table.priority} = 'important' and ${table.telegramStatus} is null`),
   ],
 )
 
@@ -4011,6 +4021,8 @@ export const notificationPref = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     // { [category]: false } — absent = on
     categories: jsonb("categories").$type<Record<string, boolean>>().notNull().default({}),
+    // Telegram copies of IMPORTANT notifications (telegram/04 Q21): { [category]: false } — absent = on.
+    telegramCategories: jsonb("telegram_categories").$type<Record<string, boolean>>().notNull().default({}),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.userId] })],

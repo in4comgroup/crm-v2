@@ -2,12 +2,14 @@
 
 // «Уведомления по темам» on /account (topics plan phase 7): the current
 // user's email choices in the active org — morning digest, weekly digest,
-// evening reminders; Telegram is shown as «Скоро». Rendered only when the
-// org's topics mode is `on` (the page decides). Data: /api/account/topic-delivery.
+// evening reminders — and the Telegram topic pushes (topics/08 T2: enabled
+// only when the org has a bot, the member linked Telegram on /profile and the
+// platform admin switch is on). Rendered only when the org's topics mode is
+// `on` (the page decides). Data: /api/account/topic-delivery.
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { toast } from "sonner"
-import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
@@ -15,13 +17,14 @@ import { PageLoader } from "@/components/blocks/page-loader"
 import type { AccountDeliveryView } from "@/app/api/account/topic-delivery/route"
 
 type PrefKey = keyof AccountDeliveryView["prefs"]
+type SaveKey = PrefKey | "telegramEnabled"
 
 const WEEKDAY_RU = ["", "в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье"]
 
 export function AccountTopicDelivery() {
   const [view, setView] = useState<AccountDeliveryView | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState<PrefKey | null>(null)
+  const [saving, setSaving] = useState<SaveKey | null>(null)
 
   useEffect(() => {
     fetch("/api/account/topic-delivery")
@@ -33,10 +36,14 @@ export function AccountTopicDelivery() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [])
 
-  const save = async (key: PrefKey, value: boolean) => {
+  const save = async (key: SaveKey, value: boolean) => {
     if (!view) return
     const before = view
-    setView({ ...view, prefs: { ...view.prefs, [key]: value } })
+    setView(
+      key === "telegramEnabled"
+        ? { ...view, telegram: { ...view.telegram, enabled: value } }
+        : { ...view, prefs: { ...view.prefs, [key]: value } },
+    )
     setSaving(key)
     try {
       const r = await fetch("/api/account/topic-delivery", {
@@ -58,6 +65,8 @@ export function AccountTopicDelivery() {
   if (error) return <p className="text-sm text-destructive">{error}</p>
   if (!view) return <PageLoader />
   const s = view.schedule
+  const tg = view.telegram
+  const tgUsable = tg.available && tg.bound && tg.orgOn
 
   const rows: { key: PrefKey; title: string; hint: string }[] = [
     {
@@ -104,17 +113,34 @@ export function AccountTopicDelivery() {
             />
           </div>
         ))}
-        <div className="flex items-start justify-between gap-4 opacity-60">
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <Label>Telegram</Label>
-              <Badge variant="outline" className="font-normal">
-                Скоро
-              </Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">Сообщения о важных темах в Telegram от бота организации.</p>
+            <Label htmlFor="delivery-telegram" className={tgUsable ? "cursor-pointer" : undefined}>
+              Темы в Telegram
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Сообщение в Telegram, когда тема попадает в «Сейчас»: с кнопками «Готово» и «Отложить до завтра». Только
+              в рабочее время, не больше 2 сообщений по одной теме за 7 дней.
+            </p>
+            {!tg.available ? (
+              <p className="text-sm text-muted-foreground pt-1">В организации не подключён Telegram-бот.</p>
+            ) : !tg.bound ? (
+              <p className="text-sm text-muted-foreground pt-1">
+                Сначала привяжите Telegram:{" "}
+                <Link href="/profile" className="underline underline-offset-2 hover:text-foreground">
+                  Профиль → Telegram
+                </Link>
+              </p>
+            ) : !tg.orgOn ? (
+              <p className="text-sm text-muted-foreground pt-1">Сообщения в Telegram выключены администратором платформы.</p>
+            ) : null}
           </div>
-          <Switch checked={false} disabled aria-label="Telegram — скоро" />
+          <Switch
+            id="delivery-telegram"
+            checked={tg.enabled}
+            disabled={!tgUsable || saving !== null}
+            onCheckedChange={(v) => void save("telegramEnabled", v)}
+          />
         </div>
       </CardContent>
     </Card>

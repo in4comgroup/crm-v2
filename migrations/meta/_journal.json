@@ -316,6 +316,13 @@
       "when": 1794916905796,
       "tag": "0044_telegram_bot_and_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794920651916,
+      "tag": "0045_telegram_pushes_notifications",
+      "breakpoints": true
     }
   ]
 }

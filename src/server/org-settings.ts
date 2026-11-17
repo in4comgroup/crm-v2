@@ -45,6 +45,10 @@ export const ORG_SETTINGS = {
   // reminders. Default false — no topics email leaves the platform for an
   // org until a platform admin switches it on («Темы» → «Рассылка»).
   "topics.delivery.email": { schema: z.boolean(), default: false },
+  // Topic pushes in Telegram (docs/specs/telegram/04 TI3, topics/08 T2 / T6).
+  // Default true: a member gets pushes only after binding Telegram (opt-in);
+  // a platform admin can switch them off per org («Темы» → «Рассылка»).
+  "topics.delivery.telegram": { schema: z.boolean(), default: true },
   // Per-org override of the delivery parameters (06 §13: evening time, P6
   // daily limit, reminders per cycle, digest size); null = platform_setting.
   "delivery.params": {

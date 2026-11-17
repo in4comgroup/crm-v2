@@ -10,6 +10,9 @@ import { statsCsv } from "@/lib/chat/stats"
 import { escapeHtml } from "@/lib/telegram/html"
 import { renderTelegramAnswer, telegramCardConfirmInput, type TgButton } from "@/lib/telegram/render"
 import { TELEGRAM_TEXTS } from "@/lib/telegram/texts"
+import { pushAfterAction } from "@/lib/telegram/push"
+import { TopicsUserError, requireTopicsOn, runTopicAction } from "@/server/topics-user"
+import { orgWorkingNow } from "@/server/telegram/delivery"
 import { runAsMember } from "@/server/acting-member"
 import { ChatActionError, cancelChatAction, confirmChatAction, getChatAction } from "@/server/chat/actions/confirm"
 import { getChatMessage, getChatThread, setChatMessageFeedback } from "@/server/chat/threads"
@@ -33,7 +36,16 @@ import {
 // work runs after the webhook's 200. Only the member the button was made for
 // may press it (the Telegram user id of its binding).
 
-const SINGLE_USE = new Set(["card_confirm", "card_cancel", "card_decision", "question_option", "retry", "feedback"])
+const SINGLE_USE = new Set(["card_confirm", "card_cancel", "card_decision", "question_option", "retry", "feedback", "topic_done", "topic_snooze"])
+/** Buttons of topic pushes (topics/08 T3) work also when the AI chat is off. */
+const PUSH_KINDS = new Set(["topic_done", "topic_snooze"])
+
+/** «18.11, 08:00» in the org time zone. */
+function whenRu(d: Date, timeZone: string): string {
+  const day = new Intl.DateTimeFormat("ru-RU", { timeZone, day: "2-digit", month: "2-digit" }).format(d)
+  const time = new Intl.DateTimeFormat("ru-RU", { timeZone, hour: "2-digit", minute: "2-digit" }).format(d)
+  return `${day}, ${time}`
+}
 
 function appUrl(): string {
   return (process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL ?? "").replace(/\/+$/, "")
@@ -66,7 +78,7 @@ export async function handleTelegramButton(ctx: TelegramWebhookContext, cq: Call
     binding.status !== "unbound" &&
     binding.tgUserId === String(cq.from.id) &&
     btn.expiresAt.getTime() > Date.now() &&
-    ctx.aiChatEnabled
+    (ctx.aiChatEnabled || PUSH_KINDS.has(btn.kind))
   if (!valid || !btn || !binding) {
     await answerTelegramCallback(ctx.botToken, cq.id, TELEGRAM_TEXTS.expiredButton)
     return []
@@ -156,6 +168,36 @@ export async function handleTelegramButton(ctx: TelegramWebhookContext, cq: Call
       if (messageId) await dropTelegramButtons(tgt, messageId, ["feedback"])
       return []
     }
+    case "topic_done":
+    case "topic_snooze":
+      return [
+        async () => {
+          const topicId = str("topicId")
+          const openUrl = `${appUrl()}/dashboard?topic=${encodeURIComponent(topicId)}`
+          const pushText = escapeHtml(cq.message && "text" in cq.message ? (cq.message.text ?? "") : "")
+          try {
+            if (!(await isActiveOrgMember(orgId, userId))) throw new TopicsUserError("Вы больше не участник организации", 403)
+            await requireTopicsOn(orgId)
+            let result: string
+            if (btn.kind === "topic_done") {
+              await runTopicAction(orgId, userId, { action: "done", topicId })
+              result = "✅ Отмечено: готово"
+            } else {
+              // «до завтра» = the start of the NEXT working day (org time).
+              const w = await orgWorkingNow(orgId, new Date())
+              const until = w.cal.nextWorkingDayAt(w.cal.at(w.cal.localDay(new Date()), "23:59"), w.workStart)
+              await runTopicAction(orgId, userId, { action: "snooze", topicId, until: until.toISOString() })
+              result = `⏰ Отложено до ${whenRu(until, w.timeZone)}`
+            }
+            const after = pushAfterAction(pushText, result, openUrl)
+            if (messageId) await editTelegramHtml(tgt, messageId, after.html, after.buttons)
+          } catch (e) {
+            const msg = e instanceof TopicsUserError ? e.message : "Не удалось изменить тему. Откройте её в CRM."
+            if (!(e instanceof TopicsUserError)) console.error("[telegram] topic button failed", topicId, e)
+            await sendTelegramHtml(tgt, `⚠️ ${escapeHtml(msg)}`, { kind: "system", entity: { type: "topic", id: topicId } })
+          }
+        },
+      ]
     default:
       return []
   }

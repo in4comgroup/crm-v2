@@ -5,11 +5,13 @@
 // provider state, the schedule, recipients with their choices and today's
 // counts, a preview of the morning / weekly / evening email for one member
 // (rendered HTML in a dialog — no sending), the test send to the CURRENT
-// admin's own email, and the delivery log (last 100 rows).
+// admin's own email, and the delivery log (last 100 rows). Telegram topic
+// pushes (topics/08 T6): the separate switch `topics.delivery.telegram`, the
+// recipients' bindings, and a test push to the CURRENT admin's own Telegram.
 // Data: /api/admin/topics/delivery.
 
 import { useCallback, useEffect, useState } from "react"
-import { Eye, Loader, RefreshCw, Send } from "lucide-react"
+import { Eye, Loader, MessageCircle, RefreshCw, Send } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -48,11 +50,13 @@ export function AdminTopicsDelivery() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [savingTelegram, setSavingTelegram] = useState(false)
   const [userId, setUserId] = useState<string>("")
   const [kind, setKind] = useState<DeliveryKind>("morning_digest")
   const [preview, setPreview] = useState<DeliveryPreviewResponse["preview"] | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [sendingTest, setSendingTest] = useState(false)
+  const [sendingTelegramTest, setSendingTelegramTest] = useState(false)
 
   useEffect(() => {
     fetch("/api/admin/topics/delivery")
@@ -111,6 +115,27 @@ export function AdminTopicsDelivery() {
     }
   }
 
+  const saveTelegramSwitch = async (telegramEnabled: boolean) => {
+    if (!view) return
+    setSavingTelegram(true)
+    try {
+      const r = await fetch("/api/admin/topics/delivery", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId: view.organizationId, telegramEnabled }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d?.error ?? `HTTP ${r.status}`)
+      setView(d.view as DeliveryAdminView)
+      setOrgs((prev) => prev?.map((o) => (o.organizationId === view.organizationId ? { ...o, telegramOn: telegramEnabled } : o)) ?? prev)
+      toast.success(telegramEnabled ? "Сообщения о темах в Telegram включены" : "Сообщения о темах в Telegram выключены")
+    } catch (e) {
+      toast.error(`Не удалось сохранить: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSavingTelegram(false)
+    }
+  }
+
   const showPreview = async () => {
     if (!orgId || !userId) return
     setPreviewing(true)
@@ -148,6 +173,27 @@ export function AdminTopicsDelivery() {
     }
   }
 
+  const sendTelegramTest = async () => {
+    if (!orgId || !userId) return
+    setSendingTelegramTest(true)
+    try {
+      const r = await fetch("/api/admin/topics/delivery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "test_telegram", organizationId: orgId, userId }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d?.error ?? `HTTP ${r.status}`)
+      if (d.status === "sent") toast.success("Тестовое сообщение отправлено вам в Telegram")
+      else toast.warning(`Сообщение не отправлено: ${reasonText(d.reason) || d.status}`)
+      void load()
+    } catch (e) {
+      toast.error(`Не удалось отправить: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSendingTelegramTest(false)
+    }
+  }
+
   const p = view?.params
 
   return (
@@ -162,6 +208,7 @@ export function AdminTopicsDelivery() {
               <SelectItem key={o.organizationId} value={o.organizationId}>
                 {o.name} · {MODE_LABEL[o.mode] ?? o.mode}
                 {o.emailOn ? " · почта вкл." : ""}
+                {o.telegramOn ? " · Telegram вкл." : ""}
               </SelectItem>
             ))}
           </SelectContent>
@@ -207,6 +254,29 @@ export function AdminTopicsDelivery() {
                 <> Последнее изменение: {formatDateTime(view.emailSwitchChange.at)}{view.emailSwitchChange.by ? `, ${view.emailSwitchChange.by}` : ""}.</>
               )}
             </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Switch
+                id="delivery-telegram-switch"
+                checked={view.telegramOn}
+                disabled={savingTelegram}
+                onCheckedChange={(v) => void saveTelegramSwitch(v)}
+              />
+              <Label htmlFor="delivery-telegram-switch" className="cursor-pointer">
+                Сообщения о темах в Telegram
+              </Label>
+              {view.telegramBot ? (
+                <Badge variant="secondary" className="font-normal">
+                  бот: {view.telegramBot.username ? `@${view.telegramBot.username}` : "подключён"}
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="font-normal">
+                  Telegram-бот не подключён
+                </Badge>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Сообщение участнику с привязанным Telegram, когда тема попадает в «Сейчас». По умолчанию включено.
+            </p>
             <p className="text-sm text-muted-foreground">
               Расписание ({p.timeZone}): утренняя сводка {p.morningDigestTime} в рабочие дни; итоги недели —{" "}
               {WEEKDAY_RU[p.weeklyReviewWeekday]} {p.weeklyReviewTime} (если праздник — последний рабочий день недели);
@@ -240,7 +310,16 @@ export function AdminTopicsDelivery() {
                     <TableCell>{m.prefs.emailMorning ? "да" : "нет"}</TableCell>
                     <TableCell>{m.prefs.emailWeekly ? "да" : "нет"}</TableCell>
                     <TableCell>{m.prefs.emailEvening ? "да" : "нет"}</TableCell>
-                    <TableCell className="text-muted-foreground">скоро</TableCell>
+                    <TableCell>
+                      {m.telegramBound ? (
+                        <>
+                          ✓ привязан
+                          {!m.prefs.telegramEnabled && <span className="text-muted-foreground"> · выкл.</span>}
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {m.counts.now} / {m.counts.digest} / {m.counts.week}
                     </TableCell>
@@ -291,8 +370,18 @@ export function AdminTopicsDelivery() {
               {sendingTest ? <Loader className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
               Отправить мне тестовое письмо
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void sendTelegramTest()}
+              disabled={!userId || sendingTelegramTest || !view.telegramBot}
+            >
+              {sendingTelegramTest ? <Loader className="h-4 w-4 mr-1 animate-spin" /> : <MessageCircle className="h-4 w-4 mr-1" />}
+              Тест в Telegram (мне)
+            </Button>
             <span className="text-xs text-muted-foreground">
-              Тест уходит только на ваш адрес, с пометкой «[Тест]». Участнику ничего не отправляется.
+              Тест уходит только вам (на ваш адрес или в ваш Telegram), с пометкой «[Тест]». Участнику ничего не
+              отправляется.
             </span>
           </div>
 

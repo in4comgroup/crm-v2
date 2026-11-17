@@ -7,12 +7,12 @@ import { getAccountDeliveryView, saveAccountDeliveryPrefs, type AccountDeliveryV
 // user's delivery choices in the ACTIVE org. Any member; session + active
 // org membership required.
 //   GET → AccountDeliveryView
-//   PUT { emailMorning?, emailWeekly?, emailEvening? } (booleans) → AccountDeliveryView
+//   PUT { emailMorning?, emailWeekly?, emailEvening?, telegramEnabled? } (booleans) → AccountDeliveryView
 //       409 when the org's topics mode is not `on`.
 
 export type { AccountDeliveryView }
 
-const KEYS = ["emailMorning", "emailWeekly", "emailEvening"] as const
+const KEYS = ["emailMorning", "emailWeekly", "emailEvening", "telegramEnabled"] as const
 
 async function context() {
   const session = await getServerSession()

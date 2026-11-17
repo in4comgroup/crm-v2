@@ -19,7 +19,7 @@ import type { TopicEntry } from "@/lib/topics/topic-ui"
 import { readOrgListEntries } from "@/server/topics-user"
 import { loadAttentionParams, loadCalendarDays } from "@/server/topics/attention/store"
 import { getTopicsMode } from "@/server/topics/mode"
-import { emailChannel, telegramChannel, type ChannelRecipient, type DeliveryChannel, type EmailSender } from "./channels"
+import { emailChannel, type ChannelRecipient, type EmailSender } from "./channels"
 import {
   DEFAULT_PREFS,
   getOrgName,
@@ -230,6 +230,8 @@ export type DeliveryRunOptions = {
   emailSwitchOverride?: boolean
   /** Evening: write the in-app reminder marks (default true). */
   markReminders?: boolean
+  /** Telegram topic pushes in this run (default true; tests / previews turn them off). */
+  telegramPushes?: boolean
 }
 
 export type DeliveryDetail = {
@@ -273,8 +275,23 @@ export async function runOrgDelivery(orgId: string, opts: DeliveryRunOptions = {
     return { result: { skipped: "topics mode is not on" }, details: [], evening: null, kinds: [] }
   }
   const ctx = await loadDeliveryContext(orgId, now)
+  // Telegram pushes of topics that entered «Сейчас» (topics/08 T2): every run,
+  // independent of the email schedule and the email switch. Lazy import (the
+  // push module reads `listsForUser` from this one).
+  const telegram = { telegramSent: 0, telegramFailed: 0, telegramLimited: 0 }
+  if (opts.telegramPushes !== false) {
+    try {
+      const { runTelegramTopicPushes } = await import("./telegram-push")
+      const t = await runTelegramTopicPushes(ctx)
+      if (!("skipped" in t)) Object.assign(telegram, { telegramSent: t.sent, telegramFailed: t.failed, telegramLimited: t.limited })
+    } catch (err) {
+      console.error(`[topics/delivery] telegram pushes failed for ${orgId}`, err)
+      telegram.telegramFailed++
+    }
+  }
+  const telegramActive = telegram.telegramSent + telegram.telegramFailed + telegram.telegramLimited > 0
   const kinds = opts.kinds ?? dueDeliveryKinds(now, ctx.cal, ctx.ap, ctx.dp)
-  if (kinds.length === 0) return { result: { skipped: "no delivery due" }, details: [], evening: null, kinds }
+  if (kinds.length === 0) return { result: telegramActive ? telegram : { skipped: "no delivery due" }, details: [], evening: null, kinds }
 
   const counts: Record<string, number> = {
     morning: kinds.includes("morning_digest") ? 1 : 0,
@@ -286,7 +303,7 @@ export async function runOrgDelivery(orgId: string, opts: DeliveryRunOptions = {
     failed: 0,
     skipped: 0,
     emailOff: 0,
-    telegramSkipped: 0,
+    ...telegram,
   }
   const evening = kinds.includes("evening_reminder") ? await eveningReminders(ctx, opts.markReminders !== false) : null
   if (evening) counts.remindersMarked = evening.marked.length
@@ -299,7 +316,6 @@ export async function runOrgDelivery(orgId: string, opts: DeliveryRunOptions = {
   }
 
   const email = emailChannel({ sender: opts.emailSender, providerStatus: opts.providerStatus })
-  const telegram: DeliveryChannel = telegramChannel()
   const dayRows = await listDayDeliveries(orgId, "email", ctx.localDay)
 
   for (const kind of kinds) {
@@ -351,11 +367,6 @@ export async function runOrgDelivery(orgId: string, opts: DeliveryRunOptions = {
       else if (res.status === "failed") await record("failed", res.error, c)
       else await record("skipped", res.reason, c)
 
-      // Telegram (open part of phase 7): only for users who switched it on.
-      if (prefs.telegramEnabled) {
-        const t = await telegram.send(recipient, { subject: c.rendered.subject, html: c.rendered.html, text: c.rendered.text })
-        if (t.status === "skipped") counts.telegramSkipped++
-      }
     }
   }
   return { result: counts, details, evening, kinds }

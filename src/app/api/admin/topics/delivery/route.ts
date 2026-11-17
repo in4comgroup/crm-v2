@@ -8,6 +8,7 @@ import {
   listDeliveryOrgs,
   previewDelivery,
   sendTestDelivery,
+  sendTestTelegramPush,
   type DeliveryAdminView,
   type DeliveryOrgRow,
 } from "@/server/topics/delivery/admin"
@@ -19,7 +20,8 @@ import { organizationExists } from "@/server/topics/mode"
 //   GET ?organizationId=                  → { view: DeliveryAdminView }
 //   GET ?organizationId=&userId=&kind=…&preview=1
 //                                         → { preview: { subject, html, text, topicCount, empty } }  (no sending)
-//   PUT { organizationId, emailEnabled }  → { view }   org switch `topics.delivery.email`
+//   PUT { organizationId, emailEnabled?, telegramEnabled? }  → { view }   org switches
+//       `topics.delivery.email` / `topics.delivery.telegram` (topic pushes, topics/08 T6)
 //   POST { action: "test", organizationId, userId, kind }
 //        → { status, reason, subject }  sends the preview to the CURRENT admin's own email only
 
@@ -81,14 +83,17 @@ export async function PUT(request: NextRequest) {
   if ("error" in auth) return auth.error
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null
   const organizationId = typeof body?.organizationId === "string" ? body.organizationId : ""
-  if (!organizationId || typeof body?.emailEnabled !== "boolean") {
-    return NextResponse.json({ error: "organizationId and emailEnabled (boolean) are required" }, { status: 400 })
+  const email = body?.emailEnabled
+  const telegram = body?.telegramEnabled
+  if (!organizationId || (typeof email !== "boolean" && typeof telegram !== "boolean")) {
+    return NextResponse.json({ error: "organizationId and emailEnabled or telegramEnabled (boolean) are required" }, { status: 400 })
   }
   try {
     if (!(await organizationExists(organizationId))) {
       return NextResponse.json({ error: "Организация не найдена" }, { status: 404 })
     }
-    await setOrgSetting(organizationId, "topics.delivery.email", body.emailEnabled, auth.user.userId)
+    if (typeof email === "boolean") await setOrgSetting(organizationId, "topics.delivery.email", email, auth.user.userId)
+    if (typeof telegram === "boolean") await setOrgSetting(organizationId, "topics.delivery.telegram", telegram, auth.user.userId)
     return NextResponse.json({ view: await getDeliveryAdminView(organizationId) })
   } catch (error) {
     return fail(error, "PUT")
@@ -101,6 +106,16 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null
   const organizationId = typeof body?.organizationId === "string" ? body.organizationId : ""
   const userId = typeof body?.userId === "string" ? body.userId : ""
+  if (body?.action === "test_telegram" && organizationId && userId) {
+    try {
+      if (!(await organizationExists(organizationId))) {
+        return NextResponse.json({ error: "Организация не найдена" }, { status: 404 })
+      }
+      return NextResponse.json(await sendTestTelegramPush(organizationId, userId, auth.user.userId))
+    } catch (error) {
+      return fail(error, "POST")
+    }
+  }
   if (body?.action !== "test" || !organizationId || !userId || !isKind(body?.kind)) {
     return NextResponse.json({ error: "action=test, organizationId, userId and kind are required" }, { status: 400 })
   }

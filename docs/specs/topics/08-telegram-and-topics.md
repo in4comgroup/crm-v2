@@ -55,7 +55,9 @@ So today a Telegram message gives signals and topics exactly like an email, with
 | I3 | Voice notes: transcription **built** (transcript = message text); the «note about a client» rule for staff dictation is still open. **Voice notes / dictated call notes** — Q11, Q32 | Staff dictate a call summary to the bot → it must become an item with the CLIENT as the counterparty, not the staff member | Transcribe (AI process, through the AI layer, with `ref`), then treat as an internal note about a client: the counterparty comes from the text («звонил Иванову из Альфы…»), direction `internal`. Needs a rule in extraction for «notes about a client» (today internal-only blocks are limited) |
 | I4 | Media groups, edits, deletions, rate limits, a re-register button, webhook health on the Sources page | Correctness of the item stream | Listed as deferred in `src/app/AGENTS.md` |
 
-## 4. Outbound: Telegram delivery to staff (open part of phase 7)
+## 4. Outbound: Telegram delivery to staff (phase 7)
+
+**Built 2026-11-17** with [telegram/04](../telegram/04-identity-and-chats.md) TI2 / TI3: T1 (binding — as `telegram_binding` on /profile, not `topic_delivery_pref.telegram_chat_id`), T2 (pushes, `src/server/topics/delivery/telegram-push.ts`), T3 («Открыть» / «✅ Готово» / «⏰ Отложить до завтра»), T5 (unbind, 403 → `blocked`), T6 (org switch `topics.delivery.telegram`, default ON — the member opts in by binding; the «Telegram» column; «Тест в Telegram (мне)»). Not built: T4 digests by Telegram. The text below is the original plan.
 
 ### 4.1 What is ready
 

@@ -126,6 +126,12 @@ export async function notify(orgId: string | null, input: NotifyInput): Promise<
       }))
     if (rows.length === 0) return 0
     const inserted = await db.insert(notification).values(rows).onConflictDoNothing().returning({ id: notification.id })
+    // Telegram copy of an IMPORTANT notification (docs/specs/telegram/04 Q21):
+    // at once inside working hours, else the hourly sweep. Never throws.
+    if (priority === "important" && orgId && def.recipients !== "platform_admins" && inserted.length) {
+      const { deliverNotificationsToTelegram } = await import("@/server/telegram/delivery")
+      await deliverNotificationsToTelegram(orgId, { ids: inserted.map((r) => r.id), now: at })
+    }
     return inserted.length
   } catch (err) {
     console.error(`[notifications] notify ${input.kind} failed`, orgId, err)
@@ -250,24 +256,46 @@ async function loadPrefs(orgId: string, userIds: readonly string[]): Promise<Map
 }
 
 export async function getNotificationPrefs(orgId: string, userId: string): Promise<NotificationPrefsView> {
-  const prefs = (await loadPrefs(orgId, [userId])).get(userId) ?? {}
+  const [r] = await db
+    .select({ categories: notificationPref.categories, telegram: notificationPref.telegramCategories })
+    .from(notificationPref)
+    .where(and(eq(notificationPref.organizationId, orgId), eq(notificationPref.userId, userId)))
+  const prefs = (r?.categories ?? {}) as Record<string, boolean>
+  const tg = (r?.telegram ?? {}) as Record<string, boolean>
+  const { getMemberTelegramBinding } = await import("@/server/telegram/bindings")
+  const binding = await getMemberTelegramBinding(orgId, userId)
   return {
     categories: MUTABLE_CATEGORIES.map((c) => ({
       category: c,
       label: NOTIFICATION_CATEGORY_LABELS[c],
       enabled: prefs[c] !== false,
       importantAlwaysOn: ALWAYS_ON_IMPORTANT.includes(c),
+      telegram: tg[c] !== false,
     })),
+    telegramBound: binding?.status === "active",
   }
 }
 
-export async function setNotificationPrefs(orgId: string, userId: string, categories: Record<string, unknown>): Promise<NotificationPrefsView> {
-  const clean: Record<string, boolean> = {}
-  for (const c of MUTABLE_CATEGORIES) if (categories[c] === false) clean[c] = false
+/** Save the in-app categories and / or the Telegram copies (`{ [category]: false }` = off). */
+export async function setNotificationPrefs(
+  orgId: string,
+  userId: string,
+  categories: Record<string, unknown> | null,
+  telegram?: Record<string, unknown> | null,
+): Promise<NotificationPrefsView> {
+  const clean = (v: Record<string, unknown>) => {
+    const out: Record<string, boolean> = {}
+    for (const c of MUTABLE_CATEGORIES) if (v[c] === false) out[c] = false
+    return out
+  }
+  const set: { categories?: Record<string, boolean>; telegramCategories?: Record<string, boolean> } = {}
+  if (categories) set.categories = clean(categories)
+  if (telegram) set.telegramCategories = clean(telegram)
+  if (!set.categories && !set.telegramCategories) return getNotificationPrefs(orgId, userId)
   await db
     .insert(notificationPref)
-    .values({ organizationId: orgId, userId, categories: clean, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: [notificationPref.organizationId, notificationPref.userId], set: { categories: clean, updatedAt: new Date() } })
+    .values({ organizationId: orgId, userId, categories: set.categories ?? {}, telegramCategories: set.telegramCategories ?? {}, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: [notificationPref.organizationId, notificationPref.userId], set: { ...set, updatedAt: new Date() } })
   return getNotificationPrefs(orgId, userId)
 }
 

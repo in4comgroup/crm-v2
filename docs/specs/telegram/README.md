@@ -2,7 +2,7 @@
 
 Specs for the Telegram bot source (inbound messages to the org's bot) and the identity of people and chats in Telegram. Delivery to staff by Telegram and group chats are described in [topics/08-telegram-and-topics.md](../topics/08-telegram-and-topics.md).
 
-Status: files + groups **built 2026-11-15** (not deployed). Identity of people and chats + two-way bot (04): **spec 2026-11-17; TI2 + the sender of TI3 built 2026-11-17 (not deployed)**, decisions recorded (open: Q17 business, Q32 business, Q33 decided in ai-chat-telegram).
+Status: files + groups **built 2026-11-15** (not deployed). Identity of people and chats + two-way bot (04): **spec 2026-11-17; TI2 + TI3 built 2026-11-17**, decisions recorded (open: Q17 business, Q32 business, Q33 decided in ai-chat-telegram).
 
 Files 01–03: files sent to the bot in private chats and groups, parsed as attachments; attachment text feeds signal extraction for every source; group chats read. Spec §7 = what was built.
 

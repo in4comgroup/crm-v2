@@ -7,7 +7,8 @@ import { runOrgDelivery } from "./run"
 // digests (morning «Сводка», weekly «Неделя»), evening reminders «Не закрыто
 // сегодня» (+ the in-app «Напоминание» marks). Only orgs in mode `on`; email
 // only when the org switch `topics.delivery.email` is on. Timing, routing,
-// limits and idempotency: ./run.ts. Telegram: stub channel (./channels.ts).
+// limits and idempotency: ./run.ts. Telegram pushes of topics entering
+// «Сейчас» (every run, ./telegram-push.ts).
 
 export async function runDeliveryPhase(ctx: TopicsPhaseContext): Promise<TopicsPhaseResult> {
   if (ctx.mode !== "on") return { skipped: "topics mode is not on" }

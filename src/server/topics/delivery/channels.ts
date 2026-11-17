@@ -9,11 +9,9 @@ import type { DeliveryChannelKey } from "./store"
 //   email    — built: platform system mail through `sendEmails`
 //              (src/lib/email.ts, Nylas). A topics digest is system
 //              mail from the platform, never mail from an org mailbox.
-//   telegram — STUB (open part of phase 7): always `skipped: "telegram not
-//              configured"`. The real channel will send through the org's
-//              Telegram bot to `topic_delivery_pref.telegram_chat_id` (bind
-//              flow via the bot), at most `telegramMaxPerCard7d` pushes per
-//              card in 7 days (kind `push`, counted from `topic_delivery`).
+//   telegram — topic PUSHES are not a digest channel: they run in
+//              `telegram-push.ts` (one message per topic entering «Сейчас»,
+//              docs/specs/topics/08 T2). Digests by Telegram (T4) are not built.
 
 export type DeliveryMessage = { subject: string; html: string; text: string }
 
@@ -71,17 +69,5 @@ export function emailChannel(
         return { status: "failed", error: err instanceof Error ? err.message : String(err) }
       }
     },
-  }
-}
-
-export const TELEGRAM_NOT_CONFIGURED = "telegram not configured"
-
-/** Telegram channel — stub until the bot binding is built (phase 7, open part). */
-export function telegramChannel(): DeliveryChannel {
-  return {
-    key: "telegram",
-    available: () => ({ ok: false, reason: TELEGRAM_NOT_CONFIGURED }),
-    address: (r) => r.telegramChatId,
-    send: async () => ({ status: "skipped", reason: TELEGRAM_NOT_CONFIGURED }),
   }
 }

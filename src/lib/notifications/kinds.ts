@@ -149,5 +149,8 @@ export type NotificationAction =
 
 /** GET / PUT /api/account/notification-prefs. */
 export type NotificationPrefsView = {
-  categories: { category: NotificationCategory; label: string; enabled: boolean; importantAlwaysOn: boolean }[]
+  /** `telegram` = Telegram copies of the IMPORTANT notifications of the category (docs/specs/telegram/04 Q21). */
+  categories: { category: NotificationCategory; label: string; enabled: boolean; importantAlwaysOn: boolean; telegram: boolean }[]
+  /** The member linked Telegram (/profile → «Telegram»); copies are sent only then. */
+  telegramBound: boolean
 }

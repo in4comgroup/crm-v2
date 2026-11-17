@@ -453,6 +453,8 @@ export type NotificationCronResult = {
   notified: number
   resolved: number
   checkErrors: number
+  /** Telegram copies of important notifications sent by this run. */
+  telegramSent: number
   purged: number | null
   durationMs: number
 }
@@ -463,7 +465,7 @@ export type NotificationCronResult = {
  */
 export async function runAllNotificationChecks(now: Date = new Date()): Promise<NotificationCronResult> {
   const t0 = Date.now()
-  const result: NotificationCronResult = { orgs: 0, failedOrgs: 0, notified: 0, resolved: 0, checkErrors: 0, purged: null, durationMs: 0 }
+  const result: NotificationCronResult = { orgs: 0, failedOrgs: 0, notified: 0, resolved: 0, checkErrors: 0, telegramSent: 0, purged: null, durationMs: 0 }
   const orgs = await db.select({ id: organization.id }).from(organization)
   let shared: SharedCheckData | undefined
   try {
@@ -485,6 +487,14 @@ export async function runAllNotificationChecks(now: Date = new Date()): Promise<
       result.failedOrgs++
       console.error("[notifications] org checks failed", o.id, err)
     }
+  }
+  // Telegram copies of important notifications made outside working hours
+  // (docs/specs/telegram/04 Q21): sent now when the org is working.
+  try {
+    const { deliverNotificationsToTelegram, orgsWithPendingTelegramCopies } = await import("@/server/telegram/delivery")
+    for (const orgId of await orgsWithPendingTelegramCopies(now)) result.telegramSent += await deliverNotificationsToTelegram(orgId, { now })
+  } catch (err) {
+    console.error("[notifications] telegram copies failed", err)
   }
   try {
     result.purged = await purgeExpiredNotifications(now)

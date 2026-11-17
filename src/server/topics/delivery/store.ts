@@ -71,7 +71,8 @@ export const DEFAULT_PREFS: DeliveryPrefs = {
   emailMorning: true,
   emailWeekly: true,
   emailEvening: true,
-  telegramEnabled: false,
+  // Topic pushes need an active Telegram binding (opt-in) — on by default.
+  telegramEnabled: true,
   telegramChatId: null,
 }
 
@@ -107,9 +108,9 @@ export async function getUserDeliveryPrefs(orgId: string, userId: string): Promi
   }
 }
 
-export type DeliveryPrefsPatch = Partial<Pick<DeliveryPrefs, "emailMorning" | "emailWeekly" | "emailEvening">>
+export type DeliveryPrefsPatch = Partial<Pick<DeliveryPrefs, "emailMorning" | "emailWeekly" | "emailEvening" | "telegramEnabled">>
 
-/** Save the email switches of one user in one org (Telegram fields: later). */
+/** Save the email switches + «Темы в Telegram» of one user in one org. */
 export async function setUserDeliveryPrefs(orgId: string, userId: string, patch: DeliveryPrefsPatch): Promise<DeliveryPrefs> {
   const cur = await getUserDeliveryPrefs(orgId, userId)
   const next = { ...cur, ...patch }
@@ -121,6 +122,7 @@ export async function setUserDeliveryPrefs(orgId: string, userId: string, patch:
       emailMorning: next.emailMorning,
       emailWeekly: next.emailWeekly,
       emailEvening: next.emailEvening,
+      telegramEnabled: next.telegramEnabled,
     })
     .onConflictDoUpdate({
       target: [topicDeliveryPref.userId, topicDeliveryPref.organizationId],
@@ -128,6 +130,7 @@ export async function setUserDeliveryPrefs(orgId: string, userId: string, patch:
         emailMorning: next.emailMorning,
         emailWeekly: next.emailWeekly,
         emailEvening: next.emailEvening,
+        telegramEnabled: next.telegramEnabled,
         updatedAt: new Date(),
       },
     })

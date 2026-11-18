@@ -98,8 +98,10 @@ it creates a new user.
   better-auth 1.5.6 apply: 6 digits, expiry 300 s, max 3 wrong attempts per
   code, OTP stored as plain text in the `verification` table.
 - The email uses `sendEmails()` from `src/lib/email.ts`. Subject for sign-in:
-  «Ваш код для входа» (Your sign-in code). Body shows the code and «Срок
-  действия кода — 5 минут» (valid for 5 minutes).
+  «Ваш код для входа SalesDaily» (Your SalesDaily sign-in code). Body: «Ваш
+  код подтверждения для входа в систему SalesDaily:» (Your code to sign in to
+  SalesDaily), the code and «Срок действия кода — 5 минут» (valid for 5
+  minutes).
 - Client: `src/lib/auth-client.ts` registers `organizationClient`,
   `adminClient`, `apiKeyClient`, `emailOTPClient`.
 

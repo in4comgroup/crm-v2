@@ -164,16 +164,16 @@ export const auth = betterAuth({
       disableSignUp: false,
       async sendVerificationOTP({ email, otp, type }) {
         const subjectMap = {
-          "sign-in": "Ваш код для входа",
-          "email-verification": "Подтверждение email",
-          "forget-password": "Код для сброса пароля",
-          "change-email": "Подтверждение нового email",
+          "sign-in": "Ваш код для входа SalesDaily",
+          "email-verification": "Подтверждение email для системы SalesDaily",
+          "forget-password": "Код для сброса пароля для системы SalesDaily",
+          "change-email": "Подтверждение нового email для системы SalesDaily",
         } as const
         await sendEmails({
           to: email,
           subject: subjectMap[type],
           body: `
-            <p>Ваш код подтверждения:</p>
+            <p>Ваш код подтверждения для входа в систему SalesDaily:</p>
             <p style="font-size:24px;font-weight:bold;letter-spacing:4px;">${otp}</p>
             <p>Срок действия кода — 5 минут.</p>
           `,

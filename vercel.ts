@@ -25,18 +25,24 @@ export const config: VercelConfig = {
       schedule: "0 3 * * *", // daily at 03:00 UTC — keep in sync with ORCHESTRATION_CONFIG.cron
     },
     {
-      // Hourly topics pipeline (docs/specs/topics/01-specification.md §13).
-      // Keep in sync with ORCHESTRATION_CONFIG.topics.cron. A sub-daily
-      // cron needs the Vercel Pro plan.
+      // Topics pipeline (docs/specs/topics/01-specification.md §13).
+      // Keep in sync with ORCHESTRATION_CONFIG.topics.cron.
+      // TEST DEPLOYMENT (Vercel Hobby, 2026-11-18): once a day at 08:00 UTC
+      // (09:00 Europe/Vienna in winter = inside working hours, so Telegram
+      // pushes can go). Hobby allows at most one run per day per cron and
+      // fires anywhere in the hour. On Pro set it back to hourly "0 * * * *".
       path: "/api/cron/topics",
-      schedule: "0 * * * *",
+      schedule: "0 8 * * *",
     },
     {
-      // Hourly notification checks for every org (docs/specs/notifications
-      // §3.2). Keep in sync with ORCHESTRATION_CONFIG.notifications.cron.
-      // At :15 so it does not start together with the topics run.
+      // Notification checks for every org (docs/specs/notifications §3.2).
+      // Keep in sync with ORCHESTRATION_CONFIG.notifications.cron.
+      // TEST DEPLOYMENT (Vercel Hobby, 2026-11-18): once a day at 09:00 UTC
+      // (10:00 Europe/Vienna in winter, inside working hours for Telegram
+      // copies; one hour after the topics run). On Pro set it back to
+      // hourly "15 * * * *".
       path: "/api/cron/notifications",
-      schedule: "15 * * * *",
+      schedule: "0 9 * * *",
     },
   ],
 }

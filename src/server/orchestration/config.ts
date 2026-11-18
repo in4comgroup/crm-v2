@@ -35,7 +35,9 @@ export const ORCHESTRATION_CONFIG = {
     // **Duplicated in `vercel.ts`** (same reason as `cron` above) — if
     // you change one, change the other. A sub-daily Vercel cron needs the
     // Vercel **Pro** plan; on Hobby the deploy rejects an hourly schedule.
-    cron: "0 * * * *",
+    // TEST DEPLOYMENT (Hobby, 2026-11-18): daily at 08:00 UTC. On Pro set
+    // it back to hourly "0 * * * *".
+    cron: "0 8 * * *",
 
     // Spec §13 "Start history (Q16)" + per-run caps — read by the phases
     // once they are built (plan phase 2+). Unused by the skeleton.
@@ -65,7 +67,9 @@ export const ORCHESTRATION_CONFIG = {
   notifications: {
     // Cron schedule expression (UTC). Every hour at :15 (after the topics
     // run starts). **Duplicated in `vercel.ts`** — change both.
-    cron: "15 * * * *",
+    // TEST DEPLOYMENT (Hobby, 2026-11-18): daily at 09:00 UTC. On Pro set
+    // it back to hourly "15 * * * *".
+    cron: "0 9 * * *",
   },
 } as const
 

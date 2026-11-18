@@ -53,7 +53,7 @@ Built: the block on /profile → «Telegram» (shown when the org has a bot) and
 
 ### 3.3 F3 — test deployment set-up (product owner)
 
-1. Deploy the code with F1 + F2. `NEXT_PUBLIC_APP_URL` = the public HTTPS origin of the deployment (else the webhook is not registered). `CRON_SECRET` set; the hourly crons run (Vercel Pro).
+1. Deploy the code with F1 + F2. `NEXT_PUBLIC_APP_URL` = the public HTTPS origin of the deployment (else the webhook is not registered). `CRON_SECRET` set. **Test deployment on Vercel Hobby (2026-11-18):** Hobby allows one run per day per cron, so `vercel.ts` + `src/server/orchestration/config.ts` run `/api/cron/topics` daily at 08:00 UTC and `/api/cron/notifications` daily at 09:00 UTC (was hourly; set back to `0 * * * *` / `15 * * * *` on Pro). For F4, do not wait for the cron: start a run by hand — topics: /settings → «Темы» → run now; both: `curl -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/topics` (or `/api/cron/notifications`). Each «next hourly run» in §3.4 then means «the next run».
 2. DB: migrations `0044`–`0047` are already applied to the `.env` DB. If the deployment uses another DB, run `pnpm db:migrate` against it before the deploy (`docs/todo/README.md` D6).
 3. @BotFather: `/setprivacy` → the test bot → **Disable** (D1).
 4. Sources → the Telegram source → save the bot credentials again (D2, D6). The webhook is then registered with `message`, `my_chat_member`, `callback_query`, `edited_message`, and the bot gets its commands. Check: «Группы» shows «Бот читает все сообщения групп».

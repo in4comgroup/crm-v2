@@ -1,8 +1,8 @@
 # Telegram — identity of people and chats, two-way bot
 
-Status: **spec 2026-11-17; TI1–TI6 built 2026-11-17 (TI4 without channels)** (with [ai-chat-telegram](../ai-chat-telegram/README.md), not deployed; build notes there in §18 — the binding UI is on /profile, the AI chat switch is `provider_config.aiChatEnabled`, the log table is `telegram_out_message`). TI3 notes: pushes need the member's binding and «Темы в Telegram» (default on), go out only in working hours, ≤ 2 per topic in 7 days; notification copies = IMPORTANT only, `topic.now` excluded (the push covers it), outside working hours sent by the hourly sweep. TI1 + TI5 notes (migration `0046_contact_telegram_ids`): `contact_address.external_id` / `verified_at`; a person with no username = value «tg:<id>»; the resolver is `src/lib/telegram/resolve.ts` (pure) + `src/server/telegram/directory.ts`; `resolved` is stamped at every Telegram parse (new items only, Q29 = a); readers switched: attribution (rule 1d0 `sender_staff_binding` before the typed handle), topics counterparty (`ItemPeer.contactId`), document link A1, company «Последняя активность», the registry match report. TI4 + TI6 notes (migration `0047_telegram_chats`): tables `telegram_chat` (+ the move of `provider_config.telegramGroups`), `telegram_chat_client`, `telegram_chat_log`, `telegram_chat_suggestion`, `telegram_contact_proposal`; code `src/server/telegram/chats.ts`; the resolver applies §7.4 (bound company first, Q19; internal → `allInternal`, Q28 warning) and author step 5; topics counterparty drops a company named in the text outside the chat's set; «Новый контакт в …?» proposals live in the company card block «Telegram» (not in discovery); suggestions by title (1–3-word runs of the title = a company key, unique) and by authors (≥ 2 known contacts in 90 days, ≥ 80 % one company); «Не анализировать» stays the chat exclusion. TI6: a member's own message in a private chat with the bot (AI chat off) is a relayed note for signal extraction (envelope «Заметка сотрудника о клиенте, отправленная боту в Telegram (пересказ)», attribution `unknown`, like the AI chat note) — closes topics/08 I3. Not built: forum topics in the thread key (§7.5), channels (Q32). Not built: the bot asking an unknown sender for the phone (Q22, org switch, default off), the records-engine fast filter by `resolved` ids (§8.3 row «Источники»). Left: TI7 (Business, Q17), channels (Q32), TI8 (live check). Decided by the product owner (2026-11-17): Q16, Q18–Q31 (§10; Q21 = topic pushes + important notifications). **Open: Q17** (business answer; the design supports both set-ups, §9.2), **Q32** (business feedback; channels written as an option, §7.7). Q33 decided (b) in ai-chat-telegram Q13. New requirement 2026-11-17: Telegram as a transport for the AI chat — this spec keeps only the capacity for it (§5.5). Questions for the product owner and business: §10 (Q16–Q33, numbers continue from [02-open-questions.md](02-open-questions.md)). Plan: §11. Acceptance checks: §12.
+Status: **business answers received 2026-11-18 — Telegram Business is not used for now (Q17 = A only), channels are out of scope (Q32 = a).** Built and tested on the test DB (not deployed, no real-phone test yet): TI1–TI6 (TI4 for groups and company accounts), together with [ai-chat-telegram](../ai-chat-telegram/README.md). TI7 (Business) and channels are dropped from this plan (postponed: `docs/todo/README.md` TG7, TG8). What works without Business: **§9.5**. Left: the finalization tasks in [05-finalization.md](05-finalization.md) (channel guard, guide for staff, real-phone check). Completion status: **§13**. Questions: §10 (Q16–Q33, all decided). Plan: §11.
 
-Related: [01-telegram-files.md](01-telegram-files.md) (files, groups — built) · [topics/08-telegram-and-topics.md](../topics/08-telegram-and-topics.md) (bot delivery to staff, T1–T6 — not built) · [identity/](../identity/README.md) (the «us» registry) · [clients-contacts/04](../clients-contacts/README.md) (contact addresses, `contact_address`) · `src/app/AGENTS.md` § "Telegram Bot (Sources)".
+Related: [01-telegram-files.md](01-telegram-files.md) (files, groups — built) · [topics/08-telegram-and-topics.md](../topics/08-telegram-and-topics.md) (bot delivery to staff: T1–T3, T5, T6 built 2026-11-17; T4 digests not built) · [identity/](../identity/README.md) (the «us» registry) · [clients-contacts/04](../clients-contacts/README.md) (contact addresses, `contact_address`) · `src/app/AGENTS.md` § "Telegram Bot (Sources)".
 
 ---
 
@@ -18,6 +18,8 @@ The system must know **who wrote each Telegram message and which company it is a
 | P4 | **Chat ↔ company** | A group (or channel) where the bot is a member can be linked to one or more companies, so that everything from this chat is about only these companies — also when the authors have no Telegram name in the CRM |
 | P5 | **AI chat over Telegram** (added 2026-11-17) | A bound member talks to the AI chat through the org bot (a transport / a special UI). What the chat does there and its limits = a separate spec; THIS spec gives the capacity (§5.5) |
 
+**Business answers (2026-11-18):** P3 = one org bot, **no Telegram Business for now** (§9.2, Q17); P4 = groups and companies' own accounts, **channels out of scope** (§7.7, Q32). A sales rep's private chat with a client reaches the CRM only through the ways of §9.5.
+
 ## 2. Telegram facts that drive the design
 
 | # | Fact | Effect on us |
@@ -29,9 +31,9 @@ The system must know **who wrote each Telegram message and which company it is a
 | F5 | In a private chat, `chat.id` = the user's id | A DM chat and the person are the same key |
 | F6 | A bot **cannot list the members** of a group (only admins and the member count). It learns members only when they write (or from `chat_member` updates, only when the bot is an admin) | Group members are learned from messages |
 | F7 | **Groups: the bot reads AND sends.** Read: with privacy mode on, the bot gets only commands to it, replies to its own messages and service messages; it gets ALL messages when privacy mode is off in BotFather (then add the bot to the group again) or when it is a group admin (built check, 01 §6 G1, `can_read_all_group_messages`). No history from before the bot joined. Messages of other bots are never delivered. Send: like any member, when the group lets members send (else the bot must be admin); Telegram flood limits apply (not published; keep group sends rare) | Reading is built. Sending into a client group = outbound to clients (Q31) |
-| F8 | **Channels** (broadcast): a bot can join a channel **only as an admin** (a bot cannot be a plain subscriber), so «read without admin» is not possible. An admin bot gets every post (`channel_post`, edits = `edited_channel_post`). To POST into the channel it needs the right «Публикация сообщений» (Post messages, `can_post_messages`). A post has no person as author (`sender_chat` = the channel; `author_signature` = a name as text only when signatures are on). Comments live in the channel's linked discussion group = a separate supergroup; the bot reads them only when it is a member there (normal group rules, F7) | The channel owner must make our bot an admin. Today `allowed_updates` = `message`, `my_chat_member` → add `channel_post`, `edited_channel_post` |
+| F8 | **Channels** (broadcast): a bot can join a channel **only as an admin** (a bot cannot be a plain subscriber), so «read without admin» is not possible. An admin bot gets every post (`channel_post`, edits = `edited_channel_post`). To POST into the channel it needs the right «Публикация сообщений» (Post messages, `can_post_messages`). A post has no person as author (`sender_chat` = the channel; `author_signature` = a name as text only when signatures are on). Comments live in the channel's linked discussion group = a separate supergroup; the bot reads them only when it is a member there (normal group rules, F7) | The channel owner must make our bot an admin. Today `allowed_updates` = `message`, `my_chat_member` → add `channel_post`, `edited_channel_post`. **Not used: channels are out of scope (Q32 = a, 2026-11-18)** |
 | F9 | Supergroups can have **forum topics** (`message_thread_id`) | One group can hold several projects |
-| F10 | **Telegram Business** (Bot API 7.2+; the rights object changed in 9.0 — check at build time): a user with **Telegram Premium** can connect a bot to their PERSONAL account (Settings → Telegram Business → Chatbots) and choose which private chats it sees. The bot then gets `business_connection` (who connected, rights, on / off) and `business_message` / `edited_business_message` / `deleted_business_messages` for those chats. Private chats only, no groups. Business Mode must be on for the bot in BotFather. Reply on behalf of the account (`can_reply`) only in chats with an incoming message in the last 24 hours. Docs do not say (a) that the owner's OWN messages arrive too and (b) that old history arrives — **check both in a live test before TI7**; plan assumes (a) yes, (b) no | The only legal way for a bot to read a sales rep's real 1:1 chats with clients. See P3 |
+| F10 | **Telegram Business** (Bot API 7.2+; the rights object changed in 9.0 — check at build time): a user with **Telegram Premium** can connect a bot to their PERSONAL account (Settings → Telegram Business → Chatbots) and choose which private chats it sees. The bot then gets `business_connection` (who connected, rights, on / off) and `business_message` / `edited_business_message` / `deleted_business_messages` for those chats. Private chats only, no groups. Business Mode must be on for the bot in BotFather. Reply on behalf of the account (`can_reply`) only in chats with an incoming message in the last 24 hours. Docs do not say (a) that the owner's OWN messages arrive too and (b) that old history arrives — **check both in a live test before TI7**; plan assumes (a) yes, (b) no | The only legal way for a bot to read a sales rep's real 1:1 chats with clients. See P3. **Not used for now (Q17 = A only, 2026-11-18)** |
 | F11 | A webhook is per bot token. The same token cannot serve two sources | One bot = one source = one org |
 
 ## 3. What exists today (code check of 2026-11-17)
@@ -209,13 +211,17 @@ No message to clients and no text in groups. The CRM tells our own people, as in
 
 | Event | Recipients | Text (Russian UI) |
 |---|---|---|
-| The bot joined a group or a channel (`my_chat_member`) | Org owners | «Бот добавлен в «<название>». Сообщения этого чата сохраняются в CRM и анализируются.» (The bot was added to «…». Messages of this chat are saved in the CRM and analysed.) |
+| The bot joined a group (`my_chat_member`) | Org owners | «Бот добавлен в «<название>». Сообщения этого чата сохраняются в CRM и анализируются.» (The bot was added to «…». Messages of this chat are saved in the CRM and analysed.) |
 | A member bound their Telegram (§5.2) | That member + org owners | «Telegram <@name> привязан к <участник>. Личные сообщения боту сохраняются в CRM.» |
-| A Business connection was made / changed / switched off (§9.3) | That member + org owners | «<участник> подключил(а) бота к своему Telegram. Выбранные личные чаты сохраняются в CRM.» / «…отключил(а)…» |
+| The bot was made admin of a CHANNEL (finalization F1, [05](05-finalization.md)) | Org owners | «Бот добавлен в канал «<название>». Каналы не поддерживаются: посты канала не сохраняются в CRM.» (The bot was added to the channel «…». Channels are not supported: posts are not saved in the CRM.) |
 
 The /account page («Telegram») and the source settings show the same text next to the bind / connect action.
 
-### 7.7 Channels (if Q32 = b — waiting for business feedback)
+### 7.7 Channels — out of scope (Q32 = a, 2026-11-18)
+
+**Not built.** The rules below are kept for a later decision (`docs/todo/README.md` TG8). Today: a bot joins a channel only as an admin (F8); `channel_post` is not in `allowed_updates`, so posts never arrive. After finalization task F1 ([05](05-finalization.md)) a channel is not listed in «Группы» and the owners get the notice of §7.6. A channel post that a person FORWARDS to the bot is saved as a normal forward (author unknown, `via = chat_forward`).
+
+Kept for later:
 
 - Only channels where the bot is an admin (F8). A row in `telegram_chat` with `type = channel`; same modes and bindings as a group.
 - A post = one source item, `externalType = chat_message`, `external_id = <chat>:<msg>`; an edit updates the item and re-parses (Q30).
@@ -284,18 +290,20 @@ A unique hit is required at steps 3–5 (as today).
 
 ### 9.2 Recommendation
 
-**One bot per org** (product owner, 2026-11-17: "one bot per org, as long as it supports all the use cases"). **Option C is dropped, D never.** Each org chooses its set-up in the Telegram source settings — switch «Telegram Business» (`provider_config.businessEnabled`, org owner, default off):
+**Decision (business, 2026-11-18): set-up A only — one org bot, no Telegram Business for now.** The switch «Telegram Business» below is NOT built; nothing in the code asks Telegram for `business_*` updates. The rest of §9.2–§9.4 is kept for a later decision (`docs/todo/README.md` TG7). What works without Business: §9.5.
+
+Earlier text: **One bot per org** (product owner, 2026-11-17: "one bot per org, as long as it supports all the use cases"). **Option C is dropped, D never.** Each org chooses its set-up in the Telegram source settings — switch «Telegram Business» (`provider_config.businessEnabled`, org owner, default off):
 
 | Set-up | What works | Org needs |
 |---|---|---|
-| «Бот» (A) | DMs to the bot, groups (+ channels if Q32 = b), staff binding, pushes, notifications, AI chat over Telegram | One bot from BotFather (built) |
-| «Бот + Telegram Business» (A + B) | All of A + the reps' private client chats (§9.3, §9.4) | Business Mode on for the bot in BotFather; Premium for each rep who connects |
+| «Бот» (A) — **the only set-up (2026-11-18)** | DMs to the bot, groups, staff binding, pushes, notifications, AI chat over Telegram | One bot from BotFather (built) |
+| «Бот + Telegram Business» (A + B) — not built | All of A + the reps' private client chats (§9.3, §9.4) | Business Mode on for the bot in BotFather; Premium for each rep who connects |
 
 Switch on → `allowed_updates` adds `business_connection`, `business_message`, `edited_business_message`, `deleted_business_messages` (the webhook is registered again, as on a credentials save). Switch off → those updates are no longer asked for; a connection that still arrives is not ingested. A connection is accepted only from a member with an active staff binding (§5) — matched by the numeric id; Business stays optional per rep. Q17 for business = only whether reps will use it; the build supports both set-ups either way.
 
 Earlier text (kept for the reasoning): **A + B.** One org bot stays the only bot per org. «Linked to a member» is done in two ways that do not need a second bot: the staff binding (§5, notifications + DM notes) and the Business connection (B, the rep's client chats). Option C only if business names a concrete use case (Q17); the model allows it later: `source.owner_user_id` (nullable) and the rules «default owner of topics / responsible for new contacts = the bot owner; delivery to that member may use their bot».
 
-### 9.3 Logic for B (when the org switches Business on)
+### 9.3 Logic for B — not built (Q17 = A only; kept for later)
 
 | Event | Action |
 |---|---|
@@ -306,7 +314,7 @@ Earlier text (kept for the reasoning): **A + B.** One org bot stays the only bot
 | Connection disabled / rights removed | Stop; keep old items |
 | Replies from the CRM through the connection | Out of scope (Q31) |
 
-### 9.4 What Telegram Business gives (use cases for Q17)
+### 9.4 What Telegram Business gives (use cases for Q17; kept for later)
 
 Without Business, the org bot sees only two things: messages that people send TO THE BOT, and groups / channels where the bot is a member. In B2B, clients rarely write to a company bot. Most talk is in the rep's own private chat with the client («Иван (менеджер) ↔ Пётр (закупщик)»). The bot does not see these chats. Business is the only allowed way to let the bot see them (option D, logging in as the rep, is against Telegram terms).
 
@@ -321,12 +329,27 @@ Without Business, the org bot sees only two things: messages that people send TO
 
 What it costs and limits: Telegram Premium for each rep who connects; private chats only (groups still need the bot as a member, F7); no history before the connection (check, F10); the rep may exclude a chat, so the CRM is not complete by force. Business question: do reps already talk to clients in personal Telegram chats? If yes, B is the feature that makes Telegram useful in the CRM; if clients mostly talk in groups, A is enough and B can wait.
 
-## 10. Questions (for the product owner and business) — answers of 2026-11-17
+### 9.5 What works without Business (set-up A, decided 2026-11-18)
+
+The bot never sees a rep's private Telegram chat with a client: a private chat has exactly two people, and nobody can add a bot to it. Client talk reaches the CRM in these ways:
+
+| # | Scenario | How it works | Built |
+|---|---|---|---|
+| S1 | **Group with the client** | A rep makes a group with the client's people (or the client has one) and adds the org bot. The owner or the company's «Ответственный» binds the group to the company (§7). Every message is an item; authors are found by §8.1; unknown authors → «Новый контакт в …?» | TI4 |
+| S2 | **Forward from a private chat** | A rep forwards a client's message from their private chat to the bot. It is saved as the CLIENT's message (original author, §8.1) and feeds signals and topics. With the AI chat on, it is also the context of a question in the same turn (ai-chat-telegram Q8) | TI1, TC3 |
+| S3 | **The client writes to the org bot** | A DM to the bot is an item from that person; a company's own account bound to a company → that company (§7.2, §8.1 step 5) | TI1, TI4 |
+| S4 | **Internal group** | Our staff group with the bot, mode `internal` → internal items, no company (Q28) | TI4 |
+| S5 | **Rep's own note** | A rep types or dictates a note to the bot. AI chat on → the chat answers, the chat → sources ingest keeps the business facts; AI chat off → a relayed note in signal extraction (TI6) | TI6, TC1–TC7 |
+| S6 | **Bot → our staff** | Topic pushes, important notifications, the AI chat (§5.4, §5.5) | TI2, TI3 |
+
+Limits: a private chat that is not forwarded is not in the CRM; a forward from a person who hides forwards in their privacy settings has no author (`hidden_forward`) — the company then comes only from the text (topics); no history before the bot joined a group (F7); the CRM never writes to clients (Q31). Staff learn S1 / S2 from a short guide on /profile → «Telegram» and in the bot's `/help` (finalization F2, built 2026-11-18).
+
+## 10. Questions (for the product owner and business) — answers of 2026-11-17 and 2026-11-18
 
 | # | Question | Options | Recommendation |
 |---|---|---|---|
 | Q16 | How do we identify our members in Telegram | (a) verified binding through the bot (§5.2) + keep the typed handle as «не подтверждён»; (b) typed handle only (today); (c) binding only, remove typed handles | **Decided** (as recommended): **(a)** — verification protects against a client's handle being typed as staff; typed handles keep working for members who do not bind |
-| Q17 | Which bot model | A only · A + B (Business) · A + C (personal bots) · all | **Open** (business answer). Product owner: one bot per org; support BOTH set-ups and let each org choose (§9.2 switch «Telegram Business»). C dropped. Business to answer: will reps use Premium and connect? |
+| Q17 | Which bot model | A only · A + B (Business) · A + C (personal bots) · all | **Decided: A only** (business, 2026-11-18): one org bot, no Telegram Business for now (§9.2, §9.5). Business set-up postponed (`docs/todo/README.md` TG7). C dropped, D never |
 | Q18 | Where a company's Telegram (shared account, group, channel) is kept | (a) as a chat binding (§7), shown in the company card block «Telegram»; (b) a new company field «Telegram» (list of @names) | **Decided** (as recommended): **(a)** — one model for «the company in Telegram»; a field would be a second place that drifts |
 | Q19 | Group bound to company A, a known contact of company B writes | (a) counterparty = A, B's contact = participant only; (b) counterparty = B for that message; (c) counterparty = both | **Decided** (as recommended): **(a)** — the group is about A; mixing makes topics jump between companies |
 | Q20 | A member's own text / voice in a DM with the bot (not a forward) | (a) internal note about a client: stored, direction `internal`, counterparty from the text, feeds signals (closes topics/08 I3); (b) ignore; (c) a question to the AI chat (the bot as a mobile AI chat) | **Decided** (as recommended): **(a)** now; (c) as a separate spec later (buttons of draft cards in Telegram need more work) |
@@ -341,7 +364,7 @@ What it costs and limits: Telegram Premium for each rep who connects; private ch
 | Q29 | When a binding / identity changes, how far back to apply | (a) new messages only; (b) re-resolve 90 days (no AI) + re-run topics for changed items in the signal window; (c) everything | **Decided (a)**: new messages only (§8.3) |
 | Q30 | Deleted / edited messages | (a) edits update the item and re-parse; Business deletions mark the item, never delete; (b) ignore edits and deletions | **Decided** (as recommended): **(a)**. Note: for normal chats Telegram tells a bot about edits (`edited_message`) but NOT about deletions |
 | Q31 | Should the CRM send messages to CLIENTS through the bot (reply in a group, in a Business chat) | (a) no — outbound only to our members; (b) later, separate spec | **Decided** (as recommended): **(a)** in this task; (b) needs rules for who may send what, templates, and a log |
-| Q32 | Client Telegram CHANNELS (broadcast) | (a) out of scope; (b) support `channel_post` from channels where the bot is admin (F8), bound to companies like groups | **Open** (business feedback). Product owner: groups AND channels wanted; written as §7.7 + 0.5 day in TI4. Posting into a channel / group = Q31 |
+| Q32 | Client Telegram CHANNELS (broadcast) | (a) out of scope; (b) support `channel_post` from channels where the bot is admin (F8), bound to companies like groups | **Decided: (a)** (business, 2026-11-18): out of scope for now (§7.7; postponed: `docs/todo/README.md` TG8). A channel the bot is added to gets the guard of finalization F1. Posting into a channel / group = Q31 |
 | Q33 | A member's own DM: note or AI chat | (a) a mode per member; (b) all to the AI chat, notes via the chat ingest; (c) a command per message | **Decided (b)** in [ai-chat-telegram](../ai-chat-telegram/01-specification.md) Q13 (2026-11-17) |
 
 ## 11. Plan (after the decisions)
@@ -353,13 +376,13 @@ One developer with AI assistance, working days. Migrations: `telegram_binding` (
 | TI1 | Resolver — **built 2026-11-17** | 2 | Pure `resolveTelegramMessage` + unit tests (every row of §8); directory loader; `resolved` stamped at parse; consumers switched: attribution (id-first), topics counterparty, A1, company activity; registry report reads «Адреса» |
 | TI2 | Staff binding + router — **built 2026-11-17** | 2 | Router of §5.5 C2 (command / button / member DM target / ingest) before storage, handled-`update_id` dedupe (C5); `/start <code>`, `/stop`; /account UI with deep link + QR; unbind paths; conflict checks |
 | TI3 | Outbound — **built 2026-11-17** (sender; topic pushes with «Готово» / «Отложить до завтра»; important-notification copies; per-category choice; org switch `topics.delivery.telegram`) | 2 | ONE sender (§5.5 C6: split, HTML, buttons with short ids, 429, log); delivery channel `telegram` (topic push T2) + important notifications (Q21) + per-category choice; 403 → `blocked`; log; topics/08 T6 admin switch |
-| TI4 | Chats — **built 2026-11-17 for groups and company accounts** (channels wait for Q32) | 2 (+ 0.5 if Q32 = b) | `telegram_chat` + data move; binding UI in «Группы» and the company card; modes; change log; suggestions §7.3; channels (only if Q32 = b): `channel_post` / `edited_channel_post` in `allowed_updates`, posts as items (§7.7); notices §7.6 |
+| TI4 | Chats — **built 2026-11-17 for groups and company accounts** (channels out of scope, Q32 = a) | 2 | `telegram_chat` + data move; binding UI in «Группы» and the company card; modes; change log; suggestions §7.3; notices §7.6 |
 | TI5 | Contacts — **built 2026-11-17** (unknown-author proposals → TI4) | 1.5 | Learned ids, «Связать с контактом», contact cards (F2), duplicates list, unknown-author proposals (Q25) |
 | TI6 | Member DM notes — **built 2026-11-17** | 1 | Q20 (a): internal note rule in extraction + eval cases |
-| TI7 | Business set-up | 2 | Org switch «Telegram Business» (§9.2); `business_connection` / `business_message` / edits / deletions; notices §7.6; `allowed_updates` per set-up; live test of the F10 open points first |
-| TI8 | Docs + live check | 0.5 | `src/app/AGENTS.md`, this folder, topics/08 status; live check on a deployed bot (webhook needed) |
+| TI7 | Business set-up — **dropped for now** (Q17 = A only, 2026-11-18; postponed: todo TG7) | — | — |
+| TI8 | Docs + live check — **docs done 2026-11-17; live check = [05-finalization.md](05-finalization.md) F3** | 0.5 | `src/app/AGENTS.md`, this folder, topics/08 status; live check on a deployed bot (webhook needed) |
 
-Total ≈ 13.5 days (Business set-up included; + 0.5 if Q32 = b). Not in this plan: the AI chat over Telegram itself (turn runner C4, chat rules in Telegram) — its own spec.
+Total ≈ 11.5 days (without TI7 and channels, 2026-11-18). **Done 2026-11-17: TI1–TI6 + the docs part of TI8 (≈ 11 days).** Left: the finalization tasks F1–F5 of [05-finalization.md](05-finalization.md) (≈ 1.5–2 days incl. the live check and its fixes). Not in this plan: the AI chat over Telegram itself (turn runner C4, chat rules in Telegram) — its own spec.
 
 ## 12. Acceptance checks
 
@@ -374,9 +397,71 @@ Total ≈ 13.5 days (Business set-up included; + 0.5 if Q32 = b). Not in this pl
 9. A binding is added to a group with 2 weeks of history → only messages after the binding use it; old items are unchanged (Q29 = a).
 10. A group titled «Альфа / Мы» with company «Альфа» → a suggestion, not a binding.
 11. Company «Последняя активность» moves after a Telegram message of its contact.
-12. (Business) A rep connects the org bot; a client writes in the rep's chat → inbound item, author = the client contact; the rep's reply → outbound `own_org`; the rep switches the connection off → nothing new arrives.
-13. (Channel, if Q32 = b) The bot is made admin of a channel bound to company A → a post becomes an item, author `company_account` of A; an edit updates it; the org owners got the notice «Бот добавлен в …».
+12. (Business — not in scope, Q17 = A only) A rep connects the org bot; a client writes in the rep's chat → inbound item, author = the client contact; the rep's reply → outbound `own_org`; the rep switches the connection off → nothing new arrives.
+13. (Channel — not in scope, Q32 = a) The bot is made admin of a channel bound to company A → a post becomes an item, author `company_account` of A; an edit updates it; the org owners got the notice «Бот добавлен в …».
 14. (Notices) A member binds Telegram → the member and the owners get the notice; no message is sent to any group.
 15. (Router) The same update delivered twice → handled once. A button press → `answerCallbackQuery` at once, the action runs once; an expired button id → «Кнопка устарела» (Button expired).
 16. (Sender) A 9,000-char answer → 3 messages; HTML special chars escaped; a 429 → sent again after `retry_after`.
-17. (Set-up) Business switch off → `allowed_updates` has no `business_*`; switch on → the webhook is registered again with them.
+17. (Set-up — not in scope, Q17 = A only) Business switch off → `allowed_updates` has no `business_*`; switch on → the webhook is registered again with them.
+18. (Channel guard, finalization F1) The bot is made admin of a channel → the owners get «Бот добавлен в канал … Каналы не поддерживаются …»; the channel is not listed in «Группы»; no post is saved.
+
+## 13. Completion status (2026-11-17)
+
+**Business answers received 2026-11-18** (Q17 = A only, Q32 = a); finalization: [05-finalization.md](05-finalization.md). Everything below runs on the test DB; nothing was tested with a real Telegram account yet (needs the deployed webhook).
+
+### 13.1 Built
+
+| Phase | What | Where |
+|---|---|---|
+| TI1 | ONE rule per message: author (binding id → staff name → contact id → contact name / legacy alias → company account → unknown; forward = original author) + company (§8.2 / §7.4), stored as `metadata_json.telegram.resolved` at every parse; readers: attribution (rule 1d0 `sender_staff_binding`), topics counterparty, document link A1, company «Последняя активность», registry match report | `src/lib/telegram/resolve.ts`, `src/server/telegram/directory.ts`, `parse-source-item.ts` |
+| TI2 | Staff binding (`/start <code>`, 15 min, single use; /profile «Telegram»), router before storage, handled-update dedupe, `/stop` `/new` `/help`, member wins over a contact | `src/server/telegram/{bindings,router}.ts`, `profile-telegram.tsx` |
+| TI3 | One sender; topic pushes with «Открыть» / «✅ Готово» / «⏰ Отложить до завтра» (working hours, ≤ 2 per topic in 7 days); Telegram copies of important notifications (per category); org switch `topics.delivery.telegram`; retention of the bot's rows | `src/server/telegram/{sender,delivery,retention}.ts`, `src/server/topics/delivery/telegram-push.ts` |
+| TI4 | Chats ↔ companies for groups and companies' own accounts: `telegram_chat` (+ move of `provider_config.telegramGroups`), modes auto / clients / internal, companies with a primary, change log, suggestions (title / authors), «Новый контакт в …?» proposals, «Группы» settings, company card block «Telegram» | `src/server/telegram/chats.ts`, `telegram-chats-settings.tsx`, `client-telegram-block.tsx` |
+| TI5 | Learned ids + renames, «Связать с контактом» (sources table, topic drawer), contact cards (phone → id), «Дубли Telegram» on /contacts, «id» badge on contact addresses | `directory.ts`, `telegram-link-contact-dialog.tsx`, `telegram-duplicates-button.tsx` |
+| TI6 | A member's own message to the bot (AI chat off) = a relayed note about a client in signal extraction | `src/server/topics/signals/item-input.ts`, `prompt/extraction.ts` |
+| TI8 (docs) | `src/app/AGENTS.md` § "Telegram Bot (Sources)", root `AGENTS.md`, topics/08, this folder | — |
+
+Migrations (applied to the `.env` test DB): `0044_telegram_bot_and_chat`, `0045_telegram_pushes_notifications`, `0046_contact_telegram_ids`, `0047_telegram_chats`. Deployed DB: `docs/todo/README.md` D6.
+
+### 13.2 Differences from the text above
+
+- Binding UI on **/profile → «Telegram»** (not /account); no QR code (no library) — link + «Открыть Telegram» + copy.
+- AI chat switch = `provider_config.aiChatEnabled` of the Telegram source (not an org setting).
+- One send log table `telegram_out_message` (every bot message; also the reply context).
+- Topic pushes: org switch `topics.delivery.telegram` default **on** (the member opts in by binding); `topic_delivery_pref.telegram_enabled` default on (migration `0045`); `telegram_chat_id` is not used — the address is the binding.
+- A person with no username is stored as the address value «tg:<id>» (shown «Telegram id …»).
+- «Новый контакт в …?» proposals live in the company card block «Telegram», not in discovery.
+- TI6 reuses the AI chat note rule (relayed note, attribution `unknown`, the client from the text) instead of a new «internal note» direction.
+- «Не анализировать» stays the chat exclusion (no `ignored` mode value).
+
+### 13.3 Acceptance checks (§12) — how they are covered today
+
+Automated: `src/server/chat/eval/telegram.eval.ts` (`pnpm chat:eval`, `CHAT_EVAL_ONLY=tg`; real router / worker / parse / model on the test DB, only the Bot API mocked) + unit tests.
+
+| # | Coverage |
+|---|---|
+| 1 binding | tg01 |
+| 2 member renamed | tg16 (member found by binding id, not by name) |
+| 3 typed staff handle = contact handle | **partly**: the registry match report lists the contact; no warning on the cards (todo TG5) |
+| 4 push + blocked | tg10, tg11 (push, limit); the 403 → `blocked` path only in code — real-phone check |
+| 5 contact by name, id learned, rename | tg12, tg13 |
+| 6 «Связать с контактом» | tg14 |
+| 7 bound group, unknown author, our member | tg19, tg20 |
+| 8 two companies | `resolve.test.ts` |
+| 9 only new messages | by design (resolution only at parse) |
+| 10 title suggestion | tg18 + unit `titleKeys` |
+| 11 company activity | tg12 |
+| 12, 17 Business | not in scope (Q17 = A only) |
+| 13 channel | not in scope (Q32 = a) |
+| 18 channel guard | tg24 (F1 built 2026-11-18) |
+| 14 notices | tg01 (bound), tg18 (bot added) |
+| 15 router dedupe / buttons | buttons tg04, tg06, tg10, tg11; dedupe in code — real-phone check |
+| 16 sender | split + escaping in `render.test.ts` / `html.test.ts`; 429 only in code |
+
+### 13.4 Left
+
+| What | Blocked by | Size |
+|---|---|---|
+| Finalization F3–F5 ([05-finalization.md](05-finalization.md); F1 channel guard + F2 guide built 2026-11-18): set-up, real-phone check, fixes + close-out | — | ≈ 1–1.5 days |
+| Postponed by the business answers: TI7 Telegram Business, channels | Q17 = A only, Q32 = a (2026-11-18) | `docs/todo/README.md` TG7, TG8 |
+| Decided, not scheduled: forum topics in the thread key (§7.5), discovery of Telegram authors, the bot asking an unknown sender for the phone (Q22), the records-engine filter by `resolved` ids, the card warning of check 3, topic digests by Telegram (topics/08 T4) | — | `docs/todo/README.md` TG1–TG6 |

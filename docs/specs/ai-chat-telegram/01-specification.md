@@ -1,6 +1,6 @@
 # AI chat over Telegram — specification
 
-Status: **built 2026-11-17 (TC1–TC7, not deployed)** — all questions Q1–Q14 decided as recommended (product owner). What differs from the text below: §18. Live check with a real Telegram account: open (needs a deployed webhook, §18). Plan: §16. Acceptance checks: §17.
+Status: **built 2026-11-17 (TC1–TC7); finalization in [telegram/05](../telegram/05-finalization.md)** — all questions Q1–Q14 decided as recommended (product owner). Tested on the test DB: Telegram eval `tg01`–`tg23` (`tg01`–`tg08` = this spec, the rest = telegram/04) + the full web chat eval 78 / 78 after the turn refactor. What differs from the text below: §18. Left: the live check with a real Telegram account (§17 = telegram/05 F4 steps 1–6) and the «later» items of §14 (`docs/todo/README.md` A3). Plan: §16. Acceptance checks: §17. Business answers 2026-11-18 (telegram/04 Q17 = A only, Q32 = a): no change for this spec.
 
 Related: [ai-chat/](../ai-chat/README.md) (the web AI chat v2 — built) · [ai-chat-tools/](../ai-chat-tools/README.md) (draft cards, files, voice — built) · [telegram/04-identity-and-chats.md](../telegram/04-identity-and-chats.md) (staff binding, router, one sender — draft; §5.5 = the capacity this spec uses) · `src/lib/AGENTS.md` § "AI Chat".
 
@@ -232,7 +232,7 @@ Option buttons; a press sends the option text as the next user message (merged i
 | Editing card values in Telegram, cards with several choices | Dialog state in Telegram; «Изменить в CRM» covers it |
 | Streaming the answer text itself (`sendMessageDraft` with text) | Partial markdown → HTML; status preview first (Q6) |
 | Voice answers (text-to-speech) | New AI process + cost |
-| Business chats (telegram/04 B), groups, inline mode | Other channels; groups are client-visible |
+| Business chats (telegram/04 B — not used, Q17 = A only, 2026-11-18), groups, inline mode | Other channels; groups are client-visible |
 | Model choice, «Не передавать в источники» switch in Telegram | Web only |
 
 ## 15. Questions — decided 2026-11-17

@@ -52,11 +52,28 @@ async function log(orgId: string, chatRowId: string, userId: string | null, acti
 
 // ── Recording the chats the bot sees ─────────────────────────────────────
 
-/** The bot joined / left a group (`my_chat_member`): the row + a notice to owners on join (§7.6). */
+/**
+ * The bot joined / left a group (`my_chat_member`): the row + a notice to owners on join (§7.6).
+ * A CHANNEL is out of scope (Q32 = a, docs/specs/telegram/05 F1): no row (its posts never
+ * arrive — `channel_post` is not asked for), only a notice to the owners that it is not supported.
+ */
 export async function recordTelegramChatMembership(sourceId: string, orgId: string, m: ChatMemberUpdated): Promise<void> {
-  if (!GROUP_TYPES.has(m.chat.type) && m.chat.type !== "channel") return
-  const chatId = String(m.chat.id)
   const title = "title" in m.chat && typeof m.chat.title === "string" ? m.chat.title : null
+  if (m.chat.type === "channel") {
+    const isIn = (s: string) => s === "member" || s === "administrator"
+    if (isIn(m.new_chat_member.status) && !isIn(m.old_chat_member.status)) {
+      await notify(orgId, {
+        kind: "telegram.channel_unsupported",
+        title: `Бот добавлен в канал «${title ?? m.chat.id}»`,
+        body: "Каналы не поддерживаются: посты канала не сохраняются в CRM. Бота можно удалить из канала.",
+        href: "/sources",
+        dedupeKey: `telegram.channel_unsupported:${m.chat.id}:${m.date}`,
+      })
+    }
+    return
+  }
+  if (!GROUP_TYPES.has(m.chat.type)) return
+  const chatId = String(m.chat.id)
   const username = "username" in m.chat ? cleanUsername((m.chat as { username?: string }).username) : null
   const status = m.new_chat_member.status
   const at = new Date(m.date * 1000)
@@ -341,12 +358,12 @@ async function viewsOf(orgId: string, rows: ChatRow[]): Promise<TelegramChatView
   }))
 }
 
-/** «Группы» of a bot (source settings): every chat row of the source. */
+/** «Группы» of a bot (source settings): every chat row of the source, channels left out (Q32 = a). */
 export async function listTelegramChats(orgId: string, sourceId: string): Promise<TelegramChatView[]> {
   const rows = await db
     .select()
     .from(telegramChat)
-    .where(and(eq(telegramChat.organizationId, orgId), eq(telegramChat.sourceId, sourceId)))
+    .where(and(eq(telegramChat.organizationId, orgId), eq(telegramChat.sourceId, sourceId), ne(telegramChat.type, "channel")))
     .orderBy(desc(telegramChat.lastMessageAt), telegramChat.title)
   return viewsOf(orgId, rows)
 }
@@ -473,7 +490,10 @@ export async function getClientTelegramView(orgId: string, userId: string, clien
   const canEdit = (await isOwner(orgId, userId)) || c.responsible === userId
   if (!bot) return { available: false, sourceId: null, canEdit, chats: [], otherChats: [], proposals: [] }
   const boundIds = (await db.select({ id: telegramChatClient.chatRowId }).from(telegramChatClient).where(eq(telegramChatClient.clientId, clientId))).map((r) => r.id)
-  const all = await db.select().from(telegramChat).where(and(eq(telegramChat.organizationId, orgId), eq(telegramChat.sourceId, bot.sourceId)))
+  const all = await db
+    .select()
+    .from(telegramChat)
+    .where(and(eq(telegramChat.organizationId, orgId), eq(telegramChat.sourceId, bot.sourceId), ne(telegramChat.type, "channel")))
   const proposals = await db
     .select({ p: telegramContactProposal, chatTitle: telegramChat.title })
     .from(telegramContactProposal)

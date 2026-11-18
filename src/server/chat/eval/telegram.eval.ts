@@ -144,6 +144,7 @@ const testNotificationKeys: string[] = []
 const groupChat = -100_000_000 - Math.floor(Math.random() * 1_000_000)
 const groupBound = groupChat - 1
 const groupInternal = groupChat - 2
+const channelChat = groupChat - 3
 
 const from = { id: TG_USER, is_bot: false, first_name: "Eval", username: `eval_tg_${TG_USER % 100000}` }
 const privateChat = { id: TG_USER, type: "private" as const, first_name: "Eval" }
@@ -236,6 +237,7 @@ describe.skipIf(!run)("AI chat over Telegram (mocked Bot API, real router / work
     await db.delete(telegramContactProposal).where(eq(telegramContactProposal.clientId, CL.id))
     for (const id of proposalContacts) await db.delete(contact).where(eq(contact.id, id))
     await db.delete(telegramChat).where(and(eq(telegramChat.sourceId, sourceId), or(inArray(telegramChat.chatId, [String(groupChat), String(groupBound), String(groupInternal), String(TG_ACCOUNT)]), eq(telegramChat.username, ACCOUNT_HANDLE))))
+    await db.delete(notification).where(like(notification.dedupeKey, `%telegram.channel_unsupported:${channelChat}:%`))
     await db.delete(notification).where(or(like(notification.dedupeKey, `%telegram.chat_added:%`), like(notification.dedupeKey, `%telegram.chat_suggestion:%${CL.id}`), like(notification.dedupeKey, `%telegram.contact_proposal:%`)))
     for (const c of [CT1, CT2, CT3]) await db.delete(contact).where(eq(contact.id, c.id))
     await db.delete(client).where(eq(client.id, CL.id))
@@ -643,6 +645,28 @@ describe.skipIf(!run)("AI chat over Telegram (mocked Bot API, real router / work
     } finally {
       ctx.aiChatEnabled = true
     }
+  })
+
+  it("tg24 F1: the bot made admin of a CHANNEL → no chat row, not in «Группы», a «не поддерживаются» notice to owners", async () => {
+    await deliver({
+      update_id: ++updateId,
+      my_chat_member: {
+        chat: { id: channelChat, type: "channel", title: "Новости поставщика" },
+        from,
+        date: Math.floor(Date.now() / 1000),
+        old_chat_member: { status: "left", user: { id: 1, is_bot: true, first_name: "Bot" } },
+        new_chat_member: { status: "administrator", user: { id: 1, is_bot: true, first_name: "Bot" } },
+      },
+    } as unknown as Update)
+    expect(await chatRow(channelChat)).toBeNull()
+    const { listTelegramChats } = await import("@/server/telegram/chats")
+    expect((await listTelegramChats(EVAL_ORG_ID, sourceId)).some((c) => c.type === "channel")).toBe(false)
+    const [n] = await db
+      .select({ title: notification.title })
+      .from(notification)
+      .where(like(notification.dedupeKey, `%telegram.channel_unsupported:${channelChat}:%`))
+      .limit(1)
+    expect(n?.title).toContain("канал")
   })
 
   it("tg08 /stop unbinds; the next message is not answered by the AI chat", async () => {

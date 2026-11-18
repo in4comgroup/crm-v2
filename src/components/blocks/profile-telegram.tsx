@@ -245,6 +245,22 @@ export function ProfileTelegram() {
         )}
 
         {view?.available && (
+          // docs/specs/telegram/05 F2: without Telegram Business, client talk reaches the
+          // CRM only through a group with the bot or a forward to the bot (04 §9.5).
+          <div className="flex flex-col gap-1 rounded-md border p-3 text-sm">
+            <div className="font-medium">Как переписка с клиентами попадает в CRM</div>
+            <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+              <li>
+                Создайте группу с клиентом и добавьте в неё бота — владелец организации или ответственный за компанию
+                привяжет группу к компании.
+              </li>
+              <li>Важное сообщение из личного чата перешлите боту — оно сохранится как сообщение клиента.</li>
+              <li>Личные чаты с клиентами бот не видит.</li>
+            </ul>
+          </div>
+        )}
+
+        {view?.available && (
           <p className="text-xs text-muted-foreground">
             Сообщения ИИ-чата хранятся в Telegram на серверах Telegram (облачный чат, без сквозного шифрования).
           </p>

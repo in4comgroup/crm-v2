@@ -3,7 +3,7 @@ import "server-only"
 import { and, asc, desc, eq, inArray, notInArray, or, sql, type SQL } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "@/db/drizzle"
-import { client, clientProfile, contact, deal, dealFunnelStage, industry, order, topic } from "@/db/schema"
+import { client, clientCoResponsible, clientProfile, contact, deal, dealFunnelStage, industry, order, topic } from "@/db/schema"
 import { recordHref, type RecordDetail, type RecordDetailSection, type RecordHit } from "@/lib/chat/records"
 import {
   CLIENT_RELATIONS,
@@ -197,7 +197,15 @@ async function list(ctx: RecordsContext, filters: ClientFilters, sort: string, l
       applied.push({ label: "Ответственный", value: "не назначен" })
     } else {
       const ids = resolvePersonFilter(ctx, members, filters.responsible)
-      where.push(ids.length ? inArray(client.responsibleUserId, ids) : sql`false`)
+      // The main OR an additional responsible member («Также отвечают», 2026-11-19).
+      where.push(
+        ids.length
+          ? or(
+              inArray(client.responsibleUserId, ids),
+              sql`exists (select 1 from ${clientCoResponsible} where ${clientCoResponsible.clientId} = ${client.id} and ${inArray(clientCoResponsible.userId, ids)})`,
+            )!
+          : sql`false`,
+      )
       applied.push({
         label: "Ответственный",
         value: ids.length ? ids.map((id) => personLabel(ctx, members, id)).join(", ") : `${filters.responsible} (не найден)`,
@@ -252,7 +260,13 @@ async function get(ctx: RecordsContext, id: string): Promise<RecordDetail | null
     .limit(1)
   if (!row || keepOwnOrg(ctx, "client", [row]).length === 0) return null
 
-  const [flags, members, profiles, customText, docs, contacts, deals, orders, topics] = await Promise.all([
+  const [coIds, flags, members, profiles, customText, docs, contacts, deals, orders, topics] = await Promise.all([
+    db
+      .select({ userId: clientCoResponsible.userId })
+      .from(clientCoResponsible)
+      .where(and(eq(clientCoResponsible.clientId, id), eq(clientCoResponsible.organizationId, ctx.orgId)))
+      .orderBy(clientCoResponsible.createdAt)
+      .then((rows) => rows.map((r) => r.userId)),
     loadClientDealFlags(ctx.orgId, [id]),
     loadOrgMembers(ctx.orgId),
     loadClientProfileTexts(ctx.orgId, [id]),
@@ -311,6 +325,7 @@ async function get(ctx: RecordsContext, id: string): Promise<RecordDetail | null
     { label: "Отношения", value: CLIENT_RELATION_LABELS[relation] },
     { label: "Отрасль", value: row.industryLabel ?? "" },
     { label: "Ответственный", value: personLabel(ctx, members, row.responsibleUserId) },
+    { label: "Также отвечают", value: coIds.map((u) => personLabel(ctx, members, u)).join(", ") },
     { label: "Юр. название", value: row.namePhys ?? "" },
     { label: "Email", value: row.email ?? "" },
     { label: "Телефон", value: row.phone ?? "" },

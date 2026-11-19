@@ -138,6 +138,7 @@ export function ClientDetailShell({
       responsibleHandoverFromUserId: detail.responsibleHandoverFromUserId,
       responsibleHandoverFromName: detail.responsibleHandoverFromName,
       responsibleHandoverReason: detail.responsibleHandoverReason,
+      coResponsible: detail.coResponsible ?? [],
       organizationId: detail.organizationId,
       createdAt: detail.createdAt,
       updatedAt: detail.updatedAt,

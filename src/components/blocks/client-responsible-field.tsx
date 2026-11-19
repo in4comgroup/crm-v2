@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
-import { Loader2, Send, UserCheck } from "lucide-react"
+import { Loader2, Send, UserCheck, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils"
 import {
   HANDOVER_REASON_MAX,
   assignableMembers,
+  coResponsibleMode,
   handoverOwners,
   responsibleMode,
   type ResponsibleMember,
@@ -35,6 +36,8 @@ import {
 // the company page. Controls by viewer (rules: src/lib/client-responsible.ts):
 // owner → member Select (+ «Оставить за собой» while a handover is pending);
 // the responsible non-owner → «Передать владельцу»; others → the name only.
+// «Также отвечают» (additional responsible members, 2026-11-19): the owner
+// adds / removes; an additional member may remove themselves.
 
 export type ResponsibleOptionsData = {
   viewerUserId: string
@@ -67,6 +70,8 @@ export type ResponsibleClient = {
   responsibleHandoverFromUserId: string | null
   responsibleHandoverFromName: string | null
   responsibleHandoverReason: string | null
+  /** Additional responsible members (absent on rows built without them). */
+  coResponsible?: { userId: string; name: string | null }[]
 }
 
 async function putResponsible(clientId: string, body: Record<string, unknown>): Promise<boolean> {
@@ -221,6 +226,7 @@ export function ClientResponsibleField({
         )}
         <HandoverPendingBadge client={client} />
       </div>
+      {opts && <CoResponsibleRow client={client} opts={opts} onChanged={onChanged} />}
       {client.responsibleHandoverFromUserId && client.responsibleHandoverReason && (
         <div className="text-xs text-muted-foreground">
           Причина: {client.responsibleHandoverReason}
@@ -238,6 +244,82 @@ export function ClientResponsibleField({
           }}
         />
       )}
+    </div>
+  )
+}
+
+/** «Также отвечают: Анна ×, Пётр × [+ Добавить]». */
+function CoResponsibleRow({
+  client,
+  opts,
+  onChanged,
+}: {
+  client: ResponsibleClient
+  opts: ResponsibleOptionsData
+  onChanged?: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const co = client.coResponsible ?? []
+  const mode = coResponsibleMode(
+    { userId: opts.viewerUserId, role: opts.viewerRole },
+    { responsibleUserId: client.responsibleUserId, coResponsibleUserIds: co.map((c) => c.userId) },
+  )
+  if (!co.length && mode !== "manage") return null
+  const candidates = assignableMembers(opts.members).filter(
+    (m) => m.userId !== client.responsibleUserId && !co.some((c) => c.userId === m.userId),
+  )
+  const change = async (action: "addCoResponsible" | "removeCoResponsible", userId: string) => {
+    setBusy(true)
+    const ok = await putResponsible(client.id, { action, userId })
+    setBusy(false)
+    if (ok) {
+      toast.success(action === "addCoResponsible" ? "Ответственный добавлен" : "Ответственный убран")
+      onChanged?.()
+    }
+  }
+  const nameOf = (c: { userId: string; name: string | null }) =>
+    c.name ?? opts.members.find((m) => m.userId === c.userId)?.name ?? "—"
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-xs text-muted-foreground">Также отвечают:</span>
+      {!co.length && <span className="text-xs text-muted-foreground">никто</span>}
+      {co.map((c) => {
+        const canRemove = mode === "manage" || (mode === "self" && c.userId === opts.viewerUserId)
+        const gone = !opts.members.some((m) => m.userId === c.userId)
+        return (
+          <Badge key={c.userId} variant="secondary" className="gap-1 font-normal">
+            {nameOf(c)}
+            {gone && <span className="text-muted-foreground">(не в организации)</span>}
+            {canRemove && (
+              <button
+                type="button"
+                disabled={busy}
+                aria-label={c.userId === opts.viewerUserId && mode === "self" ? "Снять с себя" : `Убрать ${nameOf(c)}`}
+                title={c.userId === opts.viewerUserId && mode === "self" ? "Снять с себя" : "Убрать"}
+                onClick={() => void change("removeCoResponsible", c.userId)}
+                className="rounded-sm opacity-70 hover:opacity-100"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </Badge>
+        )
+      })}
+      {mode === "manage" && candidates.length > 0 && (
+        <Select value="" onValueChange={(v) => void change("addCoResponsible", v)} disabled={busy}>
+          <SelectTrigger size="sm" className="h-7 w-fit text-xs">
+            <SelectValue placeholder="+ Добавить" />
+          </SelectTrigger>
+          <SelectContent>
+            {candidates.map((m) => (
+              <SelectItem key={m.userId} value={m.userId}>
+                {m.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
     </div>
   )
 }

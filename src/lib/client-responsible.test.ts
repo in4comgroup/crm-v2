@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest"
 import {
+  checkCoResponsibleChange,
   checkResponsibleChange,
+  coResponsibleMode,
+  isClientResponsible,
   matchesResponsibleFilter,
   normalizeHandoverReason,
   readHandoverNote,
@@ -101,5 +104,41 @@ describe("reason + note helpers", () => {
     expect(readHandoverNote({ responsibleHandover: { reason: "r", at: "t" } })).toEqual({ reason: "r", at: "t" })
     expect(readHandoverNote({})).toBeNull()
     expect(readHandoverNote(null)).toBeNull()
+  })
+})
+
+describe("additional responsible members («Также отвечают», 2026-11-19)", () => {
+  const c = { responsibleUserId: "own1", coResponsibleUserIds: ["mem"] }
+  it("the owner adds any human, not banned member — never the main one, never twice", () => {
+    expect(checkCoResponsibleChange(owner, c, { kind: "add", targetUserId: "adm" }, members)).toEqual({ ok: true })
+    expect(checkCoResponsibleChange(owner, c, { kind: "add", targetUserId: "own1" }, members)).toMatchObject({ ok: false, status: 400 })
+    expect(checkCoResponsibleChange(owner, c, { kind: "add", targetUserId: "mem" }, members)).toMatchObject({ ok: false, status: 400 })
+    expect(checkCoResponsibleChange(owner, c, { kind: "add", targetUserId: "ban" }, members)).toMatchObject({ ok: false, status: 400 })
+    expect(checkCoResponsibleChange(owner, c, { kind: "add", targetUserId: "nobody" }, members)).toMatchObject({ ok: false, status: 400 })
+  })
+  it("only the owner adds; a member removes only themselves", () => {
+    expect(checkCoResponsibleChange(mem, c, { kind: "add", targetUserId: "adm" }, members)).toMatchObject({ ok: false, status: 403 })
+    expect(checkCoResponsibleChange(mem, c, { kind: "remove", targetUserId: "mem" }, members)).toEqual({ ok: true })
+    const two = { responsibleUserId: "own1", coResponsibleUserIds: ["mem", "adm"] }
+    expect(checkCoResponsibleChange(mem, two, { kind: "remove", targetUserId: "adm" }, members)).toMatchObject({ ok: false, status: 403 })
+    expect(checkCoResponsibleChange(owner, two, { kind: "remove", targetUserId: "adm" }, members)).toEqual({ ok: true })
+    expect(checkCoResponsibleChange(owner, c, { kind: "remove", targetUserId: "adm" }, members)).toMatchObject({ ok: false, status: 400 })
+    expect(checkCoResponsibleChange({ userId: "x", role: null }, c, { kind: "remove", targetUserId: "mem" }, members)).toMatchObject({ ok: false, status: 403 })
+  })
+  it("modes and «is responsible»", () => {
+    expect(coResponsibleMode(owner, c)).toBe("manage")
+    expect(coResponsibleMode(mem, c)).toBe("self")
+    expect(coResponsibleMode(adm, c)).toBe("read")
+    expect(isClientResponsible(c, "own1")).toBe(true)
+    expect(isClientResponsible(c, "mem")).toBe(true)
+    expect(isClientResponsible(c, "adm")).toBe(false)
+    expect(isClientResponsible({ responsibleUserId: null }, null)).toBe(false)
+  })
+  it("the feed filters «Мои» / a member match the additional members too", () => {
+    const row = { responsibleUserId: "own1", responsibleHandoverFromUserId: null, coResponsibleUserIds: ["mem"] }
+    expect(matchesResponsibleFilter("mine", row, "mem")).toBe(true)
+    expect(matchesResponsibleFilter("mem", row, "x")).toBe(true)
+    expect(matchesResponsibleFilter("adm", row, "x")).toBe(false)
+    expect(matchesResponsibleFilter("mine", { ...row, coResponsibleUserIds: undefined }, "mem")).toBe(false)
   })
 })

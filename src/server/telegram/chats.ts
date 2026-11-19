@@ -297,7 +297,10 @@ async function assertCanBind(orgId: string, userId: string, clientIds: string[])
     .select({ id: client.id, responsible: client.responsibleUserId })
     .from(client)
     .where(and(eq(client.organizationId, orgId), inArray(client.id, clientIds)))
-  if (rows.length !== new Set(clientIds).size || rows.some((r) => r.responsible !== userId)) {
+  // The main OR an additional responsible member of each company (2026-11-19).
+  const { loadCoResponsibleIds } = await import("@/server/client-responsible")
+  const co = await loadCoResponsibleIds(orgId, clientIds)
+  if (rows.length !== new Set(clientIds).size || rows.some((r) => r.responsible !== userId && !(co.get(r.id) ?? []).includes(userId))) {
     throw new TelegramChatError("Привязать или отвязать компанию может владелец организации или ответственный за компанию", 403)
   }
 }
@@ -487,7 +490,11 @@ export async function getClientTelegramView(orgId: string, userId: string, clien
   if (!c) throw new TelegramChatError("Компания не найдена", 404)
   const { loadOrgTelegramBot } = await import("@/server/telegram/source")
   const bot = await loadOrgTelegramBot(orgId)
-  const canEdit = (await isOwner(orgId, userId)) || c.responsible === userId
+  const { loadCoResponsibleIds } = await import("@/server/client-responsible")
+  const canEdit =
+    (await isOwner(orgId, userId)) ||
+    c.responsible === userId ||
+    ((await loadCoResponsibleIds(orgId, [clientId])).get(clientId) ?? []).includes(userId)
   if (!bot) return { available: false, sourceId: null, canEdit, chats: [], otherChats: [], proposals: [] }
   const boundIds = (await db.select({ id: telegramChatClient.chatRowId }).from(telegramChatClient).where(eq(telegramChatClient.clientId, clientId))).map((r) => r.id)
   const all = await db

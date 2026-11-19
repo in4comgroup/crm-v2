@@ -2,11 +2,13 @@ import "server-only"
 
 import { and, eq, inArray, ne, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { client, member, user } from "@/db/schema"
+import { client, clientCoResponsible, member, user } from "@/db/schema"
 import { getServerSession } from "@/lib/get-session"
 import {
   HANDOVER_NOTE_KEY,
+  checkCoResponsibleChange,
   checkResponsibleChange,
+  type CoResponsibleChange,
   normalizeHandoverReason,
   readHandoverNote,
   type ResponsibleChange,
@@ -80,6 +82,29 @@ export type ClientResponsibleInfo = {
   responsibleHandoverFromName: string | null
   /** Reason of the pending handover (null when none / not given). */
   responsibleHandoverReason: string | null
+  /** Additional responsible members («Также отвечают»), oldest first. */
+  coResponsible: { userId: string; name: string | null }[]
+}
+
+/** Names + additional responsible members for a batch of company rows. */
+export type ResponsibleLookup = { names: Map<string, string>; co: Map<string, string[]> }
+
+/** client id → additional responsible user ids (oldest first). `clientIds` omitted = the whole org. */
+export async function loadCoResponsibleIds(orgId: string | null, clientIds?: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  if (clientIds && clientIds.length === 0) return out
+  const rows = await db
+    .select({ clientId: clientCoResponsible.clientId, userId: clientCoResponsible.userId })
+    .from(clientCoResponsible)
+    .where(
+      and(
+        orgId ? eq(clientCoResponsible.organizationId, orgId) : undefined,
+        clientIds ? inArray(clientCoResponsible.clientId, clientIds) : undefined,
+      ),
+    )
+    .orderBy(clientCoResponsible.createdAt)
+  for (const r of rows) out.set(r.clientId, [...(out.get(r.clientId) ?? []), r.userId])
+  return out
 }
 
 type ResponsibleColumns = {
@@ -90,11 +115,13 @@ type ResponsibleColumns = {
 }
 
 export function responsibleInfoOf(
-  row: ResponsibleColumns,
-  names: Map<string, string>,
+  row: ResponsibleColumns & { id: string },
+  lookup: ResponsibleLookup,
 ): ClientResponsibleInfo {
+  const { names } = lookup
   const handoverFrom = row.responsibleHandoverFromUserId
   return {
+    coResponsible: (lookup.co.get(row.id) ?? []).map((userId) => ({ userId, name: names.get(userId) ?? null })),
     responsibleUserId: row.responsibleUserId,
     responsibleName: row.responsibleUserId ? (names.get(row.responsibleUserId) ?? null) : null,
     responsibleChangedAt: row.responsibleChangedAt ? row.responsibleChangedAt.toISOString() : null,
@@ -104,9 +131,14 @@ export function responsibleInfoOf(
   }
 }
 
-/** Names for a batch of company rows (responsible + handover sender). */
-export function loadResponsibleNames(rows: ResponsibleColumns[]): Promise<Map<string, string>> {
-  return loadUserNames(rows.flatMap((r) => [r.responsibleUserId, r.responsibleHandoverFromUserId]))
+/** Names + additional responsible members for a batch of company rows (main, handover sender, additional). */
+export async function loadResponsibleLookup(rows: (ResponsibleColumns & { id: string })[]): Promise<ResponsibleLookup> {
+  const co = await loadCoResponsibleIds(null, rows.map((r) => r.id))
+  const names = await loadUserNames([
+    ...rows.flatMap((r) => [r.responsibleUserId, r.responsibleHandoverFromUserId]),
+    ...[...co.values()].flat(),
+  ])
+  return { names, co }
 }
 
 async function loadClientForChange(orgId: string, clientId: string) {
@@ -125,7 +157,8 @@ async function loadClientForChange(orgId: string, clientId: string) {
     .limit(1)
   if (!row) throw new ClientResponsibleError(404, "Компания не найдена")
   if (row.organizationId !== orgId) throw new ClientResponsibleError(404, "Компания не найдена")
-  return row
+  const co = await loadCoResponsibleIds(orgId, [clientId])
+  return { ...row, coResponsibleUserIds: co.get(clientId) ?? [] }
 }
 
 export type ResponsibleChangeResult = {
@@ -170,16 +203,22 @@ async function applyChange(
     fields[HANDOVER_NOTE_KEY] = { reason: normalizeHandoverReason(reasonRaw), at: now.toISOString() }
   }
 
-  await db
-    .update(client)
-    .set({
-      responsibleUserId: check.targetUserId,
-      responsibleChangedAt: now,
-      responsibleChangedByUserId: actorUserId,
-      responsibleHandoverFromUserId: handoverFrom,
-      customFields: fields,
-    })
-    .where(and(eq(client.id, clientId), eq(client.organizationId, orgId)))
+  await db.batch([
+    db
+      .update(client)
+      .set({
+        responsibleUserId: check.targetUserId,
+        responsibleChangedAt: now,
+        responsibleChangedByUserId: actorUserId,
+        responsibleHandoverFromUserId: handoverFrom,
+        customFields: fields,
+      })
+      .where(and(eq(client.id, clientId), eq(client.organizationId, orgId))),
+    // The new main responsible leaves the additional list (one role per person).
+    db
+      .delete(clientCoResponsible)
+      .where(and(eq(clientCoResponsible.clientId, clientId), eq(clientCoResponsible.userId, check.targetUserId))),
+  ])
 
   // Notifications (docs/specs/notifications §4): a handover → the receiving
   // owner (important); a decision (assign) closes the pending handover.
@@ -222,6 +261,45 @@ export function handoverClientToOwnerCore(
   opts: { ownerUserId?: string | null; reason?: string | null } = {},
 ): Promise<ResponsibleChangeResult> {
   return applyChange(orgId, actorUserId, clientId, { kind: "handover", ownerUserId: opts.ownerUserId ?? null }, opts.reason)
+}
+
+/**
+ * Adds / removes an additional responsible member (org-explicit core):
+ * the owner adds or removes anyone, a member may remove themselves.
+ */
+export async function changeCoResponsibleCore(
+  orgId: string,
+  actorUserId: string,
+  clientId: string,
+  change: CoResponsibleChange,
+): Promise<{ clientId: string; coResponsibleUserIds: string[]; changed: boolean }> {
+  if (!change.targetUserId) throw new ClientResponsibleError(400, "Не выбран участник")
+  const [row, members] = await Promise.all([loadClientForChange(orgId, clientId), listResponsibleMembers(orgId)])
+  const actorRole = members.find((m) => m.userId === actorUserId)?.role ?? null
+  const check = checkCoResponsibleChange(
+    { userId: actorUserId, role: actorRole },
+    { responsibleUserId: row.responsibleUserId, coResponsibleUserIds: row.coResponsibleUserIds },
+    change,
+    members,
+  )
+  if (!check.ok) throw new ClientResponsibleError(check.status, check.error)
+  if (change.kind === "add") {
+    await db
+      .insert(clientCoResponsible)
+      .values({ organizationId: orgId, clientId, userId: change.targetUserId, addedByUserId: actorUserId })
+      .onConflictDoNothing()
+  } else {
+    await db
+      .delete(clientCoResponsible)
+      .where(and(eq(clientCoResponsible.clientId, clientId), eq(clientCoResponsible.userId, change.targetUserId)))
+  }
+  // Keeps `client.updated_at` moving, so open company forms re-sync.
+  await db.update(client).set({ updatedAt: new Date() }).where(and(eq(client.id, clientId), eq(client.organizationId, orgId)))
+  const ids =
+    change.kind === "add"
+      ? [...row.coResponsibleUserIds, change.targetUserId]
+      : row.coResponsibleUserIds.filter((x) => x !== change.targetUserId)
+  return { clientId, coResponsibleUserIds: ids, changed: true }
 }
 
 export type HandoverForOwner = {
@@ -288,6 +366,11 @@ async function requireSessionOrg(): Promise<{ orgId: string; userId: string }> {
 export async function setClientResponsible(clientId: string, targetUserId: string) {
   const { orgId, userId } = await requireSessionOrg()
   return setClientResponsibleCore(orgId, userId, clientId, targetUserId)
+}
+
+export async function changeClientCoResponsible(clientId: string, change: CoResponsibleChange) {
+  const { orgId, userId } = await requireSessionOrg()
+  return changeCoResponsibleCore(orgId, userId, clientId, change)
 }
 
 export async function handoverClientToOwner(

@@ -472,6 +472,32 @@ export const client = pgTable(
   ],
 )
 
+// Additional responsible members of a company («Также отвечают», 2026-11-19).
+// The MAIN responsible stays `client.responsible_user_id` (deal owner, topic
+// owner, notifications read only it); these members share the company: the
+// «Мои» / member filters, profile and Telegram binding rights. Set by the org
+// owner; a member can remove themselves. Rules: src/lib/client-responsible.ts.
+export const clientCoResponsible = pgTable(
+  "client_co_responsible",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => client.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    addedByUserId: text("added_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.clientId, table.userId] }),
+    index("client_co_responsible_org_user_idx").on(table.organizationId, table.userId),
+  ],
+)
+
 export const contact = pgTable(
   "contact",
   {

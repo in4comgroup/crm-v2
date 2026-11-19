@@ -105,11 +105,13 @@ async function orgRole(orgId: string, userId: string): Promise<string | null> {
   return rows[0]?.role ?? null
 }
 
-/** Q3: the client's responsible member or the org owner. */
+/** Q3: the client's responsible member (main or additional, 2026-11-19) or the org owner. */
 async function canEdit(orgId: string, userId: string, head: ClientHead): Promise<boolean> {
   const role = await orgRole(orgId, userId)
   if (!role) return false
-  return role === "owner" || head.responsibleUserId === userId
+  if (role === "owner" || head.responsibleUserId === userId) return true
+  const { loadCoResponsibleIds } = await import("@/server/client-responsible")
+  return ((await loadCoResponsibleIds(orgId, [head.id])).get(head.id) ?? []).includes(userId)
 }
 
 /** Throws 404 (not in org) / 403 (not responsible / owner). Returns the client head. */

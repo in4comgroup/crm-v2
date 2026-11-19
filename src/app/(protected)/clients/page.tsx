@@ -354,6 +354,7 @@ export default function ClientsPage() {
         responsibleHandoverFromUserId: d.responsibleHandoverFromUserId,
         responsibleHandoverFromName: d.responsibleHandoverFromName,
         responsibleHandoverReason: d.responsibleHandoverReason,
+        coResponsible: d.coResponsible ?? [],
         organizationId: d.organizationId,
         createdAt: d.createdAt,
         updatedAt: d.updatedAt,
@@ -719,6 +720,11 @@ export default function ClientsPage() {
                             <TableCell>{c.userName ?? "—"}</TableCell>
                             <TableCell>
                               <div>{c.responsibleName ?? "—"}</div>
+                              {(c.coResponsible?.length ?? 0) > 0 && (
+                                <div className="text-xs text-muted-foreground">
+                                  также {c.coResponsible!.map((x) => x.name ?? "—").join(", ")}
+                                </div>
+                              )}
                               <HandoverPendingBadge client={c} className="mt-1" />
                             </TableCell>
                             <TableCell>

@@ -8,8 +8,15 @@
 //     владельцу» — the responsible becomes an owner of the org and the
 //     handover waits for that owner's decision;
 //   • everybody else: read only.
+//   • ADDITIONAL responsible members («Также отвечают», 2026-11-19): the org
+//     owner adds / removes any human, not banned member (never the main one);
+//     an additional member may remove themselves. They share the company
+//     (filters «Мои» / by member, profile + Telegram rights — see
+//     `isClientResponsible`); everything that needs ONE person (deal owner,
+//     topic owner, notifications, the handover) reads the main one only.
 // The server (src/server/client-responsible.ts) enforces these rules with
-// `checkResponsibleChange`; the UI uses `responsibleMode` to pick controls.
+// `checkResponsibleChange` / `checkCoResponsibleChange`; the UI uses
+// `responsibleMode` / `coResponsibleMode` to pick controls.
 
 export type ResponsibleMember = {
   userId: string
@@ -28,6 +35,50 @@ export type ResponsibleActor = {
 
 export type ResponsibleClientState = {
   responsibleUserId: string | null
+  /** Additional responsible members (absent = none). */
+  coResponsibleUserIds?: string[]
+}
+
+/** The main OR an additional responsible member of the company. */
+export function isClientResponsible(client: ResponsibleClientState, userId: string | null | undefined): boolean {
+  if (!userId) return false
+  return client.responsibleUserId === userId || (client.coResponsibleUserIds ?? []).includes(userId)
+}
+
+export type CoResponsibleChange = { kind: "add" | "remove"; targetUserId: string }
+
+/** Controls for the additional responsible members: the owner manages, a member may remove themselves. */
+export function coResponsibleMode(actor: ResponsibleActor, client: ResponsibleClientState): "manage" | "self" | "read" {
+  if (isOwnerRole(actor.role)) return "manage"
+  if (actor.role && (client.coResponsibleUserIds ?? []).includes(actor.userId)) return "self"
+  return "read"
+}
+
+/** Decides an add / remove of an additional responsible member. */
+export function checkCoResponsibleChange(
+  actor: ResponsibleActor,
+  client: ResponsibleClientState,
+  change: CoResponsibleChange,
+  members: ResponsibleMember[],
+): { ok: true } | { ok: false; status: 400 | 403; error: string } {
+  if (!actor.role) return { ok: false, status: 403, error: "Вы не участник этой организации" }
+  const co = client.coResponsibleUserIds ?? []
+  if (change.kind === "remove") {
+    if (!co.includes(change.targetUserId)) return { ok: false, status: 400, error: "Этот участник не среди ответственных" }
+    if (isOwnerRole(actor.role) || change.targetUserId === actor.userId) return { ok: true }
+    return { ok: false, status: 403, error: "Убрать ответственного может только владелец организации" }
+  }
+  if (!isOwnerRole(actor.role)) {
+    return { ok: false, status: 403, error: "Добавить ответственного может только владелец организации" }
+  }
+  if (!assignableMembers(members).some((m) => m.userId === change.targetUserId)) {
+    return { ok: false, status: 400, error: "Ответственным можно назначить только участника организации" }
+  }
+  if (client.responsibleUserId === change.targetUserId) {
+    return { ok: false, status: 400, error: "Этот участник уже основной ответственный" }
+  }
+  if (co.includes(change.targetUserId)) return { ok: false, status: 400, error: "Этот участник уже среди ответственных" }
+  return { ok: true }
 }
 
 export type ResponsibleChange =
@@ -152,13 +203,14 @@ export const RESPONSIBLE_FILTER_HANDOVER = "handover"
 
 export function matchesResponsibleFilter(
   filter: ResponsibleFilter | null | undefined,
-  row: { responsibleUserId: string | null; responsibleHandoverFromUserId: string | null },
+  row: { responsibleUserId: string | null; responsibleHandoverFromUserId: string | null; coResponsibleUserIds?: string[] },
   viewerUserId: string,
 ): boolean {
   if (!filter || filter === RESPONSIBLE_FILTER_ALL) return true
-  if (filter === RESPONSIBLE_FILTER_MINE) return row.responsibleUserId === viewerUserId
+  // «Мои» / a member = the main OR an additional responsible member.
+  if (filter === RESPONSIBLE_FILTER_MINE) return isClientResponsible(row, viewerUserId)
   if (filter === RESPONSIBLE_FILTER_HANDOVER) return !!row.responsibleHandoverFromUserId
-  return row.responsibleUserId === filter
+  return isClientResponsible(row, filter)
 }
 
 // ── Pending handover note (kept in client.custom_fields) ───────────────

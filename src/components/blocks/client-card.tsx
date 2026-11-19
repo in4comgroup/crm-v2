@@ -368,6 +368,9 @@ export function ClientCard({
         <div className="pt-1 text-xs text-muted-foreground truncate">
           Ответственный:{" "}
           <span className="text-foreground">{client.responsibleName ?? "не назначен"}</span>
+          {(client.coResponsible?.length ?? 0) > 0 && (
+            <span> · также {client.coResponsible!.map((c) => c.name ?? "—").join(", ")}</span>
+          )}
         </div>
         <div className="text-xs text-muted-foreground truncate">
           Создана:{" "}

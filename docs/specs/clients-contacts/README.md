@@ -13,5 +13,6 @@ Status: **built 2026-11-15** (Q1–Q12 decided): C1 definitions, C2 values + «�
 | [05-contact-company-links-questions.md](05-contact-company-links-questions.md) | Q1–Q12 with recommendations; decisions log |
 | [06-contact-company-links-plan.md](06-contact-company-links-plan.md) | Phases L1–L5, estimates |
 | [07-contact-managed-at.md](07-contact-managed-at.md) | Contact field «Ведётся на уровне» (built 2026-11-19, migration `0048`): the person in our organization at whose level a contact is managed — a member or a person who is not a user (name + position); static, no logic reads it |
+| [08-co-responsible.md](08-co-responsible.md) | Several responsible members of a company (built 2026-11-19, migration `0049`): the main «Ответственный» + additional members «Также отвечают» — who changes them, where each one counts, API, UI |
 
 Related: the AI chat creates companies / contacts, fills empty fields («Дополнить») and links contacts to companies through these rules after the user confirms a draft card — [ai-chat-tools/](../ai-chat-tools/README.md) (built 2026-11-16; 04 §6 «AI chat»).

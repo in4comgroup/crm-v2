@@ -17,7 +17,7 @@ import {
 import { db } from "@/db/drizzle"
 import { loadClientLastActivity } from "@/server/client-activity"
 import {
-  loadResponsibleNames,
+  loadResponsibleLookup,
   responsibleInfoOf,
   type ClientResponsibleInfo,
 } from "@/server/client-responsible"
@@ -150,7 +150,7 @@ export async function getClientDetail(
   ])
 
   const userName = creatorRows[0]?.name ?? null
-  const responsibleNames = await loadResponsibleNames([row])
+  const responsibleNames = await loadResponsibleLookup([row])
 
   const lastActivity = (
     await loadClientLastActivity(organizationId, [row.id])

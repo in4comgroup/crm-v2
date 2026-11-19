@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "@/lib/get-session"
 import {
   ClientResponsibleError,
+  changeClientCoResponsible,
   handoverClientToOwner,
   setClientResponsible,
 } from "@/server/client-responsible"
@@ -9,6 +10,8 @@ import {
 // «Ответственный» (Responsible) of one company — the ONLY way to change it.
 //   PUT { action: "setResponsible", userId }                     → org owner only
 //   PUT { action: "handoverToOwner", ownerUserId?, reason? }     → current responsible (not owner)
+//   PUT { action: "addCoResponsible", userId }                   → org owner only («Также отвечают»)
+//   PUT { action: "removeCoResponsible", userId }                → org owner, or the member themselves
 // The org comes from the session; rules in src/lib/client-responsible.ts.
 export async function PUT(
   request: NextRequest,
@@ -35,6 +38,13 @@ export async function PUT(
       const result = await handoverClientToOwner(id, {
         ownerUserId: typeof body.ownerUserId === "string" ? body.ownerUserId : null,
         reason: typeof body.reason === "string" ? body.reason : null,
+      })
+      return NextResponse.json({ success: true, ...result })
+    }
+    if (body.action === "addCoResponsible" || body.action === "removeCoResponsible") {
+      const result = await changeClientCoResponsible(id, {
+        kind: body.action === "addCoResponsible" ? "add" : "remove",
+        targetUserId: typeof body.userId === "string" ? body.userId : "",
       })
       return NextResponse.json({ success: true, ...result })
     }

@@ -38,7 +38,8 @@ import { matchesCustomFilters, parseCustomFilters } from "@/lib/custom-fields"
 import { listCustomFields } from "@/server/custom-fields"
 import { onEntityStatusChanged } from "@/server/topics/integration"
 import {
-  loadResponsibleNames,
+  loadCoResponsibleIds,
+  loadResponsibleLookup,
   responsibleInfoOf,
   type ClientResponsibleInfo,
 } from "@/server/client-responsible"
@@ -156,7 +157,7 @@ export async function listClients(): Promise<ClientRow[]> {
     .orderBy(desc(client.updatedAt))
 
   const clientIds = rows.map((r) => r.client.id)
-  const responsibleNames = await loadResponsibleNames(rows.map((r) => r.client))
+  const responsibleNames = await loadResponsibleLookup(rows.map((r) => r.client))
   const contacts = clientIds.length
     ? await db
         .select()
@@ -372,8 +373,20 @@ export async function listClientsFeed(params: {
     return true
   }
 
+  // «Мои» / a member also matches the ADDITIONAL responsible members.
+  const coResponsible =
+    params.responsible && params.responsible !== "all" && params.responsible !== "handover"
+      ? await loadCoResponsibleIds(activeOrgId)
+      : new Map<string, string[]>()
   const matching = rows.filter((r) => {
-    if (!matchesResponsibleFilter(params.responsible, r.client, viewerUserId)) return false
+    if (
+      !matchesResponsibleFilter(
+        params.responsible,
+        { ...r.client, coResponsibleUserIds: coResponsible.get(r.client.id) ?? [] },
+        viewerUserId,
+      )
+    )
+      return false
     if (!matchesProfile(r.profile)) return false
     if (cfFilters.length && !matchesCustomFilters(r.client.customValues as Record<string, unknown>, cfFilters, cfDefs)) return false
     if (params.tab === "all") return true
@@ -429,7 +442,7 @@ export async function listClientsFeed(params: {
 
   const [lastActivity, responsibleNames] = await Promise.all([
     loadClientLastActivity(activeOrgId, clientIds),
-    loadResponsibleNames(page.map((r) => r.client)),
+    loadResponsibleLookup(page.map((r) => r.client)),
   ])
 
   const pageTaskSummary: Record<string, ClientTaskSummary> = {}

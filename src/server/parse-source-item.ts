@@ -643,7 +643,7 @@ async function parseNylasAttachment(
       meta,
       reason: "unsupported type",
     })
-    // Documents (Q1): a file the parsers cannot read (spreadsheet, archive,
+    // Documents (Q1): a file the parsers cannot read (archive, legacy .xls,
     // …) is still a document — keep its original. Inline (cid:) parts of an
     // unsupported type are mail chrome (GIF logos …), never stored. Best
     // effort: a failed download only leaves the file for the lazy re-fetch.
@@ -1341,7 +1341,7 @@ async function parseTelegramFile(
   meta.byteSize = bytes.byteLength
   const kind = detectAttachmentKind(file.mimeType, file.fileName)
   if (!kind) {
-    // Not a parser type (xlsx, zip, HEIC …): kept as a document (Q1 of the
+    // Not a parser type (zip, legacy .xls, HEIC …): kept as a document (Q1 of the
     // documents spec) — listed and downloadable, «формат не поддерживается».
     const childId = await insertSkippedChild({ ctx, externalId: attSourceId, externalType: "attachment", meta, reason: "unsupported type" })
     await storeChildOriginal(ctx, childId, bytes, meta)

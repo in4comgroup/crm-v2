@@ -23,7 +23,7 @@ since 00:00 UTC).
 | `ai.budget.daily_usd` | `platform_setting` | 5 | Default budget for every organization |
 | `ai.budget.daily_usd` | `org_setting` (per org) | null | Override for one organization; null = default; 0 = no background AI |
 
-Both are edited by the platform admin in the «Дневной бюджет ИИ» block on
+Both are edited by the platform admin in the card «Лимиты ИИ по организациям» (was the block «Дневной бюджет ИИ») on
 `/settings` → «Использование ИИ» (`api/admin/ai/settings`: `budgetDefaultUsd`,
 `orgBudget`). Changes are logged (`platform_setting_log`, `org_setting_log`).
 

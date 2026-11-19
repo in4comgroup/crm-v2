@@ -17,6 +17,8 @@ import { Loader, RefreshCcw } from "lucide-react"
 import SetOrgRoleDialog from "@/components/forms/form-set-org-role"
 import RemoveMemberDialog from "@/components/forms/form-remove-member"
 import InviteMemberDialog from "@/components/forms/form-invite-member"
+import { TableOrgInvitations } from "@/components/tables/table-org-invitations"
+import { orgRoleLabel } from "@/lib/org-roles"
 
 // Russian plural picker: forms = [one, few, many] (1 / 2–4 / 0,5–20).
 function plural(n: number, forms: [string, string, string]): string {
@@ -25,13 +27,6 @@ function plural(n: number, forms: [string, string, string]): string {
   if (mod10 === 1 && mod100 !== 11) return forms[0]
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return forms[1]
   return forms[2]
-}
-
-// Display labels — DB enum keys stay English.
-const ORG_ROLE_LABEL: Record<string, string> = {
-  owner: "Владелец",
-  admin: "Администратор",
-  member: "Участник",
 }
 
 type OrgMember = {
@@ -60,6 +55,8 @@ export function TableOrgMembers({
   const [error, setError] = useState<string | null>(null)
   const [searchName, setSearchName] = useState("")
   const [searchEmail, setSearchEmail] = useState("")
+  // Bumped after an invite so the «Приглашения» block reloads too.
+  const [invitationsKey, setInvitationsKey] = useState(0)
 
   const fetchMembers = useCallback(async () => {
     setLoading(true)
@@ -118,7 +115,13 @@ export function TableOrgMembers({
           onChange={(e) => setSearchEmail(e.target.value)}
           className="max-w-48"
         />
-        <Button variant="outline" onClick={fetchMembers}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            fetchMembers()
+            setInvitationsKey((k) => k + 1)
+          }}
+        >
           <RefreshCcw className="h-4 w-4" />
         </Button>
         <span className="ml-auto text-sm text-gray-400 mr-4">
@@ -126,7 +129,7 @@ export function TableOrgMembers({
         </span>
         <InviteMemberDialog
           organizationId={organizationId}
-          onSuccess={fetchMembers}
+          onSuccess={() => setInvitationsKey((k) => k + 1)}
         />
       </div>
 
@@ -169,7 +172,7 @@ export function TableOrgMembers({
                             : "outline"
                       }
                     >
-                      {ORG_ROLE_LABEL[member.role] ?? member.role}
+                      {orgRoleLabel(member.role)}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -199,6 +202,11 @@ export function TableOrgMembers({
           </TableBody>
         </Table>
       )}
+
+      <TableOrgInvitations
+        organizationId={organizationId}
+        refreshKey={invitationsKey}
+      />
     </>
   )
 }

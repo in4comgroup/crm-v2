@@ -41,6 +41,8 @@ import type { OrgIdentityEntryView } from "@/server/org-identity-registry"
 import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getTopicsMode, type TopicsMode } from "@/server/topics/mode"
 import { loadAttentionParams } from "@/server/topics/attention/store"
+import { getOrgSetting, setOrgSetting } from "@/server/org-settings"
+import { withWorkingContext, workingContextInputSchema, type WorkingContextInput } from "@/lib/identity/working-context"
 import type { PersonChannel } from "@/lib/identity/org-profile"
 
 export class OrgProfileError extends Error {
@@ -157,7 +159,7 @@ export type OrgProfileView = {
     /** Human, not banned members with their extra addresses (kind `person`). */
     members: OrgProfileMember[]
   }
-  /** Group C, read-only: org time zone + working hours (`attention.params`). */
+  /** Group C: org time zone + working hours (`attention.params`); the org owner edits it (2026-11-19). */
   workingContext: { timeZone: string; workStart: string; workEnd: string }
   history: OrgProfileHistoryRow[]
 }
@@ -409,6 +411,34 @@ export async function getOrgProfileViewForSession(): Promise<OrgProfileView> {
 export async function saveOrgProfileForSession(input: unknown): Promise<SaveOrgProfileResult> {
   const { orgId, userId } = await requireSession()
   return saveOrgProfile(orgId, input, userId)
+}
+
+/**
+ * «Рабочий контекст» (2026-11-19): the org OWNER sets the time zone and the
+ * working hours. Stored as the org override of `attention.params` (only these
+ * keys change; org_setting_log keeps the history); every reader goes through
+ * `loadAttentionParams` (60 s cache), the topics run re-computes attention on
+ * the next run (the parameter hash changes).
+ */
+export async function saveWorkingContext(orgId: string, input: unknown, userId: string): Promise<WorkingContextInput> {
+  const role = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+    .limit(1)
+  if (role[0]?.role !== "owner") {
+    throw new OrgProfileError(403, "Рабочий контекст может менять только владелец организации")
+  }
+  const parsed = workingContextInputSchema.safeParse(input)
+  if (!parsed.success) throw new OrgProfileError(400, parsed.error.issues[0]?.message ?? "Некорректные данные")
+  const current = (await getOrgSetting(orgId, "attention.params")) as Record<string, unknown> | null
+  await setOrgSetting(orgId, "attention.params", withWorkingContext(current, parsed.data), userId)
+  return parsed.data
+}
+
+export async function saveWorkingContextForSession(input: unknown): Promise<WorkingContextInput> {
+  const { orgId, userId } = await requireSession()
+  return saveWorkingContext(orgId, input, userId)
 }
 
 export async function getOrgProfileBannerForSession(): Promise<OrgProfileBanner> {

@@ -1,7 +1,7 @@
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/blocks/app-sidebar"
 import { getServerSession } from "@/lib/get-session"
-import { getOrganizationLogo } from "@/server/organizations"
+import { getOrganizationLogo, listUserOrganizations } from "@/server/organizations"
 import { redirect } from "next/navigation"
 import { cookies } from "next/headers"
 import { PanelProvider } from "@/lib/chat-panel-context"
@@ -20,9 +20,13 @@ export default async function DashboardLayout({
   // session — it's a large base64 data URL and would overflow the session
   // cookie (431 Request Header Fields Too Large). See src/lib/auth.ts note.
   const orgId = session.session.activeOrganizationId
-  const [orgLogo, cookieStore] = await Promise.all([
+  // Platform admins get an org switcher in the sidebar footer: their own
+  // memberships (id + name, sorted by name). Nobody else needs the query.
+  const isPlatformAdmin = session.user.role === "admin"
+  const [orgLogo, cookieStore, adminOrganizations] = await Promise.all([
     orgId ? getOrganizationLogo(orgId) : Promise.resolve(null),
     cookies(),
+    isPlatformAdmin ? listUserOrganizations(session.user.id) : Promise.resolve(null),
   ])
   // The sidebar remembers open / closed: shadcn's SidebarProvider writes the
   // `sidebar_state` cookie on every toggle; reading it here makes a reload /
@@ -41,7 +45,7 @@ export default async function DashboardLayout({
         { "--sidebar-width": "13rem" } as React.CSSProperties
       }
     >
-      <AppSidebar session={session} orgLogo={orgLogo} />
+      <AppSidebar session={session} orgLogo={orgLogo} adminOrganizations={adminOrganizations} />
 
       <div className="relative flex-1 flex flex-col min-w-0">
         {/* Атмосфера лендинга (сетка + свечения, globals.css) — фон всего

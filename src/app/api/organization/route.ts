@@ -12,7 +12,7 @@ export async function GET() {
   }
 
   try {
-    const organization = await getActiveOrganization(session.user.id)
+    const organization = await getActiveOrganization(session.user.id, session.session.activeOrganizationId)
     return NextResponse.json({ organization })
   } catch (error) {
     console.error("Error fetching active organization:", error)

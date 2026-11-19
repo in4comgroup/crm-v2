@@ -33,8 +33,8 @@ against it.
 | `pnpm db:custom --name <what>` | Create an empty custom SQL migration |
 | `pnpm db:migrate` | Apply pending migrations to `DATABASE_URL` |
 | `pnpm db:check` | Check the migration folder |
-| `pnpm test` | Unit tests (vitest, `vitest.config.mts`; `src/**/*.test.ts`; `@/` alias; `server-only` is stubbed so pure server modules can be tested). Pure modules only: e.g. the Russian mail library `src/lib/ru-mail/`, topics post-processing / gates / attention / cards / deal rules, the AI chat contracts (`src/lib/chat/`: grounding, due dates, stream filter) and a few component render tests of the chat. |
-| `pnpm chat:eval` | AI chat eval (`vitest.chat-eval.config.mts`, `src/server/chat/eval/`) through the real `/api/chat` and real models on the `.env` DB — see "Known gaps" below for the gate. Costs money (≈ $1 per full run). |
+| `pnpm test` | Unit tests (vitest, `vitest.config.mts`; `src/**/*.test.ts`; `@/` alias; `server-only` is stubbed so pure server modules can be tested). Pure modules only: e.g. the Russian mail library `src/lib/ru-mail/`, topics post-processing / gates / attention / cards / deal rules, the AI chat contracts (`src/lib/chat/`: grounding, due dates, stream filter), the Telegram pure modules (`src/lib/telegram/`: render, resolve, inbox, push), spreadsheet rendering, the responsible rules, and a few component render tests of the chat. |
+| `pnpm chat:eval` | AI chat eval (`vitest.chat-eval.config.mts`, `src/server/chat/eval/`) through the real `/api/chat` and real models on the `.env` DB, plus the Telegram cases (real router / worker / model, Bot API mocked) — see "Known gaps" below for the gate. Costs money (≈ $1 per full run) and counts against the test org's monthly AI limit. |
 
 Unit tests cover only pure functions (plus a few render tests of chat
 components); there are no integration or browser UI tests.
@@ -85,12 +85,13 @@ Names only. Values live in `.env` locally and in Vercel project settings.
 | --- | --- |
 | `CRON_SECRET` | Base64 of 32 random bytes; every `/api/cron/*` route (daily, topics, notifications) requires `Authorization: Bearer <value>` in every environment; unset = every call rejected |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Optional fallback bot for a Telegram source with no stored credentials (both required) |
+| `TELEGRAM_BOT_USERNAME` | Not read at runtime today (the bot's @username comes from `getMe` / `provider_config`) |
 
 ### AI chat eval only (`pnpm chat:eval`, optional)
 
 | Variable | Meaning |
 | --- | --- |
-| `CHAT_EVAL_ONLY` | Comma list of case ids or prefixes to run (e.g. `p01,d`) |
+| `CHAT_EVAL_ONLY` | Comma list of case ids or prefixes to run (e.g. `p01,d`; `tg` = the Telegram cases) |
 | `CHAT_EVAL_REPEAT` | Runs of the whole set (default 1) |
 | `CHAT_EVAL_ACTION_REPEAT` | Runs of each draft-card case (default 3; pass = 2 of 3) |
 | `CHAT_EVAL_MODEL` | Another chat model for this eval run only (no admin setting changes) |
@@ -151,7 +152,7 @@ load them on every product query. They exist only in migration `0002`.
 
 **Reference data vs tenant data:** platform reference data (source templates,
 system funnel stages) is in migration `0004`; there are no system rules today (the `rule` table is kept as a data record only).
-Migration `0028_cards_contract_old_columns` drops `source_item.card_analysis_scanned_at` and `source_item.deal_analysis_scanned_at`. The latest migration is `0043` (`0039` contact ↔ company links, `0040` notifications, `0041` drops `notification_read_state` (2026-11-15); `0042` AI chat history `ai_chat_thread` / `ai_chat_message`, `0043` AI chat draft cards `ai_chat_action` (2026-11-16)); all are applied on the test DB.
+Migration `0028_cards_contract_old_columns` drops `source_item.card_analysis_scanned_at` and `source_item.deal_analysis_scanned_at`. The latest migration is `0049` (`0039` contact ↔ company links, `0040` notifications, `0041` drops `notification_read_state` (2026-11-15); `0042` AI chat history `ai_chat_thread` / `ai_chat_message`, `0043` AI chat draft cards `ai_chat_action` (2026-11-16); `0044` Telegram bot binding, buttons, send log, AI chat inbox + `ai_chat_thread.channel`, `0045` Telegram pushes and notification copies (data part: `telegram_enabled` → true, older notifications `not_sent`), `0046` Telegram ids on `contact_address`, `0047` Telegram chats ↔ companies (data part: known groups → `telegram_chat` rows) (2026-11-17); `0048` contact «Ведётся на уровне», `0049` `client_co_responsible` (2026-11-19)); all are applied on the test DB (the only DB today).
 Tenant data (organizations, users, companies, products, org-owned stages and
 rules) is never in migrations. The team's old scripts (`scripts/`), reference
 specs (`refs/`) and catalog loader (`data_migration/`) remain git-ignored and
@@ -164,14 +165,18 @@ are not needed to build a DB.
   Routes under `src/app/.well-known/workflow/` are generated at build and
   git-ignored.
 - `vercel.ts` (replaces `vercel.json`) declares three crons: `/api/cron/daily`
-  at `0 3 * * *` (03:00 UTC), `/api/cron/topics` hourly (`0 * * * *`, topics
-  engine — spec `docs/specs/topics/`) and `/api/cron/notifications` hourly
-  (`15 * * * *`, notification checks for every org — spec
+  at `0 3 * * *` (03:00 UTC), `/api/cron/topics` (topics engine with Telegram
+  pushes — spec `docs/specs/topics/`) and `/api/cron/notifications`
+  (notification checks for every org + held Telegram copies — spec
   `docs/specs/notifications/`); all three are mirrored in
-  `src/server/orchestration/config.ts`. **A cron more often than daily needs the
-  Vercel Pro plan; a Hobby deployment with it is rejected.** The daily one is
-  at `0 3 * * *` (03:00 UTC). The same expression is in
-  `src/server/orchestration/config.ts`; change both together. Set
+  `src/server/orchestration/config.ts` — change both together. **A cron more
+  often than daily needs the Vercel Pro plan; a Hobby deployment with it is
+  rejected.** By design topics run hourly (`0 * * * *`) and notifications at
+  `15 * * * *`. The test deployment is on Vercel Hobby, so since 2026-11-18
+  they run once a day: topics `0 8 * * *`, notifications `0 9 * * *` (UTC;
+  09:00 / 10:00 Vienna time in winter, inside working hours, so Telegram
+  pushes and copies can go). Set them back to hourly on Pro
+  (`docs/todo/README.md` D8). Set
   `CRON_SECRET` as a Vercel env var — Vercel then sends the bearer header.
   The daily run first syncs the AI model catalog (prices) and fetches exact
   costs still missing in the AI usage ledger, turns due AI chat segments into
@@ -186,7 +191,13 @@ are not needed to build a DB.
   Telegram webhook is not registered automatically when credentials are saved.
 - One-time steps per deployment are listed in `docs/todo/README.md` →
   «Deployment checklist» (Telegram privacy mode + webhook re-registration, own
-  Telegram names, a real Telegram file test, the notifications cron).
+  Telegram names, a real Telegram file test, the notifications cron;
+  migrations `0044`–`0047` before the code and the bot credentials saved
+  again — the webhook then gets the update list with `callback_query` /
+  `edited_message` and the bot commands; the real Telegram test of the AI
+  chat; crons back to hourly). The Telegram real-phone check is
+  `docs/specs/telegram/05-finalization.md` F4, test guide
+  `docs/specs/telegram/06-test-guide.md`.
 - Add any new production origin to `trustedOrigins` in `src/lib/auth.ts`.
 - Long-running routes set `maxDuration` (up to 300 s: parse, process, uploads,
   teardown, admin pipeline run, the Telegram webhook and fetch — files are
@@ -246,7 +257,15 @@ are not needed to build a DB.
   is not solved (#19).
 - Telegram: files above 20 MB cannot be fetched by a bot (listed only); group
   authors with unknown Telegram names are not discovery candidates; no rate
-  limit, edit / delete handling, or webhook health view (#20).
+  limit on ingest, no edit / delete handling of client messages, no webhook
+  health view (#20). No Telegram Business and no channels (postponed,
+  `docs/todo/README.md` TG7, TG8); no topic digests by Telegram. The staff
+  interface (binding, AI chat, pushes) is not yet checked with a real phone
+  (`docs/specs/telegram/05-finalization.md` F4).
+- Test deployment (Vercel Hobby): topics and notification crons run once a
+  day, not hourly (D8).
+- Source trust step 2 (who said it and with what authority) is not built;
+  only step 1 (R26: relayed notes capped and never moving deals alone).
 - Product backlog: company event feed, home page as a dashboard, selectable
   sales methodology (#21).
 - Companies feed sorts up to 500 rows in the browser; needs server-side sorting
@@ -254,4 +273,4 @@ are not needed to build a DB.
 - Debug `console.log` calls remain in LLM pipelines (#15).
 - Guest order link has no rate limiting.
 - Unit tests only for a few pure modules (`pnpm test`); type errors do not fail the build.
-- AI chat eval: `pnpm chat:eval` (42 golden questions + 36 draft-card cases with synthetic business cards, voice notes, meeting notes and a mail with a prompt injection in `src/server/chat/eval/fixtures/`; real models, test DB; gate: ≥ 90 % of cases (draft-card cases run 3 × and pass at 2 of 3), no adversarial failure in any run, 0 ungrounded contact values; report in `.chat-eval/`; `CHAT_EVAL_MODEL=<id>` answers with another chat model inside the run only). Run it before changing the chat prompt, tools or default model. A full run is ≈ 150 turns, ≈ 15 min, ≈ $1.
+- AI chat eval: `pnpm chat:eval` (42 golden questions + 41 draft-card cases = 83 web cases — synthetic business cards, voice notes, meeting notes, a mail with a prompt injection, `c01`–`c05` the company of a new contact — in `src/server/chat/eval/fixtures/`, plus 24 Telegram cases `tg01`–`tg24`; real models, test DB; gate: ≥ 90 % of cases (draft-card cases run 3 × and pass at 2 of 3), no adversarial failure in any run, 0 ungrounded contact values; report in `.chat-eval/`; `CHAT_EVAL_MODEL=<id>` answers with another chat model inside the run only). Run it before changing the chat prompt, tools or default model. A full run is ≈ 150 turns, ≈ 15 min, ≈ $1. Last full run 2026-11-16: 78 / 78; on 2026-11-19 the T7 subset passed 17 / 17, but the full run stopped at the test org's monthly AI limit ($20). The product owner keeps the limit at $20 and runs no evals for now (2026-11-19); note that every eval run counts against the test org's monthly AI limit.

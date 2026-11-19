@@ -29,6 +29,8 @@ import { Separator } from "@/components/ui/separator"
 import { Logout } from "./logout"
 import { usePathname } from "next/navigation"
 import { BrandMark } from "./brand-mark"
+import { OrgSwitcher } from "./org-switcher"
+import type { OrgOption } from "@/lib/org-switcher"
 import Link from "next/link"
 import type { getServerSession } from "@/lib/get-session"
 
@@ -107,11 +109,15 @@ function footerLinkClass(active: boolean) {
 export function AppSidebar({
   session,
   orgLogo = null,
+  adminOrganizations = null,
 }: {
   session: AuthSession
   // Loaded server-side (not from the session) because logos are large base64
   // data URLs that would overflow the session cookie. See (protected)/layout.tsx.
   orgLogo?: string | null
+  // Platform admins only: their memberships for the org switcher (null for
+  // everyone else — they see the plain /account link, as before).
+  adminOrganizations?: OrgOption[] | null
 }) {
   const pathname = usePathname()
 
@@ -216,6 +222,12 @@ export function AppSidebar({
                 <span className="text-sm truncate">{orgName ?? "Организация"}</span>
               </Link>
             </SidebarMenuButton>
+            {isAdmin && adminOrganizations && adminOrganizations.length > 0 && (
+              <OrgSwitcher
+                organizations={adminOrganizations}
+                activeOrganizationId={session.session.activeOrganizationId ?? null}
+              />
+            )}
           </SidebarMenuItem>
 
           {footerItems.map((item) => (

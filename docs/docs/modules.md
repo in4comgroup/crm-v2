@@ -13,7 +13,7 @@ Contents: [Sources & parsing](#sources--parsing-pipeline) ·
 [Companies & contacts](#companies-and-contacts) · [Deals](#deals) ·
 [Products](#products-catalog-and-price-list-export) · [Orders](#orders) ·
 [Tasks](#tasks) · [Analytics](#analytics) · [Global search](#global-search) ·
-[AI chat](#ai-chat-panel) · [Notifications](#notifications) ·
+[AI chat](#ai-chat-panel) · [Telegram bot](#telegram-bot-staff-interface) · [Notifications](#notifications) ·
 [Admin tools](#admin-tools-settings) · [Profile & organization](#profile-and-organization-pages)
 
 ## Sources & parsing pipeline
@@ -40,7 +40,7 @@ and one table «Материалы источников» with a «Разбор�
 | `imap` (email) | Remote sync, envelope only; body fetched at parse | `{ host, port, secure, user, password }`; no env fallback | Yes |
 | `gchat` | Remote sync | service-account JSON + impersonated user; no fallback | Yes |
 | `gdrive` (Drive, Meet recordings) | Remote sync | service-account JSON; no fallback | Yes |
-| `telegram` | Webhook push (private chats and groups: text, voice notes, files ≤ 20 MB); manual `getUpdates` fetch (dev) | `{ botToken, webhookSecret }`; env fallback | Parse/upload only |
+| `telegram` | Webhook push (private chats and groups: text, voice notes, files ≤ 20 MB; a bound member's private messages go to the AI chat instead when the owner switched it on, see [Telegram bot](#telegram-bot-staff-interface)); manual `getUpdates` fetch (dev) | `{ botToken, webhookSecret }`; env fallback | Parse/upload only |
 | `dropoff` | Browser upload, parsed at upload time | none | No |
 | `whatsapp` | Browser folder upload of a chat export | none | No |
 | `aichat` | Automatic: segments of AI chat conversations (user messages; AI answers quoted, never evidence), hourly for topics orgs, daily for all; files uploaded in the chat (stored original, parsed by the parser of their type when the message is sent) | none | No |
@@ -51,7 +51,13 @@ Adding a provider = enum value + metadata entry in `src/lib/sources/providers.ts
 
 **Parsing.** `parseSourceItem(id)` in `src/server/parse-source-item.ts`
 dispatches by provider to `src/server/parsers/*` (text/email, imap, chat, drive,
-pdf, image, audio, video, office, whatsapp, telegram, dropoff). Attachments
+pdf, image, audio, video, office, whatsapp, telegram, dropoff). The office
+parser reads `.docx`, `.pptx` and, since 2026-11-19, `.xlsx` and `.csv`: code
+builds the tables (≤ 10 sheets × 200 rows × 30 columns) as the document text,
+the model (`parsing.office`) writes only the summary and metadata, so it never
+retypes a number (`src/server/parsers/spreadsheet.ts`,
+`src/lib/spreadsheet-markdown.ts`). This applies to uploads, mail and Telegram
+attachments, Drive files and chat files. Legacy `.xls` is not supported. Attachments
 become child rows (also Telegram files: downloaded by `file_id` and parsed by
 the same attachment path; spec `docs/specs/telegram/`); a video yields an
 extra `derived_audio` child. A message is marked complete only after its
@@ -92,8 +98,16 @@ owners, `api/webhooks/telegram/[sourceId]`.
   never stops a batch.
 - Telegram: the bot replies (Russian) only in private chats, never in groups;
   in groups it needs privacy mode off (BotFather `/setprivacy`), shown in the
-  source settings «Группы». Group messages of our staff take the group's
-  client as counterparty.
+  source settings «Группы». Channels are not supported (owners get a notice).
+  Group messages of our staff take the group's client as counterparty. Every
+  Telegram parse resolves the author and the counterparty by ONE rule
+  (`src/lib/telegram/resolve.ts`): staff binding id → staff handle → contact
+  address id → contact username → unknown; a forward = the original author;
+  the counterparty = the author's companies or the companies bound to the
+  chat. A username match stores the numeric Telegram id on the contact
+  address, so a later rename still finds the person. A member's own message
+  in a private chat with the bot (AI chat off) is a relayed note for signal
+  extraction.
 - New orgs get sources from `is_default` templates (Files Drop Off, AI Chat);
   owners add other sources with «Добавить источник» (Add source) from visible templates.
 
@@ -195,7 +209,8 @@ PUT), `api/clients/[id]/responsible` (PUT: owner assigns / handover to owner),
 `api/documents*` (documents of every entity, see "Documents" below);
 `api/contacts/[id]/links`, `api/clients/[id]/contact-links`,
 `api/contact-link-proposals/[id]`, `api/contacts/merge` (contact ↔ company
-links over time).
+links over time); `api/clients/[id]/telegram`, `api/contacts/telegram-duplicates`,
+`api/sources/items/[id]/telegram-contact` (Telegram identity).
 
 **Server modules.** `clients.ts` (incl. `lookupClientOnWeb`,
 `enrichClientFromWeb`, `resolveEnrichment`), `contacts.ts`, `client-content.ts`,
@@ -232,6 +247,38 @@ links, proposals, merge).
   owner then decides (badge «Ждёт решения владельца», bell notification for
   that owner). Everybody else reads it. The generic `PUT api/clients` refuses
   it. Topics use it as the fallback deal owner and topic assignee.
+- «Также отвечают» (Also responsible, 2026-11-19, spec
+  `docs/specs/clients-contacts/08-co-responsible.md`): extra responsible
+  members of a company (`client_co_responsible`). The owner adds or removes
+  any human member (never the main one); a member can only remove
+  themselves (`PUT api/clients/[id]/responsible { action: addCoResponsible |
+  removeCoResponsible }`). Main OR additional counts for the feed filters
+  «Мои» / by member, profile edit rights, Telegram chat binding rights and the
+  AI chat records; only the main one counts for handover, deal owner, topic
+  owner, notifications and the stats dimension. UI: row «Также отвечают» in
+  the «Ответственный» field; card and table show «также …».
+- «Ведётся на уровне» (Managed at the level of, 2026-11-19, spec
+  `docs/specs/clients-contacts/07-contact-managed-at.md`): a contact field =
+  one member OR one of our people who is not a user (name + position). Select
+  under «Должность» in the contact form, a line on the contact card; options
+  from `GET api/contacts?managedAtOptions=1`. Information only: no logic reads
+  it. A merge keeps the kept contact's value, else takes the merged one.
+- Company drawer form (2026-11-19): when the SAME company changes elsewhere
+  (web lookup, batch enrichment, another tab — seen by `updatedAt`), the form
+  takes the stored values and keeps the values the user typed
+  (`keepDirtyValues`); before, a later save could write old values back over
+  enriched data. The company forms have `noValidate` (hidden browser checks
+  blocked the save with no message). The `/clients/[id]` edit dialog keeps
+  «Тип компании». Web lookup stores one e-mail only (the model sometimes
+  returned a list).
+- Telegram (spec `docs/specs/telegram/04`): company drawer / card block with
+  the company's Telegram chats («Добавить» by @name or from the bot's chats)
+  and proposals «Новый контакт в …?» («Создать контакт» / «Это существующий
+  контакт» / «Не контакт»); binding needs the owner or the company's
+  responsible member. On `/contacts`: «Дубли Telegram» (contacts with the same
+  Telegram id → merge); from the sources table and the topic drawer:
+  «Связать с контактом» (the author's Telegram id becomes the contact's
+  verified Telegram).
 - Contact ↔ company links over time (spec `docs/specs/clients-contacts/04`):
   a contact has current and former companies (relation «Сотрудник» /
   «Консультант / подрядчик» / «Партнёр / представитель» / «Другое»);
@@ -291,7 +338,15 @@ IN4COM GmbH runs «Тендеры и конкурсы» with the go / no-go gate
   topic says so and offers «Связать тему»; the old discovery text is never
   shown as the status. Deal drawer tabs include «Документы».
 - Deals are created and moved by the topics deal bridge (deal proposals and
-  stage confirmations; every write is journaled in `deal_activity`). Removed in
+  stage confirmations; every write is journaled in `deal_activity`). Source
+  trust (topics decision R26, step 1, 2026-11-19): the extraction prompt rule
+  12 «Источник и полномочия» (Source and authority) gives retold words at most
+  `medium` confidence; post-processing rule 2a caps `high` → `medium` on
+  relayed notes and internal items (`source_item.signal_facts.relayed`,
+  `.capped`); a signal of a relayed note never creates, moves or closes a deal
+  alone — it becomes a `deal_proposal` / `stage_confirmation` (reason
+  `relayed_source`). Forwarded client mail stays the client's own words.
+  Step 2 (speaker authority) is only a todo item (`docs/todo/README.md` T6). Removed in
   phase 12: name-based LLM deal discovery (`deals-discovery.ts`, `generateDeals`,
   `api/deals/discover`, AI process `deals.discovery`, «Найти в источниках» on
   «Сделки»), the mock kanban "board intel" (`deals-mock.ts`, `api/deals/intel`,
@@ -453,7 +508,7 @@ AI answers quoted — never evidence; a gate model skips parts with no new
 business information); menu «…» → «Передать в источники сейчас» / «Не
 передавать в источники». In topics mode `on`, chat notes get signals only after
 the platform admin switch «Чат в сигналах».
-Files (ai-chat-tools T0): photos (also the phone camera), PDF, DOCX, PPTX, audio,
+Files (ai-chat-tools T0): photos (also the phone camera), PDF, DOCX, PPTX, XLSX (since 2026-11-19), audio,
 video, text and recorded voice messages are uploaded in parts of ≤ 4 MB
 (`/api/chat/files`), stored as «AI Chat» source items and read by the parser of
 their type when the message is sent; the chat model gets only their text
@@ -472,7 +527,12 @@ overwrite), link a contact to a company or a deal, record a past meeting / call,
 start an order from a client's request («Заказ из запроса» → the existing
 wizard), move a deal (also won / lost with the funnel's reasons), close a task or
 move its due date, and asks a short question with buttons when something
-required is missing; task deadlines come from the
+required is missing; a new contact needs its company (ai-chat-tools T7 /
+Q25, 2026-11-19): the card company, else the page company, else the ONLY
+company of the contact's e-mail domain (shown «по домену почты», by mail
+domain); otherwise the chat asks «К какой компании отнести контакт?» with up
+to 4 likely companies and «Без компании» (No company; then a channel is
+still needed), and the card has a company picker; task deadlines come from the
 user's own words («до пятницы») and are computed in the org time zone — no
 words, no date (the card asks); assignee by a colleague's name; code removes every value that is not in the
 user's own text or files, shows existing records with the same e-mail / phone /
@@ -486,6 +546,8 @@ contact). The draft tools are `draftCompany`, `draftContact`, `draftTask`,
 with buttons) — `src/server/chat/actions/` (`tools.ts`, `checks.ts`, `store.ts`,
 `confirm.ts`, `signals.ts`). The chat model stays Gemini 3.1 Flash Lite
 (decision ai-chat-tools Q24, after the eval of stronger models).
+One turn runner `src/server/chat/turn.ts` (`runChatTurn`, channel `web` or
+`telegram`) serves both the web route and the Telegram bot.
 API: `api/chat` (stream), `api/chat/status` (monthly limit banner),
 `api/chat/threads` (+ `/[id]`, `/[id]/ingest`), `api/chat/feedback`,
 `api/chat/records` (record detail for the side panel), `api/chat/files` (+
@@ -495,6 +557,64 @@ Server: `src/server/chat/` (`tools.ts`, `records/`, `stats/`, `threads.ts`,
 `history.ts`, `stream.ts`, `files.ts`, `ingest.ts`, `limit.ts`, `actions/`,
 eval in `eval/`); contracts in `src/lib/chat/`.
 
+## Telegram bot (staff interface)
+
+Since 2026-11-17 the org's Telegram bot is also an interface for staff
+(specs `docs/specs/telegram/04-identity-and-chats.md`,
+`docs/specs/ai-chat-telegram/`; status and the real-phone check:
+`docs/specs/telegram/05-finalization.md`, test guide `06-test-guide.md`).
+One bot per org; no Telegram Business and no channels (business answers
+2026-11-18).
+
+- **Router.** The webhook calls one router (`src/server/telegram/router.ts`):
+  button presses, commands, the AI chat, else the normal ingest. Groups never
+  reach the AI chat.
+- **Staff binding.** /profile → «Telegram» → «Подключить Telegram» (Connect
+  Telegram) makes a one-time deep link `t.me/<bot>?start=<code>` (15 min,
+  single use). One Telegram account per member; an account bound to another
+  member is refused. Unbind: «Отвязать» on /profile, the owner in the bot
+  settings, `/stop`, removal from the org. A bound member's Telegram messages
+  count as ours (attribution `own_org`). /profile also explains how client
+  chats reach the CRM (a group with the bot, a forward to the bot).
+- **AI chat in Telegram.** The owner switches on «ИИ-чат в Telegram»
+  (Telegram source → «Настройки провайдера»; default off). Then a bound
+  member's private messages, files, photos and voice notes go to the same
+  AI chat (one engine, `runChatTurn`). Messages close in time are merged into
+  one turn; a new thread after `/new` or 6 h idle; ≤ 20 turns / 10 min per
+  member. Answers are rendered for Telegram from the stored parts
+  (`src/lib/telegram/render.ts`). Draft card buttons («Создать», decisions,
+  «Отменить») run as the member (`runAsMember`); also «📎 CSV», «Повторить»,
+  👍 / 👎.
+- **Topic pushes** (topics mode `on`): a topic that entered a member's
+  «Сейчас» in the last 24 h → one Telegram message per display cycle with
+  «Открыть», «✅ Готово», «⏰ Отложить до завтра»; only in the org's working
+  hours, ≤ 2 per topic in 7 days, ≤ 5 per member per run. Switches: org
+  `topics.delivery.telegram` (admin, default on), member «Темы в Telegram»
+  (/account → «Уведомления»). Telegram digests are not built.
+- **Notification copies.** Every important org notification (except
+  `topic.now`, which comes as a push) is also sent to the recipient's
+  Telegram; outside working hours the notifications cron sends it later;
+  older than 24 h = not sent. Per-category «Telegram» switch on /account →
+  «Уведомления».
+- **Chats ↔ companies.** Groups the bot sees are listed in the source settings
+  «Группы» (mode auto / clients / internal, companies with one primary,
+  suggestions, «Не анализировать»); companies' own accounts are typed by
+  @name on the company card. Binding: the owner or the responsible member of
+  every touched company; internal chats: the owner. Unknown authors in a
+  company chat → «Новый контакт в …?» to the company's responsible member.
+- **Retention.** The daily pipeline removes old technical rows.
+- **Eval.** 24 Telegram cases `tg01`–`tg24` in `pnpm chat:eval`
+  (`CHAT_EVAL_ONLY=tg`; real router, worker and model, only the Bot API
+  mocked).
+
+API: `api/webhooks/telegram/[sourceId]` (public), `api/account/telegram`
+(binding), `api/sources/telegram/settings` (owner settings),
+`api/telegram/chats` (+ `/[id]`), `api/telegram/chat-suggestions/[id]`,
+`api/telegram/contact-proposals/[id]`, `api/clients/[id]/telegram`. Server:
+`src/server/telegram/` (`router.ts`, `bindings.ts`, `sender.ts`, `chat/`,
+`chats.ts`, `directory.ts`, `delivery.ts`, `retention.ts`),
+`src/server/topics/delivery/telegram-push.ts`; pure `src/lib/telegram/`.
+
 ## Notifications
 
 Bell in the header (`<NotificationsDrawer/>`), spec `docs/specs/notifications/`.
@@ -503,9 +623,13 @@ Stored notifications per user (`notification`): categories («Задачи», «
 «Организация», «Оплата», «Платформа»), two priorities (important / info), read
 / hide per item, «уже не актуально» when the condition is gone; info is hidden
 after 3 days, important after 5. Badge = unread count (red with an unread
-important); toasts for new important only. Sources: events (handover, contact
+important); toasts for new important only. Important ones are also copied to
+the person's Telegram when bound (see [Telegram bot](#telegram-bot-staff-interface)). Sources: events (handover, contact
 changed company, new deal risk, topic in «Сейчас», order confirmed by the
-client, member joined, task assigned) and an hourly check for every org (task
+client, member joined, task assigned, Telegram events: binding, chat added,
+channel not supported, chat ↔ company suggestion, new contact from a chat,
+contact conflict) and a regular check for every org (hourly by design, daily
+on the test deployment) (task
 due tomorrow / today / overdue, AI limit 70 / 90 / 100 % and daily budget, org
 profile incomplete, client-profile proposals, failing sources, failed runs).
 AI usage, company profile and process notices go to org owners only. Settings
@@ -525,7 +649,7 @@ Visible only to platform admins (`user.role === 'admin'`). Tabs:
 | «Модели» (Models) | Read-only AI model registry: every model of each AI gateway with prices and capabilities; filters (gateway, type, vendor, capabilities, search, available only), sortable, server-paginated with the shared pager `table-pager.tsx` (10 / 25 / 50, default 10), detail drawer (full pricing, price history, data source per field); «Синхронизировать» (Sync) button. Spec: `docs/specs/models/02-model-registry.md` | `api/admin/ai/models`, `api/admin/ai/catalog/sync`; `src/server/ai/{registry,catalog}` |
 | «Процессы ИИ» (AI processes) | The model of every place that calls AI (22 processes, grouped; old `ai_usage_event` rows keep the raw key of removed processes and the usage page shows it when the label is unknown): primary + up to 3 fallbacks, picked only from compatible models (capabilities, vendor web-search tool), cheapest first; for the AI chat also the list users may pick from; reset to default; warnings when a chosen model became unavailable; «≈ $ / 1 000 вызовов» and 30-day usage per process; «Правила выбора моделей» (ZDR only, no training only, allowed vendors — a save that would leave a process without a compliant model is refused). Changes apply within a minute, no deploy. Spec: `docs/specs/models/03-processes-and-model-selection.md` | `api/admin/ai/processes`; `src/server/ai/registry/assignments.ts` |
 | «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost chart stacked by process or model with its own scale («По дням» / «По месяцам» / «По годам») and range «с … по …» (the range replaces only the page period; the other filters apply), breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history), block «Лимиты ИИ по организациям» (daily budget in gateway cost + MONTHLY limit in end-user cost, default $20; defaults + per-org overrides, spend today / this month). Specs: `docs/specs/models/04-usage-and-cost.md`, `07-daily-budget.md`, `08-monthly-limit.md` | `api/admin/ai/usage`, `api/admin/ai/settings` (markup + model rules); `src/server/ai/usage.ts`, `usage-stats.ts` |
-| «Темы» (Topics) | Operations of the topics engine: topics mode per org (off / shadow / on; switching to shadow / on is refused until the org profile minimum is complete — admin override with a reason; columns «Профиль» and «Профиль в промптах» = `identity.promptContext`), hourly run history + «Запустить сейчас», «Проверки CRM» (CRM checks + watchdogs, preview, switches), «Рассылка» (email digests). Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
+| «Темы» (Topics) | Operations of the topics engine: topics mode per org (off / shadow / on; switching to shadow / on is refused until the org profile minimum is complete — admin override with a reason; columns «Профиль» and «Профиль в промптах» = `identity.promptContext`), hourly run history + «Запустить сейчас», «Проверки CRM» (CRM checks + watchdogs, preview, switches), «Рассылка» (email digests; switch «Сообщения о темах в Telegram», column «Telegram», «Тест в Telegram (мне)»). Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
 | «Сигналы» (Signals) | Signals registry: table with filters, full code editor (all fields, validated, versioned), per-org pack activation / overrides / stage rules / risk guards (preset mechanism kept, no presets defined — one generic set for every org, R22), attributes, relations, risk types, rule templates, history, Markdown export | `api/admin/signals*`; `src/server/signals/` |
 | «Тесты и отладка» (Tests and debugging) | Quality checks and debugging of the topics engine, apart from operations («Темы») and the registry («Сигналы»): «Сигналы сообщений» (signal review of scanned items + «Извлечь заново»), «Темы (отладка)» (topic debug + actions), «Эталонный набор» (golden set), «Оценка извлечения (eval)» (eval / model spike with the option «С профилем организации», stored metrics, quality gate; grouping eval). Component `admin-topics-testing.tsx` | `api/admin/topics/{signals,topics,golden,spike,grouping}` |
 
@@ -540,21 +664,33 @@ source reset.
 - `/profile`: name, photo (cropped to 256 px WebP in the browser, stored in R2
   via `POST /api/profile/avatar`, served by `GET /api/avatars/[userId]`).
   Platform admins can change their own email; it becomes verified at the next
-  OTP sign-in.
+  OTP sign-in. Block «Telegram»: «Подключить Telegram» / «Отвязать» (own
+  binding to the org bot) and the guide «Как переписка с клиентами попадает в
+  CRM» (How client chats reach the CRM).
 - `/account` (title = org name): tab «Информация об организации» (owner edits
   the org record and logo), tab «Профиль организации» (who «we» are and what we
   do — identity registry, business profile, completeness «N из 6»; owner edits,
-  members read; spec `docs/specs/identity/`), tab «Участники» (Members — owners
-  only: roles, remove, invite), tab «Использование ИИ» (AI usage — owners only:
+  members read; card «Рабочий контекст» = time zone + working hours, the owner
+  edits them since 2026-11-19, stored as the org override of `attention.params`;
+  spec `docs/specs/identity/`, `docs/specs/organization/`), tab «Участники»
+  (Members — owners only: roles «Владелец» / «Участник» (the old «Администратор»
+  is no longer offered), remove, invite, and the block «Приглашения» = pending
+  invitations with «Отправить ещё раз» / «Отменить», `GET /api/organization/invitations`), tab «Использование ИИ» (AI usage — owners only:
   the admin views for the org — period, filters, KPIs, cost chart, by function /
   model / user — always cost WITH the platform markup, never the gateway cost or
   markup %; the card «Месячный лимит ИИ»; `api/account/ai-usage`, specs
   `docs/specs/models/05-…` §7 and `08-monthly-limit.md`) and tab «Уведомления»
-  (notification categories; topics email choices in mode `on`) and, for owners /
+  (notification categories with a «Telegram» column; topics email choices and
+  «Темы в Telegram» in mode `on`) and, for owners /
   admins, «Проверка эталона» (golden-set review, was the page `/review`). The
   page remembers its open tab; every page with tabs / views does (per browser),
   and the sidebar remembers open / closed (cookie). Owner banners on `/account`: incomplete org profile,
   AI monthly limit ≥ 70 % (info) / ≥ 90 % / used up, daily AI budget used up.
+- Organization switcher (platform admins only, 2026-11-19): arrow button next
+  to the sidebar's organization item → the admin's memberships → `POST
+  /api/account/active-organization` → reload on `/dashboard`; the session's org
+  name follows through `databaseHooks.session.update.before`. Other users have
+  no switcher (`docs/specs/organization/`).
 - Invitations: owner invites by email → email with
   `/accept-invitation/<id>` → invitee signs in with an OTP sent to the invited
   address → accepts → active org is set. `/sign-up` blocks self sign-up when the
@@ -562,7 +698,8 @@ source reset.
 - Server: `organizations.ts`, `invitations.ts`, `user-avatar.ts`,
   `api-keys.ts` (member management goes through the better-auth organization
   plugin), `identity/org-profile.ts`; API: `api/organization`, `api/auth/keys`,
-  `api/invitations/*`, `api/account/ai-usage`, `api/org-profile` («Профиль
+  `api/invitations/*`, `api/account/ai-usage`, `api/account/telegram` (own
+  Telegram binding), `api/org-profile` («Профиль
   организации»), `api/org-identity*`, `api/account/topic-delivery` (topics email
   choices), `api/account/notification-prefs`, `api/topics/golden` («Проверка
   эталона»).

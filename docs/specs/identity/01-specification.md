@@ -59,7 +59,7 @@ Four groups. **Bold** = part of the mandatory minimum (§3.3).
 | Geography | «География» | Free text ≤ 200 |
 | Terms and abbreviations | «Наши термины» | Optional glossary `{ term, meaning }` ≤ 30 (product nicknames, internal abbreviations) |
 
-**C. Working context** — already exists elsewhere, only shown here read-only with a link: time zone and working hours (`attention.params`), currency.
+**C. Working context** — time zone and working hours (`attention.params`), currency. ~~Read-only with a link.~~ **Changed 2026-11-19 (product owner): the org owner edits the time zone and the working hours here** (stored as the org override of `attention.params`; other members read only). There was no UI for them before.
 
 **D. Meta** — `updated_at`, `updated_by`, version; every save writes a change log row (who, when, before / after).
 

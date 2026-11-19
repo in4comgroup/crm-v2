@@ -8,7 +8,8 @@ import { organization, admin, emailOTP } from "better-auth/plugins"
 import { apiKey } from "@better-auth/api-key"
 import { nextCookies } from "better-auth/next-js"
 import { APIError } from "better-auth/api"
-import { getActiveOrganization } from "@/server/organizations"
+import { getActiveOrganization, getOrganizationSessionInfo } from "@/server/organizations"
+import { activeOrgSessionFields } from "@/lib/org-switcher"
 import {
   uniqueUsernameGenerator,
   Config,
@@ -123,6 +124,20 @@ export const auth = betterAuth({
               activeOrganizationSlug: organization?.slug,
             },
           }
+        },
+      },
+      update: {
+        // better-auth's `organization.setActive` (org switcher, accept
+        // invitation) writes only `activeOrganizationId`. Keep the name /
+        // slug fields in step, so the session row — and the cookie cache that
+        // setActive rewrites from the returned row — show the new org at
+        // once. Other session updates (expiry refresh) carry no org id and
+        // pass through untouched.
+        before: async (data) => {
+          if (!("activeOrganizationId" in data)) return
+          const orgId = (data as { activeOrganizationId?: string | null }).activeOrganizationId
+          const org = orgId ? await getOrganizationSessionInfo(orgId) : null
+          return { data: { ...data, ...activeOrgSessionFields(org) } }
         },
       },
     },

@@ -36,7 +36,7 @@ export function aiLimitMessage(l: AccountAiLimits): { tone: AiLimitTone; text: s
   if (m.level === "exceeded") {
     return {
       tone: "severe",
-      text: `Месячный лимит ИИ исчерпан: ${usd(m.spentUsd)} из ${usd(m.budgetUsd)}. Фоновая обработка (разбор источников, темы) остановлена до ${resetDay(m.resetsAt)}. ИИ чат и функции, которые вы запускаете сами, работают.`,
+      text: `Месячный лимит ИИ исчерпан: ${usd(m.spentUsd)} из ${usd(m.budgetUsd)}. Фоновая обработка (разбор источников, темы) остановлена до ${resetDay(m.resetsAt)}. ИИ чат (в приложении и в Telegram) тоже недоступен до этой даты.`,
     }
   }
   if (m.level === "warning") {
@@ -178,8 +178,8 @@ export function AiMonthlyLimitCard({ monthly }: { monthly: AiMonthlyLimitState |
             </div>
             <p className="text-xs text-muted-foreground">
               Осталось {usd(monthly.remainingUsd)} · лимит обновится {resetDay(monthly.resetsAt)} · расход этого
-              месяца с начала месяца (UTC). Когда лимит исчерпан, фоновая обработка останавливается; ИИ чат
-              работает.
+              месяца с начала месяца (UTC). Когда лимит исчерпан, фоновая обработка и ИИ чат
+              останавливаются до обновления лимита.
             </p>
           </>
         )}

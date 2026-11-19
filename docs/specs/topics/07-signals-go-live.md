@@ -44,7 +44,7 @@ Related: spec [01-specification.md](01-specification.md) (§5 extraction, §13 o
 | Migrations | `pnpm db:migrate` on the target DB **before** the deploy | every file in `migrations/` (`0000`–`0043` on 2026-11-16) | Tables + registry seed (`0012`–`0014`, `0016`, `0017`, `0038`) |
 | Source automation | Sources → «Управление источниками организации» (owner) or `/settings` (admin): `automated_parsing_is_allowed` | Вкл (default) / Выкл | Off = the daily run does not sync / parse / upload this source → no signals from it |
 | Model per process | `/settings` → «Процессы ИИ» → «Извлечение сигналов» (`topics.signal_extraction`) | default `google/gemini-2.5-flash` | Quality, cost, latency |
-| Daily AI budget | `/settings` → «Использование ИИ» → «Дневной бюджет ИИ» | platform default 5 USD / day; org override | When reached, background AI stops for the org (parse too); items wait as `deferred` |
+| Daily AI budget | `/settings` → «Использование ИИ» → «Лимиты ИИ по организациям» | platform default 5 USD / day; org override | When reached, background AI stops for the org (parse too); items wait as `deferred` |
 | Signals pack | `/settings` → «Сигналы» → org section → packs | `base` on / off | Off = no active code → the signals phase skips the org («no active signal codes») |
 | Org code overrides | «Сигналы» → org section | none (R22) | Per-code stage / weight for one org. Keep empty unless a test needs it |
 | Exclusions | Sources → «Исключения из анализа» (org owner) | list | Addresses / domains / chats never stored, parsed or sent to AI |
@@ -103,7 +103,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | B3 | **Eval** on «Оценка извлечения (eval)» with the chosen model | Platform admin | Gate passed: precision ≥ 0.85 on P6 / P8 codes, recall ≥ 0.7 (codes with < 5 occurrences = «мало данных»); cost per item recorded |
 | B4 | **Shadow review**: 1–2 weeks of `shadow` on real traffic; reviewers read «Сигналы сообщений» and «Темы (отладка)» daily: missed situations, false signals, wrong skips, topics merged or split wrongly (fix with «Объединить с…» / «Отвязать сообщение» and note the case) | IN4COM reviewers | Agreed list of fixes done (texts, exclusions, blocklist, own-org identity); topic grouping precision ≥ 0.9 / recall ≥ 0.8 on the golden set — measured by «Оценка группировки по темам» (bottom of «Тесты и отладка» → «Оценка извлечения (eval)»; reviewed real items with «Темы сообщения» vs the engine's topics) |
 | B5 | **Noise sources** decided by the owner: newsletters, service mailboxes, private chats → «Исключения из анализа»; irrelevant companies → blocklist; own names / domains / shared mailboxes / staff personal addresses + the business profile → «Профиль организации» ([identity spec](../identity/01-specification.md); IN4COM: Q11) | IN4COM owner | Lists filled before T9; the profile minimum complete (**enforced** by the mode gate — identity I3) |
-| B6 | **Budget** agreed: daily AI USD per org from the measured cost (M3) × expected volume | Product owner | Org override set on «Дневной бюджет ИИ» if 5 USD is not enough |
+| B6 | **Budget** agreed: daily AI USD per org from the measured cost (M3) × expected volume | Product owner | Org override set in «Лимиты ИИ по организациям» if 5 USD is not enough |
 | B7 | **Switch to `on`** («Темы» → org → «Включено») after the shadow review: users get the dashboard tabs «Сейчас / Сводка / Неделя / Все темы», the topic drawer, «Темы» tabs, agent deals, deal state and risks; the old Custom-rule cards (incl. «Telegram orders», R7) and the name-based deal discovery no longer exist for any org (removed in plan phase 12, 2026-11-14; `off` / `shadow` orgs see only the read-only history of old cards) | Product owner | Shadow review (B4) accepted |
 | B9 | **Email digests on** for the org after the test mail (T14) is accepted | Product owner | Members informed that digests start |
 | B10 | **CRM checks on** for the org after the dry run (T16) is reviewed with the sales lead: order data complete and current (orders imported up to today), thresholds agreed (`checks.params`: rhythm floor 90 d, best year ≥ 300 000 ₽, reply window 7 d, …) | Product owner + org sales lead | Members told what «Данные CRM» / «Сторож» topics mean |
@@ -120,7 +120,7 @@ Do them in order. Each step has a check; do not go on when the check fails.
 | M1a | Topics | «Темы (отладка)» counts per status | New topics per day in line with the counted signals; few `context`-only attaches; no growth of unresolved counterparties |
 | M2 | Item status mix | «Тесты и отладка» → «Сигналы сообщений» (stats) | Most items `done` or `skipped`; `failed` near 0; `deferred` only on budget days |
 | M3 | Cost | «Использование ИИ» (process «Извлечение сигналов») | ≈ 1–3 cents per item with the 123-code prompt (re-measure in B3) |
-| M4 | Budget hits | «Использование ИИ» → «Дневной бюджет ИИ»; usage events `blocked` | Rare; when frequent → raise the budget or narrow sources (B5) |
+| M4 | Budget hits | «Использование ИИ» → «Лимиты ИИ по организациям»; usage events `blocked` | Rare; when frequent → raise the budget or narrow sources (B5) |
 | M5 | Daily pipeline | Sources page / `pipeline_run` | `success` every day; parse backlog not growing (cap 200 / run) |
 
 Read-only SQL for the Neon console (optional):
@@ -142,7 +142,7 @@ GROUP BY 1 ORDER BY 2 DESC;
 | Situation | Action | Effect |
 |---|---|---|
 | Wrong signals, cost too high, any doubt | «Темы»: org → `off` | The next hourly run skips the org at once. Stored signals stay. Switching on again later sets a **new** 7-day history start |
-| Cost spike | Lower the org budget on «Дневной бюджет ИИ» | Background AI stops for the org for the day; items wait as `deferred` |
+| Cost spike | Lower the org budget in «Лимиты ИИ по организациям» | Background AI stops for the org for the day; items wait as `deferred` |
 | One noisy sender / chat | «Исключения из анализа» | Not stored / not analysed from now on; already parsed items need a re-parse to drop (O4) |
 | Bad code text | Edit the code in «Сигналы» (new version), or set its stage to `onHold` | Next items use the new text; stored signals are not re-scored (re-run «Извлечь заново» per item if needed) |
 | Wrong agent deals | Org setting `deals.autoCreateEnabled = false` (proposals only), or set the org back to `shadow` (deals: dry run) | No new automatic deals; existing ones can be undone with «Отменить» |

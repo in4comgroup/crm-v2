@@ -13,10 +13,8 @@
 // The server is the real gate (PUT /api/org-profile 403 for non-owners).
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import Link from "next/link"
 import { toast } from "sonner"
 import { CheckCircle2, ChevronDown, Plus, Trash2 } from "lucide-react"
-import { authClient } from "@/lib/auth-client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -34,6 +32,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { LoadingButton } from "@/components/blocks/loading-button"
 import { PageLoader } from "@/components/blocks/page-loader"
+import { WorkingContextCard } from "@/components/blocks/working-context-card"
 import {
   AddIdentityEntry,
   EntryChips,
@@ -244,8 +243,6 @@ export function OrgProfileTab({
   /** After any save (profile or registry): e.g. refresh the banner. */
   onChanged?: () => void
 }) {
-  const { data: session } = authClient.useSession()
-  const isPlatformAdmin = (session?.user as { role?: string | null } | undefined)?.role === "admin"
 
   const [view, setView] = useState<OrgProfileView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -745,34 +742,8 @@ export function OrgProfileTab({
         </CardContent>
       </Card>
 
-      {/* C. Рабочий контекст */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg font-medium">Рабочий контекст</CardTitle>
-          <CardDescription>Только для чтения.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <FieldRow label="Часовой пояс">
-            <span className="text-sm">{view.workingContext.timeZone}</span>
-          </FieldRow>
-          <FieldRow label="Рабочие часы" hint="По рабочим дням производственного календаря.">
-            <span className="text-sm">
-              {view.workingContext.workStart}–{view.workingContext.workEnd}
-            </span>
-          </FieldRow>
-          <p className="text-xs text-muted-foreground">
-            Задаёт администратор платформы в настройках тем.
-            {isPlatformAdmin && (
-              <>
-                {" "}
-                <Link href="/settings" className="underline underline-offset-2">
-                  Открыть настройки
-                </Link>
-              </>
-            )}
-          </p>
-        </CardContent>
-      </Card>
+      {/* C. Рабочий контекст — the org owner edits it (2026-11-19). */}
+      <WorkingContextCard value={view.workingContext} canEdit={canEdit} onSaved={() => void load()} />
 
       {/* Client profiles (identity I6, Q6) */}
       <Card>

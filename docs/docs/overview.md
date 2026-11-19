@@ -14,7 +14,8 @@ typing as possible:
   chat exports, files dropped in by hand, and saved AI-chat sessions.
 - It **parses** every item with an LLM into a standard Markdown document
   (summary, content, people, companies, products, language) and stores the
-  result in Cloudflare R2.
+  result in Cloudflare R2. Excel (`.xlsx`) and CSV tables are read too: code
+  builds the tables, the model writes only the summary.
 - It **discovers** companies and contacts mentioned in that material, with
   de-duplication, a blocklist and "this is us" filtering.
 - It **raises signals** («карточки», cards) on the home page: short
@@ -27,9 +28,17 @@ typing as possible:
   to the client through a no-login confirmation link.
 - It **reports** on sales (booked orders) and answers analytics questions in
   natural language.
-- An **AI chat panel** on every page searches all CRM records and the web, shows found records as a list and statistics as charts, keeps each user's chats, and passes what users tell it to the org's sources. It reads files, photos (business cards) and voice messages, and prepares draft cards (new companies, contacts, deals, tasks, order requests, deal moves, task updates) that a person checks and confirms; the chat never writes a record by itself.
+- An **AI chat panel** on every page searches all CRM records and the web, shows found records as a list and statistics as charts, keeps each user's chats, and passes what users tell it to the org's sources. It reads files, photos (business cards) and voice messages, and prepares draft cards (new companies, contacts, deals, tasks, order requests, deal moves, task updates) that a person checks and confirms; the chat never writes a record by itself. When the company of a new contact is not clear, the chat asks «К какой компании отнести контакт?» (Which company is this contact from?).
+- **Telegram is a second interface for staff.** Each member can bind a
+  Telegram account to the org's bot. Then the member can talk to the same AI
+  chat in a private chat with the bot (when the owner switched it on), gets
+  short pushes about topics that need attention, and gets copies of important
+  notifications. The bot also reads group chats with clients; the owner or the
+  company's responsible member links a chat to its companies (the system only
+  suggests).
 - It **notifies** each person in the bell («Уведомления»): task reminders,
   deal risks, topics that need attention, AI limits and process errors (owners).
+  Important notifications are also sent to the person's Telegram.
 - It **keeps people over time**: a contact can move to another company or work
   for two; the system proposes the change from the mail and a person decides.
 
@@ -39,9 +48,9 @@ The UI language is Russian. Code, database names and these docs are English.
 
 | Role | Where it comes from | What they do |
 | --- | --- | --- |
-| Org member | `member.role = member` | Day-to-day work: companies, contacts, deals, orders, tasks, cards, sources processing |
+| Org member | `member.role = member` | Day-to-day work: companies, contacts, deals, orders, tasks, cards, sources processing; can bind an own Telegram account (/profile → «Telegram») |
 | Org admin | `member.role = admin` | Same as member in most modules (most modules treat all org roles equally) |
-| Org owner | `member.role = owner` | Also manages members/invitations, organization profile, org sources (credentials, auto-parse), discovery blocklist, own-org identity registry, custom fields, the deal funnel; the only receiver of AI usage / billing / company profile / process notifications; reviews the golden set («Проверка эталона», also org admins) |
+| Org owner | `member.role = owner` | Also manages members/invitations, organization profile, org sources (credentials, auto-parse), discovery blocklist, own-org identity registry, custom fields, the deal funnel, the main and the additional responsible members of each company, the Telegram bot settings («ИИ-чат в Telegram» (AI chat in Telegram), group chats ↔ companies); the only receiver of AI usage / billing / company profile / process notifications; reviews the golden set («Проверка эталона», also org admins) |
 | Platform admin | `user.role = admin` | Everything in «Настройки» (Settings): all users and orgs, source templates, all sources, source teardown (one «Источники» tab), pipeline run + stats |
 | Guest (client) | Holder of an order link token | Reviews, adjusts quantities and confirms one order at `/o/[token]`, no account |
 
@@ -69,7 +78,9 @@ Step by step:
 1. **Connect a source.** An org owner adds a source from a template on
    «Источники» (Sources) and enters credentials (stored encrypted).
 2. **Ingest.** Items arrive by remote sync (Nylas, IMAP, Google Chat, Drive),
-   by webhook push (Telegram), by upload (Drop Off, WhatsApp archive), or from
+   by webhook push (Telegram: client messages in groups and private chats,
+   forwards and notes of staff; the same webhook also carries the staff AI
+   chat, which is not ingested as a client message), by upload (Drop Off, WhatsApp archive), or from
    the AI chat (automatic: what users tell the chat becomes chat-note items;
    files uploaded in the chat become items at once). Each item is a `source_item` row; attachments become child rows.
 3. **Process.** Each item is parsed by an LLM (via the Vercel AI Gateway; the
@@ -99,7 +110,7 @@ Step by step:
 | Sources & parsing | Connect channels, ingest items, LLM-parse to Markdown, store in R2 | `/sources` «Источники» |
 | Discovery | Find companies, contacts, links in parsed items; blocklist; own-org identity | `/clients` (dialog) |
 | Cards | Topic cards from the topics engine; read-only history of old Custom-rule cards | `/dashboard` «Домашняя» |
-| Companies & contacts | Company and person records, web lookup and batch web enrichment, custom fields, company profile, contact ↔ company links over time (current / former, two companies, «Контакт сменил компанию?», merge) | `/clients` «Компании», `/contacts` «Контакты» |
+| Companies & contacts | Company and person records, web lookup and batch web enrichment, custom fields, company profile, «Ответственный» (Responsible) + «Также отвечают» (Also responsible), contact field «Ведётся на уровне» (Managed at the level of), contact ↔ company links over time (current / former, two companies, «Контакт сменил компанию?», merge), Telegram chats of a company | `/clients` «Компании», `/contacts` «Контакты» |
 | Documents | Files of companies, contacts, deals, tasks, orders: originals stored, linked automatically and by hand | «Документы» tab in each drawer |
 | Deals | Kanban sales funnel, deal journal, deal bridge from topics | `/deals` «Сделки» |
 | Products / catalog | Read-only product catalog with hybrid search and price-list export | `/products` tab «Каталог товаров» |
@@ -108,9 +119,10 @@ Step by step:
 | Analytics | Sales reporting over booked orders + an analytics AI assistant | `/analytics` «Аналитика» |
 | Global search | Cross-entity search box in every page header | header |
 | AI chat panel | Chat over CRM data and the web, on every page; files and voice messages; draft cards that create or change records after a click | header button |
-| Notifications | Bell in the header: stored notifications per user, categories, important / info, hourly checks (tasks, AI limits, profile, sources) | header |
+| Notifications | Bell in the header: stored notifications per user, categories, important / info, regular checks (tasks, AI limits, profile, sources); copies of important ones to Telegram | header |
+| Telegram bot | Staff binding to the org bot, AI chat in Telegram, topic pushes with «Готово» / «Отложить до завтра» buttons, group chats ↔ companies, identity of people by Telegram id | `/profile` «Telegram»; Telegram source → «Настройки провайдера» (Provider settings) |
 | Admin tools | Users, orgs, templates, sources, source teardown; AI models registry, model per AI process + model rules, AI usage statistics + markup + daily AI budget; topics engine operations «Темы» (modes, runs, CRM checks, delivery), the signals registry «Сигналы», and «Тесты и отладка» (signal review, topic debug, golden set, eval) | `/settings` «Настройки» |
-| Profile & organization | User profile, org profile, members, invitations, AI usage with markup (owners), notification settings, «Проверка эталона» (golden-set review, owners / admins) | `/profile`, `/account` |
+| Profile & organization | User profile (incl. own Telegram binding), org profile, members, invitations, AI usage with markup (owners), notification settings, «Проверка эталона» (golden-set review, owners / admins) | `/profile`, `/account` |
 
 ## Navigation (sidebar)
 
@@ -148,6 +160,10 @@ search), `/cards` and `/docs` (empty placeholder pages), `/review` (redirects to
 | Own-org identity | «Своя организация» | Extra names, websites and addresses that mean "this is us, not a client". |
 | Company / client | «Компания» | A `client` row. The UI says "company"; the code says "client". |
 | Contact | «Контакт» | A person with current and former companies («Компании»: one primary = `contact.client_id`, others e.g. «Консультант»), and extra addresses («Адреса»: old / second email, phone, Telegram). |
+| Responsible / also responsible | «Ответственный» / «Также отвечают» | The main responsible member of a company (`client.responsible_user_id`, one person) and additional members (`client_co_responsible`). Lists, rights and the AI chat count both; handover, deal owner, topic owner and notifications use only the main one. |
+| Managed at the level of | «Ведётся на уровне» | Contact field: which of our people (a member, or a named person who is not a user) works with this contact. Information only; no logic reads it. |
+| Telegram binding | «Подключить Telegram» | Link between one member and one Telegram account for the org bot (one-time deep link). Needed for the AI chat in Telegram, pushes and notification copies, and makes the member's Telegram messages count as ours. |
+| Relayed note / source trust | — | A member retells what a client said (AI chat note, a member's own message to the bot, internal mail). Its signals get at most `medium` confidence and never move a deal alone (topics decision R26). |
 | Contact change proposal | «Контакт сменил компанию?» | A proposal from the sources (farewell, new address, same name at another client, two companies in 60 days) that a person decides: «Перешёл», «Работает с обеими», «Это другой человек», «Не сейчас». |
 | Notification | «Уведомление» | A stored message for one person in the bell: category, «Важное» / «Информация», read / hidden, «уже не актуально» when the condition is gone. |
 | Rule | «Правило» | A stored LLM prompt (`rule` table). No UI edits it any more; old cards still reference it. |

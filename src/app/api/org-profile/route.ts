@@ -1,13 +1,15 @@
 // «Профиль организации» (identity spec I1, src/app/AGENTS.md § "Own organization
 // profile (identity I1)"). GET → the tab view (any member); GET ?banner=1 →
 // the incomplete-profile banner state (owner only shows); PUT → save (org
-// owner only, 403 otherwise). All rules live in src/server/identity/org-profile.ts.
+// owner only, 403 otherwise); PUT { workingContext: { timeZone, workStart, workEnd } }
+// → «Рабочий контекст» (org owner only). All rules live in src/server/identity/org-profile.ts.
 import { NextResponse } from "next/server"
 import {
   getOrgProfileBannerForSession,
   getOrgProfileViewForSession,
   OrgProfileError,
   saveOrgProfileForSession,
+  saveWorkingContextForSession,
 } from "@/server/identity/org-profile"
 
 export type { OrgProfileView, OrgProfileBanner, OrgProfileMember, OrgProfileHistoryRow } from "@/server/identity/org-profile"
@@ -37,6 +39,10 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   try {
     const body = await request.json().catch(() => null)
+    // «Рабочий контекст» (time zone + working hours, org owner): PUT { workingContext }.
+    if (body && typeof body === "object" && "workingContext" in body) {
+      return NextResponse.json({ workingContext: await saveWorkingContextForSession(body.workingContext) })
+    }
     const result = await saveOrgProfileForSession(body?.profile ?? body)
     return NextResponse.json(result)
   } catch (error) {

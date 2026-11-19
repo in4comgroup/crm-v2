@@ -19,14 +19,13 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { authClient } from "@/lib/auth-client"
+import {
+  ASSIGNABLE_ORG_ROLES,
+  isAssignableOrgRole,
+  orgRoleLabel,
+  type AssignableOrgRole,
+} from "@/lib/org-roles"
 import { toast } from "sonner"
-
-// Display labels — DB enum keys stay English.
-const ORG_ROLE_LABEL: Record<string, string> = {
-  owner: "Владелец",
-  admin: "Администратор",
-  member: "Участник",
-}
 
 export default function SetOrgRoleDialog({
   memberId,
@@ -42,12 +41,15 @@ export default function SetOrgRoleDialog({
   onSuccess?: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const [role, setRole] = useState<"owner" | "admin" | "member">(
-    (currentRole as "owner" | "admin" | "member") || "member",
+  // Only «Владелец» / «Участник» are offered (src/lib/org-roles.ts). A
+  // member who still has the legacy admin role starts with no choice made.
+  const [role, setRole] = useState<AssignableOrgRole | "">(
+    isAssignableOrgRole(currentRole) ? currentRole : "",
   )
   const [isPending, startTransition] = useTransition()
 
   const handleSubmit = () => {
+    if (!role) return
     startTransition(async () => {
       const { error } = await authClient.organization.updateMemberRole({
         memberId,
@@ -60,7 +62,7 @@ export default function SetOrgRoleDialog({
         return
       }
 
-      toast.success(`Роль изменена на «${ORG_ROLE_LABEL[role] ?? role}» для ${memberName}`)
+      toast.success(`Роль изменена на «${orgRoleLabel(role)}» для ${memberName}`)
       onSuccess?.()
       setOpen(false)
     })
@@ -79,23 +81,25 @@ export default function SetOrgRoleDialog({
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-gray-400">
-            Текущая роль: <span className="text-foreground">{ORG_ROLE_LABEL[currentRole] ?? currentRole}</span>
+            Текущая роль: <span className="text-foreground">{orgRoleLabel(currentRole)}</span>
           </p>
           <div className="space-y-2">
             <label className="text-sm text-gray-400">Новая роль</label>
             <Select
               value={role}
-              onValueChange={(val) =>
-                setRole(val as "owner" | "admin" | "member")
-              }
+              onValueChange={(val) => {
+                if (isAssignableOrgRole(val)) setRole(val)
+              }}
             >
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue placeholder="Выберите роль" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="owner">Владелец</SelectItem>
-                <SelectItem value="admin">Администратор</SelectItem>
-                <SelectItem value="member">Участник</SelectItem>
+                {ASSIGNABLE_ORG_ROLES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {orgRoleLabel(r)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -104,6 +108,7 @@ export default function SetOrgRoleDialog({
               onClick={handleSubmit}
               className="w-full"
               loading={isPending}
+              disabled={!role}
             >
               Сохранить роль
             </LoadingButton>

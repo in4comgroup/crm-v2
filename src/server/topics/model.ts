@@ -100,6 +100,8 @@ export type TopicItemLink = {
   role: TopicItemRole
   date: Date
   direction: SignalDirection
+  /** Relayed note of our employee (source trust, spec topics/01 §9.2). */
+  relayed?: boolean
   threadKey: string | null
   references: TopicReference[]
   products: string[]

@@ -8,6 +8,10 @@
 //      codes, empty evidence, evidence not in the item's OWN text;
 //   2. drop inbound_only codes on our own items, internal-only blocks on
 //      external items;
+//   2a. source trust (spec §5.4 rule 2a): on a RETOLD item — a relayed note
+//      (our employee retells a counterparty) or internal mail — every code
+//      outside an internal-only block is capped at confidence `medium`: a
+//      retelling is less reliable than the decision maker's own words;
 //   3. date gates;
 //   4. outranks (+ merges_into: the merged code is context only);
 //   5. low confidence → stored, counts 0;  state codes → stored, count 0;
@@ -217,6 +221,8 @@ export type PostprocessResult = {
   dominantCode: string | null
   score: number
   band: SignalBand
+  /** Rule 2a: codes whose `high` confidence was capped to `medium` (retold item). */
+  capped: { code: string; evidence: string }[]
 }
 
 const CLASS_RANK: Record<string, number> = { risk: 3, chance: 2, fyi: 1 }
@@ -238,6 +244,8 @@ export function postprocessExtraction(
     orgAttribution: string | null
     /** Identity spec Q9: every participant is ours → direction `internal`. */
     allInternal?: boolean
+    /** Relayed note: our employee retells what a counterparty said (ai-chat Q22, telegram TI6). */
+    relayed?: boolean
   },
 ): PostprocessResult {
   const direction = resolveDirection(out.direction ?? null, item.orgAttribution, item.allInternal === true)
@@ -248,6 +256,9 @@ export function postprocessExtraction(
     reason: "unknown_code" as const,
     evidence: "",
   }))
+  // Rule 2a: a retelling by our side, not the counterparty's own words.
+  const retold = item.relayed === true || direction === "internal"
+  const capped: PostprocessResult["capped"] = []
 
   // Rules 1–3: keep or drop each returned code.
   const kept: InstanceDraft[] = []
@@ -296,10 +307,15 @@ export function postprocessExtraction(
       Number.isInteger(s.subjectIndex) && s.subjectIndex >= 0 && s.subjectIndex < subjects.length
         ? s.subjectIndex
         : -1
+    let confidence = s.confidence
+    if (retold && confidence === "high" && !ctx.blocks.get(cat.blockCode)?.internalOnly) {
+      confidence = "medium"
+      capped.push({ code: s.code, evidence: excerpt(s.evidence) })
+    }
     kept.push({
       code: s.code,
       evidence: s.evidence.trim(),
-      confidence: s.confidence,
+      confidence,
       subjectIndex,
       counted: true,
       notCountedReason: null,
@@ -384,5 +400,6 @@ export function postprocessExtraction(
     dominantCode: dominant?.code ?? null,
     score,
     band: scoreToBand(score),
+    capped,
   }
 }

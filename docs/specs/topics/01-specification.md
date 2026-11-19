@@ -292,6 +292,7 @@ Prompt rules (Russian text, see §10.4):
 - Author-only: a code describes what the AUTHOR does. Our own initiative is never a client signal.
 - Forwarded messages (requirements v2: staff forward client messages to the bot): the author is the **original sender** (Telegram `forward_origin`, email «Пересылаемое сообщение» header), not the employee who forwarded it. The envelope carries `forwardedBy` (our user) and `originalAuthor`.
 - We are the buyer: when the author sells to us, never emit customer codes (use supplier codes).
+- **Source trust [R26]** (rule 12 «Источник и полномочия»): `high` only when the person who does or decides the thing says it. A retelling of someone else's words, promises or plans (a relayed note, internal mail about a client, «клиент сказал, что подпишет»), or a client employee passing on a decision that someone else takes → confidence ≤ `medium`; a guess or rumour («вроде», «скорее всего», «говорят») → `low`. The rule changes only the confidence, never the code or the evidence. A forwarded client mail is the client's own words.
 - Vendor marketing to us is never demand.
 - Relative dates are resolved against the item's own date, never "today".
 - Copy references and product names exactly.
@@ -305,6 +306,7 @@ Model choice **[Q5 → R2]**: a spike compares 2–3 gateway models, switched on
 
 1. Drop unknown, retired (map to successor), non-active, `process`-only codes; drop entries with empty evidence; check evidence appears in the item text (fuzzy, whitespace-insensitive).
 2. Drop `inbound_only` codes when `direction = outbound`; drop internal-only blocks on external items.
+2a. **Source trust [R26]:** on a retold item — a relayed note (`relayed`, AI chat / Telegram bot note of our employee) or `direction = internal` — every code outside an internal-only block is capped from `high` to `medium` (deterministic backstop of prompt rule 12). The capped codes are stored in `source_item.signal_facts.capped`; the item keeps `signal_facts.relayed = true`.
 3. Date gates (e.g. `CONTRACT_FRAME_EXPIRY` only if `contractEndDate` within 56 days after the item date).
 4. Apply `outranks`.
 5. Low-confidence instances are stored but count 0.
@@ -547,6 +549,7 @@ Stored with the settings ladder user → org (`org_setting`, a new per-org key/v
   - Orgs may switch auto-create off (`deals.autoCreateEnabled = false`) and keep proposals only. Agency (phase 9): the agency pack uses the same auto-create: a concrete client task creates the opportunity without internal approval (Q24-1, Q24-7); `PROSPECT_NEED_EXPRESSED` passes only with the «concrete task» guard (§2, area 0).
   - A topic linked to a deal with a higher `enter_stage` code → move the deal forward (forward only; **skip allowed**, v2: an RFP or a direct order confirmation may set the matching stage at once) via `moveDealStage(actor: 'agent')`, which writes `deal_activity` with `source_item_id` and `topic_id` (new nullable columns). Backward moves only by outcome codes. Rework alone never moves a deal back (v2). Our own actions (offer sent, internal tasks) never move a stage (author-only rule).
   - In-stage codes update deal context (decision date, people, budget context) via `topic_event`, not the stage.
+  - **Source trust [R26]:** an instance from a relayed note (`signal_facts.relayed`) never creates, moves or closes a deal alone, at any confidence → `deal_proposal` / `stage_confirmation` with reason `relayed_source` («пересказ сотрудника, а не слова клиента — решает человек»). Linking the topic to the client's existing deal is still allowed.
 - The current name-based `/api/deals/discover` is removed together with the old card logic (Q8). Until then, deal discovery must write `deal_activity` for every move it makes (foundation work) [R9].
 - **The mock deal agent is removed now, for all orgs [R9]:** the auto-apply of `src/server/deals-mock.ts` proposals via `GET /api/deals/proposals` (called on board load) goes away. Only real rules (this section) move deals.
 

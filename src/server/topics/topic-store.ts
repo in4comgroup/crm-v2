@@ -227,10 +227,10 @@ export function itemPeer(metadataJson: unknown, direction: SignalDirection): Ite
   return { email: email?.toLowerCase() ?? null, name: a.name ?? null, handle: null }
 }
 
-function factsOf(raw: unknown): { facts: SignalFacts | null; direction: SignalDirection } {
+function factsOf(raw: unknown): { facts: SignalFacts | null; direction: SignalDirection; relayed: boolean } {
   const f = (raw ?? null) as Partial<SignalItemFacts> | null
   const direction = f?.direction === "outbound" || f?.direction === "internal" ? f.direction : "inbound"
-  return { facts: (f?.facts as SignalFacts | undefined) ?? null, direction }
+  return { facts: (f?.facts as SignalFacts | undefined) ?? null, direction, relayed: f?.relayed === true }
 }
 
 export type LoadedItem = { input: ItemInput; peer: ItemPeer | null; via: Record<number, string[]> }
@@ -409,7 +409,7 @@ export async function hydrateTopics(rows: TopicRow[]): Promise<TopicSnapshot[]> 
   for (const l of links) {
     const t = byId.get(l.topicId)
     if (!t) continue
-    const { facts, direction } = factsOf(l.signalFacts)
+    const { facts, direction, relayed } = factsOf(l.signalFacts)
     const forSubject = (i: number) => i === l.subjectIndex || i === -1 || l.subjectIndex === -1
     t.items.push({
       itemId: l.itemId,
@@ -417,6 +417,7 @@ export async function hydrateTopics(rows: TopicRow[]): Promise<TopicSnapshot[]> 
       role: l.role as TopicItemRole,
       date: l.date,
       direction,
+      ...(relayed ? { relayed: true } : {}),
       threadKey: l.threadKey,
       references: normaliseReferences(l.references ?? []),
       products: l.products ?? [],

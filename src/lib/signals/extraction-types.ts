@@ -136,6 +136,14 @@ export type SignalItemFacts = {
   /** Model / gate that produced the result. */
   producer: { kind: "llm" | "gate"; model: string | null; process: string | null; gate?: string }
   forward?: { forwardedBy: string | null; originalAuthor: string | null } | null
+  /**
+   * The item retells a counterparty (relayed note of our employee: AI chat /
+   * Telegram bot). Its codes never act on a deal without a person (spec
+   * topics/01 §9.2).
+   */
+  relayed?: boolean
+  /** Postprocess rule 2a: codes capped from `high` to `medium` (retold item). */
+  capped?: { code: string; evidence: string }[]
   durationMs?: number
   inputTokens?: number | null
   outputTokens?: number | null

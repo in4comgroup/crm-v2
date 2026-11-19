@@ -365,6 +365,8 @@ export async function extractSignalsForItem(
     // forward), so inbound codes can fire (docs/specs/ai-chat Q22).
     orgAttribution: envelope.relayedNote ? "unknown" : row.orgAttribution,
     allInternal: envelope.allInternal === true,
+    // Source trust (rule 2a): a retelling is capped at `medium`.
+    relayed: envelope.relayedNote === true,
   })
   const facts: SignalItemFacts = {
     facts: pp.facts,
@@ -379,6 +381,8 @@ export async function extractSignalsForItem(
       envelope.forwardedBy || envelope.originalAuthor
         ? { forwardedBy: envelope.forwardedBy ?? null, originalAuthor: envelope.originalAuthor ?? null }
         : null,
+    ...(envelope.relayedNote ? { relayed: true } : {}),
+    ...(pp.capped.length ? { capped: pp.capped } : {}),
     durationMs: run.durationMs,
     inputTokens: run.inputTokens,
     outputTokens: run.outputTokens,

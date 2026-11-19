@@ -14,6 +14,9 @@
 // - Low-confidence instances never act.
 // - Author-only: an instance from our own outbound / internal item never
 //   creates, moves or closes a deal (only `in_stage` context is kept).
+// - Source trust: an instance from a relayed note (our employee retells the
+//   client) never acts alone → ask a person (`deal_proposal` /
+//   `stage_confirmation`), whatever its confidence.
 // - Moves are forward only (skip allowed); backward / terminal moves only by
 //   outcome rules. The pre-pipeline stage («Контакт до запроса», area 0) is
 //   never a target: area 0 never creates a deal.
@@ -57,6 +60,8 @@ export type InstanceLite = {
   evidence: string
   /** Direction of the instance's item (null = unknown → treated as inbound). */
   direction: "inbound" | "outbound" | "internal" | null
+  /** The item is a relayed note (retelling, not the client's own words). */
+  relayed?: boolean
 }
 
 export type DealLite = {
@@ -162,6 +167,7 @@ export const DEAL_REASON_LABELS_RU: Record<string, string> = {
   client_guard_unknown: "условие правила по клиенту нужно проверить человеку",
   requires_confirmation: "правило требует подтверждения",
   one_level_below: "уверенность на уровень ниже правила",
+  relayed_source: "пересказ сотрудника, а не слова клиента — решает человек",
   below_proposal: "оценка темы ниже порога предложения",
   no_counterparty: "у темы нет ни компании, ни контакта",
   same_signal: "сделка только что создана этим же сигналом",
@@ -294,6 +300,9 @@ export function evaluateTopicDeals(input: TopicDealInput): DealDecision[] {
           continue
         }
       }
+      // Source trust: a retelling never acts alone, a person decides.
+      const askReason = inst.relayed && STAGE_EFFECTS.has(rule.effect) ? "relayed_source" : "one_level_below"
+      if (askReason === "relayed_source") ask = true
       if (typeof rule.guards.minScore === "number" && score < rule.guards.minScore) {
         skip("rule_min_score")
         continue
@@ -361,7 +370,7 @@ export function evaluateTopicDeals(input: TopicDealInput): DealDecision[] {
             : needsConfirm
               ? "requires_confirmation"
               : ask
-                ? "one_level_below"
+                ? askReason
                 : RANK[inst.confidence] < RANK[p.autoCreateMinConfidence]
                   ? "medium_confidence"
                   : score < p.autoCreateMinScore
@@ -451,7 +460,7 @@ export function evaluateTopicDeals(input: TopicDealInput): DealDecision[] {
               continue
             }
             openCards.add("stage_confirmation")
-            emit("confirm", needsConfirm ? "requires_confirmation" : "one_level_below", { ...extra, confirmEffect: "move" })
+            emit("confirm", needsConfirm ? "requires_confirmation" : askReason, { ...extra, confirmEffect: "move" })
             continue
           }
           deal = { ...d, stageId: target.id }
@@ -488,7 +497,7 @@ export function evaluateTopicDeals(input: TopicDealInput): DealDecision[] {
               continue
             }
             openCards.add("stage_confirmation")
-            emit("confirm", needsConfirm ? "requires_confirmation" : "one_level_below", {
+            emit("confirm", needsConfirm ? "requires_confirmation" : askReason, {
               ...extra,
               confirmEffect: rule.effect as ConfirmEffect,
             })
@@ -518,7 +527,7 @@ export function evaluateTopicDeals(input: TopicDealInput): DealDecision[] {
               continue
             }
             openCards.add("stage_confirmation")
-            emit("confirm", needsConfirm ? "requires_confirmation" : "one_level_below", {
+            emit("confirm", needsConfirm ? "requires_confirmation" : askReason, {
               ...extra,
               confirmEffect: rule.effect as ConfirmEffect,
             })

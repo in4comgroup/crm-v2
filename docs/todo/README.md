@@ -2,7 +2,7 @@
 
 Work that is decided but **not scheduled**. Each item names its source in the specs. When an item is scheduled, move it into the spec folder of its topic (`docs/specs/<topic>/`) and delete it here.
 
-Last update: 2026-11-17.
+Last update: 2026-11-19.
 
 ## Topics engine (`docs/specs/topics/`)
 
@@ -13,6 +13,7 @@ Last update: 2026-11-17.
 | T3 | Weighted forecast view | A screen for the weighted deal forecast; the data rule exists (spec 01 §9.5: stage probability × amount, the owner's win estimate) | Spec 01 §1.2, §9.5 | Agency pilot (phase 9) needs `deal.win_estimate*` first |
 | T4 | Learning from feedback | Weights stay fixed today; reject reasons and missed items are stored for manual tuning only. Later: suggest weight / text changes from the feedback | Spec 01 §1.2 | After the 4-week tuning loop gives data |
 | T5 | Mailbox read-state timers | «grace» / «forgotten» timers from per-user read state (`\Seen`) | Spec 01 §1.2 | Needs per-user read flags from the mail sync (not synced today) |
+| T6 | **Source trust — Step 2** (speaker authority) | Step 1 (R26, 2026-11-19) caps retold signals at `medium` and stops relayed notes from moving deals alone. Step 2: the model returns a speaker per signal (`first_hand` / `relayed`, column on `signal_instance`), the speaker is matched to a contact and weighted by role (`deal_contact.role` decision maker > other client staff > our rep > unknown; `contact.position`), a registry flag `requiresAuthority` per code (contract signed, selected, final terms, payment promise …) and a stage-rule guard `minSourceTrust`; golden-set cases «relayed vs first-hand» before the switch-on | Spec 02 R26, spec 01 §5.3 / §5.4 / §9.2 | Decide from pilot data whether decision-maker weighting is worth it |
 
 ## Other areas (named by the topics spec as separate work)
 

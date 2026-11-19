@@ -332,6 +332,38 @@ describe("postprocessExtraction", () => {
     expect(r.dropped[0].reason).toBe("inbound_only")
   })
 
+  it("source trust (rule 2a): a relayed note caps high confidence at medium", () => {
+    const sig = [{ code: "SALES_OFFER_REQUESTED", evidence: "Пришлите КП" }]
+    const own = postprocessExtraction(out(sig), ctx(), ITEM)
+    expect(own.instances[0].confidence).toBe("high")
+    expect(own.capped).toEqual([])
+    const relayed = postprocessExtraction(out(sig), ctx(), { ...ITEM, orgAttribution: "unknown", relayed: true })
+    expect(relayed.direction).toBe("inbound")
+    expect(relayed.instances[0].confidence).toBe("medium")
+    expect(relayed.instances[0].counted).toBe(true)
+    expect(relayed.capped.map((c) => c.code)).toEqual(["SALES_OFFER_REQUESTED"])
+    // low stays low (counts 0).
+    const low = postprocessExtraction(out([{ ...sig[0], confidence: "low" as const }]), ctx(), { ...ITEM, relayed: true })
+    expect(low.instances[0].confidence).toBe("low")
+  })
+
+  it("source trust (rule 2a): internal mail caps client codes, not internal-only blocks", () => {
+    const r = postprocessExtraction(
+      out(
+        [
+          { code: "COMPLAINT_QUALITY", evidence: "Брак" },
+          { code: "TEAM_INTERNAL", evidence: "Брак" },
+        ],
+        { direction: "outbound" },
+      ),
+      ctx(),
+      { ...ITEM, orgAttribution: "own_org", allInternal: true },
+    )
+    expect(r.direction).toBe("internal")
+    const conf = Object.fromEntries(r.instances.map((i) => [i.code, i.confidence]))
+    expect(conf).toEqual({ COMPLAINT_QUALITY: "medium", TEAM_INTERNAL: "high" })
+  })
+
   it("drops internal-only blocks on external items", () => {
     const r = postprocessExtraction(out([{ code: "TEAM_INTERNAL", evidence: "Брак" }]), ctx(), ITEM)
     expect(r.dropped[0].reason).toBe("internal_only_block")

@@ -242,6 +242,7 @@ export async function processTopicDeals(
   ])
 
   const dirByItem = new Map(snap.items.map((i) => [i.itemId, i.direction]))
+  const relayedItems = new Set(snap.items.filter((i) => i.relayed).map((i) => i.itemId))
   const instances: InstanceLite[] = snap.instances
     .filter((i) => newInstanceIds.has(i.id) && i.confidence !== "low")
     .sort((a, b) => a.itemDate.getTime() - b.itemDate.getTime() || a.id.localeCompare(b.id))
@@ -252,6 +253,7 @@ export async function processTopicDeals(
       confidence: i.confidence,
       evidence: i.evidence ?? "",
       direction: i.itemId ? (dirByItem.get(i.itemId) ?? null) : null,
+      ...(i.itemId && relayedItems.has(i.itemId) ? { relayed: true } : {}),
     }))
 
   // «Topics with counted instances» (task scope): a topic with no counted

@@ -84,6 +84,10 @@ describe("evaluateTopicDeals — create", () => {
     expect(actions(input({ instances: [inst({ confidence: "medium" })] }))).toEqual(["r-create:propose:medium_confidence"])
   })
 
+  it("source trust: a relayed note never auto-creates → proposal, also at high confidence", () => {
+    expect(actions(input({ instances: [inst({ relayed: true })] }))).toEqual(["r-create:propose:relayed_source"])
+  })
+
   it("proposes when the score is between proposalMinScore and the auto threshold", () => {
     expect(actions(input({ topic: { id: "t1", score: 6, clientId: "c1", contactId: null, hasConcreteTask: true } }))).toEqual([
       "r-create:propose:score_below_auto",
@@ -221,6 +225,15 @@ describe("evaluateTopicDeals — move / outcome / context", () => {
     expect(d.action).toBe("confirm")
     expect(d.reason).toBe("one_level_below")
     expect(d.confirmEffect).toBe("move")
+  })
+
+  it("source trust: a relayed note never moves a deal alone → stage_confirmation", () => {
+    const loose = { ...MOVE_OFFER, guards: { ...MOVE_OFFER.guards, minConfidence: "medium" as const } }
+    const [d] = evaluateTopicDeals(input({ rules: [loose], deal, instances: [inst({ confidence: "medium", relayed: true })] }))
+    expect(d.action).toBe("confirm")
+    expect(d.reason).toBe("relayed_source")
+    // The same instance from the client's own message moves the deal.
+    expect(actions(input({ rules: [loose], deal, instances: [inst({ confidence: "medium" })] }))).toEqual(["r-move:move:move"])
   })
 
   it("requires_confirmation → stage_confirmation; one open per topic", () => {

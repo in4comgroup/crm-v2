@@ -1,8 +1,8 @@
 import "server-only"
 
-import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm"
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
-import { client, contact, contactAddress, deal, member, task, user } from "@/db/schema"
+import { client, contact, contactAddress, deal, member, sourceItem, sourceItemSubject, task, user } from "@/db/schema"
 import {
   cleanEmail,
   cleanTelegram,
@@ -251,6 +251,73 @@ export async function checkContact(idx: OrgIndex, v: ContactValues, rctx: Record
     for (const h of r?.hits.contact ?? []) pushMatch(matches, { kind: "similar", type: "contact", id: h.id, title: h.title, subtitle: h.subtitle ?? undefined, reason: "похожее имя" })
   }
   return { matches: sortMatches(matches).slice(0, 5), refused: null }
+}
+
+// ── Company of a new contact (ai-chat-tools Q8, changed 2026-11-19) ──────
+
+export type CompanySuggestion = { id: string; name: string; reason: string }
+
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, "\\$&")
+
+/**
+ * Likely companies of a new contact the user named no company for. Domain
+ * evidence first: companies whose website / mail domain is the domain of
+ * the contact's e-mail (never a free-mail domain), and companies of known
+ * contacts with an e-mail on that domain. Exactly ONE company from the
+ * domain evidence = `byDomain` — the draft takes it at once (source
+ * «по домену почты»). Then companies linked (topics subjects) to mail /
+ * Telegram items from this address. ≤ 4 candidates, for the question
+ * «К какой компании отнести контакт?».
+ */
+export async function suggestContactCompanies(
+  orgId: string,
+  idx: OrgIndex,
+  v: ContactValues,
+): Promise<{ byDomain: CompanySuggestion | null; candidates: CompanySuggestion[] }> {
+  const live = (c: ClientRow) => c.status !== "deleted" && c.status !== "blocked"
+  const emails = v.emails.map(cleanEmail).filter(Boolean)
+  const domains = [...new Set(emails.map((e) => extractEmailDomain(e)).filter((d) => d && !isFreemailDomain(d)))]
+  const out: CompanySuggestion[] = []
+  const add = (id: string, reason: string) => {
+    const c = idx.clients.find((x) => x.id === id)
+    if (!c || !live(c) || out.some((o) => o.id === id)) return
+    out.push({ id: c.id, name: c.name, reason })
+  }
+  const onDomain = (d: string) => !!d && domains.some((x) => sameDomain(d, x))
+  if (domains.length) {
+    for (const c of idx.clients) if (live(c) && clientDomains(c).some(onDomain)) add(c.id, "домен почты")
+    for (const c of idx.contacts) {
+      if (!c.clientId || c.status === "deleted" || c.status === "blocked") continue
+      const cEmails = [c.email ?? "", ...(idx.addresses.get(c.id) ?? []).filter((a) => a.kind === "email").map((a) => a.value)]
+      if (cEmails.some((e) => onDomain(extractEmailDomain(e.trim().toLowerCase())))) add(c.clientId, "коллеги с тем же доменом")
+    }
+  }
+  const byDomain = out.length === 1 ? out[0] : null
+
+  const tg = cleanTelegram(v.telegram)
+  const needles = [...emails.map((e) => `%${likeEscape(e)}%`), ...(tg ? [`%"username": "${likeEscape(tg)}"%`] : [])]
+  if (!byDomain && needles.length && out.length < 4) {
+    const rows = await db
+      .select({ clientId: sourceItemSubject.clientId, n: sql<number>`count(*)::int` })
+      .from(sourceItemSubject)
+      .innerJoin(sourceItem, eq(sourceItem.id, sourceItemSubject.sourceItemId))
+      .where(
+        and(
+          eq(sourceItem.organizationId, orgId),
+          isNotNull(sourceItemSubject.clientId),
+          or(...needles.map((n) => sql`${sourceItem.metadataJson}::text ILIKE ${n}`)),
+        ),
+      )
+      .groupBy(sourceItemSubject.clientId)
+      .orderBy(desc(sql`count(*)`))
+      .limit(4)
+      .catch((e) => {
+        console.error("[chat/actions] contact company suggestions failed", e)
+        return []
+      })
+    for (const r of rows) if (r.clientId) add(r.clientId, "переписка с этого адреса")
+  }
+  return { byDomain, candidates: out.slice(0, 4) }
 }
 
 function sortMatches(m: DraftMatch[]): DraftMatch[] {

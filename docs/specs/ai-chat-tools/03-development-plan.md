@@ -149,6 +149,22 @@ Built:
 
 **Final checks (2026-11-16)**: full `pnpm chat:eval` = 142 turns, **78 / 78 cases** (plain 16, hard 18, adversarial 12 / 12 runs, card cases 32 / 32 — runs 92 / 96), **0 ungrounded values**, 0 stream errors, gate PASSED; unit tests 887+ pass, lint 0 errors, build OK.
 
+## T7 result (2026-11-19) — company of a new contact (Q25)
+
+Product owner, 2026-11-19: when the company of a new contact is not clear, the chat must ask for it (web and Telegram). Replaces the contact part of Q8.
+
+Built:
+- **Rule** (`missingFields`, `src/lib/chat/actions.ts`): a new contact needs its company (`contactCompany` «Укажите компанию контакта или выберите «Без компании»»), or `noCompany` («Без компании») + at least one channel (`companyOrChannel`). `contactValuesSchema` carries `noCompany`.
+- **Company without a question**: the card company → the page company (Q12) → the ONLY company of the contact's e-mail domain (not free mail; companies with that website / mail domain + companies of known contacts on that domain) — field source «по домену почты» (`FieldSource` `domain`). `suggestContactCompanies` (`src/server/chat/actions/checks.ts`).
+- **The question**: `draftContact` without a company returns `needs_input` + a note with ≤ 4 likely companies (domain evidence, then companies linked through `source_item_subject` to mail / Telegram items from the address) + «Без компании»; the model view also tells the model the card's `company` (so a company found by the domain is never asked about). The model asks ONE `askUser`; `askUser` itself adds «Без компании» to a question about the company of a contact. The reply → `draftContact` again (`companyRef` / `noCompany: true`); the earlier card of that person is cancelled. Prompt: «call draftContact FIRST, never ask about the company before it».
+- **Card picker** (`ContactCompanyPicker`, `draft-card.tsx`): «Компания: [Выбрать компанию]» — search over the org's companies (`GET /api/contacts?clientOptions=1`, active + new) with «Без компании»; «Компания: без компании · изменить».
+- **Existing record**: an item that uses an existing record («Использовать существующий» / «Восстановить» / «Дополнить») needs no new-record fields — the web card and the Telegram card rows now skip them like the server did (`confirm.ts`); so an exact duplicate is never blocked or asked about the company. Telegram: `defaultItemValues` carries `noCompany`; a contact without a company = card state `needs_input` until the reply.
+- **Tests**: unit tests for the rule, the card («Выбрать компанию», «без компании»), Telegram states (`needs_input` / `decide` / `confirm`) — 977 / 977. Eval cases `c01`–`c05` (spec §16).
+
+Eval (2026-11-19):
+- Subset after the fixes (`c0*`, `d0*`, `d10`, `g01`, `q01`; card cases 3 ×): **17 / 17 cases**, 0 ungrounded values, 0 adversarial failures. The first subset run found two faults, both fixed: the model asked about the company BEFORE `draftContact` (no «Без компании» button), and it asked although the card already had the company from the domain (the model view did not show the company).
+- Full run: stopped at `f03` by the org's **monthly AI limit** (IN4COM reached $20.02 of $20 after the day's eval runs — HTTP 402 for every later case). Before the limit: all business-card cases passed; `h13` (a stats answer) and `e01` (1 of 3 runs) failed once — not touched by T7. **To do: re-run the full eval when the limit allows.**
+
 ## Acceptance
 
 Status of each check (2026-11-16):

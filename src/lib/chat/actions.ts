@@ -79,6 +79,12 @@ export type ContactValues = {
   companyKey: string | null
   /** Display name of the chosen company. */
   companyName: string
+  /**
+   * The user said the contact belongs to no company («Без компании»). Without
+   * a company and without this flag the contact is incomplete — the chat asks
+   * «К какой компании отнести контакт?» (ai-chat-tools Q8, changed 2026-11-19).
+   */
+  noCompany?: boolean
 }
 
 export const TASK_TYPES = ["meet", "call", "email", "offer", "docs", "support", "other"] as const
@@ -207,7 +213,7 @@ export type TaskUpdateValues = {
 export type ItemType = "company" | "contact" | "task" | "deal" | "update" | "link" | "order_request" | "deal_move" | "task_update"
 
 /** Where a value came from — shown as a hint next to the field. */
-export type FieldSource = "input" | "file" | "page" | "default" | "model" | "rule"
+export type FieldSource = "input" | "file" | "page" | "default" | "model" | "rule" | "domain"
 export type FieldMeta = { source: FieldSource; fileName?: string; fileId?: string }
 
 export const FIELD_SOURCE_LABELS: Record<FieldSource, string> = {
@@ -217,6 +223,7 @@ export const FIELD_SOURCE_LABELS: Record<FieldSource, string> = {
   default: "по умолчанию",
   model: "текст ИИ",
   rule: "по правилу воронки",
+  domain: "по домену почты",
 }
 
 export type MatchKind = "exact" | "similar" | "deleted"
@@ -310,7 +317,7 @@ export const COMPANY_FIELD_LABELS: Record<keyof CompanyValues, string> = {
   comment: "Комментарий",
 }
 
-export const CONTACT_FIELD_LABELS: Record<Exclude<keyof ContactValues, "companyId" | "companyKey">, string> = {
+export const CONTACT_FIELD_LABELS: Record<Exclude<keyof ContactValues, "companyId" | "companyKey" | "noCompany">, string> = {
   name: "Имя",
   nameNative: "Имя (другое написание)",
   position: "Должность",
@@ -356,6 +363,7 @@ export const MISSING_LABELS: Record<string, string> = {
   dueDate: "Укажите срок",
   assignee: "Выберите исполнителя",
   companyOrChannel: "Укажите компанию или хотя бы один телефон, e-mail или Telegram",
+  contactCompany: "Укажите компанию контакта или выберите «Без компании»",
 }
 
 export function emptyCompanyValues(): CompanyValues {
@@ -448,10 +456,13 @@ export function missingFields(item: Pick<DraftItem, "type" | "values">): string[
   }
   if (!(item.values as CompanyValues | ContactValues).name.trim()) out.push("name")
   if (item.type === "contact") {
+    // ai-chat-tools Q8 (changed 2026-11-19): a new contact needs its company,
+    // or the explicit «Без компании» — then at least one channel.
     const v = item.values as ContactValues
     const hasCompany = !!(v.companyId || v.companyKey)
     const hasChannel = v.emails.some((e) => e.trim()) || v.phones.some((p) => p.trim()) || !!v.telegram.trim()
-    if (!hasCompany && !hasChannel) out.push("companyOrChannel")
+    if (!hasCompany && !v.noCompany) out.push("contactCompany")
+    else if (!hasCompany && !hasChannel) out.push("companyOrChannel")
   }
   return out
 }
@@ -1128,6 +1139,7 @@ export const contactValuesSchema = z.object({
   companyId: z.string().max(100).nullable().default(null),
   companyKey: z.string().max(10).nullable().default(null),
   companyName: str(200).default(""),
+  noCompany: z.boolean().default(false),
 })
 
 export const confirmItemSchema = z.object({

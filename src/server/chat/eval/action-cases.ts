@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm"
 import { cleanEmail, cleanTelegram, cleanWebsite, phoneKey, type ChatDraftPart, type CompanyValues, type ContactValues, type TaskValues, type DealValues, type UpdateValues, type LinkValues, type OrderRequestValues, type DealMoveValues, type TaskUpdateValues } from "@/lib/chat/actions"
 import { resolveDueText } from "@/lib/chat/due-date"
 import { execRows } from "@/server/analytics-query"
+import { extractEmailDomain, extractWebsiteDomain, isFreemailDomain } from "@/lib/email-domain"
 import { getOwnOrgContext } from "@/server/identity/own-org"
 import type { EvalCase } from "./questions"
 import type { TurnResult } from "./turn-result"
@@ -89,6 +90,10 @@ const cardCase = (id: string, file: string, question: string): EvalCase => ({
     return [...oneCard(t), ...complete(t, e), ...ungrounded(t, e)]
   },
 })
+
+// Invented person + phone of the c-cases (not in the test DB).
+const NEW_PERSON = "Олег Вересаев"
+const NEW_PHONE = "+7 912 345-67-81"
 
 export const ACTION_CASES: EvalCase[] = [
   cardCase("d01", "card-ru.png", "Сохрани визитку в CRM"),
@@ -615,7 +620,135 @@ ACTION_CASES.push(
       return out
     },
   },
+
+  // ── Company of a new contact (Q8, changed 2026-11-19) ───────────────
+  {
+    id: "c01",
+    kind: "action",
+    question: `Добавь контакт ${NEW_PERSON}, ${NEW_PHONE}`,
+    // No company named, no domain → ONE question «К какой компании …» with «Без компании»; no company invented.
+    check: async (t) => {
+      const out = [...noInventedCompany(t)]
+      const q = t.questions.find((x) => /компани/i.test(x.question))
+      if (!q) out.push("no question about the company")
+      else if (!(q.options ?? []).some((o) => /без компании/i.test(o))) out.push("the question has no «Без компании» button")
+      if (t.questions.length > 2) out.push(`${t.questions.length} questions (max 2)`)
+      return out
+    },
+  },
+  {
+    id: "c02",
+    kind: "action",
+    question: "",
+    questionFn: async (ctx) => {
+      const c = await uniqueCompany(ctx.orgId)
+      return `Добавь контакт ${NEW_PERSON} из компании ${c?.name ?? "Вектор"}, ${NEW_PHONE}`
+    },
+    // The company is named → linked, NO question.
+    check: async (t, ctx) => {
+      const c = await uniqueCompany(ctx.orgId)
+      if (!c) return []
+      const out: string[] = []
+      if (t.questions.length || askedCompanyInText(t)) out.push("asked for the company although it was named")
+      const p = contacts(t)[0]
+      if (!p) return [...out, "no contact draft"]
+      if (p.companyId !== c.id) out.push(`contact company «${p.companyName}», expected «${c.name}»`)
+      return out
+    },
+  },
+  {
+    id: "c03",
+    kind: "action",
+    question: "",
+    questionFn: async (ctx) => {
+      const c = await domainCompany(ctx.orgId)
+      return `Добавь контакт ${NEW_PERSON}, ${c ? `oleg.veresaev@${c.domain}` : NEW_PHONE}`
+    },
+    // An e-mail on the domain of ONE company → that company at once («по домену почты»), NO question.
+    check: async (t, ctx) => {
+      const c = await domainCompany(ctx.orgId)
+      if (!c) return []
+      const out: string[] = []
+      if (t.questions.some((x) => /компани/i.test(x.question)) || askedCompanyInText(t)) out.push("asked for the company although the e-mail domain gives it")
+      const it = items(t).find((i) => i.type === "contact")
+      if (!it) return [...out, "no contact draft"]
+      const v = it.values as ContactValues
+      // The right company is what counts: by the domain («по домену почты») or found by the model itself.
+      if (v.companyId !== c.id) out.push(`contact company «${v.companyName}», expected «${c.name}» (domain ${c.domain})`)
+      return out
+    },
+  },
+  {
+    id: "c04",
+    kind: "action",
+    question: `Добавь контакт ${NEW_PERSON}, ${NEW_PHONE}. Он не относится ни к какой компании`,
+    // «Без компании» said → a ready card with noCompany, NO question.
+    check: async (t) => {
+      const out = [...noInventedCompany(t)]
+      if (t.questions.some((x) => /компани/i.test(x.question)) || askedCompanyInText(t)) out.push("asked for the company although the user said «no company»")
+      const p = contacts(t)[0]
+      if (!p) return [...out, "no contact draft"]
+      if (!p.noCompany) out.push("noCompany is not set")
+      return out
+    },
+  },
+  {
+    id: "c05",
+    kind: "action",
+    question: "",
+    before: [`Добавь контакт ${NEW_PERSON}, ${NEW_PHONE}`],
+    questionFn: async (ctx) => (await uniqueCompany(ctx.orgId))?.name ?? "Вектор",
+    // The reply to «К какой компании …» → the contact card with that company.
+    check: async (t, ctx) => {
+      const c = await uniqueCompany(ctx.orgId)
+      if (!c) return []
+      const ps = contacts(t)
+      if (!ps.length) return ["no contact draft after the reply"]
+      return ps.some((p) => p.companyId === c.id) ? [] : [`contact company «${ps[0].companyName}», expected «${c.name}»`]
+    },
+  },
 )
+
+/** The answer text asks for the company («К какой компании …?», «уточните компанию»). */
+const askedCompanyInText = (t: TurnResult) => /к какой компании|уточните[^.?!]*компани|в какой компании/i.test(t.answer)
+
+/** No company card and no company on the contact unless the user named one. */
+function noInventedCompany(t: TurnResult): string[] {
+  const out: string[] = []
+  const cs = companies(t)
+  if (cs.length) out.push(`a company was made up: «${cs[0].name}»`)
+  for (const p of contacts(t)) if (p.companyId || p.companyKey) out.push(`contact linked to «${p.companyName}» although no company was named`)
+  return out
+}
+
+/** A live company with a unique name (prefers «Вектор»). */
+async function uniqueCompany(orgId: string): Promise<{ id: string; name: string } | null> {
+  const rows = await execRows<{ id: string; name: string }>(sql`
+    select c.id, c.name from client c
+    where c.organization_id = ${orgId} and c.status not in ('deleted', 'blocked') and length(c.name) >= 4
+      and (select count(*) from client c2 where c2.organization_id = ${orgId} and lower(c2.name) = lower(c.name)) = 1
+    order by (lower(c.name) = 'вектор') desc, c.updated_at desc limit 1`)
+  return rows[0] ?? null
+}
+
+/** A live company whose own (non-free-mail) domain no other company / other company's contact uses. */
+async function domainCompany(orgId: string): Promise<{ id: string; name: string; domain: string } | null> {
+  const clients = await execRows<{ id: string; name: string; web_url: string | null; email: string | null; status: string }>(sql`
+    select id, name, web_url, email, status from client where organization_id = ${orgId}`)
+  const contactsRows = await execRows<{ client_id: string | null; email: string | null }>(sql`
+    select client_id, email from contact where organization_id = ${orgId} and email is not null`)
+  const domainsOf = (c: { web_url: string | null; email: string | null }) =>
+    [c.web_url ? extractWebsiteDomain(c.web_url) : "", c.email ? extractEmailDomain(c.email) : ""].filter((d) => d && !isFreemailDomain(d))
+  for (const c of clients) {
+    if (c.status === "deleted" || c.status === "blocked") continue
+    for (const d of domainsOf(c)) {
+      const others = clients.some((o) => o.id !== c.id && o.status !== "deleted" && domainsOf(o).includes(d))
+      const otherContacts = contactsRows.some((k) => k.client_id && k.client_id !== c.id && extractEmailDomain((k.email ?? "").toLowerCase()) === d)
+      if (!others && !otherContacts) return { id: c.id, name: c.name, domain: d }
+    }
+  }
+  return null
+}
 
 /** An open deal with a unique name on a working stage + another working stage of the funnel. */
 async function movableDeal(orgId: string): Promise<{ id: string; name: string; target: { id: string; name: string } } | null> {

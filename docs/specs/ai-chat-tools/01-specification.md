@@ -113,7 +113,7 @@ AI SDK 7 can pause a tool for approval, but approval of a tool call approves **t
 | Tool | Input (zod) |
 |---|---|
 | `draftCompany` | `name`, `nameNative?`, `aliases?`, `website?`, `emails?`, `phones?`, `address?`, `industryHint?`, `comment?`, `evidence` (quotes per field) |
-| `draftContact` | `fullName`, `nameNative?`, `position?`, `companyRef?` (an existing company `ref` or a draft id or a name), `emails?`, `phones?`, `telegram?`, `comment?`, `evidence` |
+| `draftContact` | `fullName`, `nameNative?`, `position?`, `companyRef?` (an existing company `ref` or a draft id or a name), `noCompany?` (the user said «без компании», T7), `emails?`, `phones?`, `telegram?`, `comment?`, `evidence` |
 | `draftDeal` | `name`, `companyRef`, `contactRefs?`, `value?` + currency, `dealType?`, `stage?`, `description?` (what was agreed), `nextStep?`, `evidence` |
 | `draftTask` | `title`, `description?`, `type?`, `dueDate?` (YYYY-MM-DD[THH:MM], org time zone), `assignee?` («me» / a member name), `priority?`, `companyRef?`, `contactRef?`, `dealRef?`, `evidence` |
 | `draftTasks` | a list of the above (meeting notes with several to-dos) |
@@ -124,6 +124,7 @@ Built (T1): `draftCompany` / `draftContact` without the `evidence` input — the
 
 - Title by kind; fields as a small form, prefilled; each value has a source hint (tooltip «из визитки», «из сообщения», «по умолчанию»); values the check removed are shown struck through with the reason («нет в тексте»).
 - **Required and missing** fields highlighted («Укажите компанию»).
+- **Company of a new contact** (T7, 2026-11-19): a contact with no company shows «Компания: [Выбрать компанию]» — a search over the org's companies (active + new) with «Без компании» first; a chosen company shows as «Компания: X · убрать»; «Без компании» shows «Компания: без компании · изменить». A company from the e-mail domain carries the hint «по домену почты».
 - **Duplicates** above the form: «Похоже, уже есть: Контакт «Алексей Смирнов» (Вектор) — совпадает телефон» with «Использовать существующий» / «Дополнить существующий» (T4) / «Всё равно создать новый».
 - Linked drafts are grouped (company + contact from one card; a deal + its tasks) with one «Создать всё» and per-item checkboxes.
 - «Прикрепить файл к записи» checkbox when the draft came from an attachment (default on for a business card → the contact, meeting notes → the deal).
@@ -160,7 +161,7 @@ For each field value of a draft: the value (normalised) must appear in the **inp
 | Record | Required | Default (shown, editable) |
 |---|---|---|
 | Company | name | relationship tag none (the «Компании» tabs derive it from deals / orders); «Ответственный» = the user (as in the UI); web enrichment per the org setting `clients.enrichOnCreate` |
-| Contact | name; and a company **or** at least one channel (phone / e-mail / Telegram) — else ask (Q8) | company = the company of the same input (card) or of the page the user is on (Q12 context) |
+| Contact | name; and its **company** — or the explicit «Без компании» plus at least one channel (phone / e-mail / Telegram) — else ask (Q8, changed 2026-11-19, T7) | company = the company of the same input (card), else of the page the user is on (Q12 context), else the ONLY company of the contact's e-mail domain (not free mail; companies with that website / mail domain + companies of known contacts on that domain) — source «по домену почты»; else ask «К какой компании отнести контакт?». An exact duplicate (the card offers the existing contact) is never asked about |
 | Deal | company, name | stage = the first `active` stage of the org funnel (not «Контакт до запроса», area0) unless the input says more (Q8); type = the org default (`resolveDealTypeId`); value only when stated; contacts = the contacts of the input; name = «<Компания> — <предмет>» |
 | Task | title, due date | assignee = the user; due = from the input («до пятницы» → that Friday 18:00 org time); none stated → **ask** (today a missing due date means «now», which makes every such task overdue — Q8); type from the verb (позвонить → `call`, встреча → `meet`, КП → `offer`, письмо → `email`); links = the company / contact / deal of the input |
 
@@ -192,8 +193,9 @@ The CH6 ingest keeps working (segments → signals → topics → deal bridge, 3
 
 ## 12. Clarification questions (A5)
 
-- **When to ask** (and only then): a required field is missing (task due date; contact without company and channel; deal without company); a value is ambiguous (two companies match «Вектор»; «Петров» = two members; the deal type is unclear in an org with several types); a duplicate decision the code cannot take («совпадает телефон с контактом X — это он?»); the input is unreadable (blurred photo, voice too noisy → «не удалось разобрать номер телефона, продиктуйте его»).
+- **When to ask** (and only then): a required field is missing (task due date; the company of a new contact; deal without company); a value is ambiguous (two companies match «Вектор»; «Петров» = two members; the deal type is unclear in an org with several types); a duplicate decision the code cannot take («совпадает телефон с контактом X — это он?»); the input is unreadable (blurred photo, voice too noisy → «не удалось разобрать номер телефона, продиктуйте его»).
 - **How**: tool `askUser { question, options[≤ 5], allowFreeText, draftId? }` → a `data-question` part: the question + buttons («Вектор (Екатеринбург)», «Вектор-Плюс», «Другая компания…»). A click sends the answer as a normal user message (so the history reads naturally), and the model continues the draft. Free text always works too.
+- **Company of a new contact** (T7, 2026-11-19): when no company is named and none comes from the card / page / e-mail domain, `draftContact` returns `needs_input` + a note with the buttons: up to 4 likely companies (domain evidence, then companies linked to mail / Telegram items from this address — `suggestContactCompanies`) + «Без компании». The model asks ONE `askUser` «К какой компании отнести контакт …?». The reply (a button = its text, or a typed name) → `draftContact` again for the same person: a company name → `companyRef` (a company not in the CRM → `draftCompany` first); «Без компании» → `noCompany: true`. The earlier stand-alone card of that person is cancelled, so one card stays. Web and Telegram work the same (same turn runner; Telegram shows the buttons and the card as «нужны данные»).
 - **Limits**: at most **2 questions per turn**, at most one per missing field; everything optional is prefilled instead of asked; never ask what the card can show as an editable default.
 - The prompt gets explicit rules + examples; the eval checks that a question is asked when required data is missing and NOT asked when it is present (§16).
 
@@ -223,6 +225,7 @@ Extend `pnpm chat:eval` (docs/specs/ai-chat §12) with action cases on the test 
 
 - **Fixtures** (`src/server/chat/eval/fixtures/`): 6 synthetic business cards (PNG made by a script: RU, EN, both scripts, two phones, a free-mail address, a blurred one), 3 voice messages (synthetic TTS, WAV), 3 meeting notes (DOCX / PDF / text), 1 mail with an injected instruction.
 - **Deterministic checks**: draft fields equal the expected values; no ungrounded value; an existing contact found as a duplicate by phone; «us» refused; the right company linked; due dates resolved in the org time zone; a question asked when required data is missing and not asked when present; no draft from the injected instruction alone; confirm creates exactly the expected rows (then deleted).
+- **Company of a new contact** (T7): `c01` no company → the question with «Без компании», no company invented; `c02` company named → linked, no question; `c03` e-mail on one company's domain → that company «по домену почты», no question; `c04` «не относится ни к какой компании» → `noCompany`, no question; `c05` the reply to the question (a company name) → the card with that company.
 - **Gate**: as the chat gate (≥ 90 %, no adversarial failure), plus **0 ungrounded contact values** across the set.
 
 ## 17. Budgets

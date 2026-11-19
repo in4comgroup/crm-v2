@@ -50,6 +50,7 @@ import type { RecordsContext } from "@/server/chat/records"
 import {
   checkCompany,
   checkContact,
+  suggestContactCompanies,
   clientInOrg,
   clientRow,
   existingClient,
@@ -150,10 +151,21 @@ function modelView(part: ChatDraftPart, note?: string) {
     status,
     items: items.map((i) => {
       const t = i.type === "task" ? (i.values as TaskValues) : null
+      const p = i.type === "contact" ? (i.values as ContactValues) : null
       return {
         key: i.key,
         type: i.type,
         name: itemLabel(i),
+        // T7: the model must know the card already has the company (e.g. from the e-mail domain) — never ask then.
+        ...(p
+          ? {
+              company: p.companyName
+                ? `${p.companyName}${i.meta.companyName?.source === "domain" ? " (по домену почты — не спрашивай)" : ""}`
+                : p.noCompany
+                  ? "без компании"
+                  : null,
+            }
+          : {}),
         ...(t ? { due: t.dueDate ? dueLabel(t.dueDate) : null, assignee: t.assigneeName || null } : {}),
         ...(i.refused ? { refused: i.refused } : {}),
         ...(i.missing.length ? { missing: i.missing.map((m) => MISSING_LABELS[m] ?? m) } : {}),
@@ -564,7 +576,8 @@ export function buildActionTools(turn: ActionTurn) {
         "Prepare a NEW contact (person) card for the user to confirm (nothing is created until the user clicks «Создать»). " +
         "Use only values literally in the user's messages or attached files; never invent a phone, e-mail or position. " +
         "companyRef: the draftId returned by draftCompany in this answer (the contact joins that card), or the ref of an existing company, or the company name. " +
-        "Without companyRef the company the user has open in the CRM is used. " +
+        "Without companyRef: the company the user has open in the CRM, else the only company of the contact's e-mail domain; else the card needs the company — follow the note (ask which company). " +
+        "noCompany: true only when the user said the person belongs to no company («без компании»). " +
         "Returns draftId and status: ready | needs_input | duplicate | refused.",
       inputSchema: z.object({
         fullName: z.string().describe("Person's full name as written in the input"),
@@ -574,6 +587,7 @@ export function buildActionTools(turn: ActionTurn) {
         phones: z.array(z.string()).max(5).optional().describe("All phones of the person as written (mobile first)"),
         telegram: z.string().optional().describe("Telegram handle, e.g. @ivan_petrov"),
         companyRef: z.string().optional().describe("draftId of a company card of this answer, ref of an existing company, or a company name"),
+        noCompany: z.boolean().optional().describe("true = the user said the person belongs to no company («Без компании»)"),
       }),
       execute: (input) =>
         serial(async () => {
@@ -610,6 +624,20 @@ export function buildActionTools(turn: ActionTurn) {
                 g.meta.companyName = { source: "page" }
               }
             }
+            // ai-chat-tools Q8 (changed 2026-11-19): no company named → the
+            // only company of the e-mail domain, else ask which company.
+            let suggestions: { name: string; reason: string }[] = []
+            if (!v.companyId && !v.companyKey) {
+              if (input.noCompany) v.noCompany = true
+              else if (co.kind === "empty") {
+                const sug = await suggestContactCompanies(turn.orgId, idx, v)
+                if (sug.byDomain) {
+                  v.companyId = sug.byDomain.id
+                  v.companyName = sug.byDomain.name
+                  g.meta.companyName = { source: "domain" }
+                } else suggestions = sug.candidates
+              }
+            }
             const chk = await checkContact(idx, v, turn.rctx)
             // The same person drafted earlier in this answer as a stand-alone card
             // (the model called draftContact before draftCompany): that card is
@@ -633,6 +661,15 @@ export function buildActionTools(turn: ActionTurn) {
               matches: chk.matches,
               missing: missingFields({ type: "contact", values: v }),
               refused: chk.refused,
+            }
+            if (item.missing.includes("contactCompany") && !item.refused) {
+              const exact = item.matches.some((m) => m.kind === "exact")
+              const buttons = [...suggestions.map((x) => `«${x.name}» (${x.reason})`), "«Без компании»"].join(", ")
+              const ask = exact
+                ? "Человек уже есть в CRM — карточка предлагает существующий контакт; про компанию не спрашивай."
+                : `Компания контакта не указана. Задай ОДИН вопрос askUser «К какой компании отнести контакт ${v.name}?» с кнопками: ${buttons} (в кнопках только названия). ` +
+                  "Ответ с названием → снова draftContact с тем же человеком и companyRef = ответ (новой компании нет в CRM → сначала draftCompany); «Без компании» → draftContact с noCompany: true."
+              note = note ? `${note} ${ask}` : ask
             }
             return modelView(await saveDraft([item], into), note)
           } catch (e) {
@@ -664,6 +701,14 @@ export function buildActionTools(turn: ActionTurn) {
             ),
           ].slice(0, 5),
           allowFreeText: true,
+        }
+        // T7 (Q25): a question about the company of a contact always offers «Без компании».
+        if (
+          /компани/i.test(part.question) &&
+          /контакт|относ|работает/i.test(part.question) &&
+          !part.options.some((o) => /без компании/i.test(o))
+        ) {
+          part.options = [...part.options.slice(0, 4), "Без компании"]
         }
         turn.writer.write({ type: "data-question", id: part.id, data: part } as Parameters<UIMessageStreamWriter["write"]>[0])
         return { shownToUser: true, note: "Вопрос с кнопками показан. Не повторяй его текстом; закончи ответ и жди ответа пользователя." }

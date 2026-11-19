@@ -8,8 +8,11 @@
 // may show `created`).
 import { useEffect, useId, useState, type ReactNode } from "react"
 import Link from "next/link"
-import { ExternalLink, FilePlus2 } from "lucide-react"
+import { ChevronsUpDown, ExternalLink, FilePlus2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { entityMatchesFilter, FIELD_WEIGHT } from "@/lib/entity-search"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -83,6 +86,8 @@ type ContactForm = {
   companyId: string | null
   companyKey: string | null
   companyName: string
+  /** «Без компании» (ai-chat-tools Q8, changed 2026-11-19). */
+  noCompany: boolean
 }
 
 type TaskForm = { kind: "task" } & TaskValues
@@ -243,6 +248,7 @@ function toForm(item: DraftItem): FormValues {
       companyId: v.companyId ?? null,
       companyKey: v.companyKey ?? null,
       companyName: v.companyName ?? "",
+      noCompany: v.noCompany === true,
     }
   }
   if (item.type === "deal") {
@@ -424,6 +430,7 @@ function toValues(
       companyId: form.companyId,
       companyKey: form.companyKey,
       companyName: form.companyName.trim(),
+      noCompany: form.noCompany && !form.companyId && !form.companyKey,
     }
   }
   if (form.kind === "deal") {
@@ -833,6 +840,107 @@ function FieldRow({
       {control}
       {below}
       <RemovedList removed={removed} />
+    </div>
+  )
+}
+
+/**
+ * Company of a new contact (ai-chat-tools Q8, changed 2026-11-19): a search
+ * over the org's companies + «Без компании». Options load on first open
+ * (`GET /api/contacts?clientOptions=1`, active + new companies).
+ */
+function ContactCompanyPicker({
+  noCompany,
+  disabled,
+  onPick,
+  onReset,
+}: {
+  noCompany: boolean
+  disabled: boolean
+  /** null = «Без компании». */
+  onPick: (c: { id: string; name: string } | null) => void
+  onReset: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const [options, setOptions] = useState<{ id: string; name: string }[] | null>(null)
+  useEffect(() => {
+    if (!open || options) return
+    let cancelled = false
+    fetch("/api/contacts?clientOptions=1")
+      .then((r) => (r.ok ? r.json() : { options: [] }))
+      .then((d: { options?: { id: string; name: string }[] }) => {
+        if (!cancelled) setOptions(d.options ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setOptions([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, options])
+  if (noCompany) {
+    return (
+      <p className="text-xs">
+        <span className="text-muted-foreground">Компания:</span> без компании{" "}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onReset}
+          className="text-muted-foreground hover:text-foreground underline underline-offset-2"
+        >
+          изменить
+        </button>
+      </p>
+    )
+  }
+  const shown = (options ?? []).filter((o) => !query.trim() || entityMatchesFilter(query, [{ value: o.name, weight: FIELD_WEIGHT.name }])).slice(0, 50)
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-muted-foreground">Компания:</span>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={disabled}>
+            Выбрать компанию
+            <ChevronsUpDown className="size-3 opacity-60" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72 p-0" align="start">
+          <Command shouldFilter={false}>
+            <CommandInput placeholder="Найти компанию…" value={query} onValueChange={setQuery} />
+            <CommandList>
+              {options === null ? (
+                <div className="p-3 text-xs text-muted-foreground">Загрузка…</div>
+              ) : (
+                <CommandEmpty>Компания не найдена</CommandEmpty>
+              )}
+              <CommandGroup>
+                <CommandItem
+                  value="__none__"
+                  onSelect={() => {
+                    setOpen(false)
+                    onPick(null)
+                  }}
+                >
+                  Без компании
+                </CommandItem>
+                {shown.map((o) => (
+                  <CommandItem
+                    key={o.id}
+                    value={o.id}
+                    onSelect={() => {
+                      setOpen(false)
+                      onPick(o)
+                    }}
+                  >
+                    {o.name}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
     </div>
   )
 }
@@ -1414,7 +1522,9 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
     const include = !item.refused && (included[item.key] ?? true)
     const choices = choiceOptions(item)
     const choice = effectiveChoice(choices, picked[item.key])
-    const missing = missingFields({ type: item.type, values: toValues(form) })
+    // An existing / restored / filled record needs no new-record fields (the server skips them too).
+    const usesExisting = !!choice && (choice.decision === "use_existing" || choice.decision === "restore" || choice.decision === "fill_existing")
+    const missing = usesExisting ? [] : missingFields({ type: item.type, values: toValues(form) })
     return { item, form, include, choices, choice, missing }
   })
   const includedRows = rows.filter((r) => r.include)
@@ -1539,6 +1649,19 @@ export function DraftCard({ part }: { part: ChatDraftPart }) {
           name={form.companyName}
           disabled={disabled}
           onClear={() => update(item, { companyId: null, companyName: "" })}
+        />,
+      )
+    } else if (form.kind === "contact") {
+      // ai-chat-tools Q8 (changed 2026-11-19): pick the company here, or «Без компании».
+      out.push(
+        <ContactCompanyPicker
+          key="companyPick"
+          noCompany={form.noCompany}
+          disabled={disabled}
+          onPick={(c) =>
+            update(item, c ? { companyId: c.id, companyName: c.name, noCompany: false } : { companyId: null, companyName: "", noCompany: true })
+          }
+          onReset={() => update(item, { noCompany: false })}
         />,
       )
     }

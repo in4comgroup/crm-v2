@@ -454,6 +454,7 @@ export function defaultItemValues(item: DraftItem): unknown {
       companyId: v.companyId ?? null,
       companyKey: v.companyKey ?? null,
       companyName: (v.companyName ?? "").trim(),
+      noCompany: v.noCompany === true && !v.companyId && !v.companyKey,
     }
   }
   if (item.type === "deal") {
@@ -599,12 +600,18 @@ export type TgCardState = "confirm" | "decide" | "needs_input" | "open_crm" | "c
 type CardRow = { item: DraftItem; include: boolean; choices: CardChoice[]; missing: string[] }
 
 function cardRows(draft: ChatDraftPart): CardRow[] {
-  return sortedItems(draft).map((item) => ({
-    item,
-    include: !item.refused,
-    choices: cardItemChoices(item),
-    missing: missingFields({ type: item.type, values: defaultItemValues(item) as DraftItem["values"] }),
-  }))
+  return sortedItems(draft).map((item) => {
+    const choices = cardItemChoices(item)
+    // An exact match defaults to «Использовать существующий»: no new-record
+    // fields are needed then (the web card and the server skip them too).
+    const usesExisting = choices.some((c) => c.decision === "use_existing")
+    return {
+      item,
+      include: !item.refused,
+      choices,
+      missing: usesExisting ? [] : missingFields({ type: item.type, values: defaultItemValues(item) as DraftItem["values"] }),
+    }
+  })
 }
 
 /**

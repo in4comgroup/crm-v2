@@ -77,10 +77,25 @@ describe("DraftCard", () => {
     expect(html).toContain("нет в тексте сообщения или файла")
     // Missing fields of the contact (computed live).
     expect(html).toContain("Укажите название / имя")
-    expect(html).toContain("Укажите компанию или хотя бы один телефон, e-mail или Telegram")
+    expect(html).toContain("Укажите компанию контакта или выберите «Без компании»")
+    // A contact without a company: the company picker (Q8, changed 2026-11-19).
+    expect(html).toContain("Выбрать компанию")
     expect(html).toContain("Прикрепить файл к записи: «визитка.jpg»")
     // «Создать всё» is disabled while an included item misses something.
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Создать всё/)
+  })
+
+  test("«Без компании» replaces the picker and needs a channel", async () => {
+    const part = draft()
+    const items = part.draft.items.map((i) =>
+      i.type === "contact" ? { ...i, values: { ...i.values, name: "Иван Петров", noCompany: true } } : i,
+    )
+    const html = await render({ ...part, draft: { ...part.draft, items } })
+    expect(html).toContain("без компании")
+    expect(html).toContain("изменить")
+    expect(html).not.toContain("Выбрать компанию")
+    expect(html).not.toContain("Укажите компанию контакта")
+    expect(html).toContain("Укажите компанию или хотя бы один телефон, e-mail или Telegram")
   })
 
   test("created state shows results, no form", async () => {

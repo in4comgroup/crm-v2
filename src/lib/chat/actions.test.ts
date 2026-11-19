@@ -122,11 +122,19 @@ describe("unclear photo", () => {
 })
 
 describe("required fields (Q8)", () => {
-  it("a contact needs a company or a channel", () => {
+  it("a new contact needs its company, or «Без компании» + a channel (Q8, changed 2026-11-19)", () => {
     const v = parseItemValues("contact", { name: "Иван" })
     expect(v).not.toBeNull()
-    expect(missingFields({ type: "contact", values: v! })).toEqual(["companyOrChannel"])
-    expect(missingFields({ type: "contact", values: { ...(v as object), phones: ["+79120001122"] } as never })).toEqual([])
+    expect(missingFields({ type: "contact", values: v! })).toEqual(["contactCompany"])
+    // A channel alone is not enough any more: the company is asked.
+    expect(missingFields({ type: "contact", values: { ...(v as object), phones: ["+79120001122"] } as never })).toEqual(["contactCompany"])
+    // «Без компании»: then at least one channel.
+    expect(missingFields({ type: "contact", values: { ...(v as object), noCompany: true } as never })).toEqual(["companyOrChannel"])
+    expect(missingFields({ type: "contact", values: { ...(v as object), noCompany: true, phones: ["+79120001122"] } as never })).toEqual([])
+    // A company (existing or of the same card) is enough.
+    expect(missingFields({ type: "contact", values: { ...(v as object), companyId: "cl_1" } as never })).toEqual([])
+    expect(missingFields({ type: "contact", values: { ...(v as object), companyKey: "c1" } as never })).toEqual([])
+    expect(parseItemValues("contact", { name: "Иван", noCompany: true })).toMatchObject({ noCompany: true })
     expect(missingFields({ type: "company", values: parseItemValues("company", { name: " " })! })).toEqual(["name"])
   })
 })

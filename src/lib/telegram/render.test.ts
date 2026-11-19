@@ -395,6 +395,7 @@ describe("draft cards", () => {
             companyId: null,
             companyKey: "c1",
             companyName: "Альфа ООО",
+            noCompany: false,
           },
         },
       ],
@@ -509,10 +510,19 @@ describe("draft cards", () => {
     expect(telegramCardConfirmInput(d)).toBeNull()
   })
 
+  it("a contact without a company → needs input; an exact match → the choice, not the company (Q8, 2026-11-19)", () => {
+    const lone = contact({ companyKey: null, companyName: "" })
+    expect(telegramCardState(draftPart([lone]))).toBe("needs_input")
+    expect(telegramCardState(draftPart([contact({ companyKey: null, companyName: "", noCompany: true })]))).toBe("confirm")
+    const dup = contact({ companyKey: null, companyName: "" })
+    dup.matches = [{ kind: "exact", type: "contact", id: "ct_9", title: "Пётр Иванов", reason: "тот же телефон" }]
+    expect(telegramCardState(draftPart([dup]))).toBe("decide")
+  })
+
   it("a refused item is shown and sent with include: false", () => {
     const c = company({ name: "Наша компания" })
     c.refused = "Это ваша организация"
-    const d = draftPart([c, contact({ companyKey: null, companyName: "" })])
+    const d = draftPart([c, contact({ companyKey: null, companyName: "", noCompany: true })])
     expect(telegramCardState(d)).toBe("confirm")
     expect(card(d).html).toContain("⛔ Компания: Наша компания — Это ваша организация")
     expect(telegramCardConfirmInput(d)!.items.map((i) => [i.key, i.include])).toEqual([

@@ -240,12 +240,12 @@ export const auth = betterAuth({
         const inviteLink = `${appUrl}/accept-invitation/${data.id}`
         await sendEmails({
           to: data.email,
-          subject: `Вас пригласили присоединиться к ${data.organization.name}`,
+          subject: `Вас пригласили присоединиться к ${data.organization.name} в системе SalesDaily`,
           body: `
             <p>Здравствуйте,</p>
-            <p><strong>${data.inviter.user.name}</strong> (${data.inviter.user.email}) приглашает вас присоединиться к <strong>${data.organization.name}</strong>.</p>
+            <p><strong>${data.inviter.user.name}</strong> (${data.inviter.user.email}) приглашает вас присоединиться к <strong>${data.organization.name}</strong> в системе SalesDaily.</p>
             <p><a href="${inviteLink}">Нажмите здесь, чтобы принять приглашение</a></p>
-            <p>Если у вас ещё нет аккаунта, вы сможете его создать.</p>
+            <p>Если у вас ещё нет аккаунта в SalesDaily, вы сможете его создать.</p>
           `,
         })
       },

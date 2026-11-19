@@ -1,13 +1,23 @@
 "use server"
 
 import { db } from "@/db/drizzle"
-import { contact, client, user, type EntityStatus } from "@/db/schema"
-import { and, asc, eq, desc, ilike, inArray, isNull, or } from "drizzle-orm"
+import { contact, client, member, user, type EntityStatus } from "@/db/schema"
+import { and, asc, eq, desc, ilike, inArray, isNotNull, isNull, or } from "drizzle-orm"
+import { alias } from "drizzle-orm/pg-core"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
 import { onEntityStatusChanged } from "@/server/topics/integration"
 import { parseCustomFilters } from "@/lib/custom-fields"
 import { customFilterConditions, listCustomFields } from "@/server/custom-fields"
+import {
+  contactManagedAtInputSchema,
+  managedAtColumns,
+  readManagedAt,
+  sameManagedAt,
+  type ContactManagedAt,
+  type ContactManagedAtInput,
+} from "@/lib/contact-managed-at"
+import { listResponsibleMembers } from "@/server/client-responsible"
 import {
   contactLinkedToClientCondition,
   onContactClientEdited,
@@ -31,6 +41,12 @@ export type ContactRow = {
   organizationId: string
   createdAt: string
   updatedAt: string
+  /**
+   * «Ведётся на уровне» (docs/specs/clients-contacts/07): a member or a person
+   * of our org. Set on rows of this module; undefined on contact rows built
+   * elsewhere (e.g. `ClientRow.contacts`) — the edit form then loads it.
+   */
+  managedAt?: ContactManagedAt | null
   /** Custom field values («Поля») — only on `listContactsPaged` rows (list columns). */
   customValues?: Record<string, unknown>
   /** Other CURRENT companies (link rows; primary = clientId) — only on `listContactsPaged` rows. */
@@ -75,60 +91,41 @@ async function assertClientIfProvided(
   }
 }
 
-export async function listContacts(): Promise<ContactRow[]> {
-  const { activeOrgId } = await requireOrgContext()
+// «Ведётся на уровне»: the referenced member's name + whether they are still
+// a member of the contact's org.
+const managedUser = alias(user, "contact_managed_user")
+const managedMember = alias(member, "contact_managed_member")
 
-  const rows = await db
-    .select({
-      contact,
-      userName: user.name,
-      clientName: client.name,
-    })
-    .from(contact)
-    .leftJoin(user, eq(contact.userId, user.id))
-    .leftJoin(client, eq(contact.clientId, client.id))
-    .where(eq(contact.organizationId, activeOrgId))
-    .orderBy(desc(contact.updatedAt))
-
-  return rows.map((r) => ({
-    id: r.contact.id,
-    name: r.contact.name,
-    nameNative: r.contact.nameNative,
-    aliases: r.contact.aliases,
-    phone: r.contact.phone,
-    email: r.contact.email,
-    position: r.contact.position,
-    clientId: r.contact.clientId,
-    clientName: r.clientName,
-    status: r.contact.status,
-    userId: r.contact.userId,
-    userName: r.userName,
-    organizationId: r.contact.organizationId,
-    createdAt: r.contact.createdAt.toISOString(),
-    updatedAt: r.contact.updatedAt.toISOString(),
-  }))
+const contactSelect = {
+  contact,
+  userName: user.name,
+  clientName: client.name,
+  managedUserName: managedUser.name,
+  managedMemberId: managedMember.id,
 }
 
-export async function getContact(contactId: string): Promise<ContactRow | null> {
-  const { activeOrgId } = await requireOrgContext()
-  // A merged record resolves to the kept contact (docs/specs/clients-contacts/04 §3.3).
-  contactId = await resolveMergedContactId(activeOrgId, contactId)
+type ContactSelectRow = {
+  contact: typeof contact.$inferSelect
+  userName: string | null
+  clientName: string | null
+  managedUserName: string | null
+  managedMemberId: string | null
+}
 
-  const rows = await db
-    .select({
-      contact,
-      userName: user.name,
-      clientName: client.name,
-    })
+function contactFrom() {
+  return db
+    .select(contactSelect)
     .from(contact)
     .leftJoin(user, eq(contact.userId, user.id))
     .leftJoin(client, eq(contact.clientId, client.id))
-    .where(and(eq(contact.id, contactId), eq(contact.organizationId, activeOrgId)))
-    .limit(1)
+    .leftJoin(managedUser, eq(managedUser.id, contact.managedAtUserId))
+    .leftJoin(
+      managedMember,
+      and(eq(managedMember.userId, contact.managedAtUserId), eq(managedMember.organizationId, contact.organizationId)),
+    )
+}
 
-  const r = rows[0]
-  if (!r) return null
-
+function toContactRow(r: ContactSelectRow): ContactRow {
   return {
     id: r.contact.id,
     name: r.contact.name,
@@ -145,7 +142,72 @@ export async function getContact(contactId: string): Promise<ContactRow | null> 
     organizationId: r.contact.organizationId,
     createdAt: r.contact.createdAt.toISOString(),
     updatedAt: r.contact.updatedAt.toISOString(),
+    managedAt: readManagedAt(r.contact, r.contact.managedAtUserId
+      ? { name: r.managedUserName, isMember: !!r.managedMemberId }
+      : null),
   }
+}
+
+/** Validates «Ведётся на уровне»: a member must be a human member of the org. */
+async function resolveManagedAtInput(organizationId: string, raw: ContactManagedAtInput | null) {
+  const parsed = contactManagedAtInputSchema.safeParse(raw)
+  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Invalid managedAt")
+  const value = parsed.data
+  if (value?.kind === "member") {
+    const members = await listResponsibleMembers(organizationId)
+    if (!members.some((m) => m.userId === value.userId)) {
+      throw new Error("Сотрудник не найден в организации")
+    }
+  }
+  return managedAtColumns(value)
+}
+
+export type ManagedAtOptions = {
+  /** Human members of the active org (never «Агент», banned left out). */
+  members: { userId: string; name: string }[]
+  /** People of our org already used on contacts (not users) — for the autocomplete. */
+  people: { name: string; position: string | null }[]
+}
+
+/** Options of the «Ведётся на уровне» control (any member of the active org). */
+export async function listManagedAtOptions(): Promise<ManagedAtOptions> {
+  const { activeOrgId } = await requireOrgContext()
+  const [members, people] = await Promise.all([
+    listResponsibleMembers(activeOrgId),
+    db
+      .selectDistinct({ name: contact.managedAtPersonName, position: contact.managedAtPersonPosition })
+      .from(contact)
+      .where(and(eq(contact.organizationId, activeOrgId), isNotNull(contact.managedAtPersonName)))
+      .orderBy(contact.managedAtPersonName)
+      .limit(200),
+  ])
+  return {
+    members: members.filter((m) => !m.banned).map((m) => ({ userId: m.userId, name: m.name })),
+    people: people.map((p) => ({ name: p.name ?? "", position: p.position })).filter((p) => p.name),
+  }
+}
+
+export async function listContacts(): Promise<ContactRow[]> {
+  const { activeOrgId } = await requireOrgContext()
+
+  const rows = await contactFrom()
+    .where(eq(contact.organizationId, activeOrgId))
+    .orderBy(desc(contact.updatedAt))
+
+  return rows.map(toContactRow)
+}
+
+export async function getContact(contactId: string): Promise<ContactRow | null> {
+  const { activeOrgId } = await requireOrgContext()
+  // A merged record resolves to the kept contact (docs/specs/clients-contacts/04 §3.3).
+  contactId = await resolveMergedContactId(activeOrgId, contactId)
+
+  const rows = await contactFrom()
+    .where(and(eq(contact.id, contactId), eq(contact.organizationId, activeOrgId)))
+    .limit(1)
+
+  const r = rows[0]
+  return r ? toContactRow(r) : null
 }
 
 // Standalone «Контакты» page: server-paginated, alphabetical (the one list
@@ -201,11 +263,7 @@ export async function listContactsPaged(params: {
   const where = and(...conditions)
 
   const [rows, totalRows] = await Promise.all([
-    db
-      .select({ contact, userName: user.name, clientName: client.name })
-      .from(contact)
-      .leftJoin(user, eq(contact.userId, user.id))
-      .leftJoin(client, eq(contact.clientId, client.id))
+    contactFrom()
       .where(where)
       .orderBy(asc(contact.name))
       .limit(limit)
@@ -221,21 +279,7 @@ export async function listContactsPaged(params: {
   return {
     total: totalRows.length,
     rows: rows.map((r) => ({
-      id: r.contact.id,
-      name: r.contact.name,
-      nameNative: r.contact.nameNative,
-      aliases: r.contact.aliases,
-      phone: r.contact.phone,
-      email: r.contact.email,
-      position: r.contact.position,
-      clientId: r.contact.clientId,
-      clientName: r.clientName,
-      status: r.contact.status,
-      userId: r.contact.userId,
-      userName: r.userName,
-      organizationId: r.contact.organizationId,
-      createdAt: r.contact.createdAt.toISOString(),
-      updatedAt: r.contact.updatedAt.toISOString(),
+      ...toContactRow(r),
       customValues: (r.contact.customValues ?? {}) as Record<string, unknown>,
       otherCompanies: others.get(r.contact.id) ?? [],
     })),
@@ -289,11 +333,13 @@ export async function createContact(data: {
   position?: string | null
   clientId?: string | null
   status?: EntityStatus
+  managedAt?: ContactManagedAtInput | null
 }) {
   const { session, activeOrgId } = await requireOrgContext()
   if (!data.name?.trim()) throw new Error("Name is required")
 
   await assertClientIfProvided(data.clientId, activeOrgId)
+  const managed = data.managedAt ? await resolveManagedAtInput(activeOrgId, data.managedAt) : null
 
   const id = randomUUID()
   const now = new Date()
@@ -308,6 +354,7 @@ export async function createContact(data: {
     clientId: data.clientId || null,
     status: data.status ?? "active",
     userId: session.user.id,
+    ...(managed ? { ...managed, managedAtSetByUserId: session.user.id, managedAtSetAt: now } : {}),
     organizationId: activeOrgId,
     createdAt: now,
     updatedAt: now,
@@ -326,10 +373,26 @@ export async function updateContact(
     position?: string | null
     clientId?: string | null
     status?: EntityStatus
+    /** undefined = unchanged, null = clear. */
+    managedAt?: ContactManagedAtInput | null
   },
 ) {
   const { session, activeOrgId } = await requireOrgContext()
-  await assertContactInOrg(contactId, activeOrgId)
+  const current = await assertContactInOrg(contactId, activeOrgId)
+
+  // «Ведётся на уровне»: who / when is stamped only when the value changes.
+  let managedPatch: Record<string, unknown> = {}
+  if (data.managedAt !== undefined) {
+    const next = await resolveManagedAtInput(activeOrgId, data.managedAt)
+    if (!sameManagedAt(current, next)) {
+      const cleared = !next.managedAtUserId && !next.managedAtPersonName
+      managedPatch = {
+        ...next,
+        managedAtSetByUserId: cleared ? null : session.user.id,
+        managedAtSetAt: cleared ? null : new Date(),
+      }
+    }
+  }
 
   if (data.name !== undefined && !data.name.trim()) {
     throw new Error("Name is required")
@@ -364,6 +427,7 @@ export async function updateContact(
         ? { clientId: data.clientId || null }
         : {}),
       ...(data.status !== undefined ? { status: data.status } : {}),
+      ...managedPatch,
     })
     .where(eq(contact.id, contactId))
 

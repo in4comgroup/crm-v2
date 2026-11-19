@@ -972,6 +972,16 @@ export async function mergeContacts(orgId: string, keepId: string, mergeId: stri
         position: keep.position ?? merge.position,
         clientId: newPrimary,
         customValues: values,
+        // «Ведётся на уровне» (clients-contacts/07): the kept contact's value, else the merged one's.
+        ...(!keep.managedAtUserId && !keep.managedAtPersonName && (merge.managedAtUserId || merge.managedAtPersonName)
+          ? {
+              managedAtUserId: merge.managedAtUserId,
+              managedAtPersonName: merge.managedAtPersonName,
+              managedAtPersonPosition: merge.managedAtPersonPosition,
+              managedAtSetByUserId: merge.managedAtSetByUserId,
+              managedAtSetAt: merge.managedAtSetAt,
+            }
+          : {}),
       })
       .where(eq(contact.id, keep.id)),
   )

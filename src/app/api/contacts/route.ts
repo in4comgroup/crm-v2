@@ -6,10 +6,11 @@ import {
   createContact,
   updateContact,
   listClientOptions,
+  listManagedAtOptions,
 } from "@/server/contacts"
 import type { EntityStatus } from "@/db/schema"
 
-export { type ContactRow, type ClientOption } from "@/server/contacts"
+export { type ContactRow, type ClientOption, type ManagedAtOptions } from "@/server/contacts"
 
 function errorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown error"
@@ -26,6 +27,10 @@ export async function GET(request: NextRequest) {
     if (searchParams.get("clientOptions") === "1") {
       const options = await listClientOptions()
       return NextResponse.json({ options })
+    }
+    // «Ведётся на уровне» control: members + people already used (spec clients-contacts/07).
+    if (searchParams.get("managedAtOptions") === "1") {
+      return NextResponse.json(await listManagedAtOptions())
     }
     const id = searchParams.get("id")
     if (id) {
@@ -65,7 +70,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { name, nameNative, aliases, phone, email, position, clientId, status } =
+    const { name, nameNative, aliases, phone, email, position, clientId, status, managedAt } =
       body
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 })
@@ -79,6 +84,7 @@ export async function POST(request: NextRequest) {
       position,
       clientId,
       status,
+      managedAt,
     })
     return NextResponse.json({ success: true, id: result.id })
   } catch (error) {
@@ -99,6 +105,7 @@ export async function PUT(request: NextRequest) {
       position,
       clientId,
       status,
+      managedAt,
     } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
@@ -112,6 +119,7 @@ export async function PUT(request: NextRequest) {
       position,
       clientId,
       status,
+      managedAt,
     })
     return NextResponse.json({ success: true })
   } catch (error) {

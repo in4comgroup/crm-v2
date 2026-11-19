@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { CustomFieldsSummary } from "@/components/blocks/custom-field-filters"
 import type { CustomFieldDef } from "@/lib/custom-fields"
 import { Badge } from "@/components/ui/badge"
-import { Mail, Phone, Briefcase, Building2 } from "lucide-react"
+import { Mail, Phone, Briefcase, Building2, UserCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { managedAtLabel } from "@/lib/contact-managed-at"
 import type { ContactRow } from "@/app/api/contacts/route"
 
 // `initial` is the auto-discovered state — accent for review attention.
@@ -103,6 +104,13 @@ export function ContactCard({
           <div className="flex items-center gap-2 truncate">
             <Building2 className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{contact.clientName}</span>
+          </div>
+        )}
+        {/* «Ведётся на уровне» (docs/specs/clients-contacts/07). */}
+        {contact.managedAt && (
+          <div className="flex items-center gap-2 truncate">
+            <UserCheck className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Ведётся на уровне: {managedAtLabel(contact.managedAt)}</span>
           </div>
         )}
         {/* Spacer pins the creator line to the bottom of the card so it stays

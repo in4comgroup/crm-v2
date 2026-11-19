@@ -15,7 +15,10 @@ import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -29,8 +32,14 @@ import {
 } from "@/components/ui/form"
 import { toast } from "sonner"
 import { BlacklistEntityButton } from "@/components/blocks/client-blocklist-dialog"
-import type { ContactRow, ClientOption } from "@/app/api/contacts/route"
+import type { ContactRow, ClientOption, ManagedAtOptions } from "@/app/api/contacts/route"
 import type { EntityStatus } from "@/db/schema"
+import {
+  MANAGED_AT_LIMITS,
+  managedAtLabel,
+  type ContactManagedAt,
+  type ContactManagedAtInput,
+} from "@/lib/contact-managed-at"
 
 // `initial` is reserved for contacts auto-created by the contact-discovery
 // scan on /clients (Contacts tab). Operators flip it to `active` here
@@ -47,6 +56,33 @@ const STATUSES: EntityStatus[] = [
   "blocked",
 ]
 const NO_CLIENT = "__none__"
+// «Ведётся на уровне» select values (docs/specs/clients-contacts/07).
+const MANAGED_NONE = "__none__"
+const MANAGED_PERSON = "__person__"
+const MANAGED_MEMBER = "member:"
+
+type ManagedFields = { managedChoice: string; managedPersonName: string; managedPersonPosition: string }
+
+function managedFields(v: ContactManagedAt | null | undefined): ManagedFields {
+  if (v?.kind === "member") return { managedChoice: MANAGED_MEMBER + v.userId, managedPersonName: "", managedPersonPosition: "" }
+  if (v?.kind === "person") {
+    return { managedChoice: MANAGED_PERSON, managedPersonName: v.name, managedPersonPosition: v.position ?? "" }
+  }
+  return { managedChoice: MANAGED_NONE, managedPersonName: "", managedPersonPosition: "" }
+}
+
+function managedInput(f: ManagedFields): ContactManagedAtInput | null {
+  if (f.managedChoice.startsWith(MANAGED_MEMBER)) {
+    return { kind: "member", userId: f.managedChoice.slice(MANAGED_MEMBER.length) }
+  }
+  if (f.managedChoice === MANAGED_PERSON && f.managedPersonName.trim()) {
+    return { kind: "person", name: f.managedPersonName.trim(), position: f.managedPersonPosition.trim() || null }
+  }
+  return null
+}
+
+const sameManagedInput = (a: ContactManagedAtInput | null, b: ContactManagedAtInput | null) =>
+  JSON.stringify(a) === JSON.stringify(b)
 
 // UI display labels for status (DB enum values stay English).
 const STATUS_LABEL: Record<string, string> = {
@@ -67,7 +103,7 @@ type ContactFormData = {
   position: string
   clientId: string
   status: EntityStatus
-}
+} & ManagedFields
 
 type Props = {
   mode: "create" | "edit"
@@ -104,6 +140,18 @@ export function ContactEditForm({
 }) {
   const [isPending, startTransition] = useTransition()
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([])
+  const [managedOptions, setManagedOptions] = useState<ManagedAtOptions>({ members: [], people: [] })
+  // The stored «Ведётся на уровне» (null = not set). Rows built outside the
+  // contacts module carry no value (undefined) — it is loaded below, and the
+  // form sends the field only when the user changed it.
+  const [loadedManaged, setLoadedManaged] = useState<{ id: string; value: ContactManagedAt | null } | null>(null)
+  const managedStored: ContactManagedAt | null | undefined =
+    contact?.managedAt !== undefined
+      ? contact.managedAt
+      : loadedManaged && loadedManaged.id === contact?.id
+        ? loadedManaged.value
+        : undefined
+  const initialManaged = managedInput(managedFields(managedStored))
 
   const form = useForm<ContactFormData>({
     defaultValues: {
@@ -118,6 +166,7 @@ export function ContactEditForm({
           ? (defaultClientId ?? NO_CLIENT)
           : (contact?.clientId ?? NO_CLIENT),
       status: contact?.status ?? "active",
+      ...managedFields(contact?.managedAt),
     },
   })
 
@@ -134,6 +183,7 @@ export function ContactEditForm({
           ? (defaultClientId ?? NO_CLIENT)
           : (contact?.clientId ?? NO_CLIENT),
       status: contact?.status ?? "active",
+      ...managedFields(contact?.managedAt),
     })
     let cancelled = false
     fetch("/api/contacts?clientOptions=1")
@@ -143,6 +193,25 @@ export function ContactEditForm({
         setClientOptions(data.options ?? [])
       })
       .catch(() => {})
+    fetch("/api/contacts?managedAtOptions=1")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: ManagedAtOptions | null) => {
+        if (!cancelled && data) setManagedOptions({ members: data.members ?? [], people: data.people ?? [] })
+      })
+      .catch(() => {})
+    if (mode === "edit" && contact && contact.managedAt === undefined) {
+      fetch(`/api/contacts?id=${encodeURIComponent(contact.id)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { contact?: ContactRow } | null) => {
+          if (cancelled || !d?.contact) return
+          const fields = managedFields(d.contact.managedAt)
+          setLoadedManaged({ id: d.contact.id, value: d.contact.managedAt ?? null })
+          form.setValue("managedChoice", fields.managedChoice)
+          form.setValue("managedPersonName", fields.managedPersonName)
+          form.setValue("managedPersonPosition", fields.managedPersonPosition)
+        })
+        .catch(() => {})
+    }
     return () => {
       cancelled = true
     }
@@ -156,10 +225,18 @@ export function ContactEditForm({
           .split(",")
           .map((a) => a.trim())
           .filter(Boolean)
+        const { managedChoice, managedPersonName, managedPersonPosition, ...rest } = data
+        const managed = managedInput({ managedChoice, managedPersonName, managedPersonPosition })
+        if (managedChoice === MANAGED_PERSON && !managed) {
+          toast.error("Укажите имя человека в поле «Ведётся на уровне»")
+          return
+        }
+        // Sent only when changed: a row without a loaded value never clears it.
+        const managedPart = sameManagedInput(managed, initialManaged) ? {} : { managedAt: managed }
         const payload =
           mode === "create"
-            ? { ...data, aliases, clientId }
-            : { id: contact!.id, ...data, aliases, clientId }
+            ? { ...rest, aliases, clientId, ...managedPart }
+            : { id: contact!.id, ...rest, aliases, clientId, ...managedPart }
         const res = await fetch("/api/contacts", {
           method: mode === "create" ? "POST" : "PUT",
           headers: { "Content-Type": "application/json" },
@@ -263,6 +340,8 @@ export function ContactEditForm({
             </FormItem>
           )}
         />
+
+        <ManagedAtField form={form} options={managedOptions} stored={managedStored} />
 
         <FormField
           control={form.control}
@@ -368,6 +447,120 @@ export function ContactEditForm({
         </div>
       </form>
     </Form>
+  )
+}
+
+/**
+ * «Ведётся на уровне» (docs/specs/clients-contacts/07): the person in OUR
+ * organization at whose level this contact is managed — a member, or a
+ * person who is not a user (name + position). Information only.
+ */
+function ManagedAtField({
+  form,
+  options,
+  stored,
+}: {
+  form: ReturnType<typeof useForm<ContactFormData>>
+  options: ManagedAtOptions
+  stored: ContactManagedAt | null | undefined
+}) {
+  const choice = form.watch("managedChoice")
+  // A member who left the org stays visible (not offered to others).
+  const goneMember =
+    stored?.kind === "member" && !options.members.some((m) => m.userId === stored.userId) ? stored : null
+  const peopleListId = "contact-managed-people"
+  return (
+    <div className="space-y-2">
+      <FormField
+        control={form.control}
+        name="managedChoice"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-gray-400">Ведётся на уровне</FormLabel>
+            <Select value={field.value} onValueChange={field.onChange}>
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue placeholder="Не указано" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectItem value={MANAGED_NONE}>Не указано</SelectItem>
+                {(options.members.length > 0 || goneMember) && (
+                  <SelectGroup>
+                    <SelectLabel>Сотрудники в системе</SelectLabel>
+                    {options.members.map((m) => (
+                      <SelectItem key={m.userId} value={MANAGED_MEMBER + m.userId}>
+                        {m.name}
+                      </SelectItem>
+                    ))}
+                    {goneMember && (
+                      <SelectItem value={MANAGED_MEMBER + goneMember.userId}>{managedAtLabel(goneMember)}</SelectItem>
+                    )}
+                  </SelectGroup>
+                )}
+                <SelectSeparator />
+                <SelectItem value={MANAGED_PERSON}>Другой человек нашей компании…</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Кто в нашей компании ведёт этот контакт на своём уровне — например, генеральный директор. Только для
+              информации.
+            </p>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      {choice === MANAGED_PERSON && (
+        <div className="grid grid-cols-2 gap-3">
+          <FormField
+            control={form.control}
+            name="managedPersonName"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-gray-400">Имя *</FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    list={peopleListId}
+                    maxLength={MANAGED_AT_LIMITS.name}
+                    placeholder="напр. Иван Петров"
+                    onChange={(e) => {
+                      field.onChange(e)
+                      // Picked a known person → fill an empty position.
+                      const hit = options.people.find((p) => p.name === e.target.value)
+                      if (hit?.position && !form.getValues("managedPersonPosition")) {
+                        form.setValue("managedPersonPosition", hit.position)
+                      }
+                    }}
+                  />
+                </FormControl>
+                <datalist id={peopleListId}>
+                  {options.people.map((p) => (
+                    <option key={`${p.name}|${p.position ?? ""}`} value={p.name}>
+                      {p.position ?? ""}
+                    </option>
+                  ))}
+                </datalist>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="managedPersonPosition"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-gray-400">Должность</FormLabel>
+                <FormControl>
+                  <Input {...field} maxLength={MANAGED_AT_LIMITS.position} placeholder="напр. генеральный директор" />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+      )}
+    </div>
   )
 }
 

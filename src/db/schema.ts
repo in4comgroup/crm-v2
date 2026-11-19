@@ -14,6 +14,7 @@ import {
   primaryKey,
   foreignKey,
   date,
+  check,
   AnyPgColumn,
 } from "drizzle-orm/pg-core"
 import type { ClientCustomFields } from "@/lib/client-custom-fields"
@@ -511,6 +512,15 @@ export const contact = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // «Ведётся на уровне» (docs/specs/clients-contacts/07): the person in OUR
+    // organization at whose level this contact is managed — a member
+    // (`managed_at_user_id`) OR a person who is not a user of the system
+    // (`managed_at_person_name` + optional position). Static: no logic reads it.
+    managedAtUserId: text("managed_at_user_id").references(() => user.id, { onDelete: "set null" }),
+    managedAtPersonName: text("managed_at_person_name"),
+    managedAtPersonPosition: text("managed_at_person_position"),
+    managedAtSetByUserId: text("managed_at_set_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    managedAtSetAt: timestamp("managed_at_set_at"),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
@@ -521,6 +531,11 @@ export const contact = pgTable(
       .notNull(),
   },
   (table) => [
+    // A member OR a named person, never both.
+    check(
+      "contact_managed_at_one_kind",
+      sql`${table.managedAtUserId} IS NULL OR ${table.managedAtPersonName} IS NULL`,
+    ),
     index("contact_organizationId_idx").on(table.organizationId),
     // Custom field filters on /contacts (`?`, `?|` on custom_values).
     index("contact_custom_values_gin").using("gin", table.customValues),

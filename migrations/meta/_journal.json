@@ -337,6 +337,13 @@
       "when": 1794924402424,
       "tag": "0047_telegram_chats",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1795089953524,
+      "tag": "0048_contact_managed_at",
+      "breakpoints": true
     }
   ]
 }

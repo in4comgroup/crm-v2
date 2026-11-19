@@ -27,6 +27,7 @@ export const CHAT_FILE_ACCEPT = [
   ".pdf",
   ".docx",
   ".pptx",
+  ".xlsx",
   ".mp3",
   ".m4a",
   ".aac",
@@ -50,8 +51,9 @@ export function chatFileKind(mediaType: string, name: string): ChatFileKind | nu
   if (PARSER_CONFIG.video.supportedMediaTypes.includes(mt) || PARSER_CONFIG.video.supportedExtensions.includes(e)) return "video"
   if (PARSER_CONFIG.audio.supportedMediaTypes.includes(mt) || PARSER_CONFIG.audio.supportedExtensions.includes(e)) return "audio"
   if (PARSER_CONFIG.image.supportedMediaTypes.includes(mt) || PARSER_CONFIG.image.supportedExtensions.includes(e)) return "image"
-  if (PARSER_CONFIG.office.supportedMediaTypes.includes(mt) || PARSER_CONFIG.office.supportedExtensions.includes(e)) return "office"
+  // Text first: a CSV in the chat stays a plain text file (read without a model call).
   if (TEXT_TYPES.includes(mt) || TEXT_EXT.includes(e)) return "text"
+  if (PARSER_CONFIG.office.supportedMediaTypes.includes(mt) || PARSER_CONFIG.office.supportedExtensions.includes(e)) return "office"
   return null
 }
 
@@ -63,7 +65,7 @@ export function chatFileMaxBytes(kind: ChatFileKind): number {
 /** Russian check of a file before upload; null = fine. */
 export function chatFileProblem(mediaType: string, name: string, size: number): string | null {
   const kind = chatFileKind(mediaType, name)
-  if (!kind) return `Файл «${name}»: такой тип не поддерживается (изображения JPEG / PNG, PDF, DOCX, PPTX, аудио, MP4, TXT / CSV / JSON)`
+  if (!kind) return `Файл «${name}»: такой тип не поддерживается (изображения JPEG / PNG, PDF, DOCX, PPTX, XLSX, аудио, MP4, TXT / CSV / JSON)`
   const max = chatFileMaxBytes(kind)
   if (size <= 0) return `Файл «${name}» пустой`
   if (size > max) return `Файл «${name}» больше ${Math.round(max / 1024 / 1024)} МБ`

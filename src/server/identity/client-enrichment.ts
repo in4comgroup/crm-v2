@@ -701,7 +701,8 @@ ${profileInstructions(industries)}`
   return {
     candidates: extracted.candidates.map((c) => ({
       name: c.name.trim(),
-      email: c.email.trim(),
+      // One address only: the model sometimes returns «info@x.ru, sales@x.ru» — the CRM field holds one e-mail.
+      email: (c.email.match(/[^\s,;<>"'()]+@[^\s,;<>"'()]+\.[a-z]{2,}/i)?.[0] ?? "").toLowerCase(),
       phone: c.phone.trim(),
       address: c.address.trim(),
       webUrl: c.webUrl.trim(),

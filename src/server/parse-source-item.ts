@@ -81,6 +81,7 @@ import {
   parseOfficeBytes,
   isSupportedOfficeType,
   detectOfficeFormat,
+  officeMediaType,
   OfficeTooLargeError,
   UnsupportedOfficeTypeError,
 } from "@/server/parsers/office"
@@ -1648,12 +1649,7 @@ async function parseAttachmentChild(
         ...commonInput,
         bytes,
         fileName: meta.fileName,
-        mediaType: resolveMediaType(
-          meta.contentType,
-          format === "docx"
-            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ),
+        mediaType: resolveMediaType(meta.contentType, officeMediaType(format)),
       }, ctx.ai)
       return parsedOne(
         await insertParsedChild({

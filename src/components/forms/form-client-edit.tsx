@@ -190,6 +190,8 @@ export default function ClientEditDialog({
           client?.customFields?.discount != null
             ? String(client.customFields.discount)
             : "",
+        // Was missing: the field reset to empty and «Сохранить» cleared the stored «Тип компании».
+        companyKind: client?.customFields?.companyKind ?? COMPANY_KIND_NONE,
         funnelPhase: client?.funnelPhase ?? "awareness",
         status: client?.status ?? "active",
         currency: client?.currency ?? "RUB",
@@ -253,7 +255,7 @@ export default function ClientEditDialog({
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form noValidate onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
               control={form.control}
               name="name"

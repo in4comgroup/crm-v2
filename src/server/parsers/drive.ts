@@ -107,6 +107,8 @@ export type DriveBlockKind =
   | "video_audio"
   | "docx"
   | "pptx"
+  | "xlsx"
+  | "csv"
 
 export type DriveBlock = {
   kind: DriveBlockKind

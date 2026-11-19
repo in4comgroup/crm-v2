@@ -33,6 +33,8 @@ export type ParsedAttachmentKind =
   | "video_audio"
   | "docx"
   | "pptx"
+  | "xlsx"
+  | "csv"
   | "docs"
   | "slides"
   | "sheets"
@@ -74,6 +76,14 @@ export const ATTACHMENT_LABELS: Record<
   pptx: {
     title: "Презентация",
     icon: <Presentation className="h-4 w-4" />,
+  },
+  xlsx: {
+    title: "Таблица Excel",
+    icon: <FileSpreadsheet className="h-4 w-4" />,
+  },
+  csv: {
+    title: "Таблица CSV",
+    icon: <FileSpreadsheet className="h-4 w-4" />,
   },
   docs: {
     title: "Google Документ",

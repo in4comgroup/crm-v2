@@ -26,6 +26,7 @@ import {
   parseOfficeBytes,
   isSupportedOfficeType,
   detectOfficeFormat,
+  officeMediaType,
   OfficeTooLargeError,
   UnsupportedOfficeTypeError,
 } from "@/server/parsers/office"
@@ -38,6 +39,8 @@ export type DropoffBlockKind =
   | "video_audio"
   | "docx"
   | "pptx"
+  | "xlsx"
+  | "csv"
 
 export type DropoffBlock = {
   kind: DropoffBlockKind
@@ -170,12 +173,7 @@ export async function parseDropoffFile(
       ...commonInput,
       bytes,
       fileName,
-      mediaType: resolveMediaType(
-        mediaType,
-        format === "docx"
-          ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      ),
+      mediaType: resolveMediaType(mediaType, officeMediaType(format)),
     }, ai)
     blocks.push({
       kind: format,

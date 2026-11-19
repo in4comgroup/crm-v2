@@ -76,11 +76,16 @@ export const PARSER_CONFIG = {
     // (docx) and a custom jszip+xmldom pptx extractor, then the extracted
     // text/HTML is passed to the model for markdown cleanup + metadata.
     // Legacy .doc / .ppt are intentionally unsupported.
+    // Spreadsheets (2026-11-19): .xlsx (exceljs) and .csv → Markdown tables
+    // built by code (src/lib/spreadsheet-markdown.ts), the model writes only
+    // the summary + metadata. Legacy binary .xls stays unsupported.
     maxBytes: 20 * 1024 * 1024,
     supportedMediaTypes: [
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/csv",
     ] as readonly string[],
-    supportedExtensions: [".docx", ".pptx"] as readonly string[],
+    supportedExtensions: [".docx", ".pptx", ".xlsx", ".csv"] as readonly string[],
   },
 } as const

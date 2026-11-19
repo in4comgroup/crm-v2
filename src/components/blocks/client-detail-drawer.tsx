@@ -343,14 +343,22 @@ export function ClientDetailDrawer({
     defaultValues: buildDefaults(client),
   })
 
-  // Сброс формы ТОЛЬКО при смене компании — иначе фоновый refresh (кто-то
-  // изменил ДРУГУЮ карточку → новые ссылки на все client-объекты) стирал бы
-  // недосохранённый ввод. Тот же паттерн, что deal-detail-drawer.tsx.
+  // Another company → full reset. The SAME company saved elsewhere (web
+  // lookup «Поиск в интернете», batch enrichment, another tab — its
+  // `updatedAt` changes) → the stored values come into the form, but what
+  // the user is typing stays (`keepDirtyValues`). Before 2026-11-19 the form
+  // reset only on the id: after a web lookup it kept the OLD values, «Сохранить»
+  // stayed disabled (nothing dirty), and a later save wrote the old values
+  // back over the enriched ones. A refresh of OTHER companies (new object
+  // references, same `updatedAt`) still never touches the form.
+  const formClientId = useRef<string | null>(null)
   useEffect(() => {
     if (!client) return
-    editForm.reset(buildDefaults(client))
+    const sameClient = formClientId.current === client.id
+    formClientId.current = client.id
+    editForm.reset(buildDefaults(client), sameClient ? { keepDirtyValues: true } : undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client?.id])
+  }, [client?.id, client?.updatedAt])
 
   function onSave(data: ClientEditFormData, opts?: { closeAfter?: boolean }) {
     if (!client) return
@@ -455,7 +463,11 @@ export function ClientDetailDrawer({
             поиск в интернете, системный крестик закрытия — и строка табов)
             и единую скроллящуюся область с содержимым активного таба. */}
         <Form {...editForm}>
+          {/* noValidate: the browser's own checks (type="email", the hidden
+              «Поля» tab inputs inside this form) blocked submit with no visible
+              message; the form validates in code and the server checks again. */}
           <form
+            noValidate
             onSubmit={editForm.handleSubmit((data) => onSave(data))}
             className="flex flex-1 min-h-0 flex-col"
           >

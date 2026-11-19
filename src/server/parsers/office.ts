@@ -6,6 +6,11 @@ import mammoth from "mammoth"
 import JSZip from "jszip"
 import { DOMParser } from "@xmldom/xmldom"
 import { PARSER_CONFIG } from "@/lib/parser-config"
+import { sheetsToMarkdown, SHEET_LIMITS } from "@/lib/spreadsheet-markdown"
+import { detectOfficeFormat, type OfficeFormat } from "@/server/parsers/office-format"
+import { extractSpreadsheetSheets } from "@/server/parsers/spreadsheet"
+
+export { detectOfficeFormat, isSupportedOfficeType, officeMediaType, type OfficeFormat } from "@/server/parsers/office-format"
 import {
   assembleMarkdown,
   buildFrontmatter,
@@ -21,8 +26,6 @@ import {
   parserCallContext,
   withOwnOrgLine,
 } from "@/server/parsers/_shared"
-
-export type OfficeFormat = "docx" | "pptx"
 
 const officeAnalysisSchema = z.object({
   language: z
@@ -130,6 +133,12 @@ export async function parseOfficeBytes(
   const buffer =
     bytes instanceof Buffer ? bytes : Buffer.from(bytes as Uint8Array)
 
+  // Spreadsheets: the tables ARE the content (built by code); the model
+  // only writes the summary + metadata, never retypes a number.
+  if (format === "xlsx" || format === "csv") {
+    return parseSpreadsheet(input, format, buffer, ai)
+  }
+
   // ── Stage 1: server-side extraction ───────────────────────────────
   const extracted =
     format === "docx"
@@ -190,6 +199,101 @@ For Office documents specifically: the 'author/sender' is whoever you extract in
     parserModel: servedModel(result),
     analysis: {
       language: analysis.language || "en",
+      summary: analysis.summary,
+      mentions: uniqueStrings(analysis.mentions),
+      companies: uniqueStrings(analysis.companies),
+      products: uniqueStrings(analysis.products),
+      relevance: DEFAULT_RELEVANCE,
+      mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
+    },
+  }
+}
+
+// ── Spreadsheets (.xlsx / .csv) ────────────────────────────────────────
+
+const spreadsheetAnalysisSchema = officeAnalysisSchema.omit({ contentMarkdown: true })
+
+async function parseSpreadsheet(
+  input: OfficeParseInput,
+  format: "xlsx" | "csv",
+  buffer: Buffer,
+  ai: ParserAiContext,
+): Promise<ParsedOffice> {
+  const content = sheetsToMarkdown(await extractSpreadsheetSheets(buffer, format, input.fileName))
+  const empty = content === "_(пустая таблица)_"
+
+  let analysis: z.infer<typeof spreadsheetAnalysisSchema> = {
+    language: "ru",
+    summary: "Пустая таблица.",
+    senders: [],
+    recipients: [],
+    mentions: [],
+    companies: [],
+    products: [],
+    mentionedPeople: [],
+    urls: [],
+  }
+  let parserModel: string | null = null
+  if (!empty) {
+    const result = await aiGenerateText({
+      process: "parsing.office",
+      ...parserCallContext(ai),
+      output: Output.object({ schema: spreadsheetAnalysisSchema }),
+      instructions: withOwnOrgLine(
+        `You are a precise document parsing assistant. The input is a spreadsheet already converted to Markdown tables. Write a short summary of what the table is (its purpose, what the rows are, the key totals only if they are in the table) and extract the structured metadata. Never fabricate facts or numbers that are not in the table.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For spreadsheets: \`senders\` = an author named in the sheet (e.g. «Подготовил: …»), else empty; \`recipients\` usually empty. People / companies / products = names that appear in the cells.`,
+        ai,
+      ),
+      prompt: [
+        `Filename: ${input.fileName}`,
+        `Format: ${format === "xlsx" ? "Microsoft Excel (.xlsx)" : "CSV"} — converted to Markdown tables (limits: ${SHEET_LIMITS.rowsPerSheet} rows, ${SHEET_LIMITS.columns} columns per sheet).`,
+        "",
+        "--- BEGIN TABLES ---",
+        content,
+        "--- END TABLES ---",
+      ].join("\n"),
+    })
+    analysis = result.output
+    parserModel = servedModel(result)
+  }
+
+  const nowIso = new Date().toISOString()
+  const markdown = assembleMarkdown(
+    buildFrontmatter({
+      sourceId: input.sourceId,
+      parentSourceId: input.parentSourceId,
+      threadId: input.threadId,
+      sourceSystem: input.sourceSystem,
+      sourceCreatedAt: input.sourceCreatedAt,
+      sourceReceivedAt: input.sourceReceivedAt ?? nowIso,
+      processedAt: nowIso,
+      language: analysis.language || "ru",
+      senders: uniqueStrings(analysis.senders),
+      recipients: uniqueStrings(analysis.recipients),
+      mentions: uniqueStrings(analysis.mentions),
+      companies: uniqueStrings(analysis.companies),
+      products: uniqueStrings(analysis.products),
+      urls: uniqueStrings(analysis.urls),
+    }),
+    analysis.summary,
+    content,
+  )
+  return {
+    markdown,
+    metadata: {
+      sourceId: input.sourceId,
+      sourceSystem: input.sourceSystem,
+      fileName: input.fileName,
+      mediaType: input.mediaType,
+      format,
+      byteSize: buffer.byteLength,
+    },
+    parserModel,
+    analysis: {
+      language: analysis.language || "ru",
       summary: analysis.summary,
       mentions: uniqueStrings(analysis.mentions),
       companies: uniqueStrings(analysis.companies),
@@ -296,43 +400,6 @@ async function extractPptxText(buffer: Buffer): Promise<string> {
   }
 
   return parts.join("\n\n")
-}
-
-export function isSupportedOfficeType(
-  mediaType: string,
-  fileName: string,
-): boolean {
-  if (
-    PARSER_CONFIG.office.supportedMediaTypes.includes(mediaType.toLowerCase())
-  )
-    return true
-  const lower = fileName.toLowerCase()
-  return PARSER_CONFIG.office.supportedExtensions.some((ext) =>
-    lower.endsWith(ext),
-  )
-}
-
-export function detectOfficeFormat(
-  mediaType: string,
-  fileName: string,
-): OfficeFormat | null {
-  const ct = mediaType.toLowerCase()
-  const fn = fileName.toLowerCase()
-  if (
-    ct ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    fn.endsWith(".docx")
-  ) {
-    return "docx"
-  }
-  if (
-    ct ===
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
-    fn.endsWith(".pptx")
-  ) {
-    return "pptx"
-  }
-  return null
 }
 
 export class OfficeTooLargeError extends Error {

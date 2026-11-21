@@ -346,7 +346,8 @@ export async function createContact(data: {
   await db.insert(contact).values({
     id,
     name: data.name.trim(),
-    nameNative: data.nameNative?.trim() || null,
+    // «Имя на родном языке» is required; default = the name (2026-11-21).
+    nameNative: data.nameNative?.trim() || data.name.trim(),
     aliases: cleanAliases(data.aliases),
     phone: data.phone?.trim() || null,
     email: data.email?.trim() || null,
@@ -360,6 +361,25 @@ export async function createContact(data: {
     updatedAt: now,
   })
   return { id }
+}
+
+/**
+ * «Имя на родном языке» on an update (required, default = the name;
+ * 2026-11-21): an empty value becomes the name; when only the name changes
+ * and the stored native name is empty or still a copy of the old name, it
+ * follows the new name. A real native name is never overwritten by a rename.
+ */
+function nativePatch(
+  current: { name: string; nameNative: string | null },
+  data: { name?: string; nameNative?: string | null },
+): { nameNative?: string } {
+  const nextName = data.name !== undefined ? data.name.trim() : current.name
+  if (data.nameNative !== undefined) return { nameNative: data.nameNative?.trim() || nextName }
+  if (data.name !== undefined) {
+    const stored = (current.nameNative ?? "").trim()
+    if (!stored || stored === current.name) return { nameNative: nextName }
+  }
+  return {}
 }
 
 export async function updateContact(
@@ -408,9 +428,7 @@ export async function updateContact(
     .update(contact)
     .set({
       ...(data.name !== undefined ? { name: data.name.trim() } : {}),
-      ...(data.nameNative !== undefined
-        ? { nameNative: data.nameNative?.trim() || null }
-        : {}),
+      ...nativePatch(current, data),
       ...(data.aliases !== undefined
         ? { aliases: cleanAliases(data.aliases) }
         : {}),

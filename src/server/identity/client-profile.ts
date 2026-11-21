@@ -44,6 +44,7 @@ import {
 } from "@/lib/identity/client-profile"
 import {
   canonicalClientProfile,
+  fieldKey,
   fieldSlice,
   manualSaveMeta,
   planWebProfileApply,
@@ -380,6 +381,45 @@ export async function confirmClientProfileField(
   return { field }
 }
 
+/**
+ * «Убрать» (2026-11-21): a person removes an AUTOMATIC value they did not
+ * confirm (web / communications / import, `verified: false`). The field
+ * becomes empty; its meta becomes a tombstone with `removedKey` so the next
+ * web fill skips the same value (`planWebProfileApply`).
+ */
+export async function removeClientProfileField(
+  orgId: string,
+  userId: string,
+  clientId: string,
+  field: unknown,
+  now = new Date(),
+): Promise<{ field: ClientProfileField }> {
+  await assertCanEditClientProfile(orgId, userId, clientId)
+  if (typeof field !== "string" || !isProfileField(field)) throw new ClientProfileError(400, "Неизвестное поле профиля")
+  const row = await loadProfileRow(orgId, clientId)
+  const meta = readFieldMeta(row?.fieldMeta)
+  const m = meta[field]
+  const values = profileRowToValues(row)
+  if (!row || !m || isFieldEmpty(values, field)) throw new ClientProfileError(400, "Нечего убирать: поле пустое")
+  if (m.source === "manual" || m.verified) {
+    throw new ClientProfileError(400, "Убрать можно только непроверенное значение из интернета или переписки")
+  }
+  const next = withFieldValue(values, field, {})
+  meta[field] = {
+    source: m.source,
+    at: m.at,
+    verified: false,
+    removedKey: fieldKey(values, field),
+    removedByUserId: userId,
+    removedAt: now.toISOString(),
+  }
+  await db
+    .update(clientProfile)
+    .set({ ...valuesToColumns(next), fieldMeta: meta as Record<string, unknown>, updatedByUserId: userId, updatedAt: now })
+    .where(and(eq(clientProfile.organizationId, orgId), eq(clientProfile.clientId, clientId)))
+  return { field }
+}
+
 // ── Proposals («Принять» / «Отклонить») ───────────────────────────────────
 
 /**
@@ -587,6 +627,11 @@ export async function saveClientProfileForSession(clientId: string, input: unkno
 export async function confirmClientProfileFieldForSession(clientId: string, field: unknown) {
   const { orgId, userId } = await requireClientProfileSession()
   return confirmClientProfileField(orgId, userId, clientId, field)
+}
+
+export async function removeClientProfileFieldForSession(clientId: string, field: unknown) {
+  const { orgId, userId } = await requireClientProfileSession()
+  return removeClientProfileField(orgId, userId, clientId, field)
 }
 
 export async function decideClientProfileProposalForSession(clientId: string, proposalId: unknown, accept: boolean) {

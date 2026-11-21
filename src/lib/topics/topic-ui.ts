@@ -97,6 +97,30 @@ export const CYCLE_MARKER_LABELS_RU: Record<CycleMarker, string> = {
   updated: "Обновлено",
 }
 
+/** Russian channel names of source items (topic card «Источники», topic drawer). */
+export const SOURCE_CHANNEL_LABELS_RU: Record<string, string> = {
+  nylas: "Письмо",
+  imap: "Письмо",
+  telegram: "Telegram",
+  gchat: "Google Chat",
+  gdrive: "Google Drive",
+  whatsapp: "WhatsApp",
+  dropoff: "Файл",
+  aichat: "ИИ чат",
+}
+
+/** One message behind a topic, as the card's «Источники» shows it. */
+export type TopicSourceRef = {
+  sourceItemId: string
+  date: string
+  provider: string | null
+  subject: string | null
+  from: string | null
+}
+
+/** «Источники» on a topic card: the newest messages shown, at most this many. */
+export const TOPIC_CARD_SOURCES = 3
+
 /** One topic in a dashboard list. */
 export type TopicEntry = {
   topicId: string
@@ -116,6 +140,13 @@ export type TopicEntry = {
   taskContactId: string | null
   /** Matter family (signal_category.family of the lead code) — task type hint. */
   family: string | null
+  /**
+   * «Источники» (2026-11-21): the newest messages of the topic (not
+   * `context` items), newest first, ≤ TOPIC_CARD_SOURCES; `sourceCount` =
+   * all of them.
+   */
+  sources: TopicSourceRef[]
+  sourceCount: number
   dealId: string | null
   dealName: string | null
   dealOwnerUserId: string | null

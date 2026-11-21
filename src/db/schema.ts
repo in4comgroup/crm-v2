@@ -511,7 +511,9 @@ export const contact = pgTable(
     // Chinese, …). Nullable — only populated when the parser confidently pairs
     // a body name to this contact's envelope email. See
     // `metadata_json.participantNativeNames` + `applyDiscovery`.
-    nameNative: text("name_native"),
+    // «Имя на родном языке»: required, default = the name (2026-11-21; app
+    // code fills it, migration 0050 backfilled + NOT NULL).
+    nameNative: text("name_native").notNull(),
     // Alternate name spellings / order variants / nicknames seen across
     // sources (e.g. ["Богданов Евгений", "Евгений Богданов", "Женя"]). Used
     // for search + dedup. Nullable; populated by discovery + the edit form.

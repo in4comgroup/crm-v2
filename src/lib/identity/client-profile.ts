@@ -63,6 +63,15 @@ export type FieldMeta = {
   /** Who confirmed an automatic value («Подтвердить» / accepted proposal), and when. */
   verifiedByUserId?: string | null
   verifiedAt?: string | null
+  /**
+   * «Убрать» (2026-11-21): the comparison key (`fieldKey`) of an automatic
+   * value a person removed. The field is empty; the entry is a tombstone so
+   * the next web fill does not write the SAME value again (a different value
+   * still fills the field).
+   */
+  removedKey?: string | null
+  removedByUserId?: string | null
+  removedAt?: string | null
 }
 
 export const fieldMetaSchema = z.object({
@@ -74,6 +83,9 @@ export const fieldMetaSchema = z.object({
   verified: z.boolean(),
   verifiedByUserId: z.string().nullable().optional(),
   verifiedAt: z.string().nullable().optional(),
+  removedKey: z.string().nullable().optional(),
+  removedByUserId: z.string().nullable().optional(),
+  removedAt: z.string().nullable().optional(),
 })
 
 /** Read `field_meta` jsonb defensively (bad entries are dropped). */

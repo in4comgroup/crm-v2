@@ -351,6 +351,13 @@
       "when": 1795093637287,
       "tag": "0049_client_co_responsible",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795260386419,
+      "tag": "0050_contact_name_native_required",
+      "breakpoints": true
     }
   ]
 }

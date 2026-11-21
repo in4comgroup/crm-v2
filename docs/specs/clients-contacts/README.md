@@ -2,6 +2,8 @@
 
 Specs for companies («Компании», table `client`) and contacts («Контакты», table `contact`). Contact ↔ company links over time (04–06): **built 2026-11-15** (migration `0039`, test DB; no backfill — Q12). Contact field «Ведётся на уровне» (07): **built 2026-11-19** (migration `0048`). Several responsible members of a company (08): **built 2026-11-19** (migration `0049`).
 
+Later changes (2026-11-21, bug list round — [bugfixing/](../bugfixing/README.md)): contact «Имя на родном языке» is required, default = the name (migration `0050`, apply after the code); company «Этап воронки» = the stages of the company's deals (read only; manual `client.funnel_phase` no longer shown); the company name is edited in the drawer header with its own «Сохранить» / «Отмена».
+
 Status: **built 2026-11-15** (Q1–Q12 decided): C1 definitions, C2 values + «Поля» tab, C3 old data converted, AI use (Q11). Not deployed; migration `0034_custom_fields` applied on the test DB. C4 list columns + filters built the same day (migration `0035`). Open (C5): deals / orders, import / export.
 
 | File | Content |

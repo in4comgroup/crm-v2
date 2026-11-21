@@ -156,7 +156,7 @@ export function ContactEditForm({
   const form = useForm<ContactFormData>({
     defaultValues: {
       name: contact?.name ?? "",
-      nameNative: contact?.nameNative ?? "",
+      nameNative: contact?.nameNative || contact?.name || "", // required, default = the name
       aliases: (contact?.aliases ?? []).join(", "),
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
@@ -173,7 +173,7 @@ export function ContactEditForm({
   useEffect(() => {
     form.reset({
       name: contact?.name ?? "",
-      nameNative: contact?.nameNative ?? "",
+      nameNative: contact?.nameNative || contact?.name || "", // required, default = the name
       aliases: (contact?.aliases ?? []).join(", "),
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
@@ -268,7 +268,20 @@ export function ContactEditForm({
               <FormItem>
                 <FormLabel className="text-gray-400">Имя *</FormLabel>
                 <FormControl>
-                  <Input {...field} placeholder="Имя контакта" />
+                  <Input
+                    {...field}
+                    placeholder="Имя контакта"
+                    onChange={(e) => {
+                      // «Имя на родном языке» follows the name while it is
+                      // empty or still a copy of it (default = the name).
+                      const prev = form.getValues("name")
+                      const native = form.getValues("nameNative")
+                      if (!native.trim() || native === prev) {
+                        form.setValue("nameNative", e.target.value, { shouldDirty: true })
+                      }
+                      field.onChange(e)
+                    }}
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -277,10 +290,11 @@ export function ContactEditForm({
           <FormField
             control={form.control}
             name="nameNative"
+            rules={{ validate: (v) => !!v.trim() || "Укажите имя на родном языке" }}
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-gray-400">
-                  Имя на родном языке
+                  Имя на родном языке *
                 </FormLabel>
                 <FormControl>
                   <Input

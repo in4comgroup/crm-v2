@@ -125,11 +125,14 @@ function SourceBadge({
   canEdit,
   busy,
   onConfirm,
+  onRemove,
 }: {
   meta: FieldMetaView | undefined
   canEdit: boolean
   busy: boolean
   onConfirm: () => void
+  /** «Убрать» the unconfirmed automatic value (2026-11-21). */
+  onRemove: () => void
 }) {
   if (!meta) return null
   if (meta.source === "manual") {
@@ -172,10 +175,16 @@ function SourceBadge({
       )}
       {link && <span className="text-muted-foreground">{link}</span>}
       {canEdit && (
-        <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={busy} onClick={onConfirm}>
-          <Check className="mr-1 h-3 w-3" />
-          Подтвердить
-        </Button>
+        <>
+          <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={busy} onClick={onConfirm}>
+            <Check className="mr-1 h-3 w-3" />
+            Подтвердить
+          </Button>
+          <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-xs" disabled={busy} onClick={onRemove}>
+            <X className="mr-1 h-3 w-3" />
+            Убрать
+          </Button>
+        </>
       )}
     </span>
   )
@@ -430,6 +439,7 @@ export function ClientProfileBlock({ clientId, className }: { clientId: string; 
                 canEdit={view.canEdit}
                 busy={busy !== null}
                 onConfirm={() => void post(`confirm:${field}`, { action: "confirm", field })}
+                onRemove={() => void post(`remove:${field}`, { action: "remove", field })}
               />
             )}
           </>

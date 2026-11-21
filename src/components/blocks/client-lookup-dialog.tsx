@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   Search,
   RotateCw,
+  Undo2,
 } from "lucide-react"
 import type { ClientRow } from "@/app/api/clients/route"
 import type {
@@ -288,7 +289,6 @@ export function ClientLookupDialog({
             chosen={chosen}
             draft={draft}
             setDraft={setDraft}
-            pinned={pinned}
             sources={result.sources}
             notes={result.notes}
             saving={phase === "saving"}
@@ -471,7 +471,6 @@ function EditView({
   chosen,
   draft,
   setDraft,
-  pinned,
   sources,
   notes,
   saving,
@@ -484,7 +483,6 @@ function EditView({
   chosen: ClientLookupCandidate
   draft: Fields
   setDraft: React.Dispatch<React.SetStateAction<Fields>>
-  pinned: Set<FieldKey>
   sources: ClientLookupSource[]
   notes: string
   saving: boolean
@@ -503,19 +501,22 @@ function EditView({
     [currentClient, draft],
   )
 
-  // What the search found for a field the operator pinned — shown as an
-  // offer, never applied silently over their own value.
+  // What the search found when the field does not hold it — a field the
+  // operator pinned (never applied silently over their own value) or one the
+  // user reverted with «вернуть» — shown as an offer «Найдено: … применить».
   const suggestion = useCallback(
     (field: FieldKey) => {
-      if (!pinned.has(field)) return ""
       const found = (chosen[field] ?? "").trim()
       return found && found !== draft[field].trim() ? found : ""
     },
-    [chosen, draft, pinned],
+    [chosen, draft],
   )
 
   const apply = (field: FieldKey, value: string) =>
     setDraft((d) => ({ ...d, [field]: value }))
+
+  // Per-field undo (2026-11-21): put back the value the company has now.
+  const revert = (field: FieldKey) => apply(field, currentClient[field] ?? "")
 
   // Auto-warn when low confidence — gives the user pause before saving.
   const lowConfidence = chosen.confidence === "low"
@@ -537,6 +538,8 @@ function EditView({
           value={draft.name}
           onChange={(v) => apply("name", v)}
           changed={isChanged("name")}
+          original={currentClient.name ?? ""}
+          onRevert={() => revert("name")}
           suggestion={suggestion("name")}
           onApplySuggestion={(v) => apply("name", v)}
         />
@@ -545,6 +548,8 @@ function EditView({
           value={draft.email}
           onChange={(v) => apply("email", v)}
           changed={isChanged("email")}
+          original={currentClient.email ?? ""}
+          onRevert={() => revert("email")}
           placeholder="info@example.com"
           suggestion={suggestion("email")}
           onApplySuggestion={(v) => apply("email", v)}
@@ -554,6 +559,8 @@ function EditView({
           value={draft.phone}
           onChange={(v) => apply("phone", v)}
           changed={isChanged("phone")}
+          original={currentClient.phone ?? ""}
+          onRevert={() => revert("phone")}
           suggestion={suggestion("phone")}
           onApplySuggestion={(v) => apply("phone", v)}
         />
@@ -562,6 +569,8 @@ function EditView({
           value={draft.address}
           onChange={(v) => apply("address", v)}
           changed={isChanged("address")}
+          original={currentClient.address ?? ""}
+          onRevert={() => revert("address")}
           placeholder="Улица, город, страна"
           suggestion={suggestion("address")}
           onApplySuggestion={(v) => apply("address", v)}
@@ -571,6 +580,8 @@ function EditView({
           value={draft.webUrl}
           onChange={(v) => apply("webUrl", v)}
           changed={isChanged("webUrl")}
+          original={currentClient.webUrl ?? ""}
+          onRevert={() => revert("webUrl")}
           placeholder="https://example.com"
           suggestion={suggestion("webUrl")}
           onApplySuggestion={(v) => apply("webUrl", v)}
@@ -614,6 +625,8 @@ function FieldRow({
   value,
   onChange,
   changed,
+  original,
+  onRevert,
   placeholder,
   suggestion,
   onApplySuggestion,
@@ -622,6 +635,9 @@ function FieldRow({
   value: string
   onChange: (v: string) => void
   changed: boolean
+  /** The company's current value — shown as «Было: …» with «вернуть» (result step only). */
+  original?: string
+  onRevert?: () => void
   placeholder?: string
   suggestion?: string
   onApplySuggestion?: (v: string) => void
@@ -644,6 +660,21 @@ function FieldRow({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
       />
+      {changed && onRevert && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="truncate">
+            Было: {original?.trim() ? original : <span className="italic">пусто</span>}
+          </span>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+            onClick={onRevert}
+          >
+            <Undo2 className="h-3 w-3" />
+            вернуть
+          </button>
+        </div>
+      )}
       {suggestion && onApplySuggestion && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="truncate">Найдено: {suggestion}</span>

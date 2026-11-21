@@ -106,6 +106,17 @@ describe("planWebProfileApply", () => {
     expect(plan.proposals[0]).toMatchObject({ field: "description", value: { description: "Описание из сети" } })
   })
 
+  it("«Убрать»: the same removed value is not written again; another value still fills", () => {
+    const removed: FieldMeta = { source: "web", at, verified: false, removedKey: "юг", removedByUserId: "u1", removedAt: at }
+    const same = planWebProfileApply({ values: values(), meta: { geography: removed }, pending: [], incoming: [cand("geography", { geography: "Юг" })], at })
+    expect(same.filled).toEqual([])
+    expect(same.unchanged).toEqual(["geography"])
+    expect(same.values.geography).toBeNull()
+    const other = planWebProfileApply({ values: values(), meta: { geography: removed }, pending: [], incoming: [cand("geography", { geography: "Север" })], at })
+    expect(other.filled).toEqual(["geography"])
+    expect(other.values.geography).toBe("Север")
+  })
+
   it("low confidence never auto-fills an empty field", () => {
     const plan = planWebProfileApply({
       values: values(),

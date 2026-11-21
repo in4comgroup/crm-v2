@@ -20,7 +20,10 @@ import {
   CheckCheck,
   Handshake,
   Info,
+  FileText,
   ListTodo,
+  Mail,
+  MessageSquare,
   ShoppingCart,
   User,
   X,
@@ -41,6 +44,7 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import TaskEditDialog from "@/components/forms/form-task-edit"
+import { SourceMessageDialog } from "@/components/blocks/source-message-dialog"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
 import {
   CARD_REJECT_DIALOG_TITLE_RU,
@@ -70,6 +74,8 @@ import {
 } from "@/lib/topics/cards"
 import { TOPIC_SUB_STATE_LABELS_RU, type TopicSubState } from "@/lib/topics/types"
 import {
+  SOURCE_CHANNEL_LABELS_RU,
+  type TopicSourceRef,
   CYCLE_MARKER_LABELS_RU,
   topicStatusRu,
   type TopicCardView,
@@ -597,6 +603,64 @@ export function DealCardBlock({
 
 // ── Entry card (dashboard) ────────────────────────────────────────────────
 
+function SourceIcon({ provider }: { provider: string | null }) {
+  const cls = "h-3.5 w-3.5 shrink-0"
+  if (provider === "nylas" || provider === "imap") return <Mail className={cls} />
+  if (provider === "gdrive" || provider === "dropoff") return <FileText className={cls} />
+  return <MessageSquare className={cls} />
+}
+
+/**
+ * «Источники» of a topic card (2026-11-21): the newest messages behind the
+ * topic; a click opens the message itself, «ещё N» opens the topic panel
+ * with the full list.
+ */
+function TopicSources({ entry, onOpenTopic }: { entry: TopicEntry; onOpenTopic: (topicId: string) => void }) {
+  const [open, setOpen] = useState<TopicSourceRef | null>(null)
+  if (entry.sources.length === 0) return null
+  const more = entry.sourceCount - entry.sources.length
+  return (
+    <div className="space-y-1 text-xs">
+      <div className="text-muted-foreground">Источники{entry.sourceCount > 1 ? ` (${entry.sourceCount})` : ""}</div>
+      <ul className="space-y-0.5">
+        {entry.sources.map((s) => (
+          <li key={s.sourceItemId} className="min-w-0">
+            <button
+              type="button"
+              onClick={() => setOpen(s)}
+              className="flex w-full min-w-0 items-center gap-1.5 text-left hover:text-foreground text-muted-foreground"
+            >
+              <SourceIcon provider={s.provider} />
+              <span className="shrink-0">{SOURCE_CHANNEL_LABELS_RU[s.provider ?? ""] ?? "Источник"}</span>
+              <span className="shrink-0">· {formatDateTimeRu(s.date)}</span>
+              <span className="truncate text-foreground/80 hover:underline underline-offset-2">
+                {[s.subject, s.from].filter(Boolean).length ? `· ${[s.subject, s.from].filter(Boolean).join(" — ")}` : "· открыть"}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {more > 0 && (
+        <button type="button" onClick={() => onOpenTopic(entry.topicId)} className="text-muted-foreground hover:text-foreground hover:underline underline-offset-2">
+          ещё {more}
+        </button>
+      )}
+      <SourceMessageDialog
+        itemId={open?.sourceItemId ?? null}
+        open={!!open}
+        onOpenChange={(o) => {
+          if (!o) setOpen(null)
+        }}
+        title={open?.subject ?? "Сообщение"}
+        channel={open ? (SOURCE_CHANNEL_LABELS_RU[open.provider ?? ""] ?? open.provider) : null}
+        from={open?.from ?? null}
+        to={null}
+        date={open ? formatDateTimeRu(open.date) : null}
+      />
+    </div>
+  )
+}
+
 export function TopicEntryCard({
   entry,
   onChanged,
@@ -694,6 +758,7 @@ export function TopicEntryCard({
       </CardHeader>
       <CardContent className="px-4 flex flex-col gap-3 flex-1">
         <TopicCardText card={card} title={card?.headline || entry.title} />
+        <TopicSources entry={entry} onOpenTopic={onOpen} />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {deadline && (
             <span className={cn("inline-flex items-center gap-1", a?.overdue && "text-red-600 dark:text-red-400")}>

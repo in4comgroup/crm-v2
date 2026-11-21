@@ -351,6 +351,8 @@ export type WebApplyPlan = {
  *  - web value = the stored value → nothing;
  *  - EMPTY field and confidence ≠ low → write it, meta `{ source, confidence,
  *    evidenceUrl, verified: false, at }`;
+ *  - EMPTY field whose automatic value a person removed («Убрать», meta
+ *    `removedKey`) and the web brings the SAME value again → nothing;
  *  - otherwise (field has a value — manual or earlier web — or confidence
  *    `low`) → a pending proposal; an identical pending proposal of that field
  *    → nothing; a different pending one → superseded by the new one.
@@ -376,6 +378,11 @@ export function planWebProfileApply(args: {
     const proposed = withFieldValue(values, c.field, c.value)
     if (isFieldEmpty(proposed, c.field)) continue
     if (sameFieldValue(values, proposed, c.field)) {
+      plan.unchanged.push(c.field)
+      continue
+    }
+    // A person removed this very value with «Убрать»: do not write it again.
+    if (isFieldEmpty(values, c.field) && meta[c.field]?.removedKey && meta[c.field]?.removedKey === fieldKey(proposed, c.field)) {
       plan.unchanged.push(c.field)
       continue
     }

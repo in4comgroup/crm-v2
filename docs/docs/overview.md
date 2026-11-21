@@ -110,7 +110,7 @@ Step by step:
 | Sources & parsing | Connect channels, ingest items, LLM-parse to Markdown, store in R2 | `/sources` «Источники» |
 | Discovery | Find companies, contacts, links in parsed items; blocklist; own-org identity | `/clients` (dialog) |
 | Cards | Topic cards from the topics engine; read-only history of old Custom-rule cards | `/dashboard` «Домашняя» |
-| Companies & contacts | Company and person records, web lookup and batch web enrichment, custom fields, company profile, «Ответственный» (Responsible) + «Также отвечают» (Also responsible), contact field «Ведётся на уровне» (Managed at the level of), contact ↔ company links over time (current / former, two companies, «Контакт сменил компанию?», merge), Telegram chats of a company | `/clients` «Компании», `/contacts` «Контакты» |
+| Companies & contacts | Company and person records, web lookup (one company at a time; the batch «Обогатить» button was removed 2026-11-21), custom fields, company profile, «Ответственный» (Responsible) + «Также отвечают» (Also responsible), contact field «Ведётся на уровне» (Managed at the level of), contact ↔ company links over time (current / former, two companies, «Контакт сменил компанию?», merge), Telegram chats of a company | `/clients` «Компании», `/contacts` «Контакты» |
 | Documents | Files of companies, contacts, deals, tasks, orders: originals stored, linked automatically and by hand | «Документы» tab in each drawer |
 | Deals | Kanban sales funnel, deal journal, deal bridge from topics | `/deals` «Сделки» |
 | Products / catalog | Read-only product catalog with hybrid search and price-list export | `/products` tab «Каталог товаров» |

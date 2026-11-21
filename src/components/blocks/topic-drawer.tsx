@@ -46,6 +46,7 @@ import { formatOrderAmount, formatOrderDate, ORDER_STATUS_LABEL } from "@/lib/or
 import type { OrderStatus } from "@/db/schema"
 import { TOPIC_ITEM_ROLE_LABELS_RU, TOPIC_SUB_STATE_LABELS_RU, type TopicItemRole, type TopicSubState } from "@/lib/topics/types"
 import {
+  SOURCE_CHANNEL_LABELS_RU,
   CYCLE_MARKER_LABELS_RU,
   topicStatusRu,
   type TopicDealOption,
@@ -64,16 +65,7 @@ export type TopicDrawerProps = {
   onChanged?: () => void
 }
 
-const CHANNEL_LABEL: Record<string, string> = {
-  nylas: "Письмо",
-  imap: "Письмо",
-  telegram: "Telegram",
-  gchat: "Google Chat",
-  gdrive: "Google Drive",
-  whatsapp: "WhatsApp",
-  dropoff: "Файл",
-  aichat: "ИИ чат",
-}
+const CHANNEL_LABEL = SOURCE_CHANNEL_LABELS_RU
 
 const DIRECTION_LABEL: Record<string, string> = { inbound: "входящее", outbound: "исходящее", internal: "внутреннее" }
 const CONFIDENCE_LABEL: Record<string, string> = { high: "высокая", medium: "средняя", low: "низкая" }

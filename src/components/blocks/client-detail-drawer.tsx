@@ -478,8 +478,12 @@ export function ClientDetailDrawer({
             <div className="px-4 pt-4 border-b shrink-0">
               <SheetTitle className="sr-only">{client.name}</SheetTitle>
               <div className="flex items-start gap-2 pr-10">
+                {/* The company name is edited right here (2026-11-21): a
+                    pencil + a border on hover / focus show that it is a field,
+                    and a changed name gets «Сохранить» / «Отмена» next to it —
+                    no scrolling to the save button of «Общая информация». */}
                 <FollowCursorTooltip
-                  text="Клик для редактирования"
+                  text="Нажмите, чтобы изменить название"
                   disabled={nameFieldFocused}
                   className="min-w-0 flex-1"
                 >
@@ -490,22 +494,46 @@ export function ClientDetailDrawer({
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <Input
-                            {...field}
-                            onFocus={() => setNameFieldFocused(true)}
-                            onBlur={() => {
-                              field.onBlur()
-                              setNameFieldFocused(false)
-                            }}
-                            className="text-base font-semibold border-none px-0 shadow-none focus-visible:ring-0 dark:bg-transparent selection:bg-muted-foreground/30 selection:text-inherit"
-                            placeholder="Название компании"
-                          />
+                          <div className="group relative">
+                            <Input
+                              {...field}
+                              aria-label="Название компании"
+                              onFocus={() => setNameFieldFocused(true)}
+                              onBlur={() => {
+                                field.onBlur()
+                                setNameFieldFocused(false)
+                              }}
+                              className="h-9 pl-2 pr-8 -ml-2 text-base font-semibold shadow-none border-transparent hover:border-input focus-visible:border-input dark:bg-transparent selection:bg-muted-foreground/30 selection:text-inherit"
+                              placeholder="Название компании"
+                            />
+                            <Pencil
+                              aria-hidden
+                              className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground opacity-60 group-hover:opacity-100"
+                            />
+                          </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </FollowCursorTooltip>
+                {editForm.formState.dirtyFields.name && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button type="submit" size="sm" disabled={isPending}>
+                      <Save className="h-3.5 w-3.5 mr-1" />
+                      Сохранить
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={isPending}
+                      onClick={() => editForm.resetField("name")}
+                    >
+                      Отмена
+                    </Button>
+                  </div>
+                )}
                 <ClientLookupDialog
                   client={client}
                   onSaved={onChanged}

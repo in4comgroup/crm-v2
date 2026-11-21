@@ -182,6 +182,11 @@ one company / contact / deal for the «Темы» tabs).
   «Исполнитель» = the person who creates it. A topic card with `category = new_order` (ORDER_REQUESTED)
   shows «Создать заказ» (Create order) instead and starts the order-from-request
   flow (`resultOrderId` stored). «Отклонить» (Reject) needs a reason.
+- Topic card on «Домашняя» (2026-11-21): block «Источники (N)» = the newest
+  ≤ 3 messages behind the topic (channel, date, subject — sender); a click
+  opens the message, «ещё N» opens the topic panel. Checkbox «Мои» = topic
+  assignee or deal owner is me; after a click on a tab / «Мои» / a filter the
+  list shows a loader until the new list arrives (no stale cards).
 - **Topic status ≠ card status.** A topic is the business question; its card is
   one recommendation about it. Card buttons change the CARD («Принята» /
   «Отклонена»); the reason is stored for the quality eval. ONE exception
@@ -251,11 +256,23 @@ links, proposals, merge).
   probability 1; «Потенциальные» = active deal on an open or pre-pipeline stage;
   «Поставщики»/«Партнёры» = manual `customFields.companyKind` (wins over deals).
 - The feed loads up to 500 companies per tab and sorts in the browser.
-- Web lookup: two LLM passes (grounded Google search, then structured
-  extraction) plus a fetch of the company's own website; the operator reviews
-  before anything is saved. Batch enrichment runs one company at a time from
-  the browser, auto-applies only a single high-confidence match, fills blank
-  fields only, and parks the rest for review.
+- Web lookup («Поиск в интернете»): two LLM passes (grounded Google search,
+  then structured extraction) plus a fetch of the company's own website; the
+  operator reviews before anything is saved. Each field marked «изменено» has
+  «Было: … · вернуть» (per-field undo) and a field that differs from the
+  result offers «Найдено: … · применить». The search note («Примечание
+  поиска») and «почему подходит» are in Russian; with only a name known a
+  match is at most «medium» (2026-11-21). The batch button «Обогатить» was
+  removed 2026-11-21; the batch API stays (no UI calls it), «На проверке (N)»
+  stays for matches already parked. Batch rules (when called): one company at
+  a time, auto-applies only a single high-confidence match, fills blank fields
+  only, parks the rest for review.
+- Company drawer header (2026-11-21): the name is an input with a pencil icon
+  and a border on hover / focus; a changed name shows «Сохранить» / «Отмена»
+  next to it. «Этап воронки» (read only) = the stages of the company's deals
+  in the org funnel (`GET api/deals?clientStages=<id>`, open stages first);
+  the old manual field `client.funnel_phase` («Осведомлённость … Удержание»)
+  is no longer shown or edited.
 - "Company materials" match source items by the company's name, address,
   website and contacts against `metadata_json` text (R2-uploaded items only).
 - Per-client discount lives in `customFields.discount` and is used by orders.
@@ -264,8 +281,14 @@ links, proposals, merge).
   owner manages, every member edits; spec `docs/specs/clients-contacts/`).
 - «Профиль компании» (what the client does): edited by the responsible member
   and the owner; web enrichment fills EMPTY fields as «Из интернета —
-  проверьте» and turns a different value into a proposal; never overwrites a
-  manual value.
+  проверьте» (+ «Подтвердить» / «Убрать») and turns a different value into a
+  proposal; never overwrites a manual value. «Убрать» (2026-11-21) empties an
+  UNCONFIRMED automatic value and remembers it (`field_meta.removedKey`), so
+  the next web fill does not write the same value again.
+- Contact «Имя на родном языке» (native name) is required, default = the name
+  (2026-11-21; form copies the name while the field is empty or a copy; server
+  fills it on create / update / discovery; migration `0050` = backfill + NOT
+  NULL).
 - «Ответственный» (Responsible): one human member per company, default = the
   creator. Only an org owner sets it (any human, not banned member). The
   responsible member who is not an owner can only «Передать владельцу»; the
@@ -471,9 +494,15 @@ contract `src/lib/documents.ts`.
   derived audio); decorative inline images are not documents.
 - The original is stored (≤ 50 MB) at parse / upload; WhatsApp files are not.
 - `document_link` is many-to-many. Automatic links (no AI): message
-  participants → contact + company; the message's topic → company / contact /
-  deal; exact company names in the file → company; the company's only open deal
-  → deal. A person's «Отвязать» is final for that link.
+  participants → contact + company (the sender; recipients only of OUR
+  outgoing mail; on inbound mail a copy only from the sender's company /
+  mail domain, medium — 2026-11-21); the sender's company by mail domain when
+  the sender is not a contact (medium); the message's topic → company /
+  contact / deal; exact company names in the file → company; the company's
+  only open deal → deal. A person's «Отвязать» is final for that link.
+- Switch «Включая …» (default on) on every «Документы» tab (2026-11-21):
+  company + its contacts and deals; contact + its deals and tasks; deal + its
+  contacts and tasks; task + its deal; order + its company's own files.
 
 ## Analytics
 

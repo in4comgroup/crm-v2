@@ -1544,7 +1544,8 @@ export async function applyDiscovery(
       return {
         id: randomUUID(),
         name: overridden || fallback,
-        nameNative: nativeByEmail.get(c.email) ?? null,
+        // Required; default = the name (2026-11-21).
+        nameNative: nativeByEmail.get(c.email) ?? (overridden || fallback),
         email: c.email,
         phone: phoneMapByEmail.get(c.email) ?? null,
         position: positionMapByEmail.get(c.email) ?? null,
@@ -1626,9 +1627,10 @@ export async function applyDiscovery(
 
   // ── 4. Backfill native names onto existing contacts (fill blanks only) ─
   // New contacts already got their name_native at insert. This pass fills
-  // pre-existing contacts whose name_native is still blank — never
-  // overwrites a human-edited value. One UPDATE per email (rare: usually
-  // just the sender).
+  // pre-existing contacts whose name_native is still blank OR only the
+  // default copy of the name (required since 2026-11-21, default = the
+  // name) — never overwrites a human-edited value. One UPDATE per email
+  // (rare: usually just the sender).
   let nativeNamesEnriched = 0
   for (const [email, nativeName] of nativeByEmail) {
     const updated = await db
@@ -1639,7 +1641,7 @@ export async function applyDiscovery(
           eq(contact.organizationId, activeOrgId),
           ne(contact.status, "deleted"),
           sql`lower(${contact.email}) = ${email}`,
-          sql`(${contact.nameNative} IS NULL OR ${contact.nameNative} = '')`,
+          sql`(${contact.nameNative} IS NULL OR ${contact.nameNative} = '' OR ${contact.nameNative} = ${contact.name})`,
         ),
       )
       .returning({ id: contact.id })

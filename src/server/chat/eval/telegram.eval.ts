@@ -449,9 +449,9 @@ describe.skipIf(!run)("AI chat over Telegram (mocked Bot API, real router / work
   it("tg12 a client writes by the username in «Адреса» → item resolved to the contact + company; the id is learned", async () => {
     await db.insert(client).values({ id: CL.id, name: CL.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID })
     await db.insert(contact).values([
-      { id: CT1.id, name: CT1.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: CL.id, phone: null },
-      { id: CT2.id, name: CT2.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: CL.id, phone: CT1.phone },
-      { id: CT3.id, name: CT3.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: null },
+      { id: CT1.id, name: CT1.name, nameNative: CT1.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: CL.id, phone: null },
+      { id: CT2.id, name: CT2.name, nameNative: CT2.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: CL.id, phone: CT1.phone },
+      { id: CT3.id, name: CT3.name, nameNative: CT3.name, organizationId: EVAL_ORG_ID, userId: EVAL_USER_ID, clientId: null },
     ])
     await db.insert(contactAddress).values({ id: `${T}-a1`, organizationId: EVAL_ORG_ID, contactId: CT1.id, kind: "telegram", value: CT1.handle })
     const u = fromUpdate(person(TG_PETR, CT1.handle, "Пётр"), { text: "Добрый день! Пришлите, пожалуйста, КП на 200 штук до пятницы." })

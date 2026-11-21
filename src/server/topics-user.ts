@@ -38,10 +38,12 @@ import {
   type TopicEntry,
   type TopicEntryAttention,
   type TopicListResponse,
+  type TopicSourceRef,
   type TopicMergeOption,
   type TopicOrderOption,
   type TopicOwnerOption,
   type TopicTab,
+  TOPIC_CARD_SOURCES,
 } from "@/lib/topics/topic-ui"
 import { isTopicStatus, TOPIC_LIVE_STATUSES, type TopicStatus } from "@/lib/topics/types"
 import { reminderMarker } from "@/lib/topics/delivery-routing"
@@ -372,6 +374,60 @@ async function loadItemContacts(orgId: string, ids: readonly string[]): Promise<
   return out
 }
 
+/**
+ * «Источники» of topic cards: per topic the newest non-context messages
+ * (one row per source item), ≤ TOPIC_CARD_SOURCES + the total count.
+ */
+async function loadEntrySources(
+  orgId: string,
+  ids: readonly string[],
+): Promise<Map<string, { sources: TopicSourceRef[]; count: number }>> {
+  const out = new Map<string, { sources: TopicSourceRef[]; count: number }>()
+  for (let i = 0; i < ids.length; i += 500) {
+    const rows = await db
+      .select({
+        topicId: topicItem.topicId,
+        sourceItemId: topicItem.sourceItemId,
+        provider: source.provider,
+        externalType: sourceItem.externalType,
+        sourceCreatedAt: sourceItem.sourceCreatedAt,
+        createdAt: sourceItem.createdAt,
+        orgAttribution: sourceItem.orgAttribution,
+        metadataJson: sourceItem.metadataJson,
+      })
+      .from(topicItem)
+      .innerJoin(sourceItem, eq(sourceItem.id, topicItem.sourceItemId))
+      .leftJoin(source, eq(source.id, sourceItem.sourceId))
+      .where(
+        and(
+          eq(topicItem.organizationId, orgId),
+          inArray(topicItem.topicId, ids.slice(i, i + 500)),
+          ne(topicItem.role, "context"),
+        ),
+      )
+    const byTopic = new Map<string, Map<string, TopicSourceRef>>()
+    for (const r of rows) {
+      const m = byTopic.get(r.topicId) ?? new Map<string, TopicSourceRef>()
+      if (!m.has(r.sourceItemId)) {
+        const env = envelopeFromItem(r)
+        m.set(r.sourceItemId, {
+          sourceItemId: r.sourceItemId,
+          date: (r.sourceCreatedAt ?? r.createdAt).toISOString(),
+          provider: r.provider,
+          subject: env.subject ?? null,
+          from: env.from ?? null,
+        })
+      }
+      byTopic.set(r.topicId, m)
+    }
+    for (const [topicId, m] of byTopic) {
+      const all = [...m.values()].sort((a, b) => b.date.localeCompare(a.date))
+      out.set(topicId, { sources: all.slice(0, TOPIC_CARD_SOURCES), count: all.length })
+    }
+  }
+  return out
+}
+
 function toEntry(
   h: HeadRow,
   attention: TopicAttention | null,
@@ -379,6 +435,7 @@ function toEntry(
   labels: Map<string, string>,
   now: Date,
   itemContactId: string | null = null,
+  sources: { sources: TopicSourceRef[]; count: number } = { sources: [], count: 0 },
 ): TopicEntry {
   const t = h.t
   const att = entryAttention(attention)
@@ -399,6 +456,8 @@ function toEntry(
     contactName: h.contactName,
     taskContactId: t.contactId ?? itemContactId,
     family: t.family,
+    sources: sources.sources,
+    sourceCount: sources.count,
     dealId: t.dealId,
     dealName: h.dealName,
     dealOwnerUserId: h.dealOwnerUserId,
@@ -426,16 +485,19 @@ async function buildEntries(
 ): Promise<TopicEntry[]> {
   if (placed.length === 0) return []
   const ids = placed.map((p) => p.topicId)
-  const [heads, cards, labels, itemContacts] = await Promise.all([
+  const [heads, cards, labels, itemContacts, sources] = await Promise.all([
     loadHeads(orgId, ids),
     loadCards(orgId, ids),
     codeLabels(),
     loadItemContacts(orgId, ids),
+    loadEntrySources(orgId, ids),
   ])
   const out: TopicEntry[] = []
   for (const p of placed) {
     const h = heads.get(p.topicId)
-    if (h) out.push(toEntry(h, p.attention, cards.get(p.topicId) ?? [], labels, now, itemContacts.get(p.topicId) ?? null))
+    if (h) {
+      out.push(toEntry(h, p.attention, cards.get(p.topicId) ?? [], labels, now, itemContacts.get(p.topicId) ?? null, sources.get(p.topicId)))
+    }
   }
   return out
 }
@@ -672,7 +734,9 @@ export async function getTopicView(orgId: string, topicId: string, now: Date = n
   ])
   const cards = cardsMap.get(topicId) ?? []
   const attention = placer.place(t.attention, now)
-  const entry = toEntry(head, attention, cards, labels, now, itemContacts.get(topicId) ?? null)
+  const entry = toEntry(head, attention, cards, labels, now, itemContacts.get(topicId) ?? null, (
+    await loadEntrySources(orgId, [topicId])
+  ).get(topicId))
   const d = dealRow[0]
   const labelOf = (code: string) => labels.get(code) ?? null
   return {

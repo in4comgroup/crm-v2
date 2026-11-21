@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import {
   ClientProfileError,
   confirmClientProfileFieldForSession,
+  removeClientProfileFieldForSession,
   decideClientProfileProposalForSession,
   getClientProfileViewForSession,
   requireClientProfileSession,
@@ -22,6 +23,7 @@ export type { FillProfileResult } from "@/server/identity/client-enrichment"
 //   GET                                   → { view }
 //   PUT  { profile }                      → { changed, view }
 //   POST { action: "confirm", field }     → { view }
+//   POST { action: "remove", field }      → { view }  («Убрать» an unconfirmed automatic value)
 //   POST { action: "acceptProposal" | "rejectProposal", proposalId } → { view }
 //   POST { action: "enrich" }             → { result, view }  («Заполнить из интернета»)
 
@@ -77,6 +79,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     switch (body?.action) {
       case "confirm":
         await confirmClientProfileFieldForSession(id, body.field)
+        return NextResponse.json({ view: await getClientProfileViewForSession(id) })
+      case "remove":
+        // «Убрать» an unconfirmed automatic value (2026-11-21).
+        await removeClientProfileFieldForSession(id, body.field)
         return NextResponse.json({ view: await getClientProfileViewForSession(id) })
       case "acceptProposal":
       case "rejectProposal":

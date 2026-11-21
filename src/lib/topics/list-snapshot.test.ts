@@ -166,6 +166,8 @@ function entry(id: string, list: TopicList, p: Partial<TopicEntry["attention"] &
     contactName: null,
     taskContactId: null,
     family: null,
+    sources: [],
+    sourceCount: 0,
     dealId: null,
     dealName: null,
     dealOwnerUserId: null,

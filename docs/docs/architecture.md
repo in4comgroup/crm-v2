@@ -166,7 +166,8 @@ Vercel Cron (03:00 UTC, vercel.ts)
   notification checks run once a day.
 
 Other batch jobs (discovery of companies and contacts — no LLM, it reads the
-parsed metadata —, and the LLM batch web enrichment) are **not** scheduled. They run when a user clicks a button, with
+parsed metadata —; the LLM batch web enrichment has no UI button since
+2026-11-21) are **not** scheduled. They run when a user clicks a button, with
 caps (for example 50 items, concurrency 3) sized for one serverless request.
 
 ## External services

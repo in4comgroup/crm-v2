@@ -212,7 +212,7 @@ one company / contact / deal for the «Темы» tabs).
 filter («Все компании», «Клиенты», «Потенциальные», «Поставщики», «Партнёры»,
 «Не определено»), status filter, «Ответственный» filter (all / «Мои» / «Ждут
 решения владельца» / each member), sort «Сначала новые / Сначала критичные»,
-discovery, «Обогатить» (enrich), blocklist, Magic, card/table toggle, profile
+discovery, «На проверке (N)» (web-enrichment review; the batch «Обогатить» was removed 2026-11-21), blocklist, Magic, card/table toggle, profile
 filters «Отрасль» / «Роль» / «Размер», «Фильтр по полям» (custom fields) and,
 for the owner, «Настроить поля». Clicking a company opens the company drawer
 (tabs «Общая информация» (form, «Профиль компании», «Ответственный»), «Поля»,

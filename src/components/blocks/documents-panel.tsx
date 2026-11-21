@@ -2,7 +2,8 @@
 
 // «Документы» of ONE entity (docs/specs/attachments §5–§6): company, contact,
 // deal, task or order. Upload («Добавить файл» + drag and drop), type filter,
-// text search, for a company the switch «Включая контакты и сделки» (Q11),
+// text search, the switch «Включая …» = files of related records (Q11 for a
+// company; every entity since 2026-11-21, bug list item 19),
 // server paging (TablePager), per-row actions («Открыть» in a new tab /
 // «Скачать» / «Текст» / «Привязать ещё» / «Отвязать» / «Удалить файл») and
 // link chips with the «авто» badge + «Подтвердить» for medium links.
@@ -118,6 +119,15 @@ function Hint({ text, children, className }: { text: string; children: ReactNode
   )
 }
 
+/** The «related files» switch per view (server rule: `viewRefs` in src/server/documents.ts). */
+const RELATED_LABEL_RU: Record<DocumentEntityType, string> = {
+  client: "Включая контакты и сделки",
+  contact: "Включая сделки и задачи",
+  deal: "Включая контакты и задачи",
+  task: "Включая файлы сделки",
+  order: "Включая файлы компании",
+}
+
 export function DocumentsPanel({
   entityType,
   entityId,
@@ -153,8 +163,9 @@ export function DocumentsPanel({
   // Polling window start while rows are being analysed (null = not polling).
   const pollStart = useRef<number | null>(null)
 
-  const isCompany = entityType === "client"
-  const requestKey = [entityType, entityId, related && isCompany ? 1 : 0, type, q, page, pageSize].join("|")
+  // ONE key for the request and for `loading` (the source filter used to be
+  // missing here, so `loading` never became false: the list stayed dimmed).
+  const requestKey = [entityType, entityId, related ? 1 : 0, type, sourceFilter, q, page, pageSize].join("|")
 
   // Debounced search; a new query starts from the first page.
   useEffect(() => {
@@ -169,14 +180,14 @@ export function DocumentsPanel({
 
   useEffect(() => {
     const ctrl = new AbortController()
-    const key = [entityType, entityId, related && isCompany ? 1 : 0, type, sourceFilter, q, page, pageSize].join("|")
+    const key = requestKey
     const sp = new URLSearchParams({
       entityType,
       entityId,
       limit: String(pageSize),
       offset: String(page * pageSize),
     })
-    if (isCompany) sp.set("related", related ? "1" : "0")
+    sp.set("related", related ? "1" : "0")
     if (type !== ALL_TYPES) sp.set("type", type)
     if (sourceFilter !== ALL_TYPES) sp.set("source", sourceFilter)
     if (q) sp.set("q", q)
@@ -202,7 +213,7 @@ export function DocumentsPanel({
         }))
       })
     return () => ctrl.abort()
-  }, [entityType, entityId, isCompany, related, type, sourceFilter, q, page, pageSize, tick])
+  }, [requestKey, entityType, entityId, related, type, sourceFilter, q, page, pageSize, tick])
 
   const reload = useCallback(() => setTick((t) => t + 1), [])
 
@@ -451,21 +462,20 @@ export function DocumentsPanel({
             className="h-8 pl-8"
           />
         </div>
-        {isCompany && (
-          <div className="flex items-center gap-2">
-            <Switch
-              id={`docs-related-${entityId}`}
-              checked={related}
-              onCheckedChange={(v) => {
-                setRelated(v)
-                setPage(0)
-              }}
-            />
-            <Label htmlFor={`docs-related-${entityId}`} className="text-xs font-normal text-muted-foreground">
-              Включая контакты и сделки
-            </Label>
-          </div>
-        )}
+        {/* Related files, every entity (bug list 2026-11-21, item 19). */}
+        <div className="flex items-center gap-2">
+          <Switch
+            id={`docs-related-${entityId}`}
+            checked={related}
+            onCheckedChange={(v) => {
+              setRelated(v)
+              setPage(0)
+            }}
+          />
+          <Label htmlFor={`docs-related-${entityId}`} className="text-xs font-normal text-muted-foreground">
+            {RELATED_LABEL_RU[entityType]}
+          </Label>
+        </div>
       </div>
 
       {data?.error && <p className="text-sm text-destructive">{data.error}</p>}

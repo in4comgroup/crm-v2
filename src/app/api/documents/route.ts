@@ -5,7 +5,8 @@ import { documentErrorResponse } from "./_shared"
 
 // Documents of ONE entity (docs/specs/attachments §6–§7), any member of the org.
 //   GET ?entityType=client|contact|deal|task|order&entityId=[&related=0|1][&type=pdf|…][&source=<provider>][&q=][&limit=][&offset=]
-//   `related` (company only, Q11): include the documents of its contacts and deals (default 1).
+//   `related` (default 1): include the documents of related entities — company: contacts + deals (Q11);
+//   contact: deals + tasks; deal: contacts + tasks; task: its deal; order: its company (2026-11-21).
 
 export async function GET(request: NextRequest) {
   try {

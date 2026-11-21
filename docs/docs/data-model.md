@@ -240,7 +240,7 @@ Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
 | --- | --- |
 | `role` (org) | `member`, `admin`, `owner` |
 | `entity_status` (client, contact, product) | `active`, `suspended`, `initial`, `deleted`, `blocked` |
-| `funnel_phase` (client) | `awareness`, `interest`, `decision`, `action`, `retention` |
+| `funnel_phase` (client) | `awareness`, `interest`, `decision`, `action`, `retention` — legacy, not shown in the UI since 2026-11-21 («Этап воронки» of a company = the stages of its deals) |
 | `deal_status` | `active`, `cancelled`, `deleted`, `paused` (phase 5: a status, not a stage) |
 | `deal_contact_role` | `decision_maker`, `influencer`, `expert`, `initiator`, `economic_buyer`, `champion`, `blocker`, `user`, `gatekeeper` |
 | `task_type` / `task_priority` / `task_status` | `meet, call, email, offer, docs, support, other` / `low, medium, high` / `todo, in_progress, done, closed` |

@@ -22,6 +22,7 @@ import {
   contact,
   contactAddress,
   deal,
+  dealContact,
   documentLink,
   order,
   source,
@@ -39,9 +40,12 @@ import {
   documentSkipReason,
   documentTypeBucket,
   downloadFileName,
+  clientsBySenderDomain,
   isInlineSafeMime,
+  messageParticipants,
   planAutoLinks,
   safeFileSegment,
+  type AutoLinkParticipant,
   type DocumentEntityType,
   type DocumentLinkView,
   type DocumentTypeBucket,
@@ -299,7 +303,10 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
 
   // A1 — parent message participants → contacts (exact email).
   const pm = (parent?.meta ?? {}) as Record<string, unknown>
-  const senders = emailsOf(pm.from).filter((e) => !isOwn(e))
+  const fromAll = emailsOf(pm.from)
+  // Our own outgoing message: every «from» address is ours.
+  const outbound = fromAll.length > 0 && fromAll.every(isOwn)
+  const senders = fromAll.filter((e) => !isOwn(e))
   const recipients = [...emailsOf(pm.to), ...emailsOf(pm.cc)].filter((e) => !isOwn(e))
   const allEmails = [...new Set([...senders, ...recipients])]
   const contactRows = allEmails.length
@@ -338,13 +345,17 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
     if (!list.some((x) => x.id === c.id)) list.push({ id: c.id, clientId: c.clientId })
     byEmail.set(k, list)
   }
-  const participants: { contactId: string; clientId: string | null; role: "sender" | "recipient" }[] = []
-  for (const [list, role] of [[senders, "sender"], [recipients, "recipient"]] as const) {
-    for (const e of list) {
-      const hits = byEmail.get(e) ?? []
-      if (hits.length === 1) participants.push({ contactId: hits[0].id, clientId: hits[0].clientId, role })
-    }
+  // Unique hits only; who of them may link: `messageParticipants` (pure).
+  const uniqueHit = (e: string) => {
+    const hits = byEmail.get(e) ?? []
+    return hits.length === 1 ? { email: e, contactId: hits[0].id, clientId: hits[0].clientId } : null
   }
+  const participants: AutoLinkParticipant[] = messageParticipants({
+    outbound,
+    senderEmails: senders,
+    senders: senders.map(uniqueHit).filter((x) => x !== null),
+    recipients: recipients.map(uniqueHit).filter((x) => x !== null),
+  })
   // Telegram (docs/specs/telegram §4.3, Q11 / Q14): the author by Telegram
   // name — for a forward the ORIGINAL author; our member (the «us» registry)
   // never; a contact by alias «@name» or «Адреса» → Telegram (unique hit).
@@ -414,6 +425,23 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
     }
   }
 
+  // A1b — the sender's company by mail domain (the sender need not be a contact).
+  const senderDomainClients = senders.length
+    ? clientsBySenderDomain(
+        senders,
+        await db
+          .select({ id: client.id, webUrl: client.webUrl, email: client.email })
+          .from(client)
+          .where(
+            and(
+              eq(client.organizationId, orgId),
+              sql`${client.status} not in ('deleted', 'blocked')`,
+              sql`(${client.webUrl} is not null or ${client.email} is not null)`,
+            ),
+          ),
+      )
+    : []
+
   const existing = await db
     .select({ entityType: documentLink.entityType, entityId: documentLink.entityId, removedAt: documentLink.removedAt })
     .from(documentLink)
@@ -424,6 +452,7 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
     ...new Set([
       ...participants.map((p) => p.clientId).filter((x): x is string => !!x),
       ...topics.map((t) => t.clientId).filter((x): x is string => !!x),
+      ...senderDomainClients,
       ...contentClients,
       ...existing.filter((e) => e.entityType === "client" && !e.removedAt).map((e) => e.entityId),
     ]),
@@ -445,6 +474,7 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
 
   const planned = planAutoLinks({
     participants,
+    senderDomainClients,
     topics: topics
       .filter((t) => t.status !== "merged" && t.status !== "dismissed")
       .map((t) => ({ topicTitle: t.title ?? "Тема", clientId: t.clientId, contactId: t.contactId, dealId: t.dealId })),
@@ -474,21 +504,63 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
 
 // ── Lists (§6) ────────────────────────────────────────────────────────────
 
-/** The entity refs a view lists (Q11: a company + its contacts + its deals). */
+/**
+ * The entity refs a view lists. With `includeRelated` (the switch, default
+ * on; Q11 for a company, every entity since 2026-11-21 — bug list item 19):
+ * - company → + its contacts + its deals (Q11);
+ * - contact → + its deals (`deal_contact`) + its tasks;
+ * - deal → + its contacts (`deal_contact`) + its tasks;
+ * - task → + its deal;
+ * - order → + its company (only the company's OWN links: an order has no
+ *   deal in the data model).
+ * Related rows are the org's own (tenant filter on every query).
+ */
 async function viewRefs(
   orgId: string,
   entityType: DocumentEntityType,
   entityId: string,
   includeRelated: boolean,
 ): Promise<{ entityType: DocumentEntityType; entityId: string }[]> {
-  const refs = [{ entityType, entityId }]
-  if (entityType === "client" && includeRelated) {
+  const refs: { entityType: DocumentEntityType; entityId: string }[] = [{ entityType, entityId }]
+  if (!includeRelated) return refs
+  const push = (t: DocumentEntityType, ids: (string | null)[]) => {
+    for (const id of ids) if (id && !refs.some((r) => r.entityType === t && r.entityId === id)) refs.push({ entityType: t, entityId: id })
+  }
+  if (entityType === "client") {
     const [cs, ds] = await Promise.all([
       db.select({ id: contact.id }).from(contact).where(and(eq(contact.organizationId, orgId), eq(contact.clientId, entityId))),
       db.select({ id: deal.id }).from(deal).where(and(eq(deal.organizationId, orgId), eq(deal.clientId, entityId))),
     ])
-    for (const c of cs) refs.push({ entityType: "contact", entityId: c.id })
-    for (const d of ds) refs.push({ entityType: "deal", entityId: d.id })
+    push("contact", cs.map((c) => c.id))
+    push("deal", ds.map((d) => d.id))
+  } else if (entityType === "contact") {
+    const [ds, ts] = await Promise.all([
+      db
+        .select({ id: deal.id })
+        .from(dealContact)
+        .innerJoin(deal, eq(deal.id, dealContact.dealId))
+        .where(and(eq(deal.organizationId, orgId), eq(dealContact.contactId, entityId))),
+      db.select({ id: task.id }).from(task).where(and(eq(task.organizationId, orgId), eq(task.contactId, entityId))),
+    ])
+    push("deal", ds.map((d) => d.id))
+    push("task", ts.map((t) => t.id))
+  } else if (entityType === "deal") {
+    const [cs, ts] = await Promise.all([
+      db
+        .select({ id: contact.id })
+        .from(dealContact)
+        .innerJoin(contact, eq(contact.id, dealContact.contactId))
+        .where(and(eq(contact.organizationId, orgId), eq(dealContact.dealId, entityId))),
+      db.select({ id: task.id }).from(task).where(and(eq(task.organizationId, orgId), eq(task.dealId, entityId))),
+    ])
+    push("contact", cs.map((c) => c.id))
+    push("task", ts.map((t) => t.id))
+  } else if (entityType === "task") {
+    const [t] = await db.select({ dealId: task.dealId }).from(task).where(and(eq(task.organizationId, orgId), eq(task.id, entityId)))
+    push("deal", [t?.dealId ?? null])
+  } else if (entityType === "order") {
+    const [o] = await db.select({ clientId: order.clientId }).from(order).where(and(eq(order.organizationId, orgId), eq(order.id, entityId)))
+    push("client", [o?.clientId ?? null])
   }
   return refs
 }
@@ -511,7 +583,7 @@ export async function listDocuments(
   opts: ListDocumentsOptions = {},
 ): Promise<{ documents: DocumentView[]; total: number; providers: string[] }> {
   await assertEntityInOrg(orgId, entityType, entityId)
-  const refs = await viewRefs(orgId, entityType, entityId, opts.includeRelated ?? entityType === "client")
+  const refs = await viewRefs(orgId, entityType, entityId, opts.includeRelated ?? true)
   const refCond = or(
     ...refs.map((r) => and(eq(documentLink.entityType, r.entityType), eq(documentLink.entityId, r.entityId))!),
   )!

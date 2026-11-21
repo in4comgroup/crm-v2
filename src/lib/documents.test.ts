@@ -3,7 +3,9 @@ import {
   contentDisposition,
   documentTypeBucket,
   formatFileSize,
+  clientsBySenderDomain,
   isInlineSafeMime,
+  messageParticipants,
   opensInBrowser,
   planAutoLinks,
   safeFileSegment,
@@ -117,5 +119,75 @@ describe("skip reason + download name", async () => {
     expect(downloadFileName("Таблица", "text/csv; charset=utf-8")).toBe("Таблица.csv")
     expect(downloadFileName("a.pdf", "application/pdf")).toBe("a.pdf")
     expect(downloadFileName("noext", "application/x-unknown")).toBe("noext")
+  })
+})
+
+describe("messageParticipants (bug list 2026-11-21, item 16)", () => {
+  const anna = { email: "sid_anna13@hotmail.com", contactId: "anna", clientId: null }
+  const colleague = { email: "anna.chekhomova@maslov.agency", contactId: "chek", clientId: null }
+  const sameRecord = { email: "x@other.ru", contactId: "x", clientId: "maslov" }
+
+  it("inbound: a person in copy from another company / private mail is not linked", () => {
+    const r = messageParticipants({
+      outbound: false,
+      senderEmails: ["evgenia.kondrasheva@maslov.agency"],
+      senders: [],
+      recipients: [anna],
+    })
+    expect(r).toEqual([])
+  })
+
+  it("inbound: copy from the sender's mail domain or company record → medium role", () => {
+    const r = messageParticipants({
+      outbound: false,
+      senderEmails: ["evgenia.kondrasheva@maslov.agency"],
+      senders: [{ contactId: "evg", clientId: "maslov" }],
+      recipients: [anna, colleague, sameRecord],
+    })
+    expect(r.map((p) => [p.contactId, p.role])).toEqual([
+      ["evg", "sender"],
+      ["chek", "cc_sender_company"],
+      ["x", "cc_sender_company"],
+    ])
+    const links = planAutoLinks({ ...base, participants: r })
+    expect(links.find((l) => l.entityId === "chek")!.confidence).toBe("medium")
+    expect(links.find((l) => l.entityId === "evg")!.confidence).toBe("high")
+  })
+
+  it("inbound from free mail: the free-mail domain never makes a copy «same company»", () => {
+    const r = messageParticipants({
+      outbound: false,
+      senderEmails: ["someone@gmail.com"],
+      senders: [],
+      recipients: [{ email: "other@gmail.com", contactId: "o", clientId: null }],
+    })
+    expect(r).toEqual([])
+  })
+
+  it("outbound (our message): recipients are the counterparties → high", () => {
+    const r = messageParticipants({ outbound: true, senderEmails: [], senders: [], recipients: [anna] })
+    expect(r).toEqual([{ contactId: "anna", clientId: null, role: "recipient" }])
+    expect(planAutoLinks({ ...base, participants: r })[0].confidence).toBe("high")
+  })
+})
+
+describe("clientsBySenderDomain (A1b)", () => {
+  const clients = [
+    { id: "maslov", webUrl: "https://maslov.agency", email: null },
+    { id: "a", webUrl: "https://www.twins.ru/about", email: null },
+    { id: "b", webUrl: null, email: "info@twins.ru" },
+    { id: "g", webUrl: "https://gmail.com", email: null },
+  ]
+  it("one company per domain → linked; two companies on one domain → none", () => {
+    expect(clientsBySenderDomain(["evgenia@maslov.agency", "x@twins.ru"], clients)).toEqual(["maslov"])
+  })
+  it("free mail never matches", () => {
+    expect(clientsBySenderDomain(["someone@gmail.com"], clients)).toEqual([])
+  })
+  it("planner: medium client link with the domain reason", () => {
+    const r = planAutoLinks({ ...base, senderDomainClients: ["maslov"] })
+    expect(r).toEqual([
+      { entityType: "client", entityId: "maslov", origin: "auto_participant", confidence: "medium", reason: "компания отправителя (по домену почты)" },
+    ])
   })
 })

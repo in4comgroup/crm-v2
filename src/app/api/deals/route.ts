@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import {
   listDeals,
+  listClientDealStages,
   listDealClientOptions,
   listDealContactOptions,
   listDealFunnelStages,
@@ -45,6 +46,7 @@ import {
 
 export {
   type DealRow,
+  type ClientDealStage,
   type DealClientOption,
   type DealContactOption,
   type DealFunnelStageOption,
@@ -114,6 +116,11 @@ export async function GET(request: NextRequest) {
       const clientId = url.searchParams.get("clientId")
       const options = await listDealContactOptions(clientId)
       return NextResponse.json({ options })
+    }
+    // «Этап воронки» of one company: the stages of its deals.
+    const stagesOf = url.searchParams.get("clientStages")
+    if (stagesOf) {
+      return NextResponse.json({ stages: await listClientDealStages(stagesOf) })
     }
     if (url.searchParams.get("stageSettings") === "1") {
       // { stages, canManage } — only the org owner may save (PUT → 403 otherwise).

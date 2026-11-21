@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/form"
 import { toast } from "sonner"
 import type { ClientRow, ClientContactPreview } from "@/app/api/clients/route"
-import type { FunnelPhase, EntityStatus } from "@/db/schema"
+import type { EntityStatus } from "@/db/schema"
 import {
   COMPANY_KIND_LABELS,
   COMPANY_KIND_VALUES,
@@ -41,14 +41,6 @@ import {
 // Sentinel for the "no kind selected" option — shadcn SelectItem can't carry
 // an empty-string value.
 const COMPANY_KIND_NONE = "__none__"
-
-const FUNNEL_PHASES: FunnelPhase[] = [
-  "awareness",
-  "interest",
-  "decision",
-  "action",
-  "retention",
-]
 
 // `initial` is reserved for clients auto-created by the company-discovery
 // scan (see /clients page). Operators flip it to `active` here once they
@@ -69,13 +61,6 @@ const STATUSES: EntityStatus[] = [
 ]
 
 // UI display labels (DB enum values stay English).
-const PHASE_LABEL: Record<string, string> = {
-  awareness: "Осведомлённость",
-  interest: "Интерес",
-  decision: "Решение",
-  action: "Действие",
-  retention: "Удержание",
-}
 const STATUS_LABEL: Record<string, string> = {
   active: "Активная",
   suspended: "Приостановлена",
@@ -106,7 +91,6 @@ type ClientFormData = {
   discount: string
   /** Stored under `customFields.companyKind`; `COMPANY_KIND_NONE` means unset. */
   companyKind: CompanyKind | typeof COMPANY_KIND_NONE
-  funnelPhase: FunnelPhase
   status: EntityStatus
   currency: string
 }
@@ -169,7 +153,6 @@ export default function ClientEditDialog({
           ? String(client.customFields.discount)
           : "",
       companyKind: client?.customFields?.companyKind ?? COMPANY_KIND_NONE,
-      funnelPhase: client?.funnelPhase ?? "awareness",
       status: client?.status ?? "active",
       currency: client?.currency ?? "RUB",
     },
@@ -192,7 +175,6 @@ export default function ClientEditDialog({
             : "",
         // Was missing: the field reset to empty and «Сохранить» cleared the stored «Тип компании».
         companyKind: client?.customFields?.companyKind ?? COMPANY_KIND_NONE,
-        funnelPhase: client?.funnelPhase ?? "awareness",
         status: client?.status ?? "active",
         currency: client?.currency ?? "RUB",
       })
@@ -446,36 +428,9 @@ export default function ClientEditDialog({
               )}
             />
 
+            {/* «Этап воронки» is not edited here any more: it is the stage
+                of the company's deals (bug list 2026-11-21, item 13). */}
             <div className="grid grid-cols-2 gap-3">
-              <FormField
-                control={form.control}
-                name="funnelPhase"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-gray-400">
-                      Этап воронки
-                    </FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {FUNNEL_PHASES.map((p) => (
-                          <SelectItem key={p} value={p}>
-                            {PHASE_LABEL[p] ?? p}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
               <FormField
                 control={form.control}
                 name="status"

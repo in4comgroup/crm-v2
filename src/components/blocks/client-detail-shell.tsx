@@ -31,6 +31,7 @@ import {
 } from "lucide-react"
 import ClientEditDialog from "@/components/forms/form-client-edit"
 import ContactEditDialog from "@/components/forms/form-contact-edit"
+import { ClientFunnelStages } from "@/components/blocks/client-funnel-stages"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
 import { AccountSummary } from "@/components/blocks/client-card"
@@ -54,22 +55,6 @@ import {
   useClientContactLinks,
 } from "@/components/blocks/client-contact-links"
 
-const PHASE_COLOR: Record<string, string> = {
-  awareness: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
-  interest: "bg-blue-500/15 text-blue-600 dark:text-blue-300",
-  decision: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
-  action: "bg-green-500/15 text-green-600 dark:text-green-300",
-  retention: "bg-purple-500/15 text-purple-600 dark:text-purple-300",
-}
-
-// UI display labels (DB enum values stay English).
-const PHASE_LABEL: Record<string, string> = {
-  awareness: "Осведомлённость",
-  interest: "Интерес",
-  decision: "Решение",
-  action: "Действие",
-  retention: "Удержание",
-}
 const STATUS_LABEL: Record<string, string> = {
   active: "Активная",
   initial: "Новая",
@@ -185,12 +170,6 @@ export function ClientDetailShell({
           <div className="min-w-0 flex-1">
             <CardTitle className="text-2xl truncate">{detail.name}</CardTitle>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              <Badge
-                className={PHASE_COLOR[detail.funnelPhase] ?? ""}
-                variant="secondary"
-              >
-                {PHASE_LABEL[detail.funnelPhase] ?? detail.funnelPhase}
-              </Badge>
               {detail.status !== "active" && (
                 <Badge variant="outline" className="text-muted-foreground">
                   {STATUS_LABEL[detail.status] ?? detail.status}
@@ -206,6 +185,8 @@ export function ClientDetailShell({
                   </Badge>
                 )}
             </div>
+            {/* Stages of the company's deals (bug list 2026-11-21, item 13). */}
+            <ClientFunnelStages clientId={detail.id} className="mt-3" />
           </div>
           <div className="flex items-center gap-2">
             <ClientLookupDialog

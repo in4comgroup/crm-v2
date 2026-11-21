@@ -501,7 +501,7 @@ Use the tester guide `docs/specs/telegram/06-test-guide.md`. Minimum check:
 ### 7.1 Companies and contacts
 
 - «Компании» (Companies, `/clients`) has the tabs «Клиенты» (Customers), «Потенциальные» (Prospects), «Поставщики» (Suppliers), «Партнёры» (Partners) and «Не определено» (Not classified).
-- «Новая компания» (New company) adds one company. «Найти в источниках» (Find in sources) finds companies and contacts in the parsed sources. «Обогатить» (Enrich) fills in missing website, e-mail, phone and address from the web.
+- «Новая компания» (New company) adds one company. «Найти в источниках» (Find in sources) finds companies and contacts in the parsed sources. «Поиск в интернете» (Web search) on a company fills in its missing website, e-mail, phone and address from the web (one company at a time; the batch «Обогатить» button was removed 2026-11-21).
 - «Контакты» (Contacts, `/contacts`): «Новый контакт» (New contact). «Дубли Telegram (N)» (Telegram duplicates) merges contacts with the same Telegram account.
 
 Recommended order for a new client:

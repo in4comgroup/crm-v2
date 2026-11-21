@@ -505,6 +505,56 @@ function toDealRow(
   }
 }
 
+/** One deal of a company as «Этап воронки» shows it (company panel / page). */
+export type ClientDealStage = {
+  dealId: string
+  dealName: string
+  stageLabel: string
+  stageRole: DealStageRole
+  paused: boolean
+}
+
+/**
+ * «Этап воронки» of a company (bug list 2026-11-21, item 13): the stages of
+ * its deals that are not cancelled / deleted — open stages first (newest
+ * change first), then won / lost. Derived from the deals of the org's
+ * funnel; replaces the old manual `client.funnel_phase` field in the UI.
+ */
+export async function listClientDealStages(clientId: string): Promise<ClientDealStage[]> {
+  const { activeOrgId } = await requireOrgContext()
+  const rows = await db
+    .select({
+      dealId: deal.id,
+      dealName: deal.name,
+      status: deal.status,
+      stageName: dealFunnelStage.name,
+      stageDisplayName: dealFunnelStage.displayName,
+      stageRole: dealFunnelStage.role,
+    })
+    .from(deal)
+    .innerJoin(dealFunnelStage, eq(deal.funnelStageId, dealFunnelStage.id))
+    .where(
+      and(
+        eq(deal.organizationId, activeOrgId),
+        eq(deal.clientId, clientId),
+        inArray(deal.status, [...OPEN_DEAL_STATUSES]),
+      ),
+    )
+    .orderBy(desc(deal.updatedAt))
+  const out = rows.map((r) => ({
+    dealId: r.dealId,
+    dealName: r.dealName,
+    stageLabel: stageDisplayLabel(r.stageName, r.stageDisplayName),
+    stageRole: stageRoleOf(r.stageRole),
+    paused: r.status === "paused",
+  }))
+  // Stable sort: open stages keep the newest-first order, outcomes go last.
+  return [
+    ...out.filter((d) => !isTerminalStageRole(d.stageRole)),
+    ...out.filter((d) => isTerminalStageRole(d.stageRole)),
+  ]
+}
+
 export async function listDeals(
   options?: { includeCancelled?: boolean; includeDeleted?: boolean },
 ): Promise<DealRow[]> {

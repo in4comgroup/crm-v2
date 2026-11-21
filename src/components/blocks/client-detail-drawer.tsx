@@ -55,6 +55,7 @@ import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
 import { ClientResponsibleField } from "@/components/blocks/client-responsible-field"
 import { ClientProfileBlock } from "@/components/blocks/client-profile-block"
+import { ClientFunnelStages } from "@/components/blocks/client-funnel-stages"
 import { ClientTelegramBlock } from "@/components/blocks/client-telegram-block"
 import { BlacklistEntityButton } from "@/components/blocks/client-blocklist-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
@@ -69,7 +70,7 @@ import {
   RelatedTopicsList,
   useRelatedTopics,
 } from "@/components/blocks/related-topics"
-import type { TaskStatus, EntityStatus, FunnelPhase } from "@/db/schema"
+import type { TaskStatus, EntityStatus } from "@/db/schema"
 import type { ClientRow } from "@/app/api/clients/route"
 import type { TaskRow } from "@/app/api/tasks/route"
 import type { ContactRow } from "@/app/api/contacts/route"
@@ -93,13 +94,6 @@ const STATUS_OPTIONS: { value: EntityStatus; label: string }[] = [
   { value: "deleted", label: "Удалена" },
   { value: "blocked", label: "Заблокирована" },
 ]
-const PHASE_OPTIONS: { value: FunnelPhase; label: string }[] = [
-  { value: "awareness", label: "Осведомлённость" },
-  { value: "interest", label: "Интерес" },
-  { value: "decision", label: "Решение" },
-  { value: "action", label: "Действие" },
-  { value: "retention", label: "Удержание" },
-]
 const CURRENCIES: { value: string; label: string }[] = [
   { value: "RUB", label: "₽ RUB" },
   { value: "USD", label: "$ USD" },
@@ -119,7 +113,6 @@ type ClientEditFormData = {
   webUrl: string
   discount: string
   companyKind: CompanyKind | typeof COMPANY_KIND_NONE
-  funnelPhase: FunnelPhase
   status: EntityStatus
   currency: string
 }
@@ -139,7 +132,6 @@ function buildDefaults(client: ClientRow | null): ClientEditFormData {
         ? String(client.customFields.discount)
         : "",
     companyKind: client?.customFields?.companyKind ?? COMPANY_KIND_NONE,
-    funnelPhase: client?.funnelPhase ?? "awareness",
     status: client?.status ?? "active",
     currency: client?.currency ?? "RUB",
   }
@@ -396,7 +388,6 @@ export function ClientDetailDrawer({
             address: data.address,
             webUrl: data.webUrl,
             customFields,
-            funnelPhase: data.funnelPhase,
             status: data.status,
             currency: data.currency,
           }),
@@ -783,32 +774,12 @@ export function ClientDetailDrawer({
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <FormField
-                  control={editForm.control}
-                  name="funnelPhase"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs text-muted-foreground">
-                        Этап воронки
-                      </FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {PHASE_OPTIONS.map((p) => (
-                            <SelectItem key={p.value} value={p.value}>
-                              {p.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </FormItem>
-                  )}
-                />
+              {/* «Этап воронки» = the stages of the company's deals, read
+                  only (bug list 2026-11-21, item 13; the manual field
+                  `funnel_phase` with a fixed list was removed). */}
+              <ClientFunnelStages clientId={client.id} />
+
+              <div className="grid grid-cols-2 gap-3">
                 <FormField
                   control={editForm.control}
                   name="status"

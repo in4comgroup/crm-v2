@@ -3,6 +3,8 @@
 // limits, the API shapes, the PURE automatic-attribution planner (§4) and
 // small file helpers. No DB, no server imports.
 
+import { extractEmailDomain, extractWebsiteDomain, isFreemailDomain } from "@/lib/email-domain"
+
 // ── Value lists ───────────────────────────────────────────────────────────
 
 export const DOCUMENT_ENTITY_TYPES = ["client", "contact", "deal", "task", "order"] as const
@@ -251,9 +253,89 @@ export type PlannedLink = {
   reason: string
 }
 
+/**
+ * A1 roles: `sender` = author of the message; `recipient` = a recipient of
+ * OUR outgoing message (the counterparty); `cc_sender_company` = a recipient
+ * of an INBOUND message who belongs to the sender's company (same company
+ * record or the same company mail domain) — medium.
+ */
+export type ParticipantRole = "sender" | "recipient" | "cc_sender_company"
+
+export type AutoLinkParticipant = { contactId: string; clientId: string | null; role: ParticipantRole }
+
+/**
+ * PURE (bug list 2026-11-21, item 16). Which message participants may link a
+ * document. Senders always (high). Recipients of our OWN outgoing message
+ * (`outbound`) are the counterparties (high). Recipients of an INBOUND
+ * message are linked only when they are from the sender's company — same
+ * company record as a sender contact, or the same non-free-mail domain as a
+ * sender address (the sender need not be a contact) — at medium. Anyone else
+ * in «Кому» / «Копия» of an inbound message (our staff on private mail,
+ * another company in copy) is not linked: being in copy says nothing about
+ * the document.
+ */
+export function messageParticipants(input: {
+  outbound: boolean
+  /** Sender addresses that are not ours (contacts or not). */
+  senderEmails: readonly string[]
+  senders: readonly { contactId: string; clientId: string | null }[]
+  recipients: readonly { email: string; contactId: string; clientId: string | null }[]
+}): AutoLinkParticipant[] {
+  const out: AutoLinkParticipant[] = input.senders.map((s) => ({ ...s, role: "sender" as const }))
+  const senderClients = new Set(input.senders.map((s) => s.clientId).filter((c): c is string => !!c))
+  const senderDomains = new Set(
+    input.senderEmails.map((e) => extractEmailDomain(e)).filter((d) => d && !isFreemailDomain(d)),
+  )
+  for (const r of input.recipients) {
+    if (out.some((p) => p.contactId === r.contactId)) continue
+    if (input.outbound) {
+      out.push({ contactId: r.contactId, clientId: r.clientId, role: "recipient" })
+      continue
+    }
+    const domain = extractEmailDomain(r.email)
+    const sameCompany = (!!r.clientId && senderClients.has(r.clientId)) || (!!domain && senderDomains.has(domain))
+    if (sameCompany) out.push({ contactId: r.contactId, clientId: r.clientId, role: "cc_sender_company" })
+  }
+  return out
+}
+
+/**
+ * PURE (A1b, 2026-11-21). Companies of the sender by MAIL DOMAIN when the
+ * sender is not a contact: each non-free-mail sender domain that equals the
+ * website host or the e-mail domain of EXACTLY ONE company → that company.
+ * Our own domains must already be left out by the caller (the sender list
+ * has no own addresses).
+ */
+export function clientsBySenderDomain(
+  senderEmails: readonly string[],
+  clients: readonly { id: string; webUrl: string | null; email: string | null }[],
+): string[] {
+  const domains = new Set(senderEmails.map((e) => extractEmailDomain(e)).filter((d) => d && !isFreemailDomain(d)))
+  if (domains.size === 0) return []
+  const strip = (d: string) => d.replace(/^www\./, "")
+  const byDomain = new Map<string, Set<string>>()
+  for (const c of clients) {
+    for (const d of [c.webUrl ? extractWebsiteDomain(c.webUrl) : "", c.email ? extractEmailDomain(c.email) : ""]) {
+      const k = strip(d)
+      if (k && domains.has(k)) byDomain.set(k, (byDomain.get(k) ?? new Set()).add(c.id))
+    }
+  }
+  const out: string[] = []
+  for (const ids of byDomain.values()) if (ids.size === 1) out.push([...ids][0])
+  return [...new Set(out)]
+}
+
+const PARTICIPANT_LINK: Record<ParticipantRole, { confidence: LinkConfidence; contact: string; client: string }> = {
+  sender: { confidence: "high", contact: "отправитель сообщения", client: "компания отправителя" },
+  recipient: { confidence: "high", contact: "получатель сообщения", client: "компания получателя" },
+  cc_sender_company: { confidence: "medium", contact: "в копии, из компании отправителя", client: "компания отправителя" },
+}
+
 export type AutoLinkInput = {
-  /** A1: contacts matched EXACTLY to the parent message's sender / recipients (never our staff). */
-  participants: { contactId: string; clientId: string | null; role: "sender" | "recipient" }[]
+  /** A1: contacts of the parent message, chosen by `messageParticipants` (never our staff). */
+  participants: AutoLinkParticipant[]
+  /** A1b: the sender's company by mail domain (`clientsBySenderDomain`), medium. */
+  senderDomainClients?: string[]
   /** A2: topics of the item (or its parent) with their company / contact / deal. */
   topics: { topicTitle: string; clientId: string | null; contactId: string | null; dealId: string | null }[]
   /** A3: companies / contacts named in the file content (exact match keys, unique hits). */
@@ -280,13 +362,17 @@ export function planAutoLinks(input: AutoLinkInput): PlannedLink[] {
     seen.add(k)
     out.push(p)
   }
-  // A1 — participants (high).
+  // A1 — participants (high; a copy from the sender's company: medium).
   for (const p of input.participants) {
-    const reason = p.role === "sender" ? "отправитель сообщения" : "получатель сообщения"
-    add({ entityType: "contact", entityId: p.contactId, origin: "auto_participant", confidence: "high", reason })
+    const rule = PARTICIPANT_LINK[p.role]
+    add({ entityType: "contact", entityId: p.contactId, origin: "auto_participant", confidence: rule.confidence, reason: rule.contact })
     if (p.clientId) {
-      add({ entityType: "client", entityId: p.clientId, origin: "auto_participant", confidence: "high", reason: `компания ${reason === "отправитель сообщения" ? "отправителя" : "получателя"}` })
+      add({ entityType: "client", entityId: p.clientId, origin: "auto_participant", confidence: rule.confidence, reason: rule.client })
     }
+  }
+  // A1b — the sender's company by mail domain (medium).
+  for (const id of input.senderDomainClients ?? []) {
+    add({ entityType: "client", entityId: id, origin: "auto_participant", confidence: "medium", reason: "компания отправителя (по домену почты)" })
   }
   // A2 — topics (high).
   for (const t of input.topics) {

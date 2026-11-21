@@ -156,7 +156,7 @@ describe("sub-state and timers (spec §7.1)", () => {
     expect(computeSubState(t3, book)).toBe("none")
   })
 
-  it("open → dormant after 21 days, → expired after 60; resolved → archived after 14", () => {
+  it("open → dormant after 21 days, → expired after 60; resolved / done → archived after 14", () => {
     const at = (days: number) => new Date(NOW.getTime() - days * 86_400_000)
     expect(timerTransition({ status: "open", lastActivityAt: at(10), closedAt: null }, NOW)).toBeNull()
     expect(timerTransition({ status: "open", lastActivityAt: at(22), closedAt: null }, NOW)).toBe("dormant")
@@ -164,7 +164,11 @@ describe("sub-state and timers (spec §7.1)", () => {
     expect(timerTransition({ status: "open", lastActivityAt: at(70), closedAt: null }, NOW)).toBe("expired")
     expect(timerTransition({ status: "resolved", lastActivityAt: at(20), closedAt: at(15) }, NOW)).toBe("archived")
     expect(timerTransition({ status: "resolved", lastActivityAt: at(20), closedAt: at(5) }, NOW)).toBeNull()
-    expect(timerTransition({ status: "done", lastActivityAt: at(200), closedAt: at(100) }, NOW)).toBeNull()
+    // «Готово» archives by the same rule (bug list 2026-11-21, item 23).
+    expect(timerTransition({ status: "done", lastActivityAt: at(20), closedAt: at(15) }, NOW)).toBe("archived")
+    expect(timerTransition({ status: "done", lastActivityAt: at(20), closedAt: at(5) }, NOW)).toBeNull()
+    expect(timerTransition({ status: "dismissed", lastActivityAt: at(90), closedAt: at(80) }, NOW)).toBeNull()
+    expect(timerTransition({ status: "done", lastActivityAt: at(200), closedAt: at(100) }, NOW)).toBe("archived")
   })
 
   it("reopen window: 14 days from closed_at, resolved and done only", () => {

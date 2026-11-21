@@ -412,11 +412,7 @@ function CandidateSelector({
         . Выберите подходящее, чтобы продолжить.
       </div>
 
-      {notes && (
-        <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
-          {notes}
-        </div>
-      )}
+      {notes && <SearchNote text={notes} />}
 
       <div className="flex-1 overflow-y-auto space-y-2 -mx-1 px-1">
         {candidates.map((c, i) => (
@@ -526,18 +522,14 @@ function EditView({
 
   return (
     <>
-      {(notes || lowConfidence) && (
-        <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-md p-2 space-y-1">
-          {lowConfidence && (
-            <div className="flex items-center gap-1 font-medium">
-              <AlertTriangle className="h-3 w-3" />
-              Совпадение с низкой уверенностью — проверьте внимательно перед
-              сохранением.
-            </div>
-          )}
-          {notes && <div>{notes}</div>}
+      {lowConfidence && (
+        <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-md p-2 flex items-center gap-1 font-medium">
+          <AlertTriangle className="h-3 w-3" />
+          Совпадение с низкой уверенностью — проверьте внимательно перед
+          сохранением.
         </div>
       )}
+      {notes && <SearchNote text={notes} />}
 
       <div className="flex-1 overflow-y-auto space-y-3 -mx-1 px-1">
         <FieldRow
@@ -736,6 +728,19 @@ function SourcesBlock({ sources }: { sources: ClientLookupSource[] }) {
           </button>
         )}
       </div>
+    </div>
+  )
+}
+
+// The search model's remark (`notes`): information for the user, not an
+// error — neutral style (bug list 2026-11-21, item 21: an English remark in
+// the orange warning box read as a failure). Amber stays for a low-confidence
+// match only.
+function SearchNote({ text }: { text: string }) {
+  return (
+    <div className="text-xs text-muted-foreground bg-muted/50 border rounded-md p-2">
+      <span className="font-medium text-foreground">Примечание поиска: </span>
+      {text}
     </div>
   )
 }

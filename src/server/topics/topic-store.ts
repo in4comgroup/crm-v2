@@ -695,14 +695,14 @@ async function saveTopic(
 
 /**
  * Status timers of spec §7.1 for the whole org: open → dormant (21 d) →
- * expired (60 d); resolved → archived after the reopen window (14 d).
+ * expired (60 d); resolved and done → archived after the reopen window (14 d).
  * Journaled as agent events. Returns the number of changed topics.
  */
 export async function sweepTopicTimers(orgId: string, now: Date, actorUserId: string | null): Promise<number> {
   const rows = await db
     .select({ id: topic.id, status: topic.status, lastActivityAt: topic.lastActivityAt, closedAt: topic.closedAt })
     .from(topic)
-    .where(and(eq(topic.organizationId, orgId), inArray(topic.status, ["open", "dormant", "resolved"])))
+    .where(and(eq(topic.organizationId, orgId), inArray(topic.status, ["open", "dormant", "resolved", "done"])))
   const ops: unknown[] = []
   const events: TopicEventDraft[] = []
   for (const r of rows) {

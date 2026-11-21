@@ -412,7 +412,7 @@ An item with band `none` that shares a `thread_key` or a reference with an open 
    ┌─────────────────────────────────────────┐
    ▼                                         │
  open ──(state/S1 code closes last active)──▶ resolved ──(14 d after resolved)──▶ archived
-   │ ├─(user «Готово»)───────────────────────▶ done
+   │ ├─(user «Готово»)───────────────────────▶ done ──(14 d after done)──▶ archived
    │ ├─(no activity 21 d)───▶ dormant ──(no activity 60 d)──▶ expired
    │ └─(user merge)─────────▶ merged (→ merged_into_topic_id)
    └─(user «Не относится»)──▶ dismissed
@@ -425,7 +425,7 @@ The topic status has no `shadow` value: shadow mode is the org flag `topics.enab
 - **Timers** (settings `topicReopenDays` 14, `topicDormantDays` 21, `topicExpireDays` 60):
   - Reopen window = 14 days from the topic's `closed_at` (the resolved or done date). A new matching item in this window reopens the topic; later it creates a new topic with `related_topic_id`. A `dormant` topic reopens on any new matching item (it was never closed).
   - Dormant = 21 days with no activity (from `last_activity_at`). Expired = 60 days with no activity (from `last_activity_at`, i.e. 39 days after it became dormant). An `expired` topic does not reopen; a new item creates a new topic with `related_topic_id`.
-  - `resolved` → `archived` when its reopen window ends.
+  - `resolved` → `archived` when its reopen window ends; `done` → `archived` by the same rule (product owner, 2026-11-21; `closed_reason` keeps `user_done`, so CRM checks / watchdogs still never reopen it — `closedByUser` in `src/server/topics/checks/store.ts`).
   - **Card expiry is independent of topic expiry.** The card expires by its display profile (06 §7.3: P8 10, P6 7, D4 5, W1 10 working days); the topic stays `open`. Topic expiry (60 days) ends the topic; it does not depend on the card.
 
 ### 7.2 Topic score

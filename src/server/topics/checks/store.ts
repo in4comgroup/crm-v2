@@ -35,6 +35,15 @@ const EXISTING_LOOKBACK_DAYS = 400
 const USER_CLOSED: TopicStatus[] = ["done", "dismissed", "merged"]
 const REOPEN: TopicStatus[] = ["resolved", "archived", "expired", "dormant"]
 
+/**
+ * A topic a person closed: «Готово» / «Не относится» / merged — also a
+ * «Готово» topic after the timer archived it (`closed_reason` stays
+ * `user_done`, 2026-11-21). A check never reopens or recomputes it.
+ */
+function closedByUser(t: { status: TopicStatus; closedReason: string | null }): boolean {
+  return USER_CLOSED.includes(t.status) || (t.status === "archived" && t.closedReason === "user_done")
+}
+
 /** Origin of the instances of a check group (spec 01 §5.6). */
 export function originOf(def: CheckDef): "system_of_record" | "communication" {
   return def.group === "orders" ? "system_of_record" : "communication"
@@ -265,7 +274,7 @@ async function writeFinding(sc: StoreContext, def: CheckDef, f: CheckFinding, we
   if (f.topicId) {
     const loaded = await loadTopicSnapshot(orgId, f.topicId)
     if (!loaded) return { kind: "skipped", reason: "topic_missing" }
-    if (USER_CLOSED.includes(loaded.status)) return { kind: "skipped", reason: "topic_closed_by_user" }
+    if (closedByUser(loaded)) return { kind: "skipped", reason: "topic_closed_by_user" }
     t = loaded
     // A non-scoring instance (a `state` code, e.g. ORDER_CONFIRMED of phase
     // 10) never reopens a closed topic: it only closes / adds context.
@@ -377,11 +386,11 @@ async function clearInstance(sc: StoreContext, instanceId: string, reasonRu: str
     { topicId: t.id, type: "process_signal", sourceItemId: null, payload: { code: row.code, action: "cleared", instanceId, reason: reasonRu } },
   ]
   // A topic the user closed / merged keeps its status; only derived fields change.
-  if (!USER_CLOSED.includes(t.status)) events.push(...recomputeTopic(t, sc.book, now, sc.relationOf))
+  if (!closedByUser(t)) events.push(...recomputeTopic(t, sc.book, now, sc.relationOf))
   await db.batch(
     asBatch([
       update,
-      ...(USER_CLOSED.includes(t.status) ? [] : [topicUpsertOp(orgId, t)]),
+      ...(closedByUser(t) ? [] : [topicUpsertOp(orgId, t)]),
       db.insert(topicEvent).values(eventRows(orgId, events, { actor: "agent", userId: sc.actorUserId })),
       ...dealDirtyOp(orgId, t.dealId, now),
     ]),

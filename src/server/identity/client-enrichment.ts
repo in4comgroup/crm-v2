@@ -438,7 +438,7 @@ const lookupExtractSchema = z.object({
         whyMatch: z
           .string()
           .describe(
-            "One short sentence explaining why this is a candidate (e.g. 'Address matches the stored head-office address'). Used to disambiguate between candidates.",
+            "One short sentence IN RUSSIAN for the CRM user explaining why this is a candidate (e.g. «Адрес совпадает с адресом в карточке»). Plain words, no technical terms. Used to disambiguate between candidates.",
           ),
         profile: profileExtractSchema,
       }),
@@ -450,7 +450,7 @@ const lookupExtractSchema = z.object({
   notes: z
     .string()
     .describe(
-      "Caveats about the search (e.g. 'Two unrelated companies share this name in different countries'). Empty string when nothing to flag.",
+      "Caveats for the CRM user IN RUSSIAN, 1–2 short plain sentences (e.g. «Под этим названием работают две разные компании: в Москве и в Казани»). Only what the user should check before saving; no technical terms («CRM», «entity», «contact list», «research notes»). Empty string when nothing to flag.",
     ),
 })
 
@@ -693,11 +693,16 @@ ${profileInstructions(industries)}`
     ...aiCtx,
     output: Output.object({ schema: lookupExtractSchema }),
     instructions:
-      "You convert research notes and raw company-website text into structured candidate records. Never invent fields — if neither the research notes nor the website text confirms a value, return an empty string for that field. When raw website text is provided it is primary-source evidence and outranks the research notes. Operator-confirmed parameters outrank third-party sources. Use empty arrays for the candidates list if no plausible match was found.",
+      "You convert research notes and raw company-website text into structured candidate records. Never invent fields — if neither the research notes nor the website text confirms a value, return an empty string for that field. When raw website text is provided it is primary-source evidence and outranks the research notes. Operator-confirmed parameters outrank third-party sources. Use empty arrays for the candidates list if no plausible match was found. The fields «notes» and «whyMatch» are shown to a Russian-speaking CRM user: write them in Russian, in plain words.",
     prompt: extractPrompt,
     temperature: 0,
   })
 
+  // Nothing but a name to check a candidate against (no e-mail, phone,
+  // address or website): «high» is never earned — the model rated a guess by
+  // job titles «high» (bug list 2026-11-21, item 21), and a single «high»
+  // candidate is applied automatically by the enrichment flows. Cap: medium.
+  const nameOnly = !effective.email && !effective.phone && !effective.address && !effective.webUrl
   return {
     candidates: extracted.candidates.map((c) => ({
       name: c.name.trim(),
@@ -706,7 +711,7 @@ ${profileInstructions(industries)}`
       phone: c.phone.trim(),
       address: c.address.trim(),
       webUrl: c.webUrl.trim(),
-      confidence: c.confidence,
+      confidence: nameOnly && c.confidence === "high" ? ("medium" as const) : c.confidence,
       whyMatch: c.whyMatch.trim(),
       profile: c.profile,
     })),

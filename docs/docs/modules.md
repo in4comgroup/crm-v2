@@ -198,11 +198,11 @@ one company / contact / deal for the «Темы» tabs).
   | «Открыта» (`open`) | engine | live, takes new messages |
   | «Затихла» (`dormant`) | engine, 21 days without activity | live; any new message reopens it |
   | «Решена» (`resolved`) | engine, a closing signal (e.g. order confirmed) | closed; reopens on a new message within 14 days, then «В архиве» |
-  | «Готово» (`done`) | a person, button «Готово» | closed; reopens on a new message within 14 days |
+  | «Готово» (`done`) | a person, button «Готово» | closed; reopens on a new message within 14 days, then «В архиве» (since 2026-11-21) |
   | «Не относится» (`dismissed`) | a person: «Не относится» in the topic panel, or «Отклонить» on the card with the reason «Не относится к работе» | closed, not work; never reopens |
   | «Объединена» (`merged`) | a person, «Объединить с…» | merged into another topic (not offered in the filter) |
   | «Истекла» (`expired`) | engine, 60 days without activity | closed |
-  | «В архиве» (`archived`) | engine, 14 days after «Решена» | closed, kept for history |
+  | «В архиве» (`archived`) | engine, 14 days after «Решена» or «Готово» | closed, kept for history |
 
 ## Companies and contacts
 

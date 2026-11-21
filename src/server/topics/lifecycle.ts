@@ -329,8 +329,10 @@ export function recomputeTopic(
 
 /**
  * Deterministic status timers: open → dormant (21 d without activity) →
- * expired (60 d); resolved → archived when the reopen window (14 d from
- * closed_at) ends. Returns the new status or null (no change).
+ * expired (60 d); resolved AND done → archived when the reopen window (14 d
+ * from closed_at) ends («Готово» archives by the same rule since 2026-11-21,
+ * bug list item 23; `closed_reason` keeps `user_done`). Returns the new
+ * status or null (no change).
  */
 export function timerTransition(
   topic: Pick<TopicSnapshot, "status" | "lastActivityAt" | "closedAt">,
@@ -343,7 +345,7 @@ export function timerTransition(
     if (topic.status === "open" && idle > timers.dormantDays) return "dormant"
     return null
   }
-  if (topic.status === "resolved" && topic.closedAt) {
+  if ((topic.status === "resolved" || topic.status === "done") && topic.closedAt) {
     const since = (now.getTime() - topic.closedAt.getTime()) / DAY_MS
     if (since > timers.reopenDays) return "archived"
   }

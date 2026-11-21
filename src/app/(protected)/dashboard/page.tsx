@@ -27,7 +27,6 @@ import {
 import { PageLoader } from "@/components/blocks/page-loader"
 import { TopicListsSection } from "@/components/blocks/topic-lists-section"
 import { OrgProfileBanner } from "@/components/blocks/org-profile-banner"
-import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 function isoDateNDaysAgo(days: number): string {
   const d = new Date()
@@ -41,21 +40,15 @@ function todayIso(): string {
 
 type PeriodPreset = "day" | "week" | "all"
 
-const DASHBOARD_VIEWS = ["topics", "history"] as const
-
 export default function DashboardPage() {
   // Topics UI (phase 6, spec topics/01 §14): only when the org's topics mode
-  // is `on`. null = not known yet. In `off` / `shadow` the page shows only
+  // is `on` — then the page shows ONLY the topic lists (bug list 2026-11-21,
+  // item 4: the «Темы / История карточек» switch and the history of old
+  // cards were removed; an old card still opens from the global search on
+  // /cards/[id]). null = not known yet. In `off` / `shadow` the page shows
   // the read-only history of old cards: Custom-rule card generation was
   // removed for every org in plan phase 12.
   const [topicsOn, setTopicsOn] = useState<boolean | null>(null)
-  // Remembered per browser. No URL reading: `?tab=` belongs to the topic
-  // lists below (TopicListsSection).
-  const [view, setView] = usePersistentTab<"topics" | "history">(
-    "dashboard.view",
-    "topics",
-    { allowed: DASHBOARD_VIEWS, urlParam: false },
-  )
   useEffect(() => {
     let cancelled = false
     fetch("/api/topics?state=1")
@@ -115,6 +108,8 @@ export default function DashboardPage() {
   }
 
   const load = useCallback(async () => {
+    // Old cards are read only when the page shows them (topics not `on`).
+    if (topicsOn !== false) return
     try {
       const res = await fetch("/api/cards")
       if (!res.ok) {
@@ -127,9 +122,10 @@ export default function DashboardPage() {
     } catch {
       setLoadError(true)
     }
-  }, [])
+  }, [topicsOn])
 
   useEffect(() => {
+    if (topicsOn !== false) return
     let cancelled = false
     async function run() {
       try {
@@ -142,12 +138,11 @@ export default function DashboardPage() {
     return () => {
       cancelled = true
     }
-  }, [load])
+  }, [load, topicsOn])
 
-  // Old Custom-rule cards (kind null) are read-only history in every mode;
-  // engine cards live in the topic lists (mode `on`).
+  // Old Custom-rule cards (kind null) = read-only history, shown only while
+  // topics are not `on`; engine cards live in the topic lists.
   const historyCards = cards.filter((c) => c.kind === null)
-  const showHistory = topicsOn === true && view === "history"
 
   if (topicsOn === null) {
     return (
@@ -165,17 +160,7 @@ export default function DashboardPage() {
     <div className="flex flex-col h-[calc(100vh-1rem)]">
       <div className="flex flex-col gap-4 p-4 pb-0 shrink-0">
         <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-medium">Домашняя</h1>
-            {topicsOn && (
-              <Tabs value={view} onValueChange={(v) => setView(v as "topics" | "history")}>
-                <TabsList>
-                  <TabsTrigger value="topics">Темы</TabsTrigger>
-                  <TabsTrigger value="history">История карточек</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            )}
-          </div>
+          <h1 className="text-xl font-medium">Домашняя</h1>
           <PageHeaderActions />
         </div>
 
@@ -184,7 +169,7 @@ export default function DashboardPage() {
 
         {/* Filters of the read-only card history: priority / category,
             dates, period presets, rejected cards. */}
-        {(!topicsOn || showHistory) && (
+        {!topicsOn && (
         <div className="flex items-center gap-3 flex-wrap rounded-xl border bg-card p-3">
           <Select value={priority} onValueChange={setPriority}>
             <SelectTrigger size="sm" className="w-fit">
@@ -278,7 +263,7 @@ export default function DashboardPage() {
       {/* Без внешнего Card-контейнера — как на Компаниях/Задачах/Контактах,
           заголовок страницы достаточен. */}
       <div className="flex-1 min-h-0 p-4 pt-4">
-        {topicsOn && !showHistory ? (
+        {topicsOn ? (
           <TopicListsSection />
         ) : (
         <CardsFeedSection

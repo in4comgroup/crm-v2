@@ -76,6 +76,15 @@ export const CARD_REJECT_REASONS_BY_KIND: Record<CardKind, readonly CardRejectRe
   deal_link: ["no_matching_deal", "wrong_counterparty", "not_relevant", "other"],
 }
 
+/**
+ * A reject reason that also closes the card's TOPIC as «Не относится»
+ * (dismissed): «Не относится к работе» (bug list 2026-11-21, item 7). All
+ * other reasons change only the card.
+ */
+export function closesTopicOnReject(code: string | null | undefined): boolean {
+  return code === "not_relevant"
+}
+
 export function isCardKind(v: unknown): v is CardKind {
   return typeof v === "string" && (CARD_KINDS as readonly string[]).includes(v)
 }

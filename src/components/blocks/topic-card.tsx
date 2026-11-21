@@ -61,6 +61,7 @@ import type { TaskPriority, TaskStatus } from "@/db/schema"
 import { suggestTaskType } from "@/lib/tasks/suggest-task-type"
 import { TOPIC_LIST_LABELS_RU } from "@/lib/topics/attention-types"
 import {
+  closesTopicOnReject,
   CARD_KIND_LABELS_RU,
   CARD_STATUS_LABELS_RU,
   DEAL_CARD_ACCEPT_LABEL_RU,
@@ -231,7 +232,7 @@ function RejectDialog({
     start(async () => {
       try {
         await postJson("/api/cards", "PUT", { id: card.id, action: "reject", rejectReasonCode: code, rejectionReason: text.trim() })
-        toast.success("Карточка отклонена")
+        toast.success(closesTopicOnReject(code) ? "Карточка отклонена, тема закрыта" : "Карточка отклонена")
         onOpenChange(false)
         setCode(initialCode)
         setText("")

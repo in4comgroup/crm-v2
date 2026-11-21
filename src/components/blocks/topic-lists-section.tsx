@@ -75,7 +75,12 @@ export function TopicListsSection() {
   const [list, setList] = useState(ANY)
   const [clientId, setClientId] = useState(ANY)
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
-  const [data, setData] = useState<TopicListResponse | null>(null)
+  // `key` = the tab + filters the data was loaded for. A list loaded for
+  // other filters is never shown: after a click on «Мои» / a tab / a filter
+  // the page shows the loader until the new list arrives (bug list
+  // 2026-11-21, item 3 — the old cards stayed for seconds and «Мои» looked
+  // broken).
+  const [data, setData] = useState<(TopicListResponse & { key: string }) | null>(null)
   const [counts, setCounts] = useState<TopicCounts | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -99,8 +104,11 @@ export function TopicListsSection() {
     }
   }, [])
 
+  const queryKey = JSON.stringify([tab, mine, status, list, clientId])
+
   const load = useCallback(async () => {
     const id = ++req.current
+    const key = JSON.stringify([tab, mine, status, list, clientId])
     const qs = new URLSearchParams({ tab })
     if (mine) qs.set("mine", "1")
     if (tab === "all") {
@@ -118,7 +126,7 @@ export function TopicListsSection() {
         return
       }
       setError(null)
-      setData(listData as TopicListResponse)
+      setData({ ...(listData as TopicListResponse), key })
       if (countRes.ok) setCounts(countData.counts as TopicCounts)
     } catch {
       if (id === req.current) setError("Не удалось загрузить темы. Проверьте соединение.")
@@ -141,12 +149,13 @@ export function TopicListsSection() {
   }, [tab, clients.length])
 
   const refresh = useCallback(() => void load(), [load])
-  const entries = data?.tab === tab ? data.entries : []
+  const current = data?.key === queryKey ? data : null
+  const entries = current ? current.entries : []
 
   const countOf = (t: TopicTab) => (counts ? counts[t][mine ? "mine" : "all"] : null)
 
   let body: React.ReactNode
-  if (loading && !data) body = <PageLoader />
+  if (loading && !current) body = <PageLoader />
   else if (error)
     body = (
       <Card className="border-dashed border-destructive/40 bg-destructive/5">
@@ -160,7 +169,7 @@ export function TopicListsSection() {
       </Card>
     )
   else if (tab === "now") {
-    const dealCards = data?.tab === "now" ? data.dealCards : []
+    const dealCards = current?.tab === "now" ? current.dealCards : []
     body = (
       <div className="space-y-4">
         {dealCards.length > 0 && (
@@ -189,10 +198,10 @@ export function TopicListsSection() {
       </div>
     )
   } else if (tab === "digest") {
-    const parts = splitDigest(entries, data?.digestVisibleItems ?? DIGEST_VISIBLE_ITEMS)
+    const parts = splitDigest(entries, current?.digestVisibleItems ?? DIGEST_VISIBLE_ITEMS)
     body = (
       <div className="space-y-4">
-        <SectionTitle hint={`снимок ${formatDateTimeRu(data?.digestSnapshotAt ?? null) ?? ""}`}>Утренняя сводка</SectionTitle>
+        <SectionTitle hint={`снимок ${formatDateTimeRu(current?.digestSnapshotAt ?? null) ?? ""}`}>Утренняя сводка</SectionTitle>
         {parts.shown.length ? (
           <Grid entries={parts.shown} onChanged={refresh} onOpen={setDrawerId} />
         ) : (
@@ -219,7 +228,7 @@ export function TopicListsSection() {
     const parts = splitWeek(entries)
     body = (
       <div className="space-y-4">
-        <SectionTitle hint={`снимок ${formatDateTimeRu(data?.weeklySnapshotAt ?? null) ?? ""}`}>Обзор недели</SectionTitle>
+        <SectionTitle hint={`снимок ${formatDateTimeRu(current?.weeklySnapshotAt ?? null) ?? ""}`}>Обзор недели</SectionTitle>
         {parts.main.length ? (
           <Grid entries={parts.main} onChanged={refresh} onOpen={setDrawerId} />
         ) : (
@@ -282,9 +291,13 @@ export function TopicListsSection() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {/* ONE «open» value (bug list 2026-11-21, item 9): «Открытые»
+                    = open + dormant (live); the status `open` alone is not
+                    offered — «Открытые» and «Открыта» used to show different
+                    sets. «Затихла» still picks the dormant ones. */}
                 <SelectItem value="live">Открытые</SelectItem>
                 <SelectItem value="all">Все статусы</SelectItem>
-                {TOPIC_STATUSES.filter((s) => s !== "merged").map((s) => (
+                {TOPIC_STATUSES.filter((s) => s !== "merged" && s !== "open").map((s) => (
                   <SelectItem key={s} value={s}>
                     {TOPIC_STATUS_LABELS_RU[s]}
                   </SelectItem>

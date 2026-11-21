@@ -102,7 +102,7 @@ Re-parsing an item clears them so the item is re-analysed.
 
 ## 6. Cards, rules, notifications and AI chat
 
-Custom-rule card generation was removed (topics plan phase 12). Topic cards come from the topics engine; the `rule` table and the old card columns and junctions (`category`, `message`, `accepted`, `rejectionReason`, `sourceItemId`, `ruleId`, `card_client`, `card_user`, `card_contact`) are kept: topic cards write some of them and the «История карточек» tab reads all. No UI edits rules.
+Custom-rule card generation was removed (topics plan phase 12). Topic cards come from the topics engine; the `rule` table and the old card columns and junctions (`category`, `message`, `accepted`, `rejectionReason`, `sourceItemId`, `ruleId`, `card_client`, `card_user`, `card_contact`) are kept: topic cards write some of them and the read-only history of old cards reads all (the dashboard shows it only in topics mode `off` / `shadow`; `/cards/[id]` and the AI chat in every mode). No UI edits rules.
 
 | Table | Purpose | Key columns / relations |
 | --- | --- | --- |

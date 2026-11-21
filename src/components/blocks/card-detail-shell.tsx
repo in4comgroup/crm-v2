@@ -48,6 +48,7 @@ import {
   defaultRejectReason,
 } from "@/components/blocks/deal-link-chooser"
 import {
+  closesTopicOnReject,
   DEAL_CARD_ACCEPT_LABEL_RU,
   DEAL_CARD_REJECT_LABEL_RU,
   isDealCardKind,
@@ -198,7 +199,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
           toast.error(err.error || "Не удалось отклонить карточку")
           return
         }
-        toast.success("Карточка отклонена")
+        toast.success(isTopicCard && closesTopicOnReject(rejectCode) ? "Карточка отклонена, тема закрыта" : "Карточка отклонена")
         setRejectOpen(false)
         setRejectReason("")
         setRejectCode(initialRejectCode)

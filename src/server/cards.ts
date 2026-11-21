@@ -18,6 +18,7 @@ import {
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm"
 import {
   CARD_REJECT_REASON_LABELS_RU,
+  closesTopicOnReject,
   isCardRejectReason,
   isDealCardKind,
   type DealCardProposal,
@@ -640,19 +641,26 @@ export async function rejectCard(
   if (isDealCardKind(current.kind)) {
     // «Не сделка» / «Отклонить»: same columns + a topic_event (phase 5).
     await rejectDealCard(activeOrgId, cardId, session.user.id, code, trimmed)
-    return
+  } else {
+    await db
+      .update(card)
+      .set({
+        accepted: false,
+        rejectionReason: trimmed || CARD_REJECT_REASON_LABELS_RU[code],
+        rejectReasonCode: code,
+        status: "rejected",
+        decidedAt: new Date(),
+        decidedByUserId: session.user.id,
+      })
+      .where(eq(card.id, cardId))
   }
-  await db
-    .update(card)
-    .set({
-      accepted: false,
-      rejectionReason: trimmed || CARD_REJECT_REASON_LABELS_RU[code],
-      rejectReasonCode: code,
-      status: "rejected",
-      decidedAt: new Date(),
-      decidedByUserId: session.user.id,
-    })
-    .where(eq(card.id, cardId))
+  // «Не относится к работе» = the topic is not work either: close it as
+  // «Не относится» (dismissed) in the same click (bug list 2026-11-21,
+  // item 7). Other reasons keep the topic open.
+  if (closesTopicOnReject(code) && current.topicId) {
+    const { dismissTopic } = await import("@/server/topics/topic-store")
+    await dismissTopic(activeOrgId, current.topicId, session.user.id, trimmed || CARD_REJECT_REASON_LABELS_RU[code])
+  }
 }
 
 async function userCardVisible(orgId: string, current: typeof card.$inferSelect) {

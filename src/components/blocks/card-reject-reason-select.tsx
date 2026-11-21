@@ -16,6 +16,7 @@ import {
 import {
   CARD_REJECT_REASONS_BY_KIND,
   CARD_REJECT_REASON_LABELS_RU,
+  closesTopicOnReject,
   isCardKind,
 } from "@/lib/topics/cards"
 
@@ -52,17 +53,25 @@ export function CardRejectReasonSelect({
   }
   const reasons = CARD_REJECT_REASONS_BY_KIND[isCardKind(kind) ? kind : "topic"]
   return (
-    <Select value={value} onValueChange={onChange} disabled={disabled}>
-      <SelectTrigger className="w-full" aria-label="Причина отклонения">
-        <SelectValue placeholder="Выберите причину" />
-      </SelectTrigger>
-      <SelectContent>
-        {reasons.map((r) => (
-          <SelectItem key={r} value={r}>
-            {CARD_REJECT_REASON_LABELS_RU[r]}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
+        <SelectTrigger className="w-full" aria-label="Причина отклонения">
+          <SelectValue placeholder="Выберите причину" />
+        </SelectTrigger>
+        <SelectContent>
+          {reasons.map((r) => (
+            <SelectItem key={r} value={r}>
+              {CARD_REJECT_REASON_LABELS_RU[r]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {/* The one reason that also closes the topic (bug list 2026-11-21, item 7). */}
+      {closesTopicOnReject(value) && (
+        <p className="text-xs text-muted-foreground">
+          Тема тоже закроется со статусом «Не относится» и пропадёт из списков.
+        </p>
+      )}
+    </>
   )
 }

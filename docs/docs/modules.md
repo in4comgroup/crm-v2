@@ -153,8 +153,9 @@ parse-time attribution), `org-identity-registry.ts`; pure helpers in
 accepted cards into tasks or orders. Custom-rule card generation and the
 `/rules` page were removed (topics plan phase 12, 2026-11-14, every org).
 
-**Pages.** `/dashboard` «Домашняя» (Home): in topics mode `on` = topic lists plus
-the tab «История карточек» (old Custom-rule cards, read-only); in `off` /
+**Pages.** `/dashboard` «Домашняя» (Home): in topics mode `on` = ONLY the topic
+lists (the tab «История карточек» was removed 2026-11-21; an old card still
+opens from the global search on `/cards/[id]` and from the AI chat); in `off` /
 `shadow` = only the read-only history of old cards, no generation. Card kinds:
 topic, `deal_proposal`, `stage_confirmation`, `deal_link` («К какой сделке
 относится тема?» — the topic's company has 2+ open deals; spec topics/10). `/cards/[id]`: card detail
@@ -181,6 +182,27 @@ one company / contact / deal for the «Темы» tabs).
   «Исполнитель» = the person who creates it. A topic card with `category = new_order` (ORDER_REQUESTED)
   shows «Создать заказ» (Create order) instead and starts the order-from-request
   flow (`resultOrderId` stored). «Отклонить» (Reject) needs a reason.
+- **Topic status ≠ card status.** A topic is the business question; its card is
+  one recommendation about it. Card buttons change the CARD («Принята» /
+  «Отклонена»); the reason is stored for the quality eval. ONE exception
+  (2026-11-21): «Отклонить» with the reason «Не относится к работе» also closes
+  the topic as «Не относится» (the dialog says so; toast «Карточка отклонена,
+  тема закрыта»; rule `closesTopicOnReject` in `src/lib/topics/cards.ts`). All
+  other reasons keep the topic open. Otherwise the topic status changes by the
+  topic buttons («Готово», «Не относится» in the topic panel) or by the engine.
+  Topic statuses (filter «Статус» on «Все темы»; its default «Открытые» = «Открыта» +
+  «Затихла», and «Открыта» alone is not offered — one «open» value, 2026-11-21):
+
+  | Status | Set by | Meaning |
+  |---|---|---|
+  | «Открыта» (`open`) | engine | live, takes new messages |
+  | «Затихла» (`dormant`) | engine, 21 days without activity | live; any new message reopens it |
+  | «Решена» (`resolved`) | engine, a closing signal (e.g. order confirmed) | closed; reopens on a new message within 14 days, then «В архиве» |
+  | «Готово» (`done`) | a person, button «Готово» | closed; reopens on a new message within 14 days |
+  | «Не относится» (`dismissed`) | a person: «Не относится» in the topic panel, or «Отклонить» on the card with the reason «Не относится к работе» | closed, not work; never reopens |
+  | «Объединена» (`merged`) | a person, «Объединить с…» | merged into another topic (not offered in the filter) |
+  | «Истекла» (`expired`) | engine, 60 days without activity | closed |
+  | «В архиве» (`archived`) | engine, 14 days after «Решена» | closed, kept for history |
 
 ## Companies and contacts
 

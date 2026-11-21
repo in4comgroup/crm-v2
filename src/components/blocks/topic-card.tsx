@@ -17,7 +17,6 @@ import {
   AlarmClock,
   Building2,
   CalendarClock,
-  Check,
   CheckCheck,
   Handshake,
   Info,
@@ -59,6 +58,7 @@ import {
 } from "@/components/blocks/deal-funnel-ui"
 import { cn } from "@/lib/utils"
 import type { TaskPriority, TaskStatus } from "@/db/schema"
+import { suggestTaskType } from "@/lib/tasks/suggest-task-type"
 import { TOPIC_LIST_LABELS_RU } from "@/lib/topics/attention-types"
 import {
   CARD_KIND_LABELS_RU,
@@ -342,10 +342,13 @@ export function SnoozeButton({
 
 // ── Actions ───────────────────────────────────────────────────────────────
 
-type ActionEntry = Pick<TopicEntry, "topicId" | "title" | "status" | "clientId" | "contactId" | "snoozedUntil" | "card">
+type ActionEntry = Pick<
+  TopicEntry,
+  "topicId" | "title" | "status" | "clientId" | "taskContactId" | "dealId" | "family" | "snoozedUntil" | "card"
+>
 
 /**
- * Actions of a `topic` card + the topic itself: Принять (→ task) /
+ * Actions of a `topic` card + the topic itself: «Создать задачу» /
  * «Создать заказ» (ORDER_REQUESTED) / Отклонить while the card is open;
  * Готово and Отложить до… while the topic is live.
  */
@@ -366,16 +369,28 @@ export function TopicCardActions({
   const [orderOpen, setOrderOpen] = useState(false)
   const [pending, start] = useTransition()
 
+  // Prefill of «Создать задачу» (bug list 2026-11-21, item 24): company,
+  // contact (topic's, else the newest one on its items), deal of the topic,
+  // type from the card's meaning; «Исполнитель» defaults to the creator in
+  // the form itself.
   const taskInitialValues = useMemo(
     () => ({
       name: card?.taskTitle?.trim() || card?.headline || entry.title,
       description: card ? card.steps.map((s, i) => `${i + 1}. ${s.replace(/^\d+[.)]\s*/, "")}`).join("\n") : "",
+      type: suggestTaskType({
+        taskTitle: card?.taskTitle,
+        headline: card?.headline,
+        steps: card?.steps,
+        family: entry.family,
+        category: card?.category,
+      }),
       priority: (card?.priority === "high" ? "high" : "medium") as TaskPriority,
       status: "todo" as TaskStatus,
       ...(entry.clientId ? { clientId: entry.clientId } : {}),
-      ...(entry.contactId ? { contactId: entry.contactId } : {}),
+      ...(entry.taskContactId ? { contactId: entry.taskContactId } : {}),
+      ...(entry.dealId ? { dealId: entry.dealId } : {}),
     }),
-    [card, entry.title, entry.clientId, entry.contactId],
+    [card, entry.title, entry.clientId, entry.taskContactId, entry.dealId, entry.family],
   )
 
   const accept = (taskId?: string) =>
@@ -384,7 +399,7 @@ export function TopicCardActions({
       try {
         await postJson("/api/cards", "PUT", { id: card.id, action: "accept", ...(taskId ? { resultTaskId: taskId } : {}) })
         await recompute(entry.topicId)
-        toast.success("Карточка принята, задача создана")
+        // No success toast: the task form already said «Задача создана».
         onChanged()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Не удалось принять карточку")
@@ -420,8 +435,8 @@ export function TopicCardActions({
             onSuccess={accept}
             trigger={
               <Button size="sm" variant="secondary" className={isOrder ? undefined : ACCEPT_TONE} disabled={pending}>
-                <Check className="h-4 w-4 mr-1" />
-                Принять
+                <ListTodo className="h-4 w-4 mr-1" />
+                Создать задачу
               </Button>
             }
           />

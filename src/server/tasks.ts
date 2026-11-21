@@ -10,11 +10,12 @@ import {
   deal,
   user,
   member,
+  contactCompanyLink,
   type TaskType,
   type TaskPriority,
   type TaskStatus,
 } from "@/db/schema"
-import { aliasedTable, and, eq, desc, inArray, isNotNull } from "drizzle-orm"
+import { aliasedTable, and, eq, desc, exists, inArray, isNotNull, or, sql } from "drizzle-orm"
 import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getServerSession } from "@/lib/get-session"
@@ -189,8 +190,20 @@ export async function listTasks(): Promise<TaskRow[]> {
   }))
 }
 
-export async function listOrgMembers(): Promise<OrgMemberOption[]> {
-  const { activeOrgId } = await requireOrgContext()
+/**
+ * Members + the caller's own user id — the task form uses it as the default
+ * «Исполнитель» of a new task (the person who creates it), not the first
+ * member by name.
+ */
+export async function listOrgMembersForViewer(): Promise<{
+  members: OrgMemberOption[]
+  currentUserId: string
+}> {
+  const { session, activeOrgId } = await requireOrgContext()
+  return { members: await orgMemberOptions(activeOrgId), currentUserId: session.user.id }
+}
+
+async function orgMemberOptions(activeOrgId: string): Promise<OrgMemberOption[]> {
   const rows = await db
     .select({
       id: user.id,
@@ -236,7 +249,27 @@ export async function listTaskContactOptions(
     inArray(contact.status, ["active", "initial"]),
   ]
   if (clientId) {
-    conditions.push(eq(contact.clientId, clientId))
+    // Primary company (contact.client_id) OR a current link to the company
+    // (contact_company_link, docs/specs/clients-contacts/04) — a person who
+    // works with two companies is a valid task contact for both.
+    conditions.push(
+      or(
+        eq(contact.clientId, clientId),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(contactCompanyLink)
+            .where(
+              and(
+                eq(contactCompanyLink.contactId, contact.id),
+                eq(contactCompanyLink.clientId, clientId),
+                eq(contactCompanyLink.organizationId, activeOrgId),
+                eq(contactCompanyLink.status, "current"),
+              ),
+            ),
+        ),
+      )!,
+    )
   }
   const rows = await db
     .select({

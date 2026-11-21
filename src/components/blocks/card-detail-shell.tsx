@@ -19,7 +19,6 @@ import {
 import {
   ArrowLeft,
   Building2,
-  Check,
   Contact,
   FileText,
   Link2,
@@ -32,6 +31,7 @@ import {
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import TaskEditDialog from "@/components/forms/form-task-edit"
+import { cardTaskPrefill } from "@/lib/cards/task-prefill"
 import type { CardRow } from "@/app/api/cards/route"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
 import {
@@ -52,12 +52,7 @@ import {
   DEAL_CARD_REJECT_LABEL_RU,
   isDealCardKind,
 } from "@/lib/topics/cards"
-import type {
-  CardCategory,
-  CardPriority,
-  TaskPriority,
-  TaskStatus,
-} from "@/db/schema"
+import type { CardCategory, CardPriority } from "@/db/schema"
 
 const PRIORITY_LABEL: Record<CardPriority, string> = {
   normal: "Обычный",
@@ -124,15 +119,10 @@ export function CardDetailShell({ card }: { card: CardRow }) {
   const analysis = card.message?.analysis ?? ""
   const recommendation = card.message?.recommendation ?? ""
 
-  // Prefill for the "create task from card" accept flow — see DashboardCard.
+  // «Создать задачу» prefill — the same helper as DashboardCard.
   const taskInitialValues = useMemo(
-    () => ({
-      name: CATEGORY_LABEL[card.category],
-      description: recommendation,
-      priority: (card.priority === "high" ? "high" : "medium") as TaskPriority,
-      status: "todo" as TaskStatus,
-    }),
-    [card.category, card.priority, recommendation],
+    () => cardTaskPrefill(card, CATEGORY_LABEL[card.category]),
+    [card],
   )
 
   const handleAccept = (taskId?: string) => {
@@ -152,7 +142,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
           toast.error(err.error || "Не удалось принять карточку")
           return
         }
-        toast.success("Карточка принята")
+        // No success toast: the task form already said «Задача создана».
         router.refresh()
       } catch {
         toast.error("Не удалось принять карточку")
@@ -368,7 +358,7 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                 dealKind === "deal_link" && "flex-col",
               )}
             >
-              {/* new_order cards swap "Принять" for "Создать заказ" in the
+              {/* new_order cards swap «Создать задачу» for "Создать заказ" in the
                   same slot — same consolidation as dashboard-card.tsx: one
                   recommendation, one action, not a competing task button
                   next to a separate order button. */}
@@ -388,9 +378,9 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                 <Button
                   asChild
                   disabled={isPending}
-                  // Solid fill, same weight as the default "Принять" button
+                  // Solid fill, same weight as the default «Создать задачу» button
                   // it replaces here (this page doesn't use the pastel-badge
-                  // treatment dashboard-card.tsx's own Принять uses).
+                  // treatment dashboard-card.tsx's own button uses).
                   className="flex-1 bg-emerald-600 text-white hover:bg-emerald-600/90"
                 >
                   {/* → /products, where the New Order dialog opens prefilled
@@ -407,8 +397,8 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                 onSuccess={handleAccept}
                 trigger={
                   <Button disabled={isPending} className="flex-1">
-                    <Check className="h-4 w-4 mr-1" />
-                    Принять
+                    <ListTodo className="h-4 w-4 mr-1" />
+                    Создать задачу
                   </Button>
                 }
               />

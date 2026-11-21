@@ -108,6 +108,14 @@ export type TopicEntry = {
   clientName: string | null
   contactId: string | null
   contactName: string | null
+  /**
+   * Contact for a task made from the card («Создать задачу»): the topic's
+   * contact, else the newest contact named on the topic's items
+   * (`source_item_subject.contact_id`), else null.
+   */
+  taskContactId: string | null
+  /** Matter family (signal_category.family of the lead code) — task type hint. */
+  family: string | null
   dealId: string | null
   dealName: string | null
   dealOwnerUserId: string | null

@@ -23,7 +23,6 @@ import {
 } from "@/components/ui/hover-card"
 import {
   Building2,
-  Check,
   ChevronDown,
   ChevronUp,
   Contact,
@@ -37,6 +36,7 @@ import {
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import TaskEditDialog from "@/components/forms/form-task-edit"
+import { cardTaskPrefill } from "@/lib/cards/task-prefill"
 import { SourceMessageDialog } from "@/components/blocks/source-message-dialog"
 import type { CardRow } from "@/app/api/cards/route"
 import { CardRejectReasonSelect } from "@/components/blocks/card-reject-reason-select"
@@ -58,13 +58,7 @@ import {
   DEAL_CARD_REJECT_LABEL_RU,
   isDealCardKind,
 } from "@/lib/topics/cards"
-import type {
-  CardCategory,
-  CardPriority,
-  TaskPriority,
-  TaskStatus,
-  TaskType,
-} from "@/db/schema"
+import type { CardCategory, CardPriority } from "@/db/schema"
 
 // Канал источника по-человечески — вместо внутреннего id/хэша.
 const SOURCE_CHANNEL_LABEL: Record<string, string> = {
@@ -326,7 +320,7 @@ export function DashboardCard({
           toast.error(err.error || "Не удалось принять карточку")
           return
         }
-        toast.success("Карточка принята")
+        // No success toast: the task form already said «Задача создана».
         onChanged()
       } catch {
         toast.error("Не удалось принять карточку")
@@ -398,43 +392,13 @@ export function DashboardCard({
   const analysis = card.message?.analysis ?? ""
   const recommendation = card.message?.recommendation ?? ""
 
-  // Accepting a card spawns a task prefilled from it: name = the LLM-summarised
-  // task title (falls back to the category label on older cards),
-  // description = recommendation, priority high→high / normal→medium, status
-  // "to do", due today. Assignee defaults to the current user (the task dialog
-  // seeds it from the first org member). Client + contact come from the card's
-  // identified links: the contact's owning client is preferred so the task
-  // form's client-scoped contact picker keeps the contact selected; otherwise
-  // the first linked client is used (contact left empty, since the form would
-  // drop a contact that doesn't belong to the chosen client). Memoized so the
-  // dialog's reset effect keeps a stable reference.
-  const taskInitialValues = useMemo(() => {
-    const linkedContact = card.contacts[0] ?? null
-    const clientId =
-      linkedContact?.clientId ?? card.clients[0]?.id ?? undefined
-    const contactId =
-      linkedContact && linkedContact.clientId === clientId
-        ? linkedContact.id
-        : undefined
-    return {
-      name: card.message?.taskTitle?.trim() || CATEGORY_LABEL[card.category],
-      description: recommendation,
-      priority: (card.priority === "high" ? "high" : "medium") as TaskPriority,
-      status: "todo" as TaskStatus,
-      // A support card spawns a customer-support task; other cards leave the
-      // type to the form default.
-      ...(card.category === "support" ? { type: "support" as TaskType } : {}),
-      ...(clientId ? { clientId } : {}),
-      ...(contactId ? { contactId } : {}),
-    }
-  }, [
-    card.category,
-    card.priority,
-    card.message?.taskTitle,
-    card.clients,
-    card.contacts,
-    recommendation,
-  ])
+  // «Создать задачу» prefill (company, contact, deal, type) — one helper
+  // shared with the card page; memoized so the dialog's reset effect keeps a
+  // stable reference.
+  const taskInitialValues = useMemo(
+    () => cardTaskPrefill(card, CATEGORY_LABEL[card.category]),
+    [card],
+  )
 
   return (
     <Card
@@ -703,7 +667,7 @@ export function DashboardCard({
             // deal_link: the deal chooser takes its own full-width line
             // above «Ни к одной».
             <div className={cn("flex gap-2", dealKind === "deal_link" && "flex-col")}>
-            {/* new_order cards swap "Принять" for "Создать заказ" in the
+            {/* new_order cards swap «Создать задачу» for "Создать заказ" in the
                 exact same slot — the one recommendation on a new_order card
                 IS "create the order", so a generic task made no sense there,
                 and a THIRD button living inside the Рекомендация block (the
@@ -777,8 +741,8 @@ export function DashboardCard({
                   className="flex-1 bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:hover:bg-emerald-400/25"
                   disabled={isPending}
                 >
-                  <Check className="h-4 w-4 mr-1" />
-                  Принять
+                  <ListTodo className="h-4 w-4 mr-1" />
+                  Создать задачу
                 </Button>
               }
             />

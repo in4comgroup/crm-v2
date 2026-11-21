@@ -13,6 +13,7 @@ import {
   signalInstance,
   source,
   sourceItem,
+  sourceItemSubject,
   topic,
   topicEvent,
   topicItem,
@@ -339,12 +340,45 @@ async function codeLabels(): Promise<Map<string, string>> {
   return new Map(registry.categories.map((c) => [c.code, c.labelRu]))
 }
 
+/**
+ * Newest contact named on each topic's items (not `context` items) — the
+ * fallback contact of a task made from the card when the topic itself has
+ * none. Only contacts still active / initial.
+ */
+async function loadItemContacts(orgId: string, ids: readonly string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  for (let i = 0; i < ids.length; i += 500) {
+    const rows = await db
+      .selectDistinctOn([topicItem.topicId], { topicId: topicItem.topicId, contactId: sourceItemSubject.contactId })
+      .from(topicItem)
+      .innerJoin(
+        sourceItemSubject,
+        and(eq(sourceItemSubject.sourceItemId, topicItem.sourceItemId), eq(sourceItemSubject.subjectIndex, topicItem.subjectIndex)),
+      )
+      .innerJoin(sourceItem, eq(sourceItem.id, topicItem.sourceItemId))
+      .innerJoin(contact, eq(contact.id, sourceItemSubject.contactId))
+      .where(
+        and(
+          eq(topicItem.organizationId, orgId),
+          inArray(topicItem.topicId, ids.slice(i, i + 500)),
+          ne(topicItem.role, "context"),
+          eq(contact.organizationId, orgId),
+          inArray(contact.status, ["active", "initial"]),
+        ),
+      )
+      .orderBy(topicItem.topicId, desc(sourceItem.createdAt))
+    for (const r of rows) if (r.contactId) out.set(r.topicId, r.contactId)
+  }
+  return out
+}
+
 function toEntry(
   h: HeadRow,
   attention: TopicAttention | null,
   cards: CardRow[],
   labels: Map<string, string>,
   now: Date,
+  itemContactId: string | null = null,
 ): TopicEntry {
   const t = h.t
   const att = entryAttention(attention)
@@ -363,6 +397,8 @@ function toEntry(
     clientName: h.clientName,
     contactId: t.contactId,
     contactName: h.contactName,
+    taskContactId: t.contactId ?? itemContactId,
+    family: t.family,
     dealId: t.dealId,
     dealName: h.dealName,
     dealOwnerUserId: h.dealOwnerUserId,
@@ -390,11 +426,16 @@ async function buildEntries(
 ): Promise<TopicEntry[]> {
   if (placed.length === 0) return []
   const ids = placed.map((p) => p.topicId)
-  const [heads, cards, labels] = await Promise.all([loadHeads(orgId, ids), loadCards(orgId, ids), codeLabels()])
+  const [heads, cards, labels, itemContacts] = await Promise.all([
+    loadHeads(orgId, ids),
+    loadCards(orgId, ids),
+    codeLabels(),
+    loadItemContacts(orgId, ids),
+  ])
   const out: TopicEntry[] = []
   for (const p of placed) {
     const h = heads.get(p.topicId)
-    if (h) out.push(toEntry(h, p.attention, cards.get(p.topicId) ?? [], labels, now))
+    if (h) out.push(toEntry(h, p.attention, cards.get(p.topicId) ?? [], labels, now, itemContacts.get(p.topicId) ?? null))
   }
   return out
 }
@@ -580,7 +621,7 @@ export async function getTopicView(orgId: string, topicId: string, now: Date = n
   const [head] = await headQuery().where(and(eq(topic.organizationId, orgId), eq(topic.id, topicId)))
   if (!head) return null
   const t = head.t
-  const [placer, labels, cardsMap, items, instances, events, dealRow, orders] = await Promise.all([
+  const [placer, labels, cardsMap, items, instances, events, dealRow, orders, itemContacts] = await Promise.all([
     loadPlacer(orgId),
     codeLabels(),
     loadCards(orgId, [topicId]),
@@ -627,10 +668,11 @@ export async function getTopicView(orgId: string, topicId: string, now: Date = n
           .where(and(eq(deal.organizationId, orgId), eq(deal.id, t.dealId)))
       : Promise.resolve([]),
     listTopicOrders(orgId, topicId),
+    t.contactId ? Promise.resolve(new Map<string, string>()) : loadItemContacts(orgId, [topicId]),
   ])
   const cards = cardsMap.get(topicId) ?? []
   const attention = placer.place(t.attention, now)
-  const entry = toEntry(head, attention, cards, labels, now)
+  const entry = toEntry(head, attention, cards, labels, now, itemContacts.get(topicId) ?? null)
   const d = dealRow[0]
   const labelOf = (code: string) => labels.get(code) ?? null
   return {

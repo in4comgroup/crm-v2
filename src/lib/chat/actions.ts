@@ -13,6 +13,7 @@ import { normalisePhone, normaliseTelegramHandle } from "@/lib/identity/registry
 import { isLocalDateTime, localToUtc, resolveDueText, utcToLocal } from "@/lib/chat/due-date"
 import { companyMatchKey } from "@/lib/translit-ru"
 import { parseMoneyRu } from "@/lib/ru-mail/money"
+import { taskTypeFromText } from "@/lib/tasks/suggest-task-type"
 
 // ── Kinds, statuses ─────────────────────────────────────────────────────
 
@@ -904,13 +905,7 @@ export function contactFill(existing: ExistingContact, v: Partial<ContactValues>
 
 /** Task type from the verb of the title (when the model gave none). */
 export function taskTypeFromTitle(title: string): ChatTaskType {
-  const t = (title ?? "").toLowerCase()
-  if (/позвон|звонок|созвон|перезвон|набрать/.test(t)) return "call"
-  if (/встреч|встрет|визит|переговор|демо|презентац/.test(t)) return "meet"
-  if (/\bкп\b|кп |коммерческ|предложени|прайс|расч[её]т стоимост/.test(t)) return "offer"
-  if (/договор|документ|сч[её]т|акт|спецификац|подпис/.test(t)) return "docs"
-  if (/письм|написать|e-?mail|почт|ответить/.test(t)) return "email"
-  return "other"
+  return taskTypeFromText(title ?? "") ?? "other"
 }
 
 /**

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import {
   listTasks,
-  listOrgMembers,
+  listOrgMembersForViewer,
   listTaskClientOptions,
   listTaskContactOptions,
   listTaskDealOptions,
@@ -31,8 +31,9 @@ export async function GET(request: NextRequest) {
   try {
     const url = new URL(request.url)
     if (url.searchParams.get("members") === "1") {
-      const members = await listOrgMembers()
-      return NextResponse.json({ members })
+      // `currentUserId` = default «Исполнитель» of a new task in the form.
+      const { members, currentUserId } = await listOrgMembersForViewer()
+      return NextResponse.json({ members, currentUserId })
     }
     if (url.searchParams.get("clientOptions") === "1") {
       const options = await listTaskClientOptions()

@@ -173,9 +173,12 @@ one company / contact / deal for the «Темы» tabs).
   process `cards.generation`, the Explore Sources dialog, the "Magic" cards
   button, `/rules` «Правила», `api/rules`, `rules.ts`. The `rule` table stays as
   a data record (old cards reference it through `card.rule_id`).
-- «Принять» (Accept) opens a prefilled new-task dialog; the card is accepted
-  only when the task is saved (`resultTaskId` stored). A `support` card creates
-  a «Поддержка» task. A topic card with `category = new_order` (ORDER_REQUESTED)
+- «Создать задачу» (Create task; was «Принять», renamed 2026-11-21) opens a
+  prefilled new-task dialog; the card is accepted («Принята») only when the
+  task is saved (`resultTaskId` stored). Prefill: company, contact (the
+  topic's, else the newest contact on its items), the topic's deal, type from
+  the card's meaning (`suggestTaskType`, `src/lib/tasks/suggest-task-type.ts`),
+  «Исполнитель» = the person who creates it. A topic card with `category = new_order` (ORDER_REQUESTED)
   shows «Создать заказ» (Create order) instead and starts the order-from-request
   flow (`resultOrderId` stored). «Отклонить» (Reject) needs a reason.
 

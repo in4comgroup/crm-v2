@@ -107,7 +107,7 @@ type Props = {
   // dashboard-card.tsx's handleAccept). Undefined in edit mode.
   onSuccess?: (taskId?: string) => void
   // Create-mode-only prefill (ignored in edit mode, where `task` wins).
-  // Used e.g. by the dashboard cards "Принять" → "create task from card" flow.
+  // Used e.g. by the cards' «Создать задачу» → "create task from card" flow.
   // Pass a stable reference (memoize in the parent) so the open-effect's
   // form.reset doesn't re-run and wipe edits while the dialog is open.
   initialValues?: Partial<TaskFormData>
@@ -194,8 +194,9 @@ export function TaskEditForm({
             .filter((d) => isOpenDealStatus(d.status))
             .map((d) => ({ id: d.id, name: d.name, clientName: d.clientName })),
         )
+        // Default «Исполнитель» of a new task = the person who creates it.
         if (mode === "create" && !form.getValues("assigneeId")) {
-          const me = loadedMembers[0]
+          const me = loadedMembers.find((m) => m.id === mRes.currentUserId)
           if (me) form.setValue("assigneeId", me.id)
         }
       } catch {}

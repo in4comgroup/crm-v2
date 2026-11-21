@@ -164,6 +164,8 @@ function entry(id: string, list: TopicList, p: Partial<TopicEntry["attention"] &
     clientName: "ООО Норлекс",
     contactId: null,
     contactName: null,
+    taskContactId: null,
+    family: null,
     dealId: null,
     dealName: null,
     dealOwnerUserId: null,

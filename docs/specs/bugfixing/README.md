@@ -22,6 +22,36 @@ Status: **built 2026-11-21, not deployed.** Tester items committed (commits `b2a
 | 22 | — | Empty row | Skipped (no text) | — |
 | 23 | Topics | «Готово» never archived | «Готово» → «В архиве» 14 days after closing, like «Решена»; checks never reopen an archived «Готово» topic (`closedByUser`) | `lifecycle.ts`, `topic-store.ts`, `checks/store.ts` |
 
+## Follow-up 2026-11-22 — item 3 again («Мои» hides ОРИКС)
+
+Tester: with «Мои» on Home, maslov.agency (Boris) hides — correct — but ООО «ОРИКС» (hers) hides too, «with both accounts».
+
+- «Мои» on Home filters TOPICS: assignee (`topic.owner_user_id`) or the linked deal's owner — not the company list. The ОРИКС topic «ОРИКС — новый контакт» is assigned to the OLD account `amalitskaya@…gmail` (the company's «Ответственный» is that account too: on 2026-11-21 the new account picked «Маргарита Амалицкая» in the list, which shows both accounts under the same name). Checked with the real query: the gmail account sees ОРИКС under «Мои» («Все темы»); the in4comgroup account does not. The gmail account has no sign-in since 2026-09-04, so the «both accounts» test was in fact one account.
+- The topic is «Затихла» → only on «Все темы», never on «Сейчас» / «Сводка» / «Неделя», with or without «Мои».
+- Code gap found and fixed: a company «Ответственный» change did not move its topics (the assignee is filled once). Now `reassignClientTopicsOwner` moves the topics assigned to the previous responsible / to nobody (`client-responsible.ts`, `topic-store.ts`; journal line «(сменился ответственный за компанию)»).
+- Member pickers («Ответственный», «Также отвечают», «Передать владельцу», the Companies filter) show the email when two members share a name (`memberLabel`).
+- Data not changed: ОРИКС stays on the gmail account. For the tester to see it under «Мои», the owner sets ОРИКС «Ответственный» = the in4comgroup account (the topic follows now), or the two accounts are merged (product owner decision, open).
+
+## Follow-up 2026-11-22 — item 24 again («Исполнителя не подставляет»)
+
+Reproduced in the local app (Home → topic card → «Создать задачу»): «Исполнитель» stayed empty. Cause: the form sets the default (the creator) in the SAME render as the member list arrives; Radix Select's hidden native `<select>` then fires a change with "" (the option is not there yet), and that cleared the value. Fix: the «Исполнитель» Select mounts again when the members arrive (`key`), so it starts with the value and sends no change (`form-task-edit.tsx`). Checked: the dialog now shows the creator. Same form for every «Создать задачу» (topic card, card page, old card feed, company / deal / tasks pages).
+
+## Follow-up 2026-11-22 — item 16: Кондрашева and Чехомова not created as contacts
+
+Tester: the document came in a mail from Евгения Кондрашева (corporate address), Анна Чехомова in copy — why are they not contacts of maslov.agency?
+
+- By design, contacts from mail are created ONLY by «Найти в источниках» (Companies → preview → «Применить»), never at sync / parse. In IN4COM none of the 10 mails of this thread was ever scanned (`discovery_scanned_at` empty); maslov.agency has 0 contacts. Discovery finds both people (high confidence, 10 and 9 mails).
+- But the preview would have linked BOTH to a junk new company «Google Calendar» (from a calendar invite) instead of the existing maslov.agency — three defects in `src/server/discovery.ts`, fixed with `src/lib/discovery-pick.ts` (tests): link tie-break was alphabetical (now an existing company wins); the weak website rule gave «Google Calendar» the domain maslov.agency (now never a domain an existing company owns); the native name took the longest spelling (now Cyrillic first, then the most frequent).
+- Checked with the read-only preview on the test DB: both now → existing «maslov.agency» (high, not ambiguous), Кондрашева native «Евгения Кондрашева»; «Google Calendar» = low, no website (unticked). Nothing was applied — the tester runs «Найти в источниках» after the deploy.
+
+## Follow-up 2026-11-22 — item 16 for ОРИКС: files linked to «Павел Подкорытов»
+
+Tester: in the ОРИКС drawer → «Документы» both files (uploaded by her) are linked to the contact Павел Подкорытов; there must be no contact link.
+
+- Cause: rule A3 linked a contact NAMED in the file content («авто · упомянут в документе», medium). Both files name him among many people: `image.png` (AI chat — a staff table, 12 names) and «Орикс_интервью с Кристиной.docx» (14 names). He was the only one of them who was a contact when the links were made; with more contacts each file would link to all of them.
+- Change: A3 now links only COMPANIES named in a file; people named in a file are never linked (`planAutoLinks` in `src/lib/documents.ts`, `computeAutoLinks` in `src/server/documents.ts`, spec `docs/specs/attachments/01-specification.md` A3). A contact gets a file as a sender / recipient (A1) or through a topic (A2), or by hand.
+- Test DB: the 2 links deleted (the only contact links of this rule in the DB). The upload link of the docx to ОРИКС stays.
+
 ## Product owner changes (same day)
 
 | Change | Where |

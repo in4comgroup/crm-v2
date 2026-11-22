@@ -480,7 +480,11 @@ export function describeTopicEvent(
     case "unsnoozed":
       return "Откладывание снято"
     case "owner_changed":
-      return str(p.toName) ? `Ответственный: ${str(p.toName)}` : "Ответственный снят"
+      if (!str(p.toName)) return "Ответственный снят"
+      // Moved with the company's «Ответственный» (src/server/client-responsible.ts).
+      return p.reason === "client_responsible"
+        ? `Ответственный: ${str(p.toName)} (сменился ответственный за компанию)`
+        : `Ответственный: ${str(p.toName)}`
     case "deal_linked":
       return `Тема привязана к сделке${quote(p.dealName)}`
     case "deal_unlinked":

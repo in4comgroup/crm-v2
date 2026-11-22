@@ -15,6 +15,7 @@ import type { DealContactWithRole } from "@/app/api/deals/[id]/contacts/route"
 import type { DealContactOption } from "@/app/api/deals/route"
 import { DEAL_CONTACT_ROLES, dealContactRoleLabel } from "@/lib/deal-roles"
 import ContactEditDialog from "@/components/forms/form-contact-edit"
+import { contactDisplayName } from "@/lib/contact-names"
 
 const NO_ROLE = "__none__"
 
@@ -78,7 +79,7 @@ export function DealContactsRoles({ dealId, clientId }: { dealId: string; client
         >
           <div className="min-w-0">
             <div className="font-medium leading-snug truncate">
-              {c.nameNative ?? c.name}
+              {contactDisplayName(c)}
             </div>
             {c.position && (
               <div className="text-xs text-muted-foreground truncate">

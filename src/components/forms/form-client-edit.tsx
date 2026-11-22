@@ -1,5 +1,6 @@
 "use client"
 
+import { contactDisplayName } from "@/lib/contact-names"
 import { useState, useTransition, useEffect } from "react"
 import { useForm } from "react-hook-form"
 import {
@@ -112,7 +113,7 @@ function ContactList({ contacts }: { contacts: ClientContactPreview[] }) {
       <ul className="space-y-1">
         {contacts.map((c) => (
           <li key={c.id} className="text-sm">
-            <span className="font-medium">{c.name}</span>
+            <span className="font-medium">{contactDisplayName(c)}</span>
             {c.position && (
               <span className="text-muted-foreground"> — {c.position}</span>
             )}

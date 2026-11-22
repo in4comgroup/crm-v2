@@ -215,6 +215,7 @@ export function DiscoverDialog({
     return preview.contactCandidates.filter(
       (c) =>
         c.displayName.toLowerCase().includes(q) ||
+        (c.nativeName ?? "").toLowerCase().includes(q) ||
         c.email.toLowerCase().includes(q),
     )
   }, [preview, contactFilter])
@@ -284,6 +285,7 @@ export function DiscoverDialog({
             },
             clientEnrichments: preview.clientEnrichments,
             nativeNames: preview.nativeNames,
+            displayNames: preview.displayNames,
             phones: preview.phones,
             positions: preview.positions,
           }),
@@ -755,7 +757,9 @@ function ContactRow({
   onBlock?: () => void
 }) {
   const value =
-    nameOverride !== undefined ? nameOverride : candidate.displayName
+    nameOverride !== undefined
+      ? nameOverride
+      : candidate.nativeName || candidate.displayName
   // P5 (docs/specs/clients-contacts/04 §4): same name as a contact of
   // ANOTHER company — pre-unchecked; unchecked = a proposal, not a duplicate.
   const possibleMove = candidate.possibleMove ?? null
@@ -777,7 +781,7 @@ function ContactRow({
           <ConfidenceBadge level={candidate.confidence} />
           <span className="truncate">
             {candidate.email}
-            {candidate.nativeName ? ` · ${candidate.nativeName}` : ""} ·
+            {" "}·
             упомянуто в {candidate.occurrences}{" "}
             {plural(candidate.occurrences, [
               "элементе",

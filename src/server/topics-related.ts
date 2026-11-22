@@ -13,6 +13,7 @@ import {
 } from "@/lib/topics/types"
 import { TOPIC_LIST_LABELS_RU, type TopicList } from "@/lib/topics/attention-types"
 import { SIGNAL_BAND_LABELS_RU, type SignalBand } from "@/lib/signals/extraction-types"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // «Темы» tab on the company page / drawer, the contact drawer and the deal
 // drawer (spec topics/01 §14, plan phase 6 task 3). Org-explicit: the caller
@@ -111,7 +112,7 @@ async function loadTopics(
   const select = {
     t: topic,
     clientName: client.name,
-    contactName: contact.name,
+    contactName: contactDisplaySql(),
     dealName: deal.name,
   }
   const base = () =>

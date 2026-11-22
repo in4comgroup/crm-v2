@@ -26,6 +26,7 @@ import {
 } from "./shared"
 import { inIds, matchedLabel, resolveCompanyFilter, resolveDealFilter } from "./resolve"
 import { keepOwnOrg, type RecordModule, type RecordsContext, type SearchOptions } from "./types"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // «Задача» (task) — records engine module (spec §6.1).
 // Visible: every task of the org. Labels = src/lib/task-labels.ts (the same
@@ -236,7 +237,7 @@ async function get(ctx: RecordsContext, id: string): Promise<RecordDetail | null
       ...cols,
       description: task.description,
       contactId: task.contactId,
-      contactName: contact.name,
+      contactName: contactDisplaySql(),
     })
     .from(task)
     .leftJoin(client, and(eq(task.clientId, client.id), eq(client.organizationId, ctx.orgId)))

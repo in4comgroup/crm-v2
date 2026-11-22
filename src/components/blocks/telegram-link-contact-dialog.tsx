@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
+import { contactDisplayName } from "@/lib/contact-names"
 
 type TelegramAuthor = {
   telegram: boolean
@@ -50,7 +51,7 @@ const VIA_LABEL: Record<string, string> = {
 }
 
 function contactLabel(r: ContactSearchRow): string {
-  return r.nameNative || r.name
+  return contactDisplayName(r)
 }
 
 export function TelegramLinkContactDialog({

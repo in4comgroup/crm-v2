@@ -20,6 +20,7 @@ import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
+import { contactDisplaySql } from "@/server/contact-display"
 
 export type TaskRow = {
   id: string
@@ -154,7 +155,7 @@ export async function listTasks(): Promise<TaskRow[]> {
       userName: creator.name,
       assigneeName: assignee.name,
       clientName: client.name,
-      contactName: contact.name,
+      contactName: contactDisplaySql(),
       dealName: deal.name,
     })
     .from(task)
@@ -274,12 +275,12 @@ export async function listTaskContactOptions(
   const rows = await db
     .select({
       id: contact.id,
-      name: contact.name,
+      name: contactDisplaySql(),
       clientId: contact.clientId,
     })
     .from(contact)
     .where(and(...conditions))
-    .orderBy(contact.name)
+    .orderBy(contactDisplaySql())
   return rows
 }
 

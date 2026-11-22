@@ -18,6 +18,7 @@ import {
   type TelegramResolved,
   type TgPerson,
 } from "@/lib/telegram/resolve"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // DB side of the ONE rule per Telegram message (docs/specs/telegram/04 §8 /
 // §6, TI1 + TI5): the directory of the org (bindings, staff handles, contact
@@ -308,7 +309,7 @@ export async function listTelegramDuplicates(orgId: string): Promise<{ key: stri
   const groups = telegramDuplicateGroups(dir.addresses)
   const ids = [...new Set(groups.flatMap((g) => g.contactIds))]
   if (!ids.length) return []
-  const rows = await db.select({ id: contact.id, name: contact.name, clientId: contact.clientId }).from(contact).where(inArray(contact.id, ids))
+  const rows = await db.select({ id: contact.id, name: contactDisplaySql(), clientId: contact.clientId }).from(contact).where(inArray(contact.id, ids))
   const byId = new Map(rows.map((r) => [r.id, r]))
   return groups.map((g) => ({ key: g.key, label: g.label, contacts: g.contactIds.map((id) => byId.get(id)).filter((x): x is { id: string; name: string; clientId: string | null } => !!x) }))
 }
@@ -339,6 +340,6 @@ export async function getTelegramItemAuthor(orgId: string, itemId: string): Prom
   if (!input.from && !input.forwardOrigin) return empty
   const { resolved } = resolveTelegramMessage(input, await loadTelegramDirectory(orgId))
   const a = resolved.author
-  const [c] = a.contactId ? await db.select({ name: contact.name }).from(contact).where(eq(contact.id, a.contactId)).limit(1) : []
+  const [c] = a.contactId ? await db.select({ name: contactDisplaySql() }).from(contact).where(eq(contact.id, a.contactId)).limit(1) : []
   return { telegram: true, kind: a.kind, name: a.name, username: a.username, hasId: !!a.tgUserId, contactId: a.contactId ?? null, contactName: c?.name ?? null, via: a.via }
 }

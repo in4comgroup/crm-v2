@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Pencil } from "lucide-react"
 import type { ContactRow } from "@/app/api/contacts/route"
 import { ContactEditForm } from "@/components/forms/form-contact-edit"
+import { contactDisplayName } from "@/lib/contact-names"
 
 export function DealInitiatorPopover({
   contactId,
@@ -70,7 +71,7 @@ export function DealInitiatorPopover({
           <div className="text-sm text-muted-foreground">Загрузка…</div>
         ) : contact ? (
           <div className="space-y-2 text-sm">
-            <div className="font-medium">{contact.nameNative ?? contact.name}</div>
+            <div className="font-medium">{contactDisplayName(contact)}</div>
             {contact.position && (
               <div className="text-muted-foreground">{contact.position}</div>
             )}

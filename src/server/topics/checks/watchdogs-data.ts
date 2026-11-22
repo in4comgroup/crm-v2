@@ -23,6 +23,7 @@ import {
   type WdTopic,
   type WdTopicItem,
 } from "./watchdogs"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // Loaders of the phase 8 watchdogs (org-explicit, READ ONLY) + the
 // evaluators. The pure logic is `watchdogs.ts`.
@@ -145,7 +146,7 @@ export async function loadWatchdogDataUncached(orgId: string, now: Date, lookbac
         matter: topic.matter,
         counterpartyRaw: topic.counterpartyRaw,
         clientName: client.name,
-        contactName: contact.name,
+        contactName: contactDisplaySql(),
       })
       .from(topic)
       .leftJoin(client, eq(client.id, topic.clientId))

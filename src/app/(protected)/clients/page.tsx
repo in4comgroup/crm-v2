@@ -68,6 +68,7 @@ import {
   RESPONSIBLE_FILTER_ALL,
   RESPONSIBLE_FILTER_HANDOVER,
   RESPONSIBLE_FILTER_MINE,
+  memberLabel,
 } from "@/lib/client-responsible"
 
 import {
@@ -454,9 +455,9 @@ export default function ClientsPage() {
               <SelectItem value={RESPONSIBLE_FILTER_HANDOVER}>
                 Ждут решения владельца
               </SelectItem>
-              {(responsibleOptions?.members ?? []).map((m) => (
+              {(responsibleOptions?.members ?? []).map((m, _i, all) => (
                 <SelectItem key={m.userId} value={m.userId}>
-                  {m.name}
+                  {memberLabel(m, all)}
                 </SelectItem>
               ))}
             </SelectContent>

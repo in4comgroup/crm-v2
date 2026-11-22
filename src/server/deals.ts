@@ -65,6 +65,7 @@ import {
   listActiveRiskSummaries,
   listDealRisks,
 } from "@/server/deal-risks"
+import { contactDisplaySql } from "@/server/contact-display"
 
 export type DealContactSummary = { id: string; name: string }
 
@@ -405,12 +406,12 @@ export async function listDealContactOptions(
   const rows = await db
     .select({
       id: contact.id,
-      name: contact.name,
+      name: contactDisplaySql(),
       clientId: contact.clientId,
     })
     .from(contact)
     .where(and(...conditions))
-    .orderBy(contact.name)
+    .orderBy(contactDisplaySql())
   return rows
 }
 
@@ -592,12 +593,12 @@ export async function listDeals(
       .select({
         dealId: dealContact.dealId,
         id: contact.id,
-        name: contact.name,
+        name: contactDisplaySql(),
       })
       .from(dealContact)
       .innerJoin(contact, eq(dealContact.contactId, contact.id))
       .where(inArray(dealContact.dealId, dealIds))
-      .orderBy(contact.name)
+      .orderBy(contactDisplaySql())
     for (const c of contactRows) {
       const list = contactsByDeal.get(c.dealId) ?? []
       list.push({ id: c.id, name: c.name })
@@ -659,11 +660,11 @@ export async function getDeal(dealId: string): Promise<DealRow | null> {
   if (r.deal.organizationId !== activeOrgId) return null
 
   const contactRows = await db
-    .select({ id: contact.id, name: contact.name })
+    .select({ id: contact.id, name: contactDisplaySql() })
     .from(dealContact)
     .innerJoin(contact, eq(dealContact.contactId, contact.id))
     .where(eq(dealContact.dealId, dealId))
-    .orderBy(contact.name)
+    .orderBy(contactDisplaySql())
 
   const engineVisible = (await getTopicsMode(activeOrgId)) === "on"
   const [risks, activity] = await Promise.all([
@@ -1056,7 +1057,7 @@ export async function listDealContactsWithRoles(
   const rows = await db
     .select({
       id: contact.id,
-      name: contact.name,
+      name: contactDisplaySql(),
       nameNative: contact.nameNative,
       position: contact.position,
       email: contact.email,

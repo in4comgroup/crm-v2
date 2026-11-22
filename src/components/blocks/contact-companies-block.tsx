@@ -84,6 +84,7 @@ import {
   type ProposalDecisionBody,
   type ProposalView,
 } from "@/lib/contact-links"
+import { contactDisplayName } from "@/lib/contact-names"
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1553,7 +1554,7 @@ function MergeContactDialog({
                   className="w-full rounded-md border px-2.5 py-1.5 text-left text-sm hover:bg-accent"
                   onClick={() => setPicked(r)}
                 >
-                  <div className="truncate font-medium">{r.nameNative || r.name}</div>
+                  <div className="truncate font-medium">{contactDisplayName(r)}</div>
                   <div className="truncate text-xs text-muted-foreground">
                     {[r.email, r.clientName].filter(Boolean).join(" · ") || "—"}
                   </div>
@@ -1573,7 +1574,7 @@ function MergeContactDialog({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Объединить «{picked?.nameNative || picked?.name}» с «{contactName}»?
+              Объединить «{picked ? contactDisplayName(picked) : ""}» с «{contactName}»?
             </AlertDialogTitle>
             <AlertDialogDescription>
               Записи объединятся в эту. Действие нельзя отменить.

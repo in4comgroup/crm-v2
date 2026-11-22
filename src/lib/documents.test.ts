@@ -16,7 +16,6 @@ const base: AutoLinkInput = {
   participants: [],
   topics: [],
   contentClients: [],
-  contentContacts: [],
   openDealsByClient: {},
   existing: [],
 }
@@ -40,9 +39,11 @@ describe("planAutoLinks", () => {
     expect(r.find((x) => x.entityId === "d1")!.origin).toBe("auto_topic")
     expect(r.find((x) => x.entityId === "p2")!.reason).toBe("тема «T»")
   })
-  it("A3: content names are medium", () => {
-    const r = planAutoLinks({ ...base, contentClients: ["c9"], contentContacts: ["p9"] })
-    expect(r.every((x) => x.confidence === "medium" && x.origin === "auto_content")).toBe(true)
+  it("A3: a company named in the file is medium; people named in a file are never linked", () => {
+    const r = planAutoLinks({ ...base, contentClients: ["c9"] })
+    expect(r).toHaveLength(1)
+    expect(r[0]).toMatchObject({ entityType: "client", entityId: "c9", confidence: "medium", origin: "auto_content" })
+    expect(r.some((x) => x.entityType === "contact")).toBe(false)
   })
   it("A5: the company's ONLY open deal; not with 2 deals; not when a deal link exists", () => {
     const one = planAutoLinks({ ...base, contentClients: ["c1"], openDealsByClient: { c1: ["d1"] } })

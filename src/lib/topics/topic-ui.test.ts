@@ -92,6 +92,9 @@ describe("journal in plain Russian", () => {
     expect(d("snoozed", { until: "2026-11-20T05:00:00.000Z" })).toMatch(/^Отложено до 20 ноября 2026/)
     expect(d("owner_changed", { toName: "Иван" })).toBe("Ответственный: Иван")
     expect(d("owner_changed", {})).toBe("Ответственный снят")
+    expect(d("owner_changed", { toName: "Иван", reason: "client_responsible" })).toBe(
+      "Ответственный: Иван (сменился ответственный за компанию)",
+    )
     expect(d("deal_linked", { dealName: "Поставка" })).toBe("Тема привязана к сделке «Поставка»")
     expect(d("item_detached", { reason: "user" })).toBe("Сообщение отвязано от темы (вручную)")
     expect(d("done", { note: "звонок сделан" })).toBe("Отмечено «Готово»: звонок сделан")

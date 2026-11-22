@@ -23,6 +23,7 @@ import { allFacts, facts, formatDate, formatMoney, isoOrNull, shortText } from "
 import { basicHit, capTotal, loadOrgMembers, parseDay, personLabel, totalOver } from "./shared"
 import { matchedLabel, resolveCompanyFilter, type NamedMatch } from "./resolve"
 import { keepOwnOrg, type RecordModule, type RecordsContext } from "./types"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // «Контакт» (contact) — records engine module (spec §6.1).
 // Visible: every contact of the org except `deleted` / `blocked` and
@@ -63,7 +64,8 @@ function dayChip(raw: string | undefined, tz: string): string {
 const cols = {
   id: contact.id,
   organizationId: contact.organizationId,
-  name: contact.name,
+  name: contactDisplaySql(),
+  systemName: contact.name,
   nameNative: contact.nameNative,
   email: contact.email,
   phone: contact.phone,
@@ -78,6 +80,7 @@ type ContactRowLite = {
   id: string
   organizationId: string | null
   name: string
+  systemName: string
   nameNative: string | null
   email: string | null
   phone: string | null
@@ -206,7 +209,7 @@ async function list(ctx: RecordsContext, filters: ContactFilters, sort: string, 
   }
 
   const order =
-    sort === "name" ? [asc(contact.name)] : sort === "created" ? [desc(contact.createdAt)] : [desc(contact.updatedAt)]
+    sort === "name" ? [asc(contactDisplaySql())] : sort === "created" ? [desc(contact.createdAt)] : [desc(contact.updatedAt)]
   const rows = await baseQuery(ctx).where(and(...where)).orderBy(...order).limit(limit)
   const own = keepOwnOrg(ctx, "contact", rows)
   return { rows: own.map(toHit), ...capTotal(rows[0]?.total), applied }
@@ -264,7 +267,7 @@ async function get(ctx: RecordsContext, id: string): Promise<RecordDetail | null
   const info = allFacts([
     { label: "Компания", value: row.companyName ?? "" },
     { label: "Должность", value: row.position ?? "" },
-    { label: "Имя в оригинале", value: row.nameNative && row.nameNative !== row.name ? row.nameNative : "" },
+    { label: "Системное имя", value: row.systemName && row.systemName !== row.name ? row.systemName : "" },
     { label: "Email", value: row.email ?? "" },
     { label: "Телефон", value: row.phone ?? "" },
     { label: "Добавлен", value: formatDate(row.createdAt, tz) },

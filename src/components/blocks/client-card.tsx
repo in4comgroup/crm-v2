@@ -32,6 +32,7 @@ import {
 import { COMPANY_KIND_LABELS } from "@/lib/client-custom-fields"
 import type { CustomFieldDef } from "@/lib/custom-fields"
 import { CustomFieldsSummary } from "@/components/blocks/custom-field-filters"
+import { contactDisplayName } from "@/lib/contact-names"
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
@@ -341,7 +342,7 @@ export function ClientCard({
             </div>
             {preview.map((c) => (
               <div key={c.id} className="text-sm truncate">
-                <span className="font-medium">{c.nameNative || c.name}</span>
+                <span className="font-medium">{contactDisplayName(c)}</span>
                 {c.position && (
                   <span className="text-muted-foreground"> — {c.position}</span>
                 )}

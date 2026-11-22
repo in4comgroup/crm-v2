@@ -94,7 +94,6 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 type ContactFormData = {
-  name: string
   nameNative: string
   /** Comma-separated in the form; split to string[] on submit. */
   aliases: string
@@ -155,8 +154,8 @@ export function ContactEditForm({
 
   const form = useForm<ContactFormData>({
     defaultValues: {
-      name: contact?.name ?? "",
-      nameNative: contact?.nameNative || contact?.name || "", // required, default = the name
+      // The ONE shown name; «Системное имя» (`name`) is read-only (2026-11-22).
+      nameNative: contact?.nameNative || contact?.name || "",
       aliases: (contact?.aliases ?? []).join(", "),
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
@@ -172,8 +171,8 @@ export function ContactEditForm({
 
   useEffect(() => {
     form.reset({
-      name: contact?.name ?? "",
-      nameNative: contact?.nameNative || contact?.name || "", // required, default = the name
+      // The ONE shown name; «Системное имя» (`name`) is read-only (2026-11-22).
+      nameNative: contact?.nameNative || contact?.name || "",
       aliases: (contact?.aliases ?? []).join(", "),
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
@@ -233,10 +232,14 @@ export function ContactEditForm({
         }
         // Sent only when changed: a row without a loaded value never clears it.
         const managedPart = sameManagedInput(managed, initialManaged) ? {} : { managedAt: managed }
+        // «Имя на родном языке» on an edit is sent only when changed: a sent
+        // value marks it as set by a person (a source never replaces it).
+        const { nameNative, ...other } = rest
+        const nativeChanged = nameNative.trim() !== (contact?.nameNative || contact?.name || "").trim()
         const payload =
           mode === "create"
-            ? { ...rest, aliases, clientId, ...managedPart }
-            : { id: contact!.id, ...rest, aliases, clientId, ...managedPart }
+            ? { ...other, nameNative, aliases, clientId, ...managedPart }
+            : { id: contact!.id, ...other, ...(nativeChanged ? { nameNative } : {}), aliases, clientId, ...managedPart }
         const res = await fetch("/api/contacts", {
           method: mode === "create" ? "POST" : "PUT",
           headers: { "Content-Type": "application/json" },
@@ -259,54 +262,27 @@ export function ContactEditForm({
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <FormField
-            control={form.control}
-            name="name"
-            rules={{ required: "Укажите имя" }}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-gray-400">Имя *</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    placeholder="Имя контакта"
-                    onChange={(e) => {
-                      // «Имя на родном языке» follows the name while it is
-                      // empty or still a copy of it (default = the name).
-                      const prev = form.getValues("name")
-                      const native = form.getValues("nameNative")
-                      if (!native.trim() || native === prev) {
-                        form.setValue("nameNative", e.target.value, { shouldDirty: true })
-                      }
-                      field.onChange(e)
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="nameNative"
-            rules={{ validate: (v) => !!v.trim() || "Укажите имя на родном языке" }}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-gray-400">
-                  Имя на родном языке *
-                </FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    placeholder="Имя на родном языке (напр. 张伟)"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
+        <FormField
+          control={form.control}
+          name="nameNative"
+          rules={{ validate: (v) => !!v.trim() || "Укажите имя на родном языке" }}
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-gray-400">Имя на родном языке *</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="Имя на родном языке (напр. Анна Иванова)" />
+              </FormControl>
+              {/* «Системное имя» = the name the sources use (e-mail display
+                  name, Telegram profile); read-only, for matching (2026-11-22). */}
+              {mode === "edit" && contact?.name && contact.name.trim() !== field.value.trim() && (
+                <p className="text-xs text-muted-foreground">
+                  Системное имя: <span className="text-foreground/80">{contact.name}</span>
+                </p>
+              )}
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
         <div className="grid grid-cols-2 gap-3">
           <FormField

@@ -15,6 +15,7 @@ import {
   relevanceOf,
   textQuery,
 } from "@/server/search/normalise"
+import { contactDisplaySql } from "@/server/contact-display"
 
 async function requireOrgContext() {
   const session = await getServerSession()
@@ -148,7 +149,7 @@ export async function searchAcrossEntities(
     db
       .select({
         id: contact.id,
-        name: contact.name,
+        name: contactDisplaySql(),
         email: contact.email,
         clientName: client.name,
       })

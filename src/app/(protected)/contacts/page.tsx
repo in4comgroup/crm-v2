@@ -50,6 +50,7 @@ import {
 import { encodeCustomFilters, type CustomFieldFilter } from "@/lib/custom-fields"
 import { LINK_RELATION_LABELS, type LinkRelation } from "@/lib/contact-links"
 import { usePersistentTab } from "@/lib/use-persistent-tab"
+import { contactDisplayName } from "@/lib/contact-names"
 
 // «+N»: other CURRENT companies of a contact (docs/specs/clients-contacts/04
 // §6); the primary one stays `clientId` / `clientName`.
@@ -388,12 +389,7 @@ export default function ContactsPage() {
                       onClick={() => setEditingContact(c)}
                     >
                       <TableCell>
-                        <div className="font-medium">{c.name}</div>
-                        {c.nameNative && (
-                          <div className="text-xs text-muted-foreground">
-                            {c.nameNative}
-                          </div>
-                        )}
+                        <div className="font-medium">{contactDisplayName(c)}</div>
                       </TableCell>
                       <TableCell>{c.email ?? "—"}</TableCell>
                       <TableCell>{c.phone ?? "—"}</TableCell>

@@ -38,6 +38,7 @@ import { allFacts, facts, formatDate, formatDateTime, isoOrNull, nameList, short
 import { basicHit, capTotal, parseDay, totalOver } from "./shared"
 import { resolveCompanyFilter, resolveContactFilter } from "./resolve"
 import { keepOwnOrg, type RecordModule, type RecordsContext, type SearchOptions } from "./types"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // «Источник» (source item) of the records engine (spec §6.1 / §7.2): mail,
 // chat messages, files and their attachments of the org's sources. Roots and
@@ -593,7 +594,7 @@ async function loadLinkedRecords(ctx: RecordsContext, itemId: string): Promise<R
       : none,
     contactIds.length
       ? db
-          .select({ id: contact.id, title: contact.name, sub: contact.position })
+          .select({ id: contact.id, title: contactDisplaySql(), sub: contact.position })
           .from(contact)
           .where(and(eq(contact.organizationId, ctx.orgId), inArray(contact.id, contactIds), sql`${contact.status} not in ('deleted', 'blocked')`))
       : none,

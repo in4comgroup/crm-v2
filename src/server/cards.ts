@@ -35,6 +35,7 @@ import {
   isFreemailDomain,
 } from "@/lib/email-domain"
 import { getServerSession } from "@/lib/get-session"
+import { contactDisplaySql } from "@/server/contact-display"
 
 export type CardMessage = {
   analysis: string
@@ -405,7 +406,7 @@ export async function listCards(): Promise<CardRow[]> {
       .select({
         cardId: cardContact.cardId,
         contactId: contact.id,
-        contactName: contact.name,
+        contactName: contactDisplaySql(),
         contactClientId: contact.clientId,
       })
       .from(cardContact)
@@ -509,7 +510,7 @@ export async function getCard(cardId: string): Promise<CardRow | null> {
     db
       .select({
         contactId: contact.id,
-        contactName: contact.name,
+        contactName: contactDisplaySql(),
         contactClientId: contact.clientId,
       })
       .from(cardContact)

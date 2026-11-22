@@ -33,6 +33,7 @@ import {
 import { cn } from "@/lib/utils"
 import { telegramChatLabel, telegramChatTypeLabel } from "@/components/blocks/telegram-chats-settings"
 import type { ClientTelegramView } from "@/server/telegram/chats"
+import { contactDisplayName } from "@/lib/contact-names"
 
 type Proposal = ClientTelegramView["proposals"][number]
 
@@ -410,7 +411,7 @@ function ProposalRow({
         <ContactPicker
           clientId={clientId}
           busy={busy}
-          onPick={(c) => void decide({ action: "link", contactId: c.id }, `Telegram связан с контактом «${c.nameNative || c.name}»`)}
+          onPick={(c) => void decide({ action: "link", contactId: c.id }, `Telegram связан с контактом «${contactDisplayName(c)}»`)}
           onCancel={() => setStep("none")}
         />
       )}
@@ -512,7 +513,7 @@ function ContactPicker({
               className="w-full rounded-md border px-2.5 py-1.5 text-left hover:bg-accent disabled:opacity-50"
               onClick={() => onPick(r)}
             >
-              <div className="truncate text-sm font-medium">{r.nameNative || r.name}</div>
+              <div className="truncate text-sm font-medium">{contactDisplayName(r)}</div>
               <div className="truncate text-xs text-muted-foreground">
                 {[r.email, r.clientName].filter(Boolean).join(" · ") || "—"}
               </div>

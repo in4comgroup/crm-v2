@@ -55,12 +55,13 @@ import {
   type LinkOrigin,
 } from "@/lib/documents"
 import { getServerSession } from "@/lib/get-session"
-import { companyMatchKey, personMatchKey } from "@/lib/translit-ru"
+import { companyMatchKey } from "@/lib/translit-ru"
 import { getOrgFunnel, isTerminalStage, OPEN_DEAL_STATUSES } from "@/server/deal-engine"
 import { getOwnOrgContext } from "@/server/identity/own-org"
 import { getActiveOrgRole } from "@/server/sources"
 import { findActiveOrgSourceByProvider } from "@/server/source-uploads"
 import { deleteObjects, getObject, putObject } from "@/server/storage"
+import { contactDisplaySql } from "@/server/contact-display"
 
 export class DocumentError extends Error {
   constructor(
@@ -177,7 +178,7 @@ async function entityLabels(
       ? db.select({ id: client.id, label: client.name }).from(client).where(and(eq(client.organizationId, orgId), inArray(client.id, ids("client"))))
       : [],
     ids("contact").length
-      ? db.select({ id: contact.id, label: contact.name }).from(contact).where(and(eq(contact.organizationId, orgId), inArray(contact.id, ids("contact"))))
+      ? db.select({ id: contact.id, label: contactDisplaySql() }).from(contact).where(and(eq(contact.organizationId, orgId), inArray(contact.id, ids("contact"))))
       : [],
     ids("deal").length
       ? db.select({ id: deal.id, label: deal.name }).from(deal).where(and(eq(deal.organizationId, orgId), inArray(deal.id, ids("deal"))))
@@ -382,14 +383,13 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
     .innerJoin(topic, eq(topic.id, topicItem.topicId))
     .where(and(eq(topic.organizationId, orgId), inArray(topicItem.sourceItemId, topicItemIds)))
 
-  // A3 — companies / people named in the file content (exact keys, unique hits, never us).
+  // A3 — companies named in the file content (exact keys, unique hits, never us).
+  // People named in a file are not linked (bug list 2026-11-22).
   const im = (item.meta ?? {}) as Record<string, unknown>
   const companyKeys = new Set(
     [...stringsOf(im.companies), ...stringsOf(im.organizations)].map((n) => companyMatchKey(n)).filter((k) => k && !own.identity.companyKeys.includes(k)),
   )
-  const personKeys = new Set(stringsOf(im.mentions).map((n) => personMatchKey(n)).filter(Boolean))
   const contentClients: string[] = []
-  const contentContacts: string[] = []
   if (companyKeys.size) {
     const rows = await db
       .select({ id: client.id, name: client.name, aliases: client.aliases })
@@ -407,24 +407,6 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
       if (hit && hit.size === 1) contentClients.push([...hit][0])
     }
   }
-  if (personKeys.size) {
-    const rows = await db
-      .select({ id: contact.id, name: contact.name, nameNative: contact.nameNative })
-      .from(contact)
-      .where(and(eq(contact.organizationId, orgId), sql`${contact.status} not in ('deleted', 'blocked')`))
-    const byKey = new Map<string, Set<string>>()
-    for (const r of rows) {
-      for (const n of [r.name, r.nameNative]) {
-        const k = n ? personMatchKey(n) : ""
-        if (k) byKey.set(k, (byKey.get(k) ?? new Set()).add(r.id))
-      }
-    }
-    for (const k of personKeys) {
-      const hit = byKey.get(k)
-      if (hit && hit.size === 1) contentContacts.push([...hit][0])
-    }
-  }
-
   // A1b — the sender's company by mail domain (the sender need not be a contact).
   const senderDomainClients = senders.length
     ? clientsBySenderDomain(
@@ -479,7 +461,6 @@ export async function computeAutoLinks(orgId: string, itemId: string): Promise<n
       .filter((t) => t.status !== "merged" && t.status !== "dismissed")
       .map((t) => ({ topicTitle: t.title ?? "Тема", clientId: t.clientId, contactId: t.contactId, dealId: t.dealId })),
     contentClients,
-    contentContacts,
     openDealsByClient,
     existing: existing.map((e) => ({ entityType: e.entityType as DocumentEntityType, entityId: e.entityId, removed: !!e.removedAt })),
   })

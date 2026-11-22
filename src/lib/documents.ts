@@ -338,9 +338,13 @@ export type AutoLinkInput = {
   senderDomainClients?: string[]
   /** A2: topics of the item (or its parent) with their company / contact / deal. */
   topics: { topicTitle: string; clientId: string | null; contactId: string | null; dealId: string | null }[]
-  /** A3: companies / contacts named in the file content (exact match keys, unique hits). */
+  /**
+   * A3: companies named in the file content (exact match keys, unique hits).
+   * People named in a file are NOT linked (bug list 2026-11-22: a staff list /
+   * an interview names many people; a contact gets a file only as a sender /
+   * recipient (A1) or through a topic (A2)).
+   */
   contentClients: string[]
-  contentContacts: string[]
   /** A5: open (non-won / lost) deals per company. */
   openDealsByClient: Record<string, string[]>
   /** Every existing link of the item, INCLUDING removed ones (`removed: true`) — never re-added. */
@@ -384,9 +388,6 @@ export function planAutoLinks(input: AutoLinkInput): PlannedLink[] {
   // A3 — named in the file content (medium).
   for (const id of input.contentClients) {
     add({ entityType: "client", entityId: id, origin: "auto_content", confidence: "medium", reason: "компания упомянута в документе" })
-  }
-  for (const id of input.contentContacts) {
-    add({ entityType: "contact", entityId: id, origin: "auto_content", confidence: "medium", reason: "контакт упомянут в документе" })
   }
   // A5 — the company's ONLY open deal (medium), for every linked company
   // without a deal link from A2.

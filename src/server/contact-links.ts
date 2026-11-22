@@ -1,5 +1,8 @@
 import "server-only"
 
+import { contactDisplayName } from "@/lib/contact-names"
+import { contactDisplaySql } from "@/server/contact-display"
+
 import { randomUUID } from "node:crypto"
 import { and, desc, eq, gt, inArray, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm"
 import { db } from "@/db/drizzle"
@@ -170,7 +173,7 @@ export async function getContactLinksView(orgId: string, contactId: string): Pro
 
   return {
     contactId: c.id,
-    contactName: c.name,
+    contactName: contactDisplayName(c),
     links: links.map((l) => ({
       ...l,
       clientName: names.get(l.clientId)?.name ?? "—",
@@ -236,7 +239,7 @@ export async function getClientContactLinks(orgId: string, clientId: string): Pr
     const elsewhere = links
       .filter((l) => l.status === "current" && l.clientId !== clientId)
       .map((l) => ({ clientId: l.clientId, clientName: names.get(l.clientId)?.name ?? "—", relation: l.relation }))
-    const base = { contactId: c.id, name: c.name, email: c.email, elsewhere }
+    const base = { contactId: c.id, name: contactDisplayName(c), email: c.email, elsewhere }
     if (cur) {
       current.push({
         ...base,
@@ -296,7 +299,7 @@ async function listProposals(orgId: string, by: { contactId?: string; clientId?:
     for (const id of ((r.evidence as { sourceItemIds?: string[] })?.sourceItemIds ?? []).slice(0, 3)) itemIds.add(id)
   }
   const [contacts, items, names] = await Promise.all([
-    db.select({ id: contact.id, name: contact.name, status: contact.status }).from(contact).where(inArray(contact.id, [...contactIds])),
+    db.select({ id: contact.id, name: contactDisplaySql(), status: contact.status }).from(contact).where(inArray(contact.id, [...contactIds])),
     itemIds.size
       ? db
           .select({ id: sourceItem.id, meta: sourceItem.metadataJson, filename: sourceItem.filename, at: sourceItem.sourceCreatedAt })
@@ -591,7 +594,9 @@ export async function applyLinkAction(orgId: string, contactId: string, action: 
       db.select({ id: deal.id, stageId: deal.funnelStageId }).from(deal).where(inArray(deal.id, ids)),
     ])
     const stageOf = new Map(stages.map((s) => [s.id, s.stageId]))
-    const note = replacement ? `Контакт ${c.name} заменён на ${replacement.name}` : `Контакт ${c.name} убран из сделки`
+    const note = replacement
+      ? `Контакт ${contactDisplayName(c)} заменён на ${contactDisplayName(replacement)}`
+      : `Контакт ${contactDisplayName(c)} убран из сделки`
     const stmts: unknown[] = []
     for (const r of roles) {
       stmts.push(db.delete(dealContact).where(and(eq(dealContact.dealId, r.dealId), eq(dealContact.contactId, c.id))))
@@ -855,7 +860,7 @@ async function afterMoveEffects(
   }
   if (toClientId) {
     const { openContactMovedTopic } = await import("@/server/topics/contact-moved")
-    await openContactMovedTopic(orgId, { contactId: c.id, contactName: c.name, toClientId, toClientName: yName, fromClientName: xName })
+    await openContactMovedTopic(orgId, { contactId: c.id, contactName: contactDisplayName(c), toClientId, toClientName: yName, fromClientName: xName })
   }
 }
 

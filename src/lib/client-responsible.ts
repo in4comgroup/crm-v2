@@ -92,6 +92,17 @@ export type ResponsibleCheck =
 /** Max length of the optional handover reason. */
 export const HANDOVER_REASON_MAX = 500
 
+/**
+ * Picker label of a member: the name, plus the email when another member of
+ * the list has the same name (one person with two accounts — the picker
+ * must show which one is picked).
+ */
+export function memberLabel(m: Pick<ResponsibleMember, "userId" | "name" | "email">, all: readonly Pick<ResponsibleMember, "userId" | "name">[]): string {
+  const key = m.name.trim().toLowerCase()
+  const twin = all.some((o) => o.userId !== m.userId && o.name.trim().toLowerCase() === key)
+  return twin && m.email ? `${m.name} (${m.email})` : m.name
+}
+
 export function isOwnerRole(role: string | null | undefined): boolean {
   return role === "owner"
 }

@@ -220,6 +220,17 @@ async function applyChange(
       .where(and(eq(clientCoResponsible.clientId, clientId), eq(clientCoResponsible.userId, check.targetUserId))),
   ])
 
+  // The company's topics follow the new responsible member (dashboard «Мои»,
+  // topic pushes) — only those assigned to the previous one or to nobody.
+  if (row.responsibleUserId !== check.targetUserId) {
+    const names = await loadUserNames([row.responsibleUserId, check.targetUserId])
+    const { reassignClientTopicsOwner } = await import("@/server/topics/topic-store")
+    await reassignClientTopicsOwner(orgId, clientId, row.responsibleUserId, check.targetUserId, actorUserId, {
+      fromName: row.responsibleUserId ? (names.get(row.responsibleUserId) ?? null) : null,
+      toName: names.get(check.targetUserId) ?? null,
+    })
+  }
+
   // Notifications (docs/specs/notifications §4): a handover → the receiving
   // owner (important); a decision (assign) closes the pending handover.
   const { notify, resolveNotifications } = await import("@/server/notifications/engine")

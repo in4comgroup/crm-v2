@@ -49,6 +49,7 @@ import {
 import type { PersonChannel } from "@/lib/identity/org-profile"
 import { getOwnOrgContext, invalidateOwnOrgContext } from "@/server/identity/own-org"
 import { isAgentRole } from "@/server/topics/system-actor"
+import { contactDisplaySql } from "@/server/contact-display"
 
 export class OrgIdentityError extends Error {
   constructor(
@@ -273,7 +274,7 @@ export async function findIdentityMatches(
       .map((c) => ({ id: c.id, name: c.name, detail: c.webUrl ?? c.email, status: c.status }))
 
     const contactRows = await db
-      .select({ id: contact.id, name: contact.name, email: contact.email, status: contact.status })
+      .select({ id: contact.id, name: contactDisplaySql(), email: contact.email, status: contact.status })
       .from(contact)
       .where(eq(contact.organizationId, orgId))
     out.contacts = contactRows
@@ -291,7 +292,7 @@ export async function findIdentityMatches(
         .from(client)
         .where(and(eq(client.organizationId, orgId), sql`lower(${client.email}) = ${matchKey}`)),
       db
-        .select({ id: contact.id, name: contact.name, email: contact.email, status: contact.status })
+        .select({ id: contact.id, name: contactDisplaySql(), email: contact.email, status: contact.status })
         .from(contact)
         .where(and(eq(contact.organizationId, orgId), sql`lower(${contact.email}) = ${matchKey}`)),
     ])
@@ -307,7 +308,7 @@ export async function findIdentityMatches(
   if (kind === "person") {
     // Telegram «@handle» lives in contact aliases; phones in contact.phone.
     const rows = await db
-      .select({ id: contact.id, name: contact.name, aliases: contact.aliases, phone: contact.phone, status: contact.status })
+      .select({ id: contact.id, name: contactDisplaySql(), aliases: contact.aliases, phone: contact.phone, status: contact.status })
       .from(contact)
       .where(eq(contact.organizationId, orgId))
     // Telegram also in contact «Адреса» (docs/specs/telegram/04 §6.3).

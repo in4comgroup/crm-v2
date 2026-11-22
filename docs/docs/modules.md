@@ -286,6 +286,7 @@ links, proposals, merge).
   UNCONFIRMED automatic value and remembers it (`field_meta.removedKey`), so
   the next web fill does not write the same value again.
 - Contact «Имя на родном языке» (native name) is required, default = the name
+- Contact names (2026-11-22): «Имя на родном языке» is the one name shown everywhere; `name` = «Системное имя» (source name, read-only, for matching). A person's contact: only the native name is asked. A source contact: native = signature name, else the display name ([clients-contacts/09](../specs/clients-contacts/09-contact-names.md))
   (2026-11-21; form copies the name while the field is empty or a copy; server
   fills it on create / update / discovery; migration `0050` = backfill + NOT
   NULL).

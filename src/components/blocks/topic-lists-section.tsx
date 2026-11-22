@@ -309,10 +309,10 @@ export function TopicListsSection() {
                 <SelectValue placeholder="Список" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ANY}>Любой список</SelectItem>
+                <SelectItem value={ANY}>Все</SelectItem>
                 {(["now", "digest", "week", "none"] as const).map((l) => (
                   <SelectItem key={l} value={l}>
-                    {l === "none" ? "Вне списков" : TOPIC_LIST_LABELS_RU[l]}
+                    {l === "none" ? "Остальные" : TOPIC_LIST_LABELS_RU[l]}
                   </SelectItem>
                 ))}
               </SelectContent>

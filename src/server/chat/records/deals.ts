@@ -32,6 +32,7 @@ import {
 } from "./shared"
 import { inIds, matchedLabel, resolveCompanyFilter } from "./resolve"
 import { keepOwnOrg, type RecordModule, type RecordsContext, type SearchOptions } from "./types"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // «Сделка» (deal) — records engine module (spec §6.1).
 // Visible: every deal of the org except `deleted`. Stage meaning comes from
@@ -309,7 +310,7 @@ async function get(ctx: RecordsContext, id: string): Promise<RecordDetail | null
     db
       .select({
         id: contact.id,
-        name: contact.name,
+        name: contactDisplaySql(),
         position: contact.position,
         email: contact.email,
         role: dealContact.role,
@@ -323,7 +324,7 @@ async function get(ctx: RecordsContext, id: string): Promise<RecordDetail | null
           notInArray(contact.status, ["deleted", "blocked"]),
         ),
       )
-      .orderBy(asc(contact.name))
+      .orderBy(asc(contactDisplaySql()))
       .limit(10),
     ctx.topicsVisible
       ? db

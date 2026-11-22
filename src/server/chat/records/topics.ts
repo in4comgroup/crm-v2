@@ -33,6 +33,7 @@ import { basicHit, capTotal, dateRange, parseDay, totalOver } from "./shared"
 import { loadSourceItemHits } from "./source-items"
 import { inIds, matchedLabel, resolveCompanyFilter, resolveDealFilter } from "./resolve"
 import { keepOwnOrg, type RecordModule, type RecordsContext, type SearchOptions } from "./types"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // «Тема» (topic) of the records engine (spec §6.1 / §7.2). Exists for users
 // only in topics mode `on` (ctx.topicsVisible); `merged` topics are never
@@ -99,7 +100,7 @@ const cols = {
   band: bandExpr,
   storedList: topic.list,
   clientName: client.name,
-  contactName: contact.name,
+  contactName: contactDisplaySql(),
   counterpartyRaw: topic.counterpartyRaw,
   lastActivityAt: topic.lastActivityAt,
 }

@@ -1,5 +1,6 @@
 "use client"
 
+import { contactDisplayName } from "@/lib/contact-names"
 import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -313,7 +314,6 @@ export function ClientDetailShell({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Имя</TableHead>
-                      <TableHead>Имя на родном языке</TableHead>
                       <TableHead className="w-56">Email</TableHead>
                       <TableHead className="w-36">Телефон</TableHead>
                       <TableHead className="w-40">Должность</TableHead>
@@ -325,14 +325,11 @@ export function ClientDetailShell({
                     {visibleContacts.map((c) => (
                       <TableRow key={c.id}>
                         <TableCell className="text-sm font-medium truncate">
-                          {c.name}
+                          {contactDisplayName(c)}
                           <ContactAlsoLine
                             entry={contactLinks.entryFor(c.id)}
                             className="font-normal"
                           />
-                        </TableCell>
-                        <TableCell className="text-sm truncate">
-                          {c.nameNative ?? "—"}
                         </TableCell>
                         <TableCell className="text-xs truncate">
                           {c.email ?? "—"}

@@ -29,6 +29,7 @@ import {
   type EventCandidate,
 } from "./logic"
 import type { CardWriterInput } from "./writer"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // DB side of the card engine (spec topics/01 §9.1). Org-explicit,
 // session-free, `server-only`: the caller (phase, admin route, deal-state
@@ -57,7 +58,7 @@ export function metaOf(c: Pick<TopicCardRow, "message"> | null | undefined): Top
   return m?.topicCard && typeof m.topicCard === "object" ? m.topicCard : null
 }
 
-const topicSelect = { t: topic, clientName: client.name, contactName: contact.name }
+const topicSelect = { t: topic, clientName: client.name, contactName: contactDisplaySql() }
 
 function toRow(r: { t: typeof topic.$inferSelect; clientName: string | null; contactName: string | null }): CardTopicRow {
   return { ...r.t, clientName: r.clientName, contactName: r.contactName }

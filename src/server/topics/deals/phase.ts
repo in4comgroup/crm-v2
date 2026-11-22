@@ -47,6 +47,7 @@ import {
   type RuleLite,
   type StageLite,
 } from "./rules"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // Phase «deals» of the hourly run (plan phase 5, deal bridge, spec topics/01
 // §9.2). Runs after «cards». Deterministic, no AI cost.
@@ -220,7 +221,7 @@ export async function processTopicDeals(
 ): Promise<TopicDealOutcome> {
   const { orgId } = octx
   const [names] = await db
-    .select({ clientName: client.name, contactName: contact.name, ownerUserId: topic.ownerUserId })
+    .select({ clientName: client.name, contactName: contactDisplaySql(), ownerUserId: topic.ownerUserId })
     .from(topic)
     .leftJoin(client, eq(client.id, topic.clientId))
     .leftJoin(contact, eq(contact.id, topic.contactId))

@@ -69,6 +69,7 @@ import {
   setTopicOwner,
   snoozeTopic,
 } from "@/server/topics/topic-store"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // User-facing read models + actions of the topics UI (topics plan phase 6,
 // spec topics/01 §8.1, §9.1, §14; 06 §7.2, §11): the dashboard lists
@@ -312,7 +313,7 @@ type HeadRow = {
 const headSelect = {
   t: topic,
   clientName: client.name,
-  contactName: contact.name,
+  contactName: contactDisplaySql(),
   dealName: deal.name,
   dealOwnerUserId: deal.userId,
   ownerName: ownerUser.name,

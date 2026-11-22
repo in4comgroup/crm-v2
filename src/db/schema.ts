@@ -514,6 +514,11 @@ export const contact = pgTable(
     // «Имя на родном языке»: required, default = the name (2026-11-21; app
     // code fills it, migration 0050 backfilled + NOT NULL).
     nameNative: text("name_native").notNull(),
+    // Who set `name_native` (2026-11-22, src/lib/contact-names.ts): `manual` =
+    // a person (a source never replaces it) | `source` = a source / the system
+    // (a signature name found later may replace it). Text validated in code.
+    // `name_native` is the ONE name shown in the UI; `name` = «Системное имя».
+    nameNativeSource: text("name_native_source").notNull().default("source"),
     // Alternate name spellings / order variants / nicknames seen across
     // sources (e.g. ["Богданов Евгений", "Евгений Богданов", "Женя"]). Used
     // for search + dedup. Nullable; populated by discovery + the edit form.

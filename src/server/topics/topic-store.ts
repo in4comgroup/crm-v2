@@ -1133,6 +1133,62 @@ export async function setTopicOwner(
 }
 
 /**
+ * The company's «Ответственный» changed (src/server/client-responsible.ts):
+ * its topics assigned to the PREVIOUS responsible member — or to nobody —
+ * move to the new one, so «Мои» on the dashboard and the topic pushes follow
+ * the company. A topic someone gave to another person keeps that person.
+ * Merged topics are left alone. One `owner_changed` journal line per topic
+ * (actor = the person who changed the company). Never throws.
+ */
+export async function reassignClientTopicsOwner(
+  orgId: string,
+  clientId: string,
+  fromUserId: string | null,
+  toUserId: string,
+  actorUserId: string,
+  names: { fromName?: string | null; toName?: string | null } = {},
+): Promise<number> {
+  try {
+    if (fromUserId === toUserId) return 0
+    const rows = await db
+      .select({ id: topic.id, ownerUserId: topic.ownerUserId })
+      .from(topic)
+      .where(
+        and(
+          eq(topic.organizationId, orgId),
+          eq(topic.clientId, clientId),
+          ne(topic.status, "merged"),
+          fromUserId ? or(isNull(topic.ownerUserId), eq(topic.ownerUserId, fromUserId)) : isNull(topic.ownerUserId),
+        ),
+      )
+    if (!rows.length) return 0
+    const ids = rows.map((r) => r.id)
+    await db.batch(
+      asBatch([
+        db
+          .update(topic)
+          .set({ ownerUserId: toUserId })
+          .where(and(eq(topic.organizationId, orgId), inArray(topic.id, ids))),
+        ...rows.map((r) =>
+          userEvent(orgId, r.id, actorUserId, "owner_changed", {
+            from: r.ownerUserId,
+            to: toUserId,
+            fromName: r.ownerUserId ? (names.fromName ?? null) : null,
+            toName: names.toName ?? null,
+            reason: "client_responsible",
+          }),
+        ),
+      ]),
+    )
+    await refreshAttention(orgId, ids)
+    return ids.length
+  } catch (e) {
+    console.error("[topics] reassign topics after a company responsible change failed", clientId, e)
+    return 0
+  }
+}
+
+/**
  * «Привязать к сделке» (spec §14): link the topic to a deal of the org
  * (`dealId` null = unlink). Linking goes through the deal engine
  * (`linkTopicToDeal`: deal activity + deal state dirty); both ways add a

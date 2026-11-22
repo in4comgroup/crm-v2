@@ -30,6 +30,7 @@ import { getRegistry } from "@/server/signals/registry"
 import { envelopeFromItem } from "./signals/item-input"
 import { effectiveCardStatus } from "./cards/logic"
 import { attentionOf, metaOf } from "./cards/store"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // Read models of the admin debug block «Темы (отладка)» (plan phase 3 task
 // 8): topic list with counts per status, one topic with items, signal
@@ -241,7 +242,7 @@ const rowSelect = {
   t: topic,
   clientName: client.name,
   clientStatus: client.status,
-  contactName: contact.name,
+  contactName: contactDisplaySql(),
   contactStatus: contact.status,
   itemCount: sql<number>`(select count(*)::int from topic_item ti where ti.topic_id = "topic"."id")`,
   card: sql<{ status: string | null; expiresAt: string | null } | null>`(

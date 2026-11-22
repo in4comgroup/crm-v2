@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  memberLabel,
   checkCoResponsibleChange,
   checkResponsibleChange,
   coResponsibleMode,
@@ -140,5 +141,16 @@ describe("additional responsible members («Также отвечают», 2026-
     expect(matchesResponsibleFilter("mem", row, "x")).toBe(true)
     expect(matchesResponsibleFilter("adm", row, "x")).toBe(false)
     expect(matchesResponsibleFilter("mine", { ...row, coResponsibleUserIds: undefined }, "mem")).toBe(false)
+  })
+})
+
+describe("memberLabel — two accounts with the same name (bug list 2026-11-22)", () => {
+  const a = { userId: "a", name: "Маргарита Амалицкая", email: "a@gmail.com" }
+  const b = { userId: "b", name: "маргарита амалицкая ", email: "b@in4comgroup.com" }
+  const c = { userId: "c", name: "Boris", email: "c@x.ru" }
+  it("adds the email only when another member has the same name", () => {
+    expect(memberLabel(a, [a, b, c])).toBe("Маргарита Амалицкая (a@gmail.com)")
+    expect(memberLabel(c, [a, b, c])).toBe("Boris")
+    expect(memberLabel(a, [a, c])).toBe("Маргарита Амалицкая")
   })
 })

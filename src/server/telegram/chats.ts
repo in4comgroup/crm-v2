@@ -537,7 +537,9 @@ export async function decideTelegramContactProposal(
   if (input.action === "create") {
     const { createContact } = await import("@/server/contacts")
     const name = (input.name ?? "").trim() || p.name || (p.username ? `@${p.username}` : "Контакт из Telegram")
-    contactId = (await createContact({ name, clientId: p.clientId })).id
+    // Telegram profile name = «Системное имя»; the native name is the same value
+    // until a person edits it (src/lib/contact-names.ts, 2026-11-22).
+    contactId = (await createContact({ name, clientId: p.clientId, namesFrom: "source" })).id
   } else if (input.action === "link") {
     const [c] = input.contactId ? await db.select({ id: contact.id }).from(contact).where(and(eq(contact.id, input.contactId), eq(contact.organizationId, orgId))).limit(1) : []
     if (!c) throw new TelegramChatError("Контакт не найден", 404)

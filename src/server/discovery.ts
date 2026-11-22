@@ -24,6 +24,8 @@ import { loadOrgBlocklist } from "@/server/blocklist"
 import { cleanPhone } from "@/server/parsers/_shared"
 import { randomUUID } from "crypto"
 import { loadContactAddressIndex, proposeFromDiscovery } from "@/server/contact-links"
+import { pickDisplayName, pickNativeName, rankDomainMatches } from "@/lib/discovery-pick"
+import { namesFromSource, sourceContactNames } from "@/lib/contact-names"
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -124,6 +126,7 @@ export type ClientEnrichmentEntry = {
 
 /** An email→native-name pairing collected across the scanned rows. */
 export type NativeNameEntry = { email: string; nativeName: string }
+export type DisplayNameEntry = { email: string; displayName: string }
 
 /** An email→phone pairing collected across the scanned rows. */
 export type PhoneEntry = { email: string; phone: string }
@@ -183,6 +186,10 @@ export type DiscoveryPreview = {
    *  (deduped, including emails that are ALREADY contacts). Applied to
    *  fill blank `contact.name_native` on apply — both new and existing. */
   nativeNames: NativeNameEntry[]
+  /** Every email→display-name («Системное имя») pairing seen across the
+   *  scanned rows — the most frequent real name per email (2026-11-22),
+   *  including emails that are ALREADY contacts (apply updates their copy). */
+  displayNames: DisplayNameEntry[]
   /** Every email→phone pairing seen across the scanned rows (deduped,
    *  including already-contact emails). Applied to fill blank
    *  `contact.phone` on apply — both new and existing. */
@@ -212,6 +219,8 @@ export type ApplyDiscoveryInput = {
   /** Native-name pairings from the preview — applied to fill blank
    *  `contact.name_native` on both new and pre-existing contacts. */
   nativeNames: NativeNameEntry[]
+  /** Display-name pairings from the preview (optional for old clients). */
+  displayNames?: DisplayNameEntry[]
   /** Phone pairings from the preview — applied to fill blank
    *  `contact.phone` on both new and pre-existing contacts. */
   phones: PhoneEntry[]
@@ -593,6 +602,8 @@ export async function previewDiscovery(opts?: {
     sourceItemIds: Set<string>
   }
   const contactBuckets = new Map<string, ContactBucket>()
+  // email → display names seen (name → rows); picked by `pickDisplayName`.
+  const displayNameVotes = new Map<string, Map<string, number>>()
 
   // rowId → participant emails, kept for same-run webUrl inference.
   const participantsByRow = new Map<string, Participant[]>()
@@ -609,10 +620,13 @@ export async function previewDiscovery(opts?: {
   // website + spellings to union into the client's aliases on apply.
   const enrichByKey = new Map<string, { webUrl: string | null; spellings: Set<string> }>()
 
-  // email → native-language name, accumulated across rows (longest wins).
-  // Collected for ALL emails — including ones that are already contacts —
-  // so apply can backfill blank `name_native` on existing contacts too.
-  const nativeNameByEmail = new Map<string, string>()
+  // email → native-language name spellings with their row counts; the name is
+  // chosen by `pickNativeName` (a non-Latin spelling wins, then the most
+  // frequent — before 2026-11-22 the LONGEST won, so «Evgenia Kondrasheva»
+  // beat «Евгения Кондрашева» seen in 9 of 10 mails). Collected for ALL
+  // emails — including ones that are already contacts — so apply can
+  // backfill blank `name_native` on existing contacts too.
+  const nativeNameVotes = new Map<string, Map<string, number>>()
 
   // email → phone number, accumulated across rows (first plausible wins).
   // Sourced from both the email parser's participantDetails (sender
@@ -731,6 +745,10 @@ export async function previewDiscovery(opts?: {
     )
     participantsByRow.set(row.id, participants)
     for (const p of participants) {
+      // «Системное имя» votes for EVERY email (also existing contacts).
+      const dv = displayNameVotes.get(p.email) ?? new Map<string, number>()
+      dv.set(p.name, (dv.get(p.name) ?? 0) + 1)
+      displayNameVotes.set(p.email, dv)
       if (existingContactEmails.has(p.email)) continue
       const existing = contactBuckets.get(p.email)
       if (existing) {
@@ -761,10 +779,9 @@ export async function previewDiscovery(opts?: {
           typeof rec.nativeName === "string" ? rec.nativeName : ""
         ).trim()
         if (nativeName) {
-          const existing = nativeNameByEmail.get(email)
-          if (existing === undefined || nativeName.length > existing.length) {
-            nativeNameByEmail.set(email, nativeName)
-          }
+          const votes = nativeNameVotes.get(email) ?? new Map<string, number>()
+          votes.set(nativeName, (votes.get(nativeName) ?? 0) + 1)
+          nativeNameVotes.set(email, votes)
         }
         considerPhone(email, rec.phone)
         const position = (
@@ -789,6 +806,29 @@ export async function previewDiscovery(opts?: {
         considerPhone(rec.email, rec.phone)
       }
     }
+  }
+
+  const displayNameByEmail = new Map<string, string>()
+  for (const [email, votes] of displayNameVotes) {
+    const name = pickDisplayName(votes, email)
+    if (name) displayNameByEmail.set(email, name)
+  }
+  for (const b of contactBuckets.values()) b.bestName = displayNameByEmail.get(b.email) ?? b.bestName
+
+  const nativeNameByEmail = new Map<string, string>()
+  for (const [email, votes] of nativeNameVotes) {
+    const name = pickNativeName(votes)
+    if (name) nativeNameByEmail.set(email, name)
+  }
+
+  // Website domains of existing companies: a domain identifies ONE company, so
+  // the weak rule 3 below never gives such a domain to a new candidate (an
+  // invite's «Google Calendar» got maslov.agency, bug list 2026-11-22).
+  const existingClientDomains = new Set<string>()
+  for (const c of existingClients) {
+    if (c.status === "deleted") continue
+    const d = c.webUrl ? extractWebsiteDomain(c.webUrl) : ""
+    if (d) existingClientDomains.add(d)
   }
 
   // ── 4. webUrl inference + confidence for new client candidates ──────
@@ -837,8 +877,12 @@ export async function previewDiscovery(opts?: {
       inferredWebUrl = labelMatchUrl
       webUrlLevel = "high"
     }
-    // 3. Sole business domain.
-    if (!inferredWebUrl && businessDomains.size === 1) {
+    // 3. Sole business domain — not one an existing company already owns.
+    if (
+      !inferredWebUrl &&
+      businessDomains.size === 1 &&
+      !existingClientDomains.has(Array.from(businessDomains)[0])
+    ) {
       inferredWebUrl = `https://${Array.from(businessDomains)[0]}`
       webUrlLevel = "medium"
     }
@@ -1000,6 +1044,9 @@ export async function previewDiscovery(opts?: {
   const nativeNames: NativeNameEntry[] = Array.from(
     nativeNameByEmail.entries(),
   ).map(([email, nativeName]) => ({ email, nativeName }))
+  const displayNames: DisplayNameEntry[] = Array.from(displayNameByEmail.entries()).map(
+    ([email, displayName]) => ({ email, displayName }),
+  )
 
   // All email→phone pairings seen this run (same posture: includes emails
   // that are already contacts, so apply can backfill blank phones).
@@ -1103,11 +1150,16 @@ export async function previewDiscovery(opts?: {
 
     // A. Domain attribution (skip freemail — gmail can't identify a company).
     if (!isFreemail) {
-      const matches = clientByDomain.filter((cl) =>
-        domainMatches(emailDomain, cl.domain),
+      // An existing company beats new candidates on the same domain (before
+      // 2026-11-22 the first by ALPHABET won, so a junk candidate «Google
+      // Calendar» took the maslov.agency people instead of maslov.agency).
+      const matches = rankDomainMatches(
+        emailDomain,
+        clientByDomain
+          .filter((cl) => domainMatches(emailDomain, cl.domain))
+          .map((cl) => ({ ...cl, existing: cl.client.ref.kind === "existing", name: cl.client.name })),
       )
       if (matches.length > 0) {
-        matches.sort((a, b) => a.client.name.localeCompare(b.client.name))
         const picked = matches[0]
         linkProposals.push({
           contact: lc.ref,
@@ -1195,6 +1247,7 @@ export async function previewDiscovery(opts?: {
     linkProposals,
     clientEnrichments,
     nativeNames,
+    displayNames,
     phones,
     positions,
   }
@@ -1519,14 +1572,14 @@ export async function applyDiscovery(
   // on the old row are preserved. Keeps the original id.
   for (const c of reviveContactCands) {
     const id = deletedContactByEmail.get(c.email)!
+    // A person's name in the dialog = their «Имя на родном языке» (`manual`);
+    // the system name is updated by the source pass below (2026-11-22).
     const overridden = (overrides[c.email] ?? "").trim()
     const newName = overridden || c.displayName.trim()
     await db
       .update(contact)
       .set({
-        // Only overwrite the name when we have a usable one — otherwise keep
-        // whatever the soft-deleted row carried (name is NOT NULL).
-        ...(newName ? { name: newName } : {}),
+        ...(overridden ? { nameNative: overridden, nameNativeSource: "manual" } : {}),
         clientId: null,
         status: "initial",
         updatedAt: new Date(),
@@ -1539,13 +1592,16 @@ export async function applyDiscovery(
   if (insertContactCands.length > 0) {
     const now = new Date()
     const rows = insertContactCands.map((c) => {
+      // The dialog's name field = «Имя на родном языке» (prefilled with the
+      // signature name, else the display name); a person's edit is `manual`.
+      // «Системное имя» = the display name (2026-11-22, src/lib/contact-names.ts).
       const overridden = (overrides[c.email] ?? "").trim()
-      const fallback = c.displayName.trim() || "(unknown)"
+      const names = sourceContactNames({ displayName: c.displayName, signatureName: nativeByEmail.get(c.email), email: c.email })
       return {
         id: randomUUID(),
-        name: overridden || fallback,
-        // Required; default = the name (2026-11-21).
-        nameNative: nativeByEmail.get(c.email) ?? (overridden || fallback),
+        name: names.name,
+        nameNative: overridden || names.nameNative,
+        nameNativeSource: overridden ? "manual" : names.nameNativeSource,
         email: c.email,
         phone: phoneMapByEmail.get(c.email) ?? null,
         position: positionMapByEmail.get(c.email) ?? null,
@@ -1559,7 +1615,7 @@ export async function applyDiscovery(
     })
     await db.insert(contact).values(rows)
     for (const r of rows) {
-      createdContacts.push({ id: r.id, name: r.name, email: r.email ?? "" })
+      createdContacts.push({ id: r.id, name: r.nameNative, email: r.email ?? "" })
       newContactEmailToId.set(r.email ?? "", r.id)
     }
   }
@@ -1625,27 +1681,53 @@ export async function applyDiscovery(
     }
   }
 
-  // ── 4. Backfill native names onto existing contacts (fill blanks only) ─
-  // New contacts already got their name_native at insert. This pass fills
-  // pre-existing contacts whose name_native is still blank OR only the
-  // default copy of the name (required since 2026-11-21, default = the
-  // name) — never overwrites a human-edited value. One UPDATE per email
-  // (rare: usually just the sender).
+  // ── 4. Names of existing contacts from the sources (2026-11-22) ─────
+  // `namesFromSource` (src/lib/contact-names.ts): «Системное имя» ← the most
+  // frequent display name while it is still the copy of the native name (a
+  // manual contact) or a placeholder; «Имя на родном языке» ← the signature
+  // name only when a source set it (`source`) — a person's native name
+  // (`manual`) is never replaced. New contacts got their names at insert.
   let nativeNamesEnriched = 0
-  for (const [email, nativeName] of nativeByEmail) {
-    const updated = await db
-      .update(contact)
-      .set({ nameNative: nativeName })
+  const sourceDisplayByEmail = new Map<string, string>()
+  for (const d of input.displayNames ?? []) {
+    const email = (d.email ?? "").trim().toLowerCase()
+    const name = (d.displayName ?? "").trim()
+    if (email && name) sourceDisplayByEmail.set(email, name)
+  }
+  const nameEmails = [...new Set([...nativeByEmail.keys(), ...sourceDisplayByEmail.keys()])]
+  const createdIds = new Set(createdContacts.map((c) => c.id))
+  for (let i = 0; i < nameEmails.length; i += 500) {
+    const chunk = nameEmails.slice(i, i + 500)
+    const rows = await db
+      .select({
+        id: contact.id,
+        name: contact.name,
+        nameNative: contact.nameNative,
+        nameNativeSource: contact.nameNativeSource,
+        email: contact.email,
+      })
+      .from(contact)
       .where(
         and(
           eq(contact.organizationId, activeOrgId),
           ne(contact.status, "deleted"),
-          sql`lower(${contact.email}) = ${email}`,
-          sql`(${contact.nameNative} IS NULL OR ${contact.nameNative} = '' OR ${contact.nameNative} = ${contact.name})`,
+          inArray(sql`lower(${contact.email})`, chunk),
         ),
       )
-      .returning({ id: contact.id })
-    nativeNamesEnriched += updated.length
+    for (const r of rows) {
+      if (createdIds.has(r.id)) continue
+      const email = (r.email ?? "").trim().toLowerCase()
+      const patch = namesFromSource(r, {
+        displayName: sourceDisplayByEmail.get(email),
+        signatureName: nativeByEmail.get(email),
+      })
+      if (!patch.name && !patch.nameNative) continue
+      await db
+        .update(contact)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(contact.id, r.id), eq(contact.organizationId, activeOrgId)))
+      if (patch.nameNative) nativeNamesEnriched++
+    }
   }
 
   // Same fill-blanks-only pass for phone numbers.

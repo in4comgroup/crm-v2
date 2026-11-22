@@ -72,8 +72,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { name, nameNative, aliases, phone, email, position, clientId, status, managedAt } =
       body
-    if (!name) {
-      return NextResponse.json({ error: "name is required" }, { status: 400 })
+    // A person gives «Имя на родном языке»; «Системное имя» is its copy (2026-11-22).
+    if (!(typeof nameNative === "string" && nameNative.trim()) && !(typeof name === "string" && name.trim())) {
+      return NextResponse.json({ error: "Укажите имя" }, { status: 400 })
     }
     const result = await createContact({
       name,

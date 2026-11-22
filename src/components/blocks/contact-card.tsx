@@ -8,6 +8,7 @@ import { Mail, Phone, Briefcase, Building2, UserCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { managedAtLabel } from "@/lib/contact-managed-at"
 import type { ContactRow } from "@/app/api/contacts/route"
+import { contactDisplayName } from "@/lib/contact-names"
 
 // `initial` is the auto-discovered state — accent for review attention.
 // `suspended` stays muted (archived). `deleted` is the soft-delete (excluded
@@ -57,13 +58,8 @@ export function ContactCard({
       <CardHeader>
         <div className="min-w-0 flex-1">
           <CardTitle className="truncate">
-            {contact.nameNative || contact.name}
+            {contactDisplayName(contact)}
           </CardTitle>
-          {contact.nameNative && contact.nameNative !== contact.name && (
-            <div className="text-sm text-muted-foreground truncate">
-              {contact.name}
-            </div>
-          )}
           {contact.position && (
             <div className="mt-1 text-sm text-muted-foreground truncate">
               {contact.position}

@@ -485,7 +485,16 @@ export function TaskEditForm({
           render={({ field }) => (
             <FormItem>
               <FormLabel className="text-gray-400">Исполнитель</FormLabel>
-              <Select value={field.value} onValueChange={field.onChange}>
+              {/* Remount when the members arrive: the default «Исполнитель» is set
+                  in the SAME render as the options, and Radix Select's hidden
+                  native <select> then fires a change with "" (no option yet),
+                  which cleared the value (bug list 2026-11-22, item 24). A
+                  fresh Select starts with the value and sends no change. */}
+              <Select
+                key={members.length ? "members" : "loading"}
+                value={field.value}
+                onValueChange={field.onChange}
+              >
                 <FormControl>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Выберите исполнителя" />

@@ -1,5 +1,12 @@
 "use server"
 
+import {
+  manualContactNames,
+  namesFromManualEdit,
+  sourceContactNames,
+  type NameNativeSource,
+} from "@/lib/contact-names"
+import { contactDisplaySql } from "@/server/contact-display"
 import { db } from "@/db/drizzle"
 import { contact, client, member, user, type EntityStatus } from "@/db/schema"
 import { and, asc, eq, desc, ilike, inArray, isNotNull, isNull, or } from "drizzle-orm"
@@ -265,7 +272,8 @@ export async function listContactsPaged(params: {
   const [rows, totalRows] = await Promise.all([
     contactFrom()
       .where(where)
-      .orderBy(asc(contact.name))
+      // Alphabetical by the SHOWN name («Имя на родном языке», 2026-11-22).
+      .orderBy(asc(contactDisplaySql()))
       .limit(limit)
       .offset(offset),
     db.select({ id: contact.id }).from(contact).where(where),
@@ -325,8 +333,17 @@ function cleanAliases(raw: string[] | null | undefined): string[] | null {
 }
 
 export async function createContact(data: {
-  name: string
+  /** «Системное имя». Optional for a person: the copy of `nameNative`. */
+  name?: string | null
+  /** «Имя на родном языке» = the shown name (required for a person). */
   nameNative?: string | null
+  /**
+   * Who gives the names (src/lib/contact-names.ts): `manual` (default) = a
+   * person — the native name is theirs; `source` = a source (Telegram
+   * profile, a business card in the AI chat) — `name` is the account name,
+   * `nameNative` the name found in the content (else the same value).
+   */
+  namesFrom?: NameNativeSource
   aliases?: string[] | null
   phone?: string | null
   email?: string | null
@@ -336,7 +353,11 @@ export async function createContact(data: {
   managedAt?: ContactManagedAtInput | null
 }) {
   const { session, activeOrgId } = await requireOrgContext()
-  if (!data.name?.trim()) throw new Error("Name is required")
+  if (!data.name?.trim() && !data.nameNative?.trim()) throw new Error("Name is required")
+  const names =
+    data.namesFrom === "source"
+      ? sourceContactNames({ displayName: data.name, signatureName: data.nameNative, email: data.email })
+      : manualContactNames(data.nameNative?.trim() || data.name?.trim() || "", data.name)
 
   await assertClientIfProvided(data.clientId, activeOrgId)
   const managed = data.managedAt ? await resolveManagedAtInput(activeOrgId, data.managedAt) : null
@@ -345,9 +366,11 @@ export async function createContact(data: {
   const now = new Date()
   await db.insert(contact).values({
     id,
-    name: data.name.trim(),
-    // «Имя на родном языке» is required; default = the name (2026-11-21).
-    nameNative: data.nameNative?.trim() || data.name.trim(),
+    // «Имя на родном языке» = the shown name; «Системное имя» = its copy for
+    // a person, the account name for a source (2026-11-22).
+    name: names.name,
+    nameNative: names.nameNative,
+    nameNativeSource: names.nameNativeSource,
     aliases: cleanAliases(data.aliases),
     phone: data.phone?.trim() || null,
     email: data.email?.trim() || null,
@@ -364,20 +387,26 @@ export async function createContact(data: {
 }
 
 /**
- * «Имя на родном языке» on an update (required, default = the name;
- * 2026-11-21): an empty value becomes the name; when only the name changes
- * and the stored native name is empty or still a copy of the old name, it
- * follows the new name. A real native name is never overwritten by a rename.
+ * The names on an update (2026-11-22, src/lib/contact-names.ts):
+ * - a new «Имя на родном языке» (a person in the form, an AI chat card the
+ *   person confirmed) → `manual`; «Системное имя» follows it while it was the
+ *   copy of the old native name. Empty = unchanged.
+ * - only `name` («Системное имя», code paths) → set it; a native name that is
+ *   empty or the copy of the old name follows it.
  */
-function nativePatch(
+function namesPatch(
   current: { name: string; nameNative: string | null },
   data: { name?: string; nameNative?: string | null },
-): { nameNative?: string } {
-  const nextName = data.name !== undefined ? data.name.trim() : current.name
-  if (data.nameNative !== undefined) return { nameNative: data.nameNative?.trim() || nextName }
+): { name?: string; nameNative?: string; nameNativeSource?: NameNativeSource } {
+  const native = data.nameNative?.trim() ?? ""
+  if (native) {
+    const edit = namesFromManualEdit(current, native)
+    return data.name?.trim() ? { ...edit, name: data.name.trim() } : edit
+  }
   if (data.name !== undefined) {
+    const nextName = data.name.trim()
     const stored = (current.nameNative ?? "").trim()
-    if (!stored || stored === current.name) return { nameNative: nextName }
+    return !stored || stored === current.name ? { name: nextName, nameNative: nextName } : { name: nextName }
   }
   return {}
 }
@@ -427,8 +456,7 @@ export async function updateContact(
   await db
     .update(contact)
     .set({
-      ...(data.name !== undefined ? { name: data.name.trim() } : {}),
-      ...nativePatch(current, data),
+      ...namesPatch(current, data),
       ...(data.aliases !== undefined
         ? { aliases: cleanAliases(data.aliases) }
         : {}),

@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
       candidates: body.candidates,
       clientEnrichments: body.clientEnrichments ?? [],
       nativeNames: body.nativeNames ?? [],
+      displayNames: body.displayNames ?? [],
       phones: body.phones ?? [],
       positions: body.positions ?? [],
     })

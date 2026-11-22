@@ -37,6 +37,7 @@ import {
   type OrgMember,
 } from "./shared"
 import { keepOwnOrg, type RecordModule, type RecordsContext } from "./types"
+import { contactDisplaySql } from "@/server/contact-display"
 
 // «Компания» (client) — reference module of the records engine (spec §6.1).
 // Visible: every company of the org except `deleted` / `blocked`.
@@ -273,10 +274,10 @@ async function get(ctx: RecordsContext, id: string): Promise<RecordDetail | null
     loadCustomValuesText(ctx.orgId, "client", [id], 1200),
     loadEntityDocumentsForChat(ctx.orgId, [{ entityType: "client", entityId: id }], 8),
     db
-      .select({ id: contact.id, name: contact.name, position: contact.position, email: contact.email })
+      .select({ id: contact.id, name: contactDisplaySql(), position: contact.position, email: contact.email })
       .from(contact)
       .where(and(eq(contact.organizationId, ctx.orgId), eq(contact.clientId, id), notInArray(contact.status, [...HIDDEN_STATUSES])))
-      .orderBy(asc(contact.name))
+      .orderBy(asc(contactDisplaySql()))
       .limit(10),
     db
       .select({

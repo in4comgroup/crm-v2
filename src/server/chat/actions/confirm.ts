@@ -424,8 +424,11 @@ export async function confirmChatAction(orgId: string, userId: string, input: Co
           const phones = uniqueBy(v.phones, phoneKey)
           const tg = cleanTelegram(v.telegram)
           const { id } = await createContact({
+            // A business card / note is a source: its name = «Системное
+            // имя», the native spelling (else the same) = the shown name.
             name: v.name,
             nameNative: v.nameNative || null,
+            namesFrom: "source",
             aliases: tg ? [`@${tg}`] : null,
             email: emails[0] ?? null,
             phone: phones[0] ?? null,

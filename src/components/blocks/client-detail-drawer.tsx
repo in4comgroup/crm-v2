@@ -84,6 +84,7 @@ import {
   CustomFieldsPanel,
   type CustomFieldsPanelHandle,
 } from "@/components/blocks/custom-fields-tab"
+import { contactDisplayName } from "@/lib/contact-names"
 
 const COMPANY_KIND_NONE = "__none__"
 
@@ -1037,7 +1038,7 @@ export function ClientDetailDrawer({
                   >
                     <div className="min-w-0">
                       <div className="truncate font-medium leading-snug">
-                        {c.nameNative || c.name}
+                        {contactDisplayName(c)}
                       </div>
                       <div className="truncate text-xs text-muted-foreground">
                         {[c.position, c.email, c.phone]

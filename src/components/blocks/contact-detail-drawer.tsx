@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { ContactCompaniesBlock } from "@/components/blocks/contact-companies-block"
+import { contactDisplayName } from "@/lib/contact-names"
 
 // Дровер контакта — по образцу <ClientDetailDrawer>/<DealDetailDrawer>: клик
 // на строку/карточку контакта открывает его здесь, сразу со всеми полями в
@@ -125,7 +126,7 @@ export function ContactDetailDrawer({
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <SheetHeader className="p-4 pb-3 border-b shrink-0">
-          <SheetTitle>{contact.nameNative || contact.name}</SheetTitle>
+          <SheetTitle>{contactDisplayName(contact)}</SheetTitle>
           {contact.clientName && (
             <div className="text-xs text-muted-foreground truncate">
               {contact.clientName}

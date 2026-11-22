@@ -28,6 +28,7 @@ import {
   assignableMembers,
   coResponsibleMode,
   handoverOwners,
+  memberLabel,
   responsibleMode,
   type ResponsibleMember,
 } from "@/lib/client-responsible"
@@ -184,7 +185,7 @@ export function ClientResponsibleField({
               <SelectContent>
                 {assignableMembers(members).map((m) => (
                   <SelectItem key={m.userId} value={m.userId}>
-                    {m.name}
+                    {memberLabel(m, members)}
                     {m.role === "owner" && (
                       <span className="ml-1 text-xs text-muted-foreground">· владелец</span>
                     )}
@@ -313,7 +314,7 @@ function CoResponsibleRow({
           <SelectContent>
             {candidates.map((m) => (
               <SelectItem key={m.userId} value={m.userId}>
-                {m.name}
+                {memberLabel(m, opts.members)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -384,7 +385,7 @@ function HandoverDialog({
                 <SelectContent>
                   {owners.map((o) => (
                     <SelectItem key={o.userId} value={o.userId}>
-                      {o.name}
+                      {memberLabel(o, owners)}
                     </SelectItem>
                   ))}
                 </SelectContent>

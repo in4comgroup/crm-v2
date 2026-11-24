@@ -119,7 +119,7 @@ Rules a kind can use (resolved at write time, human members only, banned users s
 | `member.joined` | organization | info | a member accepted an invitation (owners) |
 | `golden.review_waiting` | organization | info | golden-set items wait for review (reviewers) |
 | `document.too_large` | processes | info | a file could not be stored / parsed (too large, unsupported) — to the person who uploaded it |
-| `discovery.new_records` | clients | info | the automatic discovery created N companies / contacts (one summary instead of one notification per record — replaces today's «Новая компания: …» list) |
+| `discovery.new_records` | clients | info | the automatic discovery created N companies / contacts (one summary instead of one notification per record — replaces today's «Новая компания: …» list). Built 2026-11-24: `src/server/discovery-auto.ts`, to the org owner who becomes «Ответственный», once per run with records |
 | `platform.*` | platform | important | catalog sync failed, a cron run failed, AI policy refused a process — platform admins |
 
 ## 6. User settings
@@ -164,5 +164,5 @@ Notes and differences:
 - **Sources**: no per-source sync-error columns exist; «failing» = the latest finished daily run has a sync error for the source and `last_synced_at` is not newer (+ 3 hours passed, or 3 runs in a row). Telegram webhook errors are not stored anywhere, so they are not covered.
 - **Runs**: owners get `process.run_failed` for the org's failed topics runs; the daily pipeline is platform-wide → `platform.run_failed` / `platform.catalog_sync_failed` to platform admins.
 - **Daily budget** text has no numbers (it is gateway cost; owners never see it).
-- **Not built**: `process.daily_stats` (Q6: optional, off by default — needs a per-kind setting), `discovery.new_records` (no AUTOMATIC discovery exists today; a user's own discovery run notifies nobody, Q2), `billing.*` (billing TBD), the later set of Q5 (`deal.card_waiting`, `deal.stale`, `golden.review_waiting`, `document.too_large`).
+- **Not built**: `process.daily_stats` (Q6: optional, off by default — needs a per-kind setting), `billing.*` (billing TBD), the later set of Q5 (`deal.card_waiting`, `deal.stale`, `golden.review_waiting`, `document.too_large`).
 - **Live check (test DB, 2026-11-15)**: notify + dedupe, list, read, hide; a task due today → «Срок задачи сегодня» (important) at once, done → «уже не актуально»; the hourly checks of one org → «Профиль организации заполнен на 1 из 6». All test rows removed.

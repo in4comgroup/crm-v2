@@ -165,10 +165,13 @@ Vercel Cron (03:00 UTC, vercel.ts)
   (`docs/todo/README.md` D8), signals, topics, Telegram pushes and
   notification checks run once a day.
 
-Other batch jobs (discovery of companies and contacts — no LLM, it reads the
-parsed metadata —; the LLM batch web enrichment has no UI button since
-2026-11-21) are **not** scheduled. They run when a user clicks a button, with
-caps (for example 50 items, concurrency 3) sized for one serverless request.
+Discovery of companies and contacts (no LLM, it reads the parsed metadata)
+runs on a button («Найти в источниках») and, since 2026-11-24, also
+automatically after the daily parse and the hourly topics intake for orgs with
+the org setting `discovery.autoApply` on (`src/server/discovery-auto.ts`; the
+org owner switches it on Sources → «Управление», a platform admin on
+/settings → «Источники» → «Автоматическая обработка»). The LLM batch web
+enrichment has no UI button since 2026-11-21 and is not scheduled.
 
 ## External services
 

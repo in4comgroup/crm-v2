@@ -62,6 +62,34 @@ Tester: in the ОРИКС drawer → «Документы» both files (uploaded
 | Contact «Имя на родном языке» required, default = the name (form copies the name; server on create / update / discovery; migration `0050` backfill + NOT NULL) | `form-contact-edit.tsx`, `contacts.ts`, `discovery.ts`, `schema.ts` |
 | Topic cards show «Источники»: the newest ≤ 3 messages, click opens the message, «ещё N» opens the topic panel | `topics-user.ts` (`loadEntrySources`), `topic-card.tsx` |
 
+## Product owner change 2026-11-24 — status filter of «Все темы» (replaces item 9)
+
+| Change | Where |
+|---|---|
+| New filter values, in this order: «Открыты» (`open`, default), «Затихли», «Истекли», «Все» (not merged), «Закрыты» (resolved + done), «В архиве», «Ошибочные» (dismissed + topics whose LATEST topic card is rejected, any reason). Old / unknown value → «Открыты». «Ошибочные» overlaps the status values (a rejected-card topic stays e.g. «Открыты») | `TOPIC_STATUS_FILTERS` (`src/lib/topics/topic-ui.ts`), `allStatusCondition` (`src/server/topics-user.ts`), `topic-lists-section.tsx` |
+
+## Product owner change 2026-11-24 — automatic processing of sources (tester: «Найти в источниках» only by button)
+
+Before: sync + parse ran automatically per source («Авторазбор», owner on Sources → «Управление», admin on /settings → «Источники»); companies / contacts were created ONLY by the button. Now (the button stays):
+
+| Change | Where |
+|---|---|
+| Org setting `discovery.autoApply` «Создавать компании и контакты автоматически» (default off). After the daily parse and the hourly topics intake parse, the dialog's default choice is applied as «Агент», «Ответственный» = org owner, one notification to the owner | `src/server/discovery-auto.ts`, `discovery-core.ts` (org-explicit split of `discovery.ts`), `src/lib/discovery-default-pick.ts` (shared with the dialog), `daily-pipeline.ts`, `topics/intake.ts` |
+| Owner: card «Автоматическая обработка» on Sources → «Управление» | `auto-discovery-switch.tsx`, `api/sources/auto-discovery` |
+| Platform admin: block «Автоматическая обработка» on /settings → «Источники» (per org: «Авторазбор» N of M sources, the switch, «Запустить сейчас») | `admin-auto-processing.tsx`, `api/admin/sources/auto-processing` |
+
+Dry run on the test DB (2026-11-24, preview only, nothing written): the first automatic run would create in IN4COM 10 of 26 company candidates, 9 contacts, 9 links; in salesdaily 28 of 49, 25, 19. The switch is off in both orgs.
+
+## Tester item 2026-11-24 — «Компании» → company panel: no way to edit the name
+
+Already built 2026-11-21 (product owner change above, commit `74111d0`, not deployed at that time): the name in the panel header is a field — hover shows a border, a pencil and the hint «Нажмите, чтобы изменить название»; a changed name gets «Сохранить» / «Отмена» next to it (`client-detail-drawer.tsx`). Every company panel (Companies, contact panel, task panel) is this one drawer. No code change; the tester needs a deployment with `74111d0` or later.
+
+## Product owner change 2026-11-24 — reject reasons of a topic card (Home → card → «Отклонить»)
+
+| Change | Where |
+|---|---|
+| New list, in this order: «Ошибка в фактах карточки», «Неправильно определены клиент или контакт» (was «Не тот клиент или контакт»), «Неверная важность», «Полностью нерелевантно» (was «Не относится к работе» — same code `not_relevant`, still closes the topic as «Не относится»), «Дубликат» (was «Дубликат другой карточки»), «Другое». «Уже сделано» and «Не сейчас» removed for topic cards (the server refuses them; stored cards keep their labels; deal cards keep «Не сейчас»). Renamed labels apply to every card kind | `src/lib/topics/cards.ts`, `rejectCard` (`src/server/cards.ts`) |
+
 ## Open
 
 - The web lookup does not use the mail domains of the company's message senders as a hint (would find `orexc.ru` for ОРИКС by name only) — offered, not decided.

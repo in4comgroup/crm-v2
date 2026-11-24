@@ -100,6 +100,11 @@ export const ORG_SETTINGS = {
   // Identity I6 (Q6): web enrichment of a NEW client right after create.
   // Default false — expensive (AI + web search per client).
   "clients.enrichOnCreate": { schema: z.boolean(), default: false },
+  // Automatic «Найти в источниках» (2026-11-24, src/server/discovery-auto.ts):
+  // after the daily / hourly parse, new companies, contacts and links of the
+  // default choice are created as «Агент». Default false — the org owner or
+  // a platform admin switches it on.
+  "discovery.autoApply": { schema: z.boolean(), default: false },
 } as const
 
 export type OrgSettingKey = keyof typeof ORG_SETTINGS

@@ -190,9 +190,36 @@ export type TopicListResponse = {
 export type TopicCountPair = { all: number; mine: number }
 export type TopicCounts = Record<TopicTab, TopicCountPair>
 
+/**
+ * Status filter of «Все темы» (product owner, 2026-11-24), in menu order:
+ * `open` (default) = status open; `dormant`; `expired`; `all` = every status
+ * except merged; `closed` = resolved + done; `archived`; `erroneous` =
+ * «Не относится» (dismissed) + topics whose latest topic card was rejected,
+ * whatever the reason.
+ */
+export const TOPIC_STATUS_FILTERS = ["open", "dormant", "expired", "all", "closed", "archived", "erroneous"] as const
+export type TopicStatusFilter = (typeof TOPIC_STATUS_FILTERS)[number]
+
+export const TOPIC_STATUS_FILTER_LABELS_RU: Record<TopicStatusFilter, string> = {
+  open: "Открыты",
+  dormant: "Затихли",
+  expired: "Истекли",
+  all: "Все",
+  closed: "Закрыты",
+  archived: "В архиве",
+  erroneous: "Ошибочные",
+}
+
+export const DEFAULT_TOPIC_STATUS_FILTER: TopicStatusFilter = "open"
+
+/** An unknown value (also the old `live` / single statuses) → the default. */
+export function topicStatusFilterOf(v: string | null | undefined): TopicStatusFilter {
+  return (TOPIC_STATUS_FILTERS as readonly string[]).includes(v ?? "") ? (v as TopicStatusFilter) : DEFAULT_TOPIC_STATUS_FILTER
+}
+
 /** Filter options of «Все темы». */
 export type TopicAllFilters = {
-  /** `live` (open + dormant, default) | `all` | one topic status. */
+  /** One of `TOPIC_STATUS_FILTERS` (default `open`). */
   status?: string | null
   /** `any` (default) | one list. */
   list?: string | null

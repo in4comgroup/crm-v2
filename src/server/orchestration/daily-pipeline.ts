@@ -51,7 +51,7 @@ export type RunPipelineResult = {
 }
 
 type PipelineErrorEntry = {
-  phase: "catalog" | "sync" | "parse" | "upload"
+  phase: "catalog" | "sync" | "parse" | "discovery" | "upload"
   sourceId?: string
   sourceItemId?: string
   message: string
@@ -216,6 +216,18 @@ export async function runDailyPipeline(
   }
   const parseCapped = Math.max(0, parseEligible - parseAttempted)
 
+  // ── Phase 2b: automatic «Найти в источниках» ───────────────────────
+  // Orgs with `discovery.autoApply` on (src/server/discovery-auto.ts):
+  // companies / contacts / links of the default choice from the items just
+  // parsed. No AI calls. Failures are per org and only logged.
+  try {
+    const { runAutoDiscoveryAllOrgs } = await import("@/server/discovery-auto")
+    const d = await runAutoDiscoveryAllOrgs()
+    for (const f of d.failed) pushError(errors, { phase: "discovery", message: `${f.orgId}: ${f.message}` })
+  } catch (err) {
+    pushError(errors, { phase: "discovery", message: err instanceof Error ? err.message : String(err) })
+  }
+
   // ── Phase 3: Upload ───────────────────────────────────────────────
   // Run AFTER parse so the same daily run picks up the rows it just
   // parsed. The cap intentionally applies separately — upload is fast,
@@ -328,9 +340,11 @@ async function notifyRunFailed(
   counts: { sync: number; parse: number; upload: number },
 ): Promise<void> {
   const catalog = errors.filter((e) => e.phase === "catalog").length
+  const discovery = errors.filter((e) => e.phase === "discovery").length
   const parts = [
     counts.sync ? `синхронизация: ${counts.sync}` : null,
     counts.parse ? `разбор: ${counts.parse}` : null,
+    discovery ? `компании и контакты: ${discovery}` : null,
     counts.upload ? `загрузка в хранилище: ${counts.upload}` : null,
     catalog ? `каталог моделей: ${catalog}` : null,
   ].filter(Boolean)

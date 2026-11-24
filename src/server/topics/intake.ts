@@ -20,7 +20,9 @@ import { uploadSourceItem } from "@/server/upload-source-item"
 // waiting for the daily run (03:00 UTC). Telegram items are already parsed
 // on arrival; the step simply finds nothing pending for them.
 //
-// Last step: fill missing `thread_key` values of older items (backfill).
+// After parse: the automatic «Найти в источниках» when the org switched it
+// on (`discovery.autoApply`). Last step: fill missing `thread_key` values of
+// older items (backfill).
 //
 // Same gates as the daily pipeline: only active syncable sources with
 // `automated_parsing_is_allowed`, only ROOT items in `pending`. Parse is
@@ -84,6 +86,9 @@ export async function runIntakePhase(ctx: TopicsPhaseContext): Promise<TopicsPha
     chatIngested: 0,
     chatNewInfo: 0,
     chatFailed: 0,
+    discoveryCreated: 0,
+    discoveryLeft: 0,
+    discoveryFailed: 0,
   }
 
   // 0. AI chat segments → source items of the «AI Chat» source (docs/specs/
@@ -138,6 +143,21 @@ export async function runIntakePhase(ctx: TopicsPhaseContext): Promise<TopicsPha
         console.error("[topics/intake] parse failed", id, message(e))
       }
     })
+  }
+
+  // 2b. Automatic «Найти в источниках» when the org switched it on
+  //     (`discovery.autoApply`, src/server/discovery-auto.ts): companies /
+  //     contacts exist before «signals» / «topics» resolve counterparties.
+  try {
+    const { runAutoDiscoveryForOrg } = await import("@/server/discovery-auto")
+    const d = await runAutoDiscoveryForOrg(orgId)
+    if (!("skipped" in d)) {
+      counts.discoveryCreated = d.clientsCreated + d.clientsRevived + d.contactsCreated + d.contactsRevived
+      counts.discoveryLeft = d.leftForReview
+    }
+  } catch (e) {
+    counts.discoveryFailed++
+    console.error("[topics/intake] auto discovery failed", orgId, message(e))
   }
 
   // 3. Upload what is parsed (no AI; keeps the DB copy of markdown small).

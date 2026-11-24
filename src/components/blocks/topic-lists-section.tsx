@@ -18,9 +18,11 @@ import { PageLoader } from "@/components/blocks/page-loader"
 import { DealCardBlock, TopicEntryCard, formatDateTimeRu } from "@/components/blocks/topic-card"
 import { TopicDrawer } from "@/components/blocks/topic-drawer"
 import { TOPIC_LIST_LABELS_RU } from "@/lib/topics/attention-types"
-import { TOPIC_STATUSES, TOPIC_STATUS_LABELS_RU } from "@/lib/topics/types"
 import {
+  DEFAULT_TOPIC_STATUS_FILTER,
   DIGEST_VISIBLE_ITEMS,
+  TOPIC_STATUS_FILTERS,
+  TOPIC_STATUS_FILTER_LABELS_RU,
   TOPIC_TABS,
   TOPIC_TAB_LABELS_RU,
   splitDigest,
@@ -71,7 +73,7 @@ export function TopicListsSection() {
     allowed: TOPIC_TABS,
   })
   const [mine, setMine] = useState(false)
-  const [status, setStatus] = useState("live")
+  const [status, setStatus] = useState<string>(DEFAULT_TOPIC_STATUS_FILTER)
   const [list, setList] = useState(ANY)
   const [clientId, setClientId] = useState(ANY)
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
@@ -291,15 +293,12 @@ export function TopicListsSection() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {/* ONE «open» value (bug list 2026-11-21, item 9): «Открытые»
-                    = open + dormant (live); the status `open` alone is not
-                    offered — «Открытые» and «Открыта» used to show different
-                    sets. «Затихла» still picks the dormant ones. */}
-                <SelectItem value="live">Открытые</SelectItem>
-                <SelectItem value="all">Все статусы</SelectItem>
-                {TOPIC_STATUSES.filter((s) => s !== "merged" && s !== "open").map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {TOPIC_STATUS_LABELS_RU[s]}
+                {/* Status filter of «Все темы» (product owner, 2026-11-24):
+                    «Закрыты» = resolved + done, «Ошибочные» = «Не относится»
+                    + topics whose latest card was rejected. */}
+                {TOPIC_STATUS_FILTERS.map((f) => (
+                  <SelectItem key={f} value={f}>
+                    {TOPIC_STATUS_FILTER_LABELS_RU[f]}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -509,6 +509,7 @@ Recommended order for a new client:
 1. **[Owner]** Complete the profile and the identity registry first (section 3). Then the discovery does not create our own company as a client.
 2. **[Owner]** Fill in the blocklist (7.3).
 3. **[Owner]** or **[Member]** After the first sync, click «Найти в источниках». Check the proposals. Create the companies and contacts that are real.
+4. **[Owner]** Optional: on «Источники» (Sources) → «Управление» (Manage) → «Автоматическая обработка» (Automatic processing), switch on «Создавать компании и контакты автоматически» (Create companies and contacts automatically). Then after each automatic parse the product creates the companies, contacts and links that the dialog checks by default. Doubtful finds stay for «Найти в источниках». Do step 1 and 2 first.
 
 ### 7.2 Custom fields («Поля», Fields)
 

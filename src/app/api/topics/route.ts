@@ -24,7 +24,7 @@ import { TopicActionError, TopicNotFoundError } from "@/server/topics/topic-stor
 // GET  ?state=1                         → { visible }  (any mode)
 // GET  ?counts=1                        → { counts }   (per tab, all + «Мои»)
 // GET  ?tab=now|digest|week|all&mine=1  → TopicListResponse
-//        «Все темы» filters: &status=live|all|<status> &list=now|digest|week|none &clientId=
+//        «Все темы» filters: &status=open|dormant|expired|all|closed|archived|erroneous &list=now|digest|week|none &clientId=
 // GET  ?clients=1                       → { clients }  (filter «Компания»)
 // GET  ?id=<topicId>                    → { topic: TopicDetailView }
 // GET  ?options=merge|deals|orders&id=<topicId> / ?options=owners → { options }

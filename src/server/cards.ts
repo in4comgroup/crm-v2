@@ -18,6 +18,7 @@ import {
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm"
 import {
   CARD_REJECT_REASON_LABELS_RU,
+  CARD_REJECT_REASONS_BY_KIND,
   closesTopicOnReject,
   isCardRejectReason,
   isDealCardKind,
@@ -639,6 +640,11 @@ export async function rejectCard(
     return
   }
   if (!isCardRejectReason(code)) throw new Error("Rejection reason code is required")
+  // Topic cards take only the reasons offered for them (2026-11-24: no
+  // «Уже сделано» / «Не сейчас» any more).
+  if (current.kind === "topic" && !CARD_REJECT_REASONS_BY_KIND.topic.includes(code)) {
+    throw new Error("Rejection reason code is required")
+  }
   if (isDealCardKind(current.kind)) {
     // «Не сделка» / «Отклонить»: same columns + a topic_event (phase 5).
     await rejectDealCard(activeOrgId, cardId, session.user.id, code, trimmed)
@@ -655,7 +661,7 @@ export async function rejectCard(
       })
       .where(eq(card.id, cardId))
   }
-  // «Не относится к работе» = the topic is not work either: close it as
+  // «Полностью нерелевантно» (`not_relevant`) = the topic is not work either: close it as
   // «Не относится» (dismissed) in the same click (bug list 2026-11-21,
   // item 7). Other reasons keep the topic open.
   if (closesTopicOnReject(code) && current.topicId) {

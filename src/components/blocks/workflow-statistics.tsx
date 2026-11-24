@@ -41,6 +41,7 @@ const TRIGGER_LABEL: Record<string, string> = {
 const PHASE_LABEL: Record<string, string> = {
   sync: "синхр.",
   parse: "разбор",
+  discovery: "компании и контакты",
   upload: "загрузка",
 }
 

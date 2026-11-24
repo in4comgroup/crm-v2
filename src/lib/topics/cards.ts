@@ -54,12 +54,17 @@ export const CARD_REJECT_REASONS = [
 export type CardRejectReason = (typeof CARD_REJECT_REASONS)[number]
 
 export const CARD_REJECT_REASON_LABELS_RU: Record<CardRejectReason, string> = {
-  not_relevant: "Не относится к работе",
+  // Labels of 2026-11-24 (product owner): «Полностью нерелевантно» was «Не
+  // относится к работе» (same code, same mechanics), «Неправильно определены
+  // клиент или контакт» was «Не тот клиент или контакт», «Дубликат» was
+  // «Дубликат другой карточки». `already_done` / `not_now` are no longer
+  // offered for topic cards; their labels stay for stored cards.
+  not_relevant: "Полностью нерелевантно",
   already_done: "Уже сделано",
-  wrong_counterparty: "Не тот клиент или контакт",
+  wrong_counterparty: "Неправильно определены клиент или контакт",
   wrong_facts: "Ошибка в фактах карточки",
   wrong_priority: "Неверная важность",
-  duplicate: "Дубликат другой карточки",
+  duplicate: "Дубликат",
   not_now: "Не сейчас",
   not_a_deal: "Это не сделка",
   deal_exists: "Сделка уже есть",
@@ -70,7 +75,7 @@ export const CARD_REJECT_REASON_LABELS_RU: Record<CardRejectReason, string> = {
 
 /** Reason codes offered per card kind (the list in the reject dialog). */
 export const CARD_REJECT_REASONS_BY_KIND: Record<CardKind, readonly CardRejectReason[]> = {
-  topic: ["not_relevant", "already_done", "wrong_counterparty", "wrong_facts", "wrong_priority", "duplicate", "not_now", "other"],
+  topic: ["wrong_facts", "wrong_counterparty", "wrong_priority", "not_relevant", "duplicate", "other"],
   deal_proposal: ["not_a_deal", "deal_exists", "wrong_counterparty", "wrong_facts", "not_now", "other"],
   stage_confirmation: ["wrong_stage", "wrong_facts", "not_now", "other"],
   deal_link: ["no_matching_deal", "wrong_counterparty", "not_relevant", "other"],
@@ -78,7 +83,8 @@ export const CARD_REJECT_REASONS_BY_KIND: Record<CardKind, readonly CardRejectRe
 
 /**
  * A reject reason that also closes the card's TOPIC as «Не относится»
- * (dismissed): «Не относится к работе» (bug list 2026-11-21, item 7). All
+ * (dismissed): «Полностью нерелевантно» (code `not_relevant`; bug list
+ * 2026-11-21, item 7, label changed 2026-11-24). All
  * other reasons change only the card.
  */
 export function closesTopicOnReject(code: string | null | undefined): boolean {

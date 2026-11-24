@@ -7,6 +7,7 @@ import { ShieldAlert } from "lucide-react"
 import { TableAdminUsers } from "@/components/tables/table-admin-users"
 import { TableAdminOrgs } from "@/components/tables/table-admin-orgs"
 import { TableAdminSources } from "@/components/tables/table-admin-sources"
+import { AdminAutoProcessing } from "@/components/blocks/admin-auto-processing"
 import { TableAdminTemplates } from "@/components/tables/table-admin-templates"
 import { AdminTeardown } from "@/components/blocks/admin-teardown"
 import { AdminAiModels } from "@/components/blocks/admin-ai-models"
@@ -128,6 +129,17 @@ export default function SettingsPage() {
                   Все источники платформы. Можно отфильтровать по организации.
                 </p>
                 <TableAdminSources />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <h2 className="text-lg font-medium">Автоматическая обработка</h2>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  «Авторазбор» включается у каждого источника в таблице выше: синхронизация и разбор по расписанию.
+                  Переключатель организации создаёт компании, контакты и связи из разобранных сообщений, как «Найти в
+                  источниках» → «Применить». «Запустить сейчас» делает это один раз, даже когда переключатель выключен.
+                </p>
+                <AdminAutoProcessing />
               </CardContent>
             </Card>
             <Card>

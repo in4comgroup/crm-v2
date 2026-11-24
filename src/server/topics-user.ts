@@ -1,6 +1,6 @@
 import "server-only"
 
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm"
+import { and, asc, desc, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core"
 import { db } from "@/db/drizzle"
 import {
@@ -44,8 +44,10 @@ import {
   type TopicOwnerOption,
   type TopicTab,
   TOPIC_CARD_SOURCES,
+  topicStatusFilterOf,
+  type TopicStatusFilter,
 } from "@/lib/topics/topic-ui"
-import { isTopicStatus, TOPIC_LIVE_STATUSES, type TopicStatus } from "@/lib/topics/types"
+import { TOPIC_LIVE_STATUSES, type TopicStatus } from "@/lib/topics/types"
 import { reminderMarker } from "@/lib/topics/delivery-routing"
 import { viewerLists, type SnapshotContext } from "@/lib/topics/list-snapshot"
 import { loadDeliveryParams, orgHumanMemberIds } from "@/server/topics/delivery/store"
@@ -503,15 +505,35 @@ async function buildEntries(
   return out
 }
 
+/**
+ * SQL condition of one «Все темы» status filter (`TOPIC_STATUS_FILTERS`).
+ * «Ошибочные» = dismissed, or the topic's LATEST topic card is rejected
+ * (any reason) — a newer card of a later cycle takes the topic out again.
+ */
+function allStatusCondition(f: TopicStatusFilter): SQL {
+  switch (f) {
+    case "all":
+      return ne(topic.status, "merged")
+    case "closed":
+      return inArray(topic.status, ["resolved", "done"])
+    case "erroneous":
+      return or(
+        eq(topic.status, "dismissed"),
+        sql`(
+          select c.status from ${card} c
+          where c.topic_id = ${topic.id} and c.kind = 'topic'
+          order by c.created_at desc, c.id desc
+          limit 1
+        ) = 'rejected'`,
+      )!
+    default:
+      return eq(topic.status, f)
+  }
+}
+
 /** «Все темы» (06 §7.2): every topic incl. snoozed / waiting / closed, with filters. */
 async function allEntries(orgId: string, filters: TopicAllFilters, now: Date): Promise<TopicEntry[]> {
-  const status = filters.status ?? "live"
-  const statusCond =
-    status === "all"
-      ? ne(topic.status, "merged")
-      : isTopicStatus(status)
-        ? eq(topic.status, status)
-        : inArray(topic.status, LIVE)
+  const statusCond = allStatusCondition(topicStatusFilterOf(filters.status))
   const rows = await db
     .select({ id: topic.id, attention: topic.attention })
     .from(topic)

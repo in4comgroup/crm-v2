@@ -3,6 +3,11 @@
 import { useCallback, useMemo, useState } from "react"
 import { toast } from "sonner"
 import {
+  isDefaultClientPick,
+  isDefaultContactPick,
+  isDefaultLinkPick,
+} from "@/lib/discovery-default-pick"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -140,23 +145,19 @@ export function DiscoverDialog({
         // AND low-confidence candidates so they aren't created by default —
         // the operator opts in after reviewing.
         for (const cand of dp.clientCandidates)
-          c[cand.normalisedKey] =
-            !cand.possibleDuplicate && cand.confidence !== "low"
+          c[cand.normalisedKey] = isDefaultClientPick(cand)
         setClientChecked(c)
 
         const ct: Record<string, boolean> = {}
         for (const cand of dp.contactCandidates)
-          ct[cand.email] =
-            !cand.possibleDuplicate &&
-            !cand.possibleMove &&
-            cand.confidence !== "low"
+          ct[cand.email] = isDefaultContactPick(cand)
         setContactChecked(ct)
         setContactNameOverrides({})
 
         const lk: Record<string, boolean> = {}
         // Low-confidence links (ambiguous company attribution) start unchecked.
         for (const lp of dp.linkProposals)
-          lk[linkKey(lp)] = lp.confidence !== "low"
+          lk[linkKey(lp)] = isDefaultLinkPick(lp)
         setLinkChecked(lk)
 
         setPhase("preview")

@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TableSourceItems } from "@/components/tables/table-source-items"
 import { TableOrgSources } from "@/components/tables/table-org-sources"
+import { AutoDiscoverySwitch } from "@/components/blocks/auto-discovery-switch"
 import { TableStoredContent } from "@/components/tables/table-stored-content"
 import { DropoffUploadDialog } from "@/components/blocks/dropoff-upload-dialog"
 import { WhatsAppArchiveDialog } from "@/components/blocks/whatsapp-archive-dialog"
@@ -185,6 +186,21 @@ export function SourcesPageShell({
             </CardHeader>
             <CardContent>
               <TableOrgSources />
+            </CardContent>
+          </Card>
+          {/* Automatic processing (2026-11-24): «Авторазбор» per source in the
+              table above = sync + parse on schedule; this switch = companies
+              and contacts from the parsed items. */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Автоматическая обработка</CardTitle>
+              <CardDescription>
+                Источники с включённым «Авторазбором» синхронизируются и разбираются автоматически: каждый день, а
+                при включённых темах — каждый час.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AutoDiscoverySwitch />
             </CardContent>
           </Card>
           <AnalysisExclusionsSection />

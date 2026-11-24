@@ -121,11 +121,25 @@ icon button). Period selector (default: last day), «Re-scan already-reviewed
 items» option, three sections (Companies / Contacts / Links), Apply or
 «Mark all reviewed».
 
+**Automatic mode (2026-11-24).** Org setting `discovery.autoApply` (default
+off; the org owner on Sources → «Управление» → «Автоматическая обработка», a
+platform admin on /settings → «Источники» → «Автоматическая обработка», with
+«Запустить сейчас»). When on, the daily pipeline (after parse, phase
+`discovery`) and the hourly topics intake (after parse) apply the dialog's
+DEFAULT choice (`src/lib/discovery-default-pick.ts`: high / medium, no possible
+duplicate / move) as «Агент»; «Ответственный» of new companies = the org owner;
+one summary notification `discovery.new_records` to the owner. Scanned items
+are stamped like «Применить»; low-confidence finds stay for the dialog with
+«Повторно просканировать». Sync + parse on schedule = the per-source switch
+«Авторазбор».
+
 **Main API.** `POST /api/discovery/preview` (read-only scan),
 `POST /api/discovery/apply`; `api/blocklist`, `api/blocklist/[id]`,
 `api/blocklist/from-entity`; `api/org-identity`, `api/org-identity/[id]`.
 
-**Server modules.** `discovery.ts`, `blocklist.ts`, `org-identity.ts`
+**Server modules.** `discovery.ts` (session wrappers) over `discovery-core.ts`
+(org-explicit preview / apply), `discovery-auto.ts` (automatic run + settings),
+`blocklist.ts`, `org-identity.ts`
 (sync views of the one «us» resolver `getOwnOrgContext` in
 `identity/own-org.ts`: discovery + parse-time company stripping, and
 parse-time attribution), `org-identity-registry.ts`; pure helpers in
@@ -190,13 +204,17 @@ one company / contact / deal for the «Темы» tabs).
 - **Topic status ≠ card status.** A topic is the business question; its card is
   one recommendation about it. Card buttons change the CARD («Принята» /
   «Отклонена»); the reason is stored for the quality eval. ONE exception
-  (2026-11-21): «Отклонить» with the reason «Не относится к работе» also closes
+  (2026-11-21): «Отклонить» with the reason «Полностью нерелевантно» (was «Не относится к
+  работе» until 2026-11-24) also closes
   the topic as «Не относится» (the dialog says so; toast «Карточка отклонена,
   тема закрыта»; rule `closesTopicOnReject` in `src/lib/topics/cards.ts`). All
   other reasons keep the topic open. Otherwise the topic status changes by the
   topic buttons («Готово», «Не относится» in the topic panel) or by the engine.
-  Topic statuses (filter «Статус» on «Все темы»; its default «Открытые» = «Открыта» +
-  «Затихла», and «Открыта» alone is not offered — one «open» value, 2026-11-21):
+  Filter «Статус» on «Все темы» (2026-11-24): «Открыты» (`open`, default),
+  «Затихли» (`dormant`), «Истекли» (`expired`), «Все» (every status except
+  «Объединена»), «Закрыты» («Решена» + «Готово»), «В архиве» (`archived`),
+  «Ошибочные» («Не относится» + every topic whose latest card was rejected,
+  any reason — such a topic can also show under its own status). Topic statuses:
 
   | Status | Set by | Meaning |
   |---|---|---|
@@ -204,7 +222,7 @@ one company / contact / deal for the «Темы» tabs).
   | «Затихла» (`dormant`) | engine, 21 days without activity | live; any new message reopens it |
   | «Решена» (`resolved`) | engine, a closing signal (e.g. order confirmed) | closed; reopens on a new message within 14 days, then «В архиве» |
   | «Готово» (`done`) | a person, button «Готово» | closed; reopens on a new message within 14 days, then «В архиве» (since 2026-11-21) |
-  | «Не относится» (`dismissed`) | a person: «Не относится» in the topic panel, or «Отклонить» on the card with the reason «Не относится к работе» | closed, not work; never reopens |
+  | «Не относится» (`dismissed`) | a person: «Не относится» in the topic panel, or «Отклонить» on the card with the reason «Полностью нерелевантно» | closed, not work; never reopens |
   | «Объединена» (`merged`) | a person, «Объединить с…» | merged into another topic (not offered in the filter) |
   | «Истекла» (`expired`) | engine, 60 days without activity | closed |
   | «В архиве» (`archived`) | engine, 14 days after «Решена» or «Готово» | closed, kept for history |

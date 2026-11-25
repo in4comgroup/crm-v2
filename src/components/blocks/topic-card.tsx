@@ -27,9 +27,11 @@ import {
   ShoppingCart,
   User,
   X,
+  Zap,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Dialog,
@@ -129,6 +131,10 @@ const CLASS_LABEL: Record<string, string> = { risk: "Риск", chance: "Воз�
 const ACCEPT_TONE =
   "bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:bg-emerald-400/15 dark:text-emerald-300 dark:hover:bg-emerald-400/25"
 
+function cardText(text: string): string {
+  return text.replaceAll("—", "-")
+}
+
 function cardStatusLabel(s: string | null): string | null {
   return s && isCardStatus(s) ? CARD_STATUS_LABELS_RU[s] : s
 }
@@ -142,9 +148,74 @@ function isoDay(offsetDays: number): string {
 
 // ── «Почему в этом списке» ────────────────────────────────────────────────
 
-export function ListExplanation({ entry }: { entry: Pick<TopicEntry, "attention"> }) {
+export function ListExplanation({ entry, badge = false }: { entry: Pick<TopicEntry, "attention">; badge?: boolean }) {
   const a = entry.attention
   if (!a) return null
+  const outcome = a.explanation.find((line) => line.startsWith("итог:"))
+  const outcomeLabels = outcome?.match(/^итог: «([^»]+)»(?: \(([^)]+)\))?$/)?.slice(1).filter(Boolean)
+  const reasons = a.explanation.filter((line) => line !== outcome || !outcomeLabels)
+  const explanation = (
+    <>
+      <div className="text-xs font-semibold uppercase tracking-wide mb-2">
+        Почему в этом списке
+      </div>
+      {reasons.length ? (
+        <ul className="space-y-2 text-sm">
+          {reasons.flatMap((line, index) => {
+            const weight = line.match(/^(.*) \(вес ([+-]?\d+)(?:, тон сообщения ([+-]\d+))?\)$/)
+            const change = line.match(/^(.*) \(([+-]\d+)\)$/)
+            const points = weight?.[2] ?? change?.[2]
+            const rows = [{ text: weight?.[1] ?? change?.[1] ?? line, points }]
+            if (weight?.[3]) rows.push({ text: "Тон сообщения", points: weight[3] })
+            return rows.map(({ text, points }, row) => (
+              <li key={`${index}-${row}`} className="flex items-baseline justify-between gap-2">
+                <span className="min-w-0">{cardText(text)}</span>
+                {points && (
+                  <Badge variant="outline" className="border-current/40 text-inherit tabular-nums">
+                    {/^[+-]/.test(points) ? points : `+${points}`}
+                  </Badge>
+                )}
+              </li>
+            ))
+          })}
+        </ul>
+      ) : (
+        <p className="text-sm">Нет объяснения.</p>
+      )}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-current/25 pt-2 text-sm">
+        <span className="font-medium">Итого</span>
+        <div className="flex flex-wrap gap-1">
+          <Badge variant="outline" className="border-current/40 text-inherit tabular-nums">Баллы: {a.score}</Badge>
+          {outcomeLabels?.map((label) => (
+            <Badge key={label} variant="outline" className="border-current/40 text-inherit">{label}</Badge>
+          ))}
+        </div>
+      </div>
+    </>
+  )
+  if (badge) {
+    const critical = a.band === "critical"
+    if (!critical && a.band !== "high" && a.band !== "very_high") return null
+    return (
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              size="icon-sm"
+              aria-label={critical ? "Критическая важность. Почему в этом списке" : "Высокая важность. Почему в этом списке"}
+              className="rounded-full bg-red-700 text-white hover:bg-red-800"
+            >
+              <Zap aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="end" sideOffset={6} className="max-w-[min(28rem,calc(100vw-2rem))] px-4 py-3 text-start text-wrap">
+            {explanation}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
   return (
     <HoverCard openDelay={150} closeDelay={100}>
       <HoverCardTrigger asChild>
@@ -158,18 +229,7 @@ export function ListExplanation({ entry }: { entry: Pick<TopicEntry, "attention"
         </button>
       </HoverCardTrigger>
       <HoverCardContent align="start" className="w-80">
-        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
-          Почему в этом списке
-        </div>
-        {a.explanation.length ? (
-          <ul className="space-y-0.5 text-sm">
-            {a.explanation.map((l, i) => (
-              <li key={i}>{l}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted-foreground">Нет объяснения.</p>
-        )}
+        {explanation}
       </HoverCardContent>
     </HoverCard>
   )
@@ -179,21 +239,21 @@ export function ListExplanation({ entry }: { entry: Pick<TopicEntry, "attention"
 
 export function TopicCardText({ card, title }: { card: TopicCardView | null; title: string }) {
   if (!card) {
-    return <p className="text-sm text-muted-foreground italic">Карточки пока нет — тема в работе у системы.</p>
+    return <p className="text-sm text-muted-foreground italic">Карточки пока нет. Система ещё обрабатывает тему.</p>
   }
   return (
     <div className="space-y-2 text-sm">
-      {card.headline && card.headline !== title && <p className="font-medium leading-snug">{card.headline}</p>}
+      {card.headline && cardText(card.headline) !== cardText(title) && <p className="font-medium leading-snug">{cardText(card.headline)}</p>}
       {card.whyNow && (
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Почему сейчас</div>
-          <p className="leading-relaxed">{card.whyNow}</p>
+          <div className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300">Почему нужно внимание сейчас</div>
+          <p className="leading-relaxed">{cardText(card.whyNow)}</p>
         </div>
       )}
       {card.whatChanged && (
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Что изменилось</div>
-          <p className="leading-relaxed">{card.whatChanged}</p>
+          <div className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300">Что изменилось</div>
+          <p className="leading-relaxed">{cardText(card.whatChanged)}</p>
         </div>
       )}
       {card.steps.length > 0 && (
@@ -203,13 +263,13 @@ export function TopicCardText({ card, title }: { card: TopicCardView | null; tit
           </div>
           <ol className="list-decimal pl-5 space-y-0.5">
             {card.steps.slice(0, 3).map((s, i) => (
-              <li key={i}>{s.replace(/^\d+[.)]\s*/, "")}</li>
+              <li key={i}>{cardText(s.replace(/^\d+[.)]\s*/, ""))}</li>
             ))}
           </ol>
         </div>
       )}
       {card.rejectionReason && card.status === "rejected" && (
-        <p className="text-xs text-muted-foreground">Причина отклонения: {card.rejectionReason}</p>
+        <p className="text-xs text-muted-foreground">Причина отклонения: {cardText(card.rejectionReason)}</p>
       )}
     </div>
   )
@@ -253,7 +313,7 @@ function RejectDialog({
         <DialogHeader>
           <DialogTitle>{gate ? NO_GO_DIALOG_TITLE : CARD_REJECT_DIALOG_TITLE_RU[card.kind]}</DialogTitle>
           <DialogDescription>
-            {gate ? NO_GO_DIALOG_DESCRIPTION : "Выберите причину. Комментарий — по желанию. Причины помогают настроить систему."}
+            {gate ? NO_GO_DIALOG_DESCRIPTION : "Выберите причину. Комментарий по желанию. Причины помогают настроить систему."}
           </DialogDescription>
         </DialogHeader>
         <CardRejectReasonSelect
@@ -322,7 +382,7 @@ export function SnoozeButton({
       <PopoverTrigger asChild>
         <Button size="sm" variant="outline" disabled={disabled || pending}>
           <AlarmClock className="h-4 w-4 mr-1" />
-          Отложить до…
+          Отложить
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64 space-y-2">
@@ -337,7 +397,7 @@ export function SnoozeButton({
         </div>
         <Input type="date" value={day} min={isoDay(1)} onChange={(e) => setDay(e.target.value)} className="h-8" />
         <p className="text-xs text-muted-foreground">
-          Тема вернётся в начале рабочего дня. Новое важное сообщение вернёт её раньше.
+          Тема вернётся в начале выбранного рабочего дня. Новое важное событие по теме может вернуть её раньше.
         </p>
         <Button size="sm" className="w-full" disabled={!day || pending} onClick={() => run({ action: "snooze", until: day }, "Тема отложена")}>
           Отложить
@@ -427,41 +487,45 @@ export function TopicCardActions({
   const isOrder = card?.category === "new_order"
 
   return (
-    <div className={cn("flex flex-wrap gap-2", className)}>
-      {cardOpen && card && (
-        <>
-          {isOrder && (
-            <Button size="sm" variant="secondary" className={ACCEPT_TONE} disabled={pending} onClick={() => setOrderOpen(true)}>
-              <ShoppingCart className="h-4 w-4 mr-1" />
-              Создать заказ
+    <div className={cn("@container flex flex-wrap gap-2", className)}>
+      {cardOpen && isOrder && (
+        <Button size="sm" variant="secondary" className={ACCEPT_TONE} disabled={pending} onClick={() => setOrderOpen(true)}>
+          <ShoppingCart className="h-4 w-4 mr-1" />
+          Создать заказ
+        </Button>
+      )}
+      {(cardOpen || live) && (
+        <div className="grid w-full grid-cols-2 items-center gap-2 @[27.25rem]:flex @[27.25rem]:gap-x-1.5 @[27.25rem]:[&>button:has(>svg)]:px-1.5 [&_svg]:mr-0 @max-[19rem]:[&_svg]:hidden">
+          {cardOpen && (
+            <TaskEditDialog
+              mode="create"
+              initialValues={taskInitialValues}
+              onSuccess={accept}
+              trigger={
+                <Button size="sm" variant="secondary" className={isOrder ? undefined : ACCEPT_TONE} disabled={pending}>
+                  <ListTodo className="h-4 w-4" />
+                  Создать задачу
+                </Button>
+              }
+            />
+          )}
+          {live && <SnoozeButton topicId={entry.topicId} snoozedUntil={entry.snoozedUntil} onDone={onChanged} disabled={pending} />}
+          {cardOpen && (
+            <Button size="sm" variant="outline" disabled={pending} onClick={() => setRejectOpen(true)}>
+              <X className="h-4 w-4" />
+              Отклонить
             </Button>
           )}
-          <TaskEditDialog
-            mode="create"
-            initialValues={taskInitialValues}
-            onSuccess={accept}
-            trigger={
-              <Button size="sm" variant="secondary" className={isOrder ? undefined : ACCEPT_TONE} disabled={pending}>
-                <ListTodo className="h-4 w-4 mr-1" />
-                Создать задачу
-              </Button>
-            }
-          />
-          <Button size="sm" variant="outline" disabled={pending} onClick={() => setRejectOpen(true)}>
-            <X className="h-4 w-4 mr-1" />
-            Отклонить
-          </Button>
-          <RejectDialog card={card} open={rejectOpen} onOpenChange={setRejectOpen} onDone={() => void recompute(entry.topicId).then(onChanged)} />
-        </>
+          {live && (
+            <Button size="sm" variant="outline" disabled={pending} onClick={done}>
+              <CheckCheck className="h-4 w-4" />
+              Готово
+            </Button>
+          )}
+        </div>
       )}
-      {live && (
-        <>
-          <Button size="sm" variant="outline" disabled={pending} onClick={done}>
-            <CheckCheck className="h-4 w-4 mr-1" />
-            Готово
-          </Button>
-          <SnoozeButton topicId={entry.topicId} snoozedUntil={entry.snoozedUntil} onDone={onChanged} disabled={pending} />
-        </>
+      {cardOpen && card && (
+        <RejectDialog card={card} open={rejectOpen} onOpenChange={setRejectOpen} onDone={() => void recompute(entry.topicId).then(onChanged)} />
       )}
       {card?.resultTaskId && (
         <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
@@ -575,7 +639,7 @@ export function DealCardBlock({
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {dealCardGate(card).gate ? "Новая возможность: go / no-go" : CARD_KIND_LABELS_RU[card.kind]}
           </div>
-          <p className="font-medium leading-snug">{card.headline}</p>
+          <p className="font-medium leading-snug">{cardText(card.headline)}</p>
         </div>
         {card.status !== "open" && <Badge variant="secondary">{cardStatusLabel(card.status)}</Badge>}
       </div>
@@ -591,7 +655,7 @@ export function DealCardBlock({
           {(p.fromStageLabelRu || p.stageLabelRu) && (
             <p>
               Стадия: {p.fromStageLabelRu ? `${p.fromStageLabelRu} → ` : ""}
-              {p.stageLabelRu ?? "—"}
+              {p.stageLabelRu ?? "-"}
             </p>
           )}
         </div>
@@ -634,7 +698,7 @@ function TopicSources({ entry, onOpenTopic }: { entry: TopicEntry; onOpenTopic: 
               <span className="shrink-0">{SOURCE_CHANNEL_LABELS_RU[s.provider ?? ""] ?? "Источник"}</span>
               <span className="shrink-0">· {formatDateTimeRu(s.date)}</span>
               <span className="truncate text-foreground/80 hover:underline underline-offset-2">
-                {[s.subject, s.from].filter(Boolean).length ? `· ${[s.subject, s.from].filter(Boolean).join(" — ")}` : "· открыть"}
+                {[s.subject, s.from].filter(Boolean).length ? `· ${[s.subject, s.from].filter(Boolean).map(cardText).join(" · ")}` : "· открыть"}
               </span>
             </button>
           </li>
@@ -686,7 +750,7 @@ export function TopicEntryCard({
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
               >
                 <Building2 className="h-3.5 w-3.5" />
-                {entry.clientName}
+                {cardText(entry.clientName)}
               </Link>
             ) : entry.contactName ? (
               <Link
@@ -694,7 +758,7 @@ export function TopicEntryCard({
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
               >
                 <User className="h-3.5 w-3.5" />
-                {entry.contactName}
+                {cardText(entry.contactName)}
               </Link>
             ) : null}
             <button
@@ -702,7 +766,7 @@ export function TopicEntryCard({
               onClick={() => onOpen(entry.topicId)}
               className="block text-left font-semibold leading-snug hover:underline underline-offset-4"
             >
-              {card?.headline || entry.title}
+              {cardText(card?.headline || entry.title)}
             </button>
           </div>
           {entry.marker && (
@@ -715,6 +779,7 @@ export function TopicEntryCard({
               Напоминание {entry.reminder.count}
             </Badge>
           )}
+          <ListExplanation entry={entry} badge />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {a?.class && (
@@ -733,7 +798,7 @@ export function TopicEntryCard({
             </Badge>
           )}
           {entry.status === "open" && entry.subState !== "none" && (
-            <Badge variant="outline" className="font-normal">
+            <Badge variant={entry.subState === "waiting_on_us" ? "destructive" : "outline"} className="font-normal">
               {TOPIC_SUB_STATE_LABELS_RU[entry.subState as TopicSubState] ?? entry.subState}
             </Badge>
           )}
@@ -757,9 +822,9 @@ export function TopicEntryCard({
         </div>
       </CardHeader>
       <CardContent className="px-4 flex flex-col gap-3 flex-1">
-        <TopicCardText card={card} title={card?.headline || entry.title} />
+        <TopicCardText card={card} title={cardText(card?.headline || entry.title)} />
         <TopicSources entry={entry} onOpenTopic={onOpen} />
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <div className="flex flex-col items-start gap-1 text-xs text-muted-foreground">
           {deadline && (
             <span className={cn("inline-flex items-center gap-1", a?.overdue && "text-red-600 dark:text-red-400")}>
               <CalendarClock className="h-3.5 w-3.5" />
@@ -770,16 +835,15 @@ export function TopicEntryCard({
           {entry.dealName && (
             <Link href={`/deals?openDeal=${entry.dealId}`} className="inline-flex items-center gap-1 hover:text-foreground">
               <Handshake className="h-3.5 w-3.5" />
-              {entry.dealName}
+              {cardText(entry.dealName)}
             </Link>
           )}
           {entry.ownerName && (
             <span className="inline-flex items-center gap-1">
               <User className="h-3.5 w-3.5" />
-              {entry.ownerName}
+              {cardText(entry.ownerName)}
             </span>
           )}
-          <ListExplanation entry={entry} />
         </div>
         <TopicCardActions entry={entry} onChanged={onChanged} className="mt-auto pt-1" />
       </CardContent>

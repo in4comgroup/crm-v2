@@ -36,12 +36,21 @@ import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 const ANY = "__any__"
 
+const TAB_DESCRIPTIONS: Record<TopicTab, string> = {
+  now: "Срочные темы и решения по сделкам, которые требуют внимания сейчас.",
+  digest: "Утренняя подборка тем и новые темы, добавленные в неё после утра.",
+  week: "Еженедельный обзор: менее срочные и затихшие темы, а также недавно истёкшие карточки.",
+  all: "Все темы, доступные по выбранным фильтрам, включая те, что не входят в списки внимания.",
+}
+
 function Grid({ entries, onChanged, onOpen }: { entries: TopicEntry[]; onChanged: () => void; onOpen: (id: string) => void }) {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4 items-stretch">
-      {entries.map((e) => (
-        <TopicEntryCard key={e.topicId} entry={e} onChanged={onChanged} onOpen={onOpen} />
-      ))}
+    <div className="@container">
+      <div className="grid grid-cols-[min(100%,19rem)] gap-4 @[29.375rem]:grid-cols-[repeat(auto-fill,29.375rem)]">
+        {entries.map((e) => (
+          <TopicEntryCard key={e.topicId} entry={e} onChanged={onChanged} onOpen={onOpen} />
+        ))}
+      </div>
     </div>
   )
 }
@@ -268,7 +277,7 @@ export function TopicListsSection() {
     <div className="flex flex-col h-full gap-3">
       <div className="flex items-center gap-3 flex-wrap rounded-xl border bg-card p-3 shrink-0">
         <Tabs value={tab} onValueChange={(v) => setTab(v as TopicTab)}>
-          <TabsList>
+          <TabsList aria-label="Списки тем" aria-describedby="topic-list-description">
             {TOPIC_TABS.map((t) => {
               const n = countOf(t)
               return (
@@ -335,6 +344,9 @@ export function TopicListsSection() {
           <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
         </Button>
       </div>
+      <p id="topic-list-description" className="px-1 text-sm text-muted-foreground">
+        {TAB_DESCRIPTIONS[tab]}
+      </p>
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none pb-4">{body}</div>
       <TopicDrawer
         topicId={drawerId}

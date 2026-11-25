@@ -92,29 +92,23 @@ export function AccountSummary({
     ? formatAmount(activeDeal.value, activeDeal.currency)
     : null
 
+  const revenueLabel = "Выручка за 12 мес."
+  const revenueValue = revenue && revenue.revenue > 0
+    ? `${formatCompactNumber(revenue.revenue)} ${symbol} · ${revenue.orders} ${pluralizeOrders(revenue.orders)}`
+    : "нет заказов"
+  const dealName = activeDeal?.name ?? "Нет активной сделки"
+  const dealStage = activeDeal ? [activeDeal.funnelStageLabel, dealAmount].filter(Boolean).join(" · ") : null
+
   return (
-    <div className="rounded-md border border-border bg-muted p-2.5 space-y-1.5 text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">
-          Выручка за 12 мес.
-        </span>
-        <span className="font-semibold tabular-nums">
-          {revenue && revenue.revenue > 0
-            ? `${formatCompactNumber(revenue.revenue)} ${symbol} · ${revenue.orders} ${pluralizeOrders(revenue.orders)}`
-            : "нет заказов"}
-        </span>
+    <div className="min-w-0 rounded-md border border-border bg-muted p-2.5 space-y-1.5 text-sm">
+      <div className="min-w-0">
+        <div className="truncate text-xs text-muted-foreground" title={revenueLabel}>{revenueLabel}</div>
+        <div className="truncate font-semibold tabular-nums" title={revenueValue}>{revenueValue}</div>
       </div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground truncate flex items-center gap-1">
-          <Briefcase className="h-3 w-3 shrink-0" />
-          {activeDeal ? activeDeal.name : "Нет активной сделки"}
-        </span>
-        {activeDeal && (
-          <span className="text-xs shrink-0 text-right">
-            {activeDeal.funnelStageLabel}
-            {dealAmount ? ` · ${dealAmount}` : ""}
-          </span>
-        )}
+      <div className="flex min-w-0 items-center gap-1">
+        <Briefcase className="h-3 w-3 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={dealName}>{dealName}</span>
+        {dealStage && <span className="min-w-0 max-w-[60%] truncate text-right text-xs" title={dealStage}>{dealStage}</span>}
       </div>
       {stale && (
         // Тот же визуальный язык, что «остывание» на карточке сделки
@@ -165,7 +159,7 @@ export function ClientCard({
   // Пока родитель ещё грузит задачи, не показываем «Задач нет» — иначе на
   // миг мелькнёт ложное «пусто» до прихода реальных данных.
   tasksLoaded?: boolean
-  onOpenDetail: (clientId: string) => void
+  onOpenDetail: (clientId: string, initialTab?: "contacts") => void
   // Custom fields marked «Показывать в списке» (position order): up to 3
   // «Название: значение» pairs with a value are shown in one muted line.
   listFields?: readonly CustomFieldDef[]
@@ -206,7 +200,7 @@ export function ClientCard({
     >
       <CardHeader className="flex flex-row items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <CardTitle className="truncate">{client.name}</CardTitle>
+          <CardTitle className="wrap-anywhere">{client.name}</CardTitle>
           {client.webUrl && (
             <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
               <Globe className="h-3.5 w-3.5 shrink-0" />
@@ -337,8 +331,9 @@ export function ClientCard({
 
         {client.contacts.length > 0 && (
           <div className="rounded-md border p-2 space-y-1">
-            <div className="text-xs font-medium text-muted-foreground">
-              Контакты ({client.contacts.length})
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              Контакты
+              <Badge variant="secondary" className="px-1.5 py-0 tabular-nums">{client.contacts.length}</Badge>
             </div>
             {preview.map((c) => (
               <div key={c.id} className="text-sm truncate">
@@ -349,9 +344,16 @@ export function ClientCard({
               </div>
             ))}
             {moreCount > 0 && (
-              <div className="text-xs text-muted-foreground">
-                +{moreCount} ещё (откройте, чтобы посмотреть)
-              </div>
+              <button
+                type="button"
+                className="cursor-pointer text-xs text-muted-foreground underline decoration-dashed underline-offset-2 hover:text-foreground"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenDetail(client.id, "contacts")
+                }}
+              >
+                еще +{moreCount}
+              </button>
             )}
           </div>
         )}

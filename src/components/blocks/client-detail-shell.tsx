@@ -187,7 +187,7 @@ export function ClientDetailShell({
                 )}
             </div>
             {/* Stages of the company's deals (bug list 2026-11-21, item 13). */}
-            <ClientFunnelStages clientId={detail.id} className="mt-3" />
+            <ClientFunnelStages clientId={detail.id} clientName={detail.name} className="mt-3" />
           </div>
           <div className="flex items-center gap-2">
             <ClientLookupDialog
@@ -451,7 +451,7 @@ export function ClientDetailShell({
       {/* Client Content table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Материалы компании</CardTitle>
+          <CardTitle className="text-base">Источники компании</CardTitle>
           <p className="text-xs text-muted-foreground">
             Разобранные элементы источников, относящиеся к этой компании
             (сопоставление по названию, адресу, сайту, а также именам/email

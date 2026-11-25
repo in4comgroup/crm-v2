@@ -452,14 +452,6 @@ export function ClientProfileBlock({ clientId, className }: { clientId: string; 
     <div className={cn("flex flex-col gap-3 rounded-lg border p-3", className)}>
       <div className="flex flex-wrap items-center gap-2">
         <div className="text-sm font-medium">Профиль компании</div>
-        <Badge variant="secondary" className="font-normal">
-          Сегмент: {view.segment ?? "—"}
-        </Badge>
-        {view.relation && view.relation !== "unknown" && (
-          <Badge variant="secondary" className="font-normal">
-            Отношения: {RELATION_LABELS_RU[view.relation]}
-          </Badge>
-        )}
         <div className="ml-auto flex items-center gap-1.5">
           {view.canEdit && !editing && (
             <>
@@ -476,21 +468,32 @@ export function ClientProfileBlock({ clientId, className }: { clientId: string; 
               </Button>
               <Button
                 type="button"
-                size="sm"
+                size="icon-sm"
                 variant="outline"
-                className="h-7"
+                className="size-7"
+                aria-label="Изменить профиль компании"
+                title="Изменить профиль компании"
                 disabled={busy !== null}
                 onClick={() => {
                   setDraft(v)
                   setEditing(true)
                 }}
               >
-                <Pencil className="mr-1 h-3.5 w-3.5" />
-                Изменить
+                <Pencil className="h-3.5 w-3.5" />
               </Button>
             </>
           )}
         </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Badge variant="secondary" className="font-normal">
+          Сегмент: {view.segment ?? "-"}
+        </Badge>
+        {view.relation && view.relation !== "unknown" && (
+          <Badge variant="secondary" className="font-normal">
+            Отношения: {RELATION_LABELS_RU[view.relation]}
+          </Badge>
+        )}
       </div>
 
       {busy === "enrich" && (

@@ -12,7 +12,15 @@ import { stageColorClass } from "@/lib/deal-board"
 import { cn } from "@/lib/utils"
 import type { ClientDealStage } from "@/app/api/deals/route"
 
-export function ClientFunnelStages({ clientId, className }: { clientId: string; className?: string }) {
+function dealDisplayName(dealName: string, clientName: string): string {
+  const name = clientName.trim()
+  const title = dealName.trim()
+  if (!name || !title.toLowerCase().startsWith(name.toLowerCase())) return title.replaceAll("—", "-")
+  const suffix = title.slice(name.length).match(/^\s*[-–—:]\s*(.+)$/)?.[1]
+  return (suffix || title).replaceAll("—", "-")
+}
+
+export function ClientFunnelStages({ clientId, clientName, className }: { clientId: string; clientName: string; className?: string }) {
   // Keyed by the company the answer is for, so another company never shows
   // an old answer and no state reset is needed when `clientId` changes.
   const [data, setData] = useState<{ clientId: string; stages: ClientDealStage[] | null } | null>(null)
@@ -48,12 +56,12 @@ export function ClientFunnelStages({ clientId, className }: { clientId: string; 
       ) : (
         <ul className="space-y-1">
           {stages.slice(0, 5).map((s) => (
-            <li key={s.dealId} className="flex items-center gap-2 min-w-0 text-sm">
+            <li key={s.dealId} className="flex min-w-0 flex-col items-start gap-1 text-sm">
               <Badge variant="secondary" className={cn("shrink-0", stageColorClass({ name: s.stageLabel, role: s.stageRole }))}>
                 {s.stageLabel}
               </Badge>
-              <Link href={`/deals?openDeal=${s.dealId}`} className="truncate hover:underline">
-                {s.dealName}
+              <Link href={`/deals?openDeal=${s.dealId}`} className="max-w-full wrap-anywhere hover:underline">
+                {dealDisplayName(s.dealName, clientName)}
               </Link>
               {s.paused && <span className="shrink-0 text-xs text-muted-foreground">пауза</span>}
             </li>

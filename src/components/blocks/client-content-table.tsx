@@ -325,13 +325,13 @@ export function ClientContentTable({
       </div>
 
       <div className="rounded-md border overflow-hidden">
-        <Table className="table-fixed w-full">
+        <Table className="table-fixed w-full min-w-[32rem]">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-40">Дата</TableHead>
-              <TableHead className="w-32">Источник</TableHead>
+              <TableHead className="w-28">Дата</TableHead>
+              <TableHead className="w-24">Источник</TableHead>
               <TableHead>Элемент</TableHead>
-              <TableHead className="w-56">Категории</TableHead>
+              <TableHead className="w-32">Категории</TableHead>
               <TableHead className="w-16">Просмотр</TableHead>
             </TableRow>
           </TableHeader>
@@ -358,8 +358,8 @@ export function ClientContentTable({
                 <TableCell colSpan={5}>
                   <p className="text-sm text-muted-foreground py-6 text-center">
                     {matchTerms.length === 0
-                      ? "У клиента ещё нет идентифицирующих полей — добавьте email, сайт или контакт, чтобы началось сопоставление материалов."
-                      : "Нет материалов по заданным фильтрам."}
+                      ? "У клиента ещё нет идентифицирующих полей — добавьте email, сайт или контакт, чтобы найти связанные записи."
+                      : "Нет записей по заданным фильтрам."}
                   </p>
                 </TableCell>
               </TableRow>
@@ -377,7 +377,7 @@ export function ClientContentTable({
                       {row.sourceName}
                     </TableCell>
                     <TableCell
-                      className="text-sm truncate"
+                      className="whitespace-normal wrap-anywhere text-sm"
                       title={title}
                     >
                       {title}

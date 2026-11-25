@@ -40,7 +40,7 @@ export type AuthSession = NonNullable<
 
 export const items = [
   {
-    title: "Домашняя",
+    title: "Главное",
     url: "/dashboard",
     icon: Home,
   },

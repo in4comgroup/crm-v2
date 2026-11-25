@@ -417,7 +417,7 @@ export function DocumentsPanel({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL_TYPES}>Все типы</SelectItem>
+            <SelectItem value={ALL_TYPES}>Все форматы</SelectItem>
             {DOCUMENT_TYPE_BUCKETS.map((b) => (
               <SelectItem key={b} value={b}>
                 {DOCUMENT_TYPE_LABELS_RU[b]}

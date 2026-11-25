@@ -72,11 +72,9 @@ import {
 } from "@/lib/client-responsible"
 
 import {
-  CLIENT_SIZE_BANDS,
   CLIENT_SIZE_LABELS_RU,
   type ClientSizeBand,
 } from "@/lib/identity/client-profile"
-import { MARKET_ROLES, MARKET_ROLE_LABELS_RU } from "@/lib/identity/org-profile"
 import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 const ALL = "__all__"
@@ -150,8 +148,6 @@ export default function ClientsPage() {
   const responsibleOptions = useResponsibleOptions()
   // «Профиль компании» filters (identity I5) — server-side, like «Ответственный».
   const [industryFilter, setIndustryFilter] = useState<string>(ALL)
-  const [roleFilter, setRoleFilter] = useState<string>(ALL)
-  const [sizeFilter, setSizeFilter] = useState<string>(ALL)
   const [industries, setIndustries] = useState<{ code: string; label: string }[]>([])
   useEffect(() => {
     fetch("/api/clients?profileOptions=1")
@@ -163,7 +159,7 @@ export default function ClientsPage() {
     () => Object.fromEntries(industries.map((i) => [i.code, i.label])) as Record<string, string>,
     [industries],
   )
-  const profileFiltered = industryFilter !== ALL || roleFilter !== ALL || sizeFilter !== ALL
+  const profileFiltered = industryFilter !== ALL
   // Порядок ленты. Живёт на уровне страницы, поэтому не сбрасывается при
   // переключении карточки/таблица (обе раскладки показывают одни и те же rows).
   // Сортировка — на клиенте над уже загруженной вкладкой: переключение
@@ -199,6 +195,7 @@ export default function ClientsPage() {
   // выводим из живого `rows`, чтобы дровер не устарел после refreshAll.
   const [openClientId, setOpenClientId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerInitialTab, setDrawerInitialTab] = useState<"info" | "contacts">("info")
   const [view, setView] = usePersistentTab<ClientView>("clients.view", "cards", {
     allowed: CLIENT_VIEWS,
     urlParam: false,
@@ -240,8 +237,6 @@ export default function ClientsPage() {
         params.set("responsible", responsibleFilter)
       }
       if (industryFilter !== ALL) params.set("industry", industryFilter)
-      if (roleFilter !== ALL) params.set("role", roleFilter)
-      if (sizeFilter !== ALL) params.set("size", sizeFilter)
       if (cfParam) params.set("cf", cfParam)
       const res = await fetch(`/api/clients?${params.toString()}`)
       if (reqIdRef.current !== reqId) return
@@ -260,7 +255,7 @@ export default function ClientsPage() {
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [tab, statusFilter, responsibleFilter, industryFilter, roleFilter, sizeFilter, cfParam])
+  }, [tab, statusFilter, responsibleFilter, industryFilter, cfParam])
 
   const sortedRows = useMemo(
     () => sortClientFeed(rows, sort, taskSummary),
@@ -273,7 +268,7 @@ export default function ClientsPage() {
     setRows([])
     void loadPage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, statusFilter, responsibleFilter, industryFilter, roleFilter, sizeFilter, cfParam])
+  }, [tab, statusFilter, responsibleFilter, industryFilter, cfParam])
 
   const loadExtras = useCallback(async () => {
     const [revRes, dealsRes, tasksRes] = await Promise.all([
@@ -371,6 +366,7 @@ export default function ClientsPage() {
       }
       setRows((prev) => (prev.some((r) => r.id === row.id) ? prev : [row, ...prev]))
       setOpenClientId(row.id)
+      setDrawerInitialTab("info")
       setDrawerOpen(true)
     })()
   }, [])
@@ -476,34 +472,6 @@ export default function ClientsPage() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={roleFilter} onValueChange={setRoleFilter}>
-            <SelectTrigger size="sm" className="w-fit" aria-label="Роль">
-              <SelectValue placeholder="Роль" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>Роль: все</SelectItem>
-              <SelectItem value="none">Роль не указана</SelectItem>
-              {MARKET_ROLES.map((r) => (
-                <SelectItem key={r} value={r}>
-                  {MARKET_ROLE_LABELS_RU[r]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={sizeFilter} onValueChange={setSizeFilter}>
-            <SelectTrigger size="sm" className="w-fit" aria-label="Размер">
-              <SelectValue placeholder="Размер" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>Размер: все</SelectItem>
-              <SelectItem value="none">Размер не указан</SelectItem>
-              {CLIENT_SIZE_BANDS.map((b) => (
-                <SelectItem key={b} value={b}>
-                  {CLIENT_SIZE_LABELS_RU[b]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
           <Tabs
             value={sort}
             onValueChange={(v) => setSort(v as ClientFeedSort)}
@@ -524,8 +492,6 @@ export default function ClientsPage() {
                 setStatusFilter(ALL)
                 setResponsibleFilter(RESPONSIBLE_FILTER_ALL)
                 setIndustryFilter(ALL)
-                setRoleFilter(ALL)
-                setSizeFilter(ALL)
                 setCustomFilters([])
               }}
             >
@@ -642,8 +608,9 @@ export default function ClientsPage() {
                     tasks={tasksByClient[c.id] ?? []}
                     tasksLoaded={tasksLoaded}
                     listFields={listFields}
-                    onOpenDetail={(id) => {
+                    onOpenDetail={(id, initialTab = "info") => {
                       setOpenClientId(id)
+                      setDrawerInitialTab(initialTab)
                       setDrawerOpen(true)
                     }}
                   />
@@ -686,6 +653,7 @@ export default function ClientsPage() {
                             className="cursor-pointer even:bg-muted/40"
                             onClick={() => {
                               setOpenClientId(c.id)
+                              setDrawerInitialTab("info")
                               setDrawerOpen(true)
                             }}
                           >
@@ -757,6 +725,7 @@ export default function ClientsPage() {
       <ClientDetailDrawer
         client={rows.find((r) => r.id === openClientId) ?? null}
         open={drawerOpen}
+        initialTab={drawerInitialTab}
         onOpenChange={setDrawerOpen}
         onChanged={refreshAll}
         canBlock={canBlock}

@@ -226,12 +226,14 @@ function useDrawerWidth() {
 export function ClientDetailDrawer({
   client,
   open,
+  initialTab = "info",
   onOpenChange,
   onChanged,
   canBlock = false,
 }: {
   client: ClientRow | null
   open: boolean
+  initialTab?: "info" | "contacts"
   onOpenChange: (open: boolean) => void
   onChanged: () => void
   // When true (owner), shows the "add to blocklist" action in the form
@@ -470,7 +472,7 @@ export function ClientDetailDrawer({
                 открытии другой компании снова начинать с первого таба. */}
             <Tabs
               key={client.id}
-              defaultValue="info"
+              defaultValue={initialTab}
               onValueChange={(v) => {
                 if (v === "fields") setFieldsVisitedFor(client.id)
               }}
@@ -587,7 +589,7 @@ export function ClientDetailDrawer({
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="content" className="flex-none">
-                  Материалы
+                  Источники
                 </TabsTrigger>
                 {relatedTopics.visible && (
                   <TabsTrigger value="topics" className="flex-none">
@@ -806,7 +808,7 @@ export function ClientDetailDrawer({
               {/* «Этап воронки» = the stages of the company's deals, read
                   only (bug list 2026-11-21, item 13; the manual field
                   `funnel_phase` with a fixed list was removed). */}
-              <ClientFunnelStages clientId={client.id} />
+              <ClientFunnelStages clientId={client.id} clientName={client.name} />
 
               <div className="grid grid-cols-2 gap-3">
                 <FormField

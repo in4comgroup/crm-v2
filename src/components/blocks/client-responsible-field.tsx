@@ -281,46 +281,48 @@ function CoResponsibleRow({
   const nameOf = (c: { userId: string; name: string | null }) =>
     c.name ?? opts.members.find((m) => m.userId === c.userId)?.name ?? "—"
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-xs text-muted-foreground">Также отвечают:</span>
-      {!co.length && <span className="text-xs text-muted-foreground">никто</span>}
-      {co.map((c) => {
-        const canRemove = mode === "manage" || (mode === "self" && c.userId === opts.viewerUserId)
-        const gone = !opts.members.some((m) => m.userId === c.userId)
-        return (
-          <Badge key={c.userId} variant="secondary" className="gap-1 font-normal">
-            {nameOf(c)}
-            {gone && <span className="text-muted-foreground">(не в организации)</span>}
-            {canRemove && (
-              <button
-                type="button"
-                disabled={busy}
-                aria-label={c.userId === opts.viewerUserId && mode === "self" ? "Снять с себя" : `Убрать ${nameOf(c)}`}
-                title={c.userId === opts.viewerUserId && mode === "self" ? "Снять с себя" : "Убрать"}
-                onClick={() => void change("removeCoResponsible", c.userId)}
-                className="rounded-sm opacity-70 hover:opacity-100"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </Badge>
-        )
-      })}
-      {mode === "manage" && candidates.length > 0 && (
-        <Select value="" onValueChange={(v) => void change("addCoResponsible", v)} disabled={busy}>
-          <SelectTrigger size="sm" className="h-7 w-fit text-xs">
-            <SelectValue placeholder="+ Добавить" />
-          </SelectTrigger>
-          <SelectContent>
-            {candidates.map((m) => (
-              <SelectItem key={m.userId} value={m.userId}>
-                {memberLabel(m, opts.members)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-      {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+    <div className="space-y-1.5">
+      <div className="text-xs text-muted-foreground">Также отвечают</div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {co.map((c) => {
+          const canRemove = mode === "manage" || (mode === "self" && c.userId === opts.viewerUserId)
+          const gone = !opts.members.some((m) => m.userId === c.userId)
+          return (
+            <Badge key={c.userId} variant="secondary" className="gap-1 font-normal">
+              {nameOf(c)}
+              {gone && <span className="text-muted-foreground">(не в организации)</span>}
+              {canRemove && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-label={c.userId === opts.viewerUserId && mode === "self" ? "Снять с себя" : `Убрать ${nameOf(c)}`}
+                  title={c.userId === opts.viewerUserId && mode === "self" ? "Снять с себя" : "Убрать"}
+                  onClick={() => void change("removeCoResponsible", c.userId)}
+                  className="rounded-sm opacity-70 hover:opacity-100"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </Badge>
+          )
+        })}
+        {mode === "manage" && candidates.length > 0 && (
+          <Select value="__none__" onValueChange={(v) => { if (v !== "__none__") void change("addCoResponsible", v) }} disabled={busy}>
+            <SelectTrigger size="sm" className="h-7 w-fit text-xs" aria-label="Также отвечают">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Не выбрано</SelectItem>
+              {candidates.map((m) => (
+                <SelectItem key={m.userId} value={m.userId}>
+                  {memberLabel(m, opts.members)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+      </div>
     </div>
   )
 }

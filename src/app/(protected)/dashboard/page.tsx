@@ -148,7 +148,7 @@ export default function DashboardPage() {
     return (
       <div className="flex flex-col h-[calc(100vh-1rem)]">
         <div className="flex items-center justify-between gap-4 p-4 pb-0">
-          <h1 className="text-xl font-medium">Домашняя</h1>
+          <h1 className="text-xl font-medium">Главное</h1>
           <PageHeaderActions />
         </div>
         <PageLoader />
@@ -160,7 +160,7 @@ export default function DashboardPage() {
     <div className="flex flex-col h-[calc(100vh-1rem)]">
       <div className="flex flex-col gap-4 p-4 pb-0 shrink-0">
         <div className="flex items-center justify-between gap-4">
-          <h1 className="text-xl font-medium">Домашняя</h1>
+          <h1 className="text-xl font-medium">Главное</h1>
           <PageHeaderActions />
         </div>
 

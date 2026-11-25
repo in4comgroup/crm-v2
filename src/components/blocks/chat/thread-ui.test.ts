@@ -29,11 +29,12 @@ describe("chat history controls", () => {
     expect(html).toContain('aria-label="Новый чат"')
   })
 
-  test("a new empty chat: no rename / delete", async () => {
+  test("a new empty chat: no rename / delete / new", async () => {
     const html = await render(createElement(ThreadControls, { ...base, title: "Новый чат", saved: false }))
     expect(html).toContain("Новый чат")
     expect(html).not.toContain("Переименовать чат")
     expect(html).not.toContain("Удалить чат")
+    expect(html).not.toContain('aria-label="Новый чат"')
   })
 
   test("thumbs show the stored state", async () => {

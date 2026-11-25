@@ -107,11 +107,6 @@ export function ThreadControls({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-80">
-          <DropdownMenuItem onSelect={onNew}>
-            <Plus className="size-4" />
-            Новый чат
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">Мои чаты</DropdownMenuLabel>
           <div className="max-h-80 overflow-y-auto">
             {threads.length === 0 && (
@@ -157,11 +152,12 @@ export function ThreadControls({
           >
             <Trash2 className="size-3.5" />
           </Button>
+          {/* Only from a chat with messages: an empty chat already IS a new chat. */}
+          <Button variant="ghost" size="icon-sm" disabled={disabled} onClick={onNew} aria-label="Новый чат" title="Новый чат">
+            <Plus className="size-4" />
+          </Button>
         </>
       )}
-      <Button variant="ghost" size="icon-sm" disabled={disabled} onClick={onNew} aria-label="Новый чат" title="Новый чат">
-        <Plus className="size-4" />
-      </Button>
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>

@@ -47,8 +47,8 @@ export function UrgentTasksSection() {
         <ul className="mt-2 max-h-40 divide-y overflow-y-auto">
           {items.map((item) => (
             <li key={item.id}>
-              <Link href={`/tasks?openTask=${encodeURIComponent(item.id)}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-sm hover:underline">
-                <span className="min-w-0 flex-1 wrap-anywhere">{item.name}</span>
+              <Link href={`/tasks?openTask=${encodeURIComponent(item.id)}`} className="group flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-sm">
+                <span className="min-w-0 flex-1 wrap-anywhere group-hover:underline group-focus-visible:underline">{item.name}</span>
                 <time dateTime={item.dueDate} className="text-xs text-muted-foreground">{dueFormat.format(new Date(item.dueDate))}</time>
                 {item.overdue ? <Badge variant="destructive">Просрочена</Badge> : item.priority === "high" && <Badge variant="outline">Высокий приоритет</Badge>}
               </Link>

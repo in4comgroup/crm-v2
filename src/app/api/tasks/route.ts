@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import {
   listTasks,
+  listUrgentTasks,
   listOrgMembersForViewer,
   listTaskClientOptions,
   listTaskContactOptions,
@@ -48,6 +49,9 @@ export async function GET(request: NextRequest) {
       const clientId = url.searchParams.get("clientId")
       const options = await listTaskDealOptions(clientId)
       return NextResponse.json({ options })
+    }
+    if (url.searchParams.get("urgent") === "1") {
+      return NextResponse.json({ tasks: await listUrgentTasks() })
     }
     const tasks = await listTasks()
     return NextResponse.json({ tasks })

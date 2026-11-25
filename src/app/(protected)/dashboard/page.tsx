@@ -25,6 +25,7 @@ import {
   CATEGORY_LABEL,
 } from "@/components/blocks/cards-feed-section"
 import { PageLoader } from "@/components/blocks/page-loader"
+import { UrgentTasksSection } from "@/components/blocks/urgent-tasks-section"
 import { TopicListsSection } from "@/components/blocks/topic-lists-section"
 import { OrgProfileBanner } from "@/components/blocks/org-profile-banner"
 
@@ -262,9 +263,10 @@ export default function DashboardPage() {
 
       {/* Без внешнего Card-контейнера — как на Компаниях/Задачах/Контактах,
           заголовок страницы достаточен. */}
-      <div className="flex-1 min-h-0 p-4 pt-4">
+      <div className="flex flex-1 min-h-0 flex-col p-4">
+        <UrgentTasksSection />
         {topicsOn ? (
-          <TopicListsSection />
+          <div className="min-h-0 flex-1"><TopicListsSection /></div>
         ) : (
         <CardsFeedSection
           cards={historyCards}

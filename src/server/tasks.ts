@@ -15,7 +15,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "@/db/schema"
-import { aliasedTable, and, eq, desc, exists, inArray, isNotNull, or, sql } from "drizzle-orm"
+import { aliasedTable, and, eq, desc, exists, inArray, isNotNull, or, sql, asc, lte } from "drizzle-orm"
 import { OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getServerSession } from "@/lib/get-session"
@@ -141,6 +141,24 @@ async function assertDealIfProvided(
   if (!current || current.organizationId !== organizationId) {
     throw new Error("Invalid deal")
   }
+}
+
+export async function listUrgentTasks() {
+  const { activeOrgId, session } = await requireOrgContext()
+  const now = new Date()
+  const upcoming = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+  const rows = await db.select({ id: task.id, name: task.name, dueDate: task.dueDate, priority: task.priority })
+    .from(task)
+    .where(and(
+      eq(task.organizationId, activeOrgId),
+      eq(task.assigneeId, session.user.id),
+      inArray(task.status, ["todo", "in_progress"]),
+      or(lte(task.dueDate, upcoming), eq(task.priority, "high")),
+    ))
+    .orderBy(asc(task.dueDate), asc(task.id))
+  return rows.map(({ id, name, dueDate, priority }) => ({
+    id, name, dueDate: dueDate.toISOString(), priority, overdue: dueDate < now,
+  }))
 }
 
 export async function listTasks(): Promise<TaskRow[]> {

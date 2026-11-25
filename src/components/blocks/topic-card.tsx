@@ -740,7 +740,18 @@ export function TopicEntryCard({
   const closed = entry.status !== "open" && entry.status !== "dormant"
   const cardStatus = card && card.status !== "open" ? cardStatusLabel(card.status) : null
   return (
-    <Card className={cn("flex flex-col gap-3 py-4 bg-card shadow-sm", closed && "bg-muted dark:bg-background")}>
+    <Card
+      className={cn(
+        "flex cursor-pointer flex-col gap-3 border-border bg-card py-4 shadow-sm transition-[box-shadow,background-color] duration-200 hover:bg-card hover:shadow-lg dark:hover:bg-secondary",
+        closed && "bg-muted dark:bg-background",
+      )}
+      onClick={(event) => {
+        const target = event.target
+        if (!(target instanceof Element) || !event.currentTarget.contains(target)) return
+        if (target.closest("a, button, input, select, textarea, label, [role=button], [role=link]")) return
+        onOpen(entry.topicId)
+      }}
+    >
       <CardHeader className="px-4 gap-1.5 grid-cols-1">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
@@ -764,7 +775,7 @@ export function TopicEntryCard({
             <button
               type="button"
               onClick={() => onOpen(entry.topicId)}
-              className="block text-left font-semibold leading-snug hover:underline underline-offset-4"
+              className="block cursor-pointer rounded-sm text-left font-semibold leading-snug focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
               {cardText(card?.headline || entry.title)}
             </button>

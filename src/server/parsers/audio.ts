@@ -50,7 +50,7 @@ const audioAnalysisSchema = z.object({
   summary: z
     .string()
     .describe(
-      "A concise 2-4 sentence summary of the conversation or monologue — what was discussed, decisions made, or asks raised.",
+      "A concise 2-4 sentence summary of the conversation or monologue — what was discussed, decisions made, or asks raised. Write this summary in Russian regardless of the source language.",
     ),
   segments: z
     .array(audioSegmentSchema)

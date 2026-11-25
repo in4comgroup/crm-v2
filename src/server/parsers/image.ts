@@ -33,7 +33,7 @@ const imageAnalysisSchema = z.object({
   summary: z
     .string()
     .describe(
-      "A concise 1-3 sentence summary describing what the image shows or what it communicates.",
+      "A concise 1-3 sentence summary describing what the image shows or what it communicates. Write this summary in Russian regardless of the source language.",
     ),
   senders: z
     .array(z.string())

@@ -75,7 +75,7 @@ const metadataOnlySchema = z.object({
     ),
   summary: z
     .string()
-    .describe("A concise 1-3 sentence summary of what the document is about."),
+    .describe("A concise 1-3 sentence summary of what the document is about. Write this summary in Russian regardless of the source language."),
   mentions: z
     .array(z.string())
     .describe(

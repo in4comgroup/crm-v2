@@ -37,7 +37,7 @@ const videoAnalysisSchema = z.object({
   videoSummary: z
     .string()
     .describe(
-      "A brief 2-4 sentence summary of what the video is about — topic, purpose, key takeaways.",
+      "A brief 2-4 sentence summary of what the video is about — topic, purpose, key takeaways. Write this summary in Russian regardless of the source language.",
     ),
   videoContent: z
     .string()
@@ -49,7 +49,7 @@ const videoAnalysisSchema = z.object({
   audioSummary: z
     .string()
     .describe(
-      "A brief 2-4 sentence summary of the spoken content — what was discussed, decisions made, questions raised. Empty string if the video has no speech.",
+      "A brief 2-4 sentence summary of the spoken content — what was discussed, decisions made, questions raised. Empty string if the video has no speech. Write this summary in Russian regardless of the source language.",
     ),
   segments: z
     .array(audioSegmentSchema)
@@ -253,8 +253,8 @@ For video specifically: the 'author/sender' is each of the SPEAKERS — don't in
   const audioSummary =
     analysis.audioSummary.trim() ||
     (segments.length === 0
-      ? "The video contains no speech."
-      : "Transcript of the audio track of the video.")
+      ? "В видео нет речи."
+      : "Расшифровка звуковой дорожки видео.")
   const audioMarkdown = assembleMarkdown(
     buildFrontmatter(audioFrontmatter),
     audioSummary,

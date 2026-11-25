@@ -130,14 +130,6 @@ export function ContactDetailDrawer({
         // же фикс в client-detail-drawer.tsx/deal-detail-drawer.tsx.
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        <SheetHeader className="p-4 pb-3 border-b shrink-0">
-          <SheetTitle>{contactDisplayName(contact)}</SheetTitle>
-          {contact.clientName && (
-            <div className="text-xs text-muted-foreground truncate">
-              {contact.clientName}
-            </div>
-          )}
-        </SheetHeader>
         <Tabs
           key={contact.id}
           defaultValue="info"
@@ -146,8 +138,16 @@ export function ContactDetailDrawer({
           }}
           className="flex flex-1 min-h-0 flex-col gap-0"
         >
-          <div className="px-4 border-b shrink-0">
-            <TabsList variant="line" className="w-full justify-start gap-2 overflow-x-auto [&_[role=tab]]:after:bottom-0! [&_[role=tab]:focus-visible]:border-transparent [&_[role=tab]:focus-visible]:ring-0 [&_[role=tab]:focus-visible]:outline-none [&_[role=tab]:focus-visible]:underline [&_[role=tab]:focus-visible]:underline-offset-4">
+          <div className="shrink-0 border-b px-4 pt-4">
+            <SheetHeader className="gap-1 p-0 pr-10">
+              <SheetTitle>{contactDisplayName(contact)}</SheetTitle>
+              {contact.clientName && (
+                <div className="text-xs text-muted-foreground truncate">
+                  {contact.clientName}
+                </div>
+              )}
+            </SheetHeader>
+            <TabsList variant="line" className="mt-1 flex w-full justify-start gap-4 overflow-x-auto p-0 scrollbar-none [&_[role=tab]]:h-full! [&_[role=tab]]:after:-bottom-px! [&_[role=tab]:focus-visible]:border-transparent [&_[role=tab]:focus-visible]:ring-0 [&_[role=tab]:focus-visible]:outline-none [&_[role=tab]:focus-visible]:underline [&_[role=tab]:focus-visible]:underline-offset-4">
               <TabsTrigger value="info" className="flex-none">
                 Общая информация
               </TabsTrigger>

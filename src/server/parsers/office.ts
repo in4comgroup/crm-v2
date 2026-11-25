@@ -36,7 +36,7 @@ const officeAnalysisSchema = z.object({
   summary: z
     .string()
     .describe(
-      "A concise 1-3 sentence summary of what the document is about.",
+      "A concise 1-3 sentence summary of what the document is about. Write this summary in Russian regardless of the source language.",
     ),
   senders: z
     .array(z.string())

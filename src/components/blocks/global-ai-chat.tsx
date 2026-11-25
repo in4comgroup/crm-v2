@@ -53,7 +53,7 @@ export function AiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
   useEffect(() => {
     if (!open) return
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") closeChat()
+      if (e.key === "Escape" && !e.defaultPrevented) closeChat()
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
@@ -81,15 +81,16 @@ export function AiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
       <div
         role="dialog"
         aria-modal={open}
+        inert={!open}
         aria-label="ИИ чат"
         className={cn(
           "fixed inset-y-0 right-0 z-50 flex w-full border-l bg-background shadow-xl transition-transform duration-300",
-          content ? "sm:w-[85vw] lg:w-[70vw]" : "sm:w-[520px]",
+          content ? "md:w-[90vw] lg:w-[70vw]" : "sm:w-[520px]",
           open ? "translate-x-0" : "translate-x-full pointer-events-none",
         )}
       >
         {/* Chat column */}
-        <div className="flex min-w-0 flex-1 flex-col min-h-0">
+        <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", content && "hidden md:flex")}>
           <div className="flex items-center justify-between border-b px-3 py-2">
             <h3 className="text-sm font-semibold">ИИ чат</h3>
             <Button
@@ -108,9 +109,9 @@ export function AiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
 
         {/* Detail panel */}
         {content && (
-          <div className="w-[50%] min-w-0 min-h-0 flex flex-col border-l bg-card">
-            <div className="flex items-center justify-between px-4 py-2 border-b">
-              <div className="flex items-center gap-2">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card md:w-1/2 md:flex-none md:border-l">
+            <div className="flex items-center justify-between gap-2 border-b px-4 py-2">
+              <div className="flex min-w-0 items-center gap-2">
                 {history.length > 0 && (
                   <Button
                     variant="ghost"

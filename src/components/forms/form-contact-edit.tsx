@@ -12,6 +12,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { LoadingButton } from "@/components/blocks/loading-button"
 import { Input } from "@/components/ui/input"
+import { CircleHelp } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   Select,
   SelectContent,
@@ -232,7 +234,7 @@ export function ContactEditForm({
         }
         // Sent only when changed: a row without a loaded value never clears it.
         const managedPart = sameManagedInput(managed, initialManaged) ? {} : { managedAt: managed }
-        // «Имя на родном языке» on an edit is sent only when changed: a sent
+        // The native name on an edit is sent only when changed: a sent
         // value marks it as set by a person (a source never replaces it).
         const { nameNative, ...other } = rest
         const nativeChanged = nameNative.trim() !== (contact?.nameNative || contact?.name || "").trim()
@@ -265,12 +267,12 @@ export function ContactEditForm({
         <FormField
           control={form.control}
           name="nameNative"
-          rules={{ validate: (v) => !!v.trim() || "Укажите имя на родном языке" }}
+          rules={{ validate: (v) => !!v.trim() || "Укажите имя" }}
           render={({ field }) => (
             <FormItem>
-              <FormLabel className="text-gray-400">Имя на родном языке *</FormLabel>
+              <FormLabel className="text-gray-400">Имя</FormLabel>
               <FormControl>
-                <Input {...field} placeholder="Имя на родном языке (напр. Анна Иванова)" />
+                <Input {...field} placeholder="Обязательное поле" aria-required="true" />
               </FormControl>
               {/* «Системное имя» = the name the sources use (e-mail display
                   name, Telegram profile); read-only, for matching (2026-11-22). */}
@@ -352,7 +354,7 @@ export function ContactEditForm({
           )}
         />
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 [&>*]:min-w-0">
           <FormField
             control={form.control}
             name="clientId"
@@ -364,7 +366,7 @@ export function ContactEditForm({
                   onValueChange={field.onChange}
                 >
                   <FormControl>
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full min-w-0">
                       <SelectValue placeholder="Без клиента" />
                     </SelectTrigger>
                   </FormControl>
@@ -392,7 +394,7 @@ export function ContactEditForm({
                   onValueChange={field.onChange}
                 >
                   <FormControl>
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full min-w-0">
                       <SelectValue />
                     </SelectTrigger>
                   </FormControl>
@@ -410,13 +412,15 @@ export function ContactEditForm({
           />
         </div>
 
-        <div className="flex items-center justify-between gap-2 pt-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
           {mode === "edit" && contact && canBlock && contact.status !== "blocked" ? (
             <BlacklistEntityButton
               entityType="contact"
               id={contact.id}
               name={contact.nameNative || contact.name}
               label="Добавить в список блокировки"
+              size="default"
+              className="text-muted-foreground hover:bg-red-100 hover:text-red-800 dark:hover:bg-red-950/70 dark:hover:text-red-200"
               onBlocked={() => onSuccess?.()}
             />
           ) : (
@@ -466,7 +470,21 @@ function ManagedAtField({
         name="managedChoice"
         render={({ field }) => (
           <FormItem>
-            <FormLabel className="text-gray-400">Ведётся на уровне</FormLabel>
+            <div className="flex items-center gap-1.5">
+              <FormLabel className="text-gray-400">Ведётся на уровне</FormLabel>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button type="button" className="rounded-full text-muted-foreground hover:text-foreground" aria-label="Что значит «Ведётся на уровне»">
+                      <CircleHelp className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-left">
+                    Кто в нашей компании ведёт этот контакт. Например, генеральный директор. Поле справочное.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             <Select value={field.value} onValueChange={field.onChange}>
               <FormControl>
                 <SelectTrigger>
@@ -492,10 +510,6 @@ function ManagedAtField({
                 <SelectItem value={MANAGED_PERSON}>Другой человек нашей компании…</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
-              Кто в нашей компании ведёт этот контакт на своём уровне — например, генеральный директор. Только для
-              информации.
-            </p>
             <FormMessage />
           </FormItem>
         )}
@@ -505,15 +519,16 @@ function ManagedAtField({
           <FormField
             control={form.control}
             name="managedPersonName"
+            rules={{ validate: (v) => !!v.trim() || "Укажите имя" }}
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-gray-400">Имя *</FormLabel>
+                <FormLabel className="text-gray-400">Имя</FormLabel>
                 <FormControl>
                   <Input
                     {...field}
                     list={peopleListId}
                     maxLength={MANAGED_AT_LIMITS.name}
-                    placeholder="напр. Иван Петров"
+                    placeholder="Обязательное поле" aria-required="true"
                     onChange={(e) => {
                       field.onChange(e)
                       // Picked a known person → fill an empty position.

@@ -15,8 +15,6 @@ import { toast } from "sonner"
 import {
   ArrowLeftRight,
   Building2,
-  ChevronDown,
-  History,
   Loader,
   Merge,
   MoreHorizontal,
@@ -30,11 +28,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
 import {
   Dialog,
   DialogContent,
@@ -476,10 +469,12 @@ export function ContactLinkProposalsList({
 export function ContactCompaniesBlock({
   contactId,
   onChanged,
+  onHistoryChange,
 }: {
   contactId: string
   /** After any change (link, address, proposal, merge) — the drawer refreshes. */
   onChanged?: () => void
+  onHistoryChange: (contactId: string, events: ContactLinksResponse["events"]) => void
 }) {
   const [data, setData] = useState<ContactLinksResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -499,13 +494,14 @@ export function ContactCompaniesBlock({
       const json = (await res.json()) as ContactLinksResponse
       if (reqIdRef.current !== reqId) return
       setData(json)
+      onHistoryChange(contactId, json.events)
       setLoadError(false)
     } catch {
       if (reqIdRef.current === reqId) setLoadError(true)
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [contactId])
+  }, [contactId, onHistoryChange])
 
   useEffect(() => {
     void load()
@@ -520,6 +516,8 @@ export function ContactCompaniesBlock({
         )
         ++reqIdRef.current
         setData(next)
+        setLoading(false)
+        onHistoryChange(contactId, next.events)
         setLoadError(false)
         if (okText) toast.success(okText)
         onChanged?.()
@@ -529,7 +527,7 @@ export function ContactCompaniesBlock({
         return false
       }
     },
-    [contactId, onChanged],
+    [contactId, onChanged, onHistoryChange],
   )
 
   const afterExternalChange = useCallback(() => {
@@ -587,11 +585,11 @@ export function ContactCompaniesBlock({
             </Badge>
           )}
           <div className="ml-auto flex items-center gap-1">
-            <Button size="sm" variant="ghost" onClick={() => setMergeOpen(true)}>
+            <Button size="sm" variant="secondary" onClick={() => setMergeOpen(true)}>
               <Merge className="mr-1 h-4 w-4" />
               Объединить с…
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+            <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>
               <Plus className="mr-1 h-4 w-4" />
               Добавить компанию
             </Button>
@@ -641,8 +639,6 @@ export function ContactCompaniesBlock({
         currentLinks={current}
         onAct={act}
       />
-
-      <JournalSection events={data.events} />
 
       {addOpen && (
         <AddCompanyDialog
@@ -741,13 +737,13 @@ function LinkRow({
             {l.clientName}
           </Link>
           {isCurrent && l.isPrimary && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+            <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
               Основная
             </Badge>
           )}
         </div>
         {meta.length > 0 && (
-          <div className="truncate text-xs text-muted-foreground">
+          <div className="mt-1.5 truncate text-xs text-muted-foreground">
             {meta.join(" · ")}
           </div>
         )}
@@ -1206,9 +1202,10 @@ function AddressesSection({
   const [value, setValue] = useState("")
   const [companyId, setCompanyId] = useState(NO_COMPANY)
   const [busy, setBusy] = useState(false)
+  const [removingId, setRemovingId] = useState<string | null>(null)
 
   async function add() {
-    if (!value.trim()) return
+    if (!value.trim() || busy || removingId) return
     setBusy(true)
     const ok = await onAct(
       {
@@ -1226,6 +1223,16 @@ function AddressesSection({
     }
   }
 
+  async function remove(addressId: string) {
+    if (busy || removingId) return
+    setRemovingId(addressId)
+    try {
+      await onAct({ action: "removeAddress", addressId }, "Адрес удалён")
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
   return (
     <section className="space-y-2">
       <div className="flex items-center gap-2">
@@ -1233,7 +1240,8 @@ function AddressesSection({
         {!adding && (
           <Button
             size="sm"
-            variant="ghost"
+            variant="secondary"
+            disabled={!!removingId}
             className="ml-auto"
             onClick={() => {
               setKind("email")
@@ -1257,8 +1265,9 @@ function AddressesSection({
           {addresses.map((a) => (
             <div
               key={a.id}
+              aria-busy={removingId === a.id}
               className={cn(
-                "flex items-center gap-2 rounded-md border px-2.5 py-1.5",
+                "relative flex items-center gap-2 rounded-md border px-2.5 py-1.5",
                 a.status === "old" && "bg-muted/30",
               )}
             >
@@ -1291,6 +1300,7 @@ function AddressesSection({
                     size="icon"
                     className="h-7 w-7 shrink-0"
                     aria-label="Действия с адресом"
+                    disabled={busy || !!removingId}
                   >
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
@@ -1309,15 +1319,18 @@ function AddressesSection({
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     variant="destructive"
-                    onSelect={() =>
-                      void onAct({ action: "removeAddress", addressId: a.id }, "Адрес удалён")
-                    }
+                    onSelect={() => void remove(a.id)}
                   >
                     <Trash2 className="h-4 w-4" />
                     Удалить
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              {removingId === a.id && (
+                <div className="absolute inset-0 z-10 grid place-items-center rounded-md bg-background/75" role="status" aria-label="Удаляем адрес">
+                  <Loader className="size-4 animate-spin" />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1326,7 +1339,7 @@ function AddressesSection({
       {adding && (
         <div className="space-y-2 rounded-md border p-2.5">
           <div className="flex flex-wrap gap-2">
-            <Select value={kind} onValueChange={(v) => setKind(v as AddressKind)}>
+            <Select disabled={busy} value={kind} onValueChange={(v) => setKind(v as AddressKind)}>
               <SelectTrigger size="sm" className="w-32">
                 <SelectValue />
               </SelectTrigger>
@@ -1340,6 +1353,7 @@ function AddressesSection({
             </Select>
             <Input
               className="h-8 min-w-[12rem] flex-1"
+              disabled={busy}
               value={value}
               placeholder={
                 kind === "email" ? "name@company.ru" : kind === "phone" ? "+7 …" : "@handle"
@@ -1354,7 +1368,7 @@ function AddressesSection({
             />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Select value={companyId} onValueChange={setCompanyId}>
+            <Select disabled={busy} value={companyId} onValueChange={setCompanyId}>
               <SelectTrigger size="sm" className="w-fit max-w-full">
                 <SelectValue placeholder="Компания адреса" />
               </SelectTrigger>
@@ -1371,7 +1385,8 @@ function AddressesSection({
               <Button size="sm" variant="ghost" disabled={busy} onClick={() => setAdding(false)}>
                 Отмена
               </Button>
-              <Button size="sm" disabled={busy || !value.trim()} onClick={() => void add()}>
+              <Button size="sm" disabled={busy || !!removingId || !value.trim()} aria-busy={busy} onClick={() => void add()}>
+                {busy && <Loader className="size-4 animate-spin" aria-hidden="true" />}
                 Добавить
               </Button>
             </div>
@@ -1401,39 +1416,21 @@ function TelegramIdBadge({ verified }: { verified: boolean }) {
 
 // ── «История» ──────────────────────────────────────────────────────────────
 
-function JournalSection({ events }: { events: ContactLinksResponse["events"] }) {
-  const [open, setOpen] = useState(false)
-  if (events.length === 0) return null
+export function ContactLinkHistory({ events }: { events: ContactLinksResponse["events"] | null }) {
+  if (!events) return <p className="text-sm text-muted-foreground">История пока недоступна.</p>
+  if (!events.length) return <p className="text-sm text-muted-foreground">Изменений пока нет.</p>
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className="flex w-full items-center gap-1.5 text-left font-medium"
-        >
-          <History className="h-4 w-4 text-muted-foreground" />
-          История
-          <span className="text-xs font-normal text-muted-foreground">{events.length}</span>
-          <ChevronDown
-            className={cn("ml-auto h-4 w-4 transition-transform", open && "rotate-180")}
-          />
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <ul className="mt-2 space-y-1.5">
-          {events.map((e) => (
-            <li key={e.id} className="text-xs">
-              <span>{e.text}</span>
-              <span className="text-muted-foreground">
-                {" · "}
-                {formatLinkDay(e.createdAt)}
-                {e.userName ? ` · ${e.userName}` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </CollapsibleContent>
-    </Collapsible>
+    <ul className="space-y-2 text-sm">
+      {events.map((event) => (
+        <li key={event.id}>
+          <div>{event.text}</div>
+          <div className="text-xs text-muted-foreground">
+            {formatLinkDay(event.createdAt)}
+            {event.userName ? ` · ${event.userName}` : ""}
+          </div>
+        </li>
+      ))}
+    </ul>
   )
 }
 

@@ -17,7 +17,7 @@ import {
   Component,
   type ReactNode,
 } from "react"
-import { CopyIcon, CheckIcon, CircleAlert, Paperclip } from "lucide-react"
+import { CopyIcon, CheckIcon, ChevronDown, CircleAlert, Paperclip } from "lucide-react"
 import { toast } from "sonner"
 import {
   useJsonRenderMessage,
@@ -71,6 +71,7 @@ import {
   PromptInputProvider,
   PromptInput,
   PromptInputTextarea,
+  PromptInputFooter,
   PromptInputTools,
   PromptInputActionMenu,
   PromptInputActionMenuTrigger,
@@ -80,10 +81,10 @@ import {
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input"
 import { DictationButton } from "@/components/blocks/chat/dictation-button"
+import { Command } from "@/components/ui/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
-  ModelSelector,
-  ModelSelectorTrigger,
-  ModelSelectorContent,
+  ModelSelectorEmpty,
   ModelSelectorInput,
   ModelSelectorList,
   ModelSelectorGroup,
@@ -483,42 +484,45 @@ function ChatSession({
       )}
     >
       {/* Header */}
-      <div className="flex min-h-11 items-center gap-2 border-b px-2 py-2">
+      <div className="flex min-h-11 flex-wrap items-center justify-between gap-2 border-b px-2 py-2">
         {renderControls({ busy: isLoading, hasMessages: messages.length > 0 })}
         <div className="flex shrink-0 items-center gap-1">
           {showPicker && (
-            <ModelSelector open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
-              <ModelSelectorTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-2 text-xs">
+            <Popover open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="min-w-0 max-w-44 gap-2 text-xs" aria-label={`Выбрать модель: ${currentModel?.name ?? "Модель"}`}>
                   {currentModel?.vendor && (
                     <ModelSelectorLogo provider={currentModel.vendor} className="size-4" />
                   )}
-                  {currentModel?.name ?? "Модель"}
+                  <span className="truncate">{currentModel?.name ?? "Модель"}</span>
+                  <ChevronDown className="size-3 opacity-60" />
                 </Button>
-              </ModelSelectorTrigger>
-              <ModelSelectorContent>
-                <ModelSelectorInput placeholder="Поиск моделей..." />
-                <ModelSelectorList>
-                  <ModelSelectorGroup heading="Доступные модели">
-                    {models.map((model) => (
-                      <ModelSelectorItem
-                        key={model.id}
-                        value={`${model.name} ${model.id}`}
-                        onSelect={() => {
-                          setPickedModel(model.id)
-                          setModelSelectorOpen(false)
-                        }}
-                      >
-                        {model.vendor && (
-                          <ModelSelectorLogo provider={model.vendor} className="size-4" />
-                        )}
-                        <ModelSelectorName>{model.name}</ModelSelectorName>
-                      </ModelSelectorItem>
-                    ))}
-                  </ModelSelectorGroup>
-                </ModelSelectorList>
-              </ModelSelectorContent>
-            </ModelSelector>
+              </PopoverTrigger>
+              <PopoverContent align="end" sideOffset={6} className="z-[60] w-72 max-w-[calc(100vw-1rem)] p-0" aria-label="Выбор модели">
+                <Command>
+                  <ModelSelectorInput placeholder="Поиск моделей…" aria-label="Поиск моделей" />
+                  <ModelSelectorList className="max-h-[min(16rem,var(--radix-popover-content-available-height))]">
+                    <ModelSelectorEmpty>Модели не найдены</ModelSelectorEmpty>
+                    <ModelSelectorGroup heading="Доступные модели">
+                      {models.map((model) => (
+                        <ModelSelectorItem
+                          key={model.id}
+                          value={`${model.name} ${model.id}`}
+                          onSelect={() => {
+                            setPickedModel(model.id)
+                            setModelSelectorOpen(false)
+                          }}
+                        >
+                          {model.vendor && <ModelSelectorLogo provider={model.vendor} className="size-4" />}
+                          <ModelSelectorName>{model.name}</ModelSelectorName>
+                          {currentModel?.id === model.id && <CheckIcon className="ml-auto size-4" aria-label="Текущая модель" />}
+                        </ModelSelectorItem>
+                      ))}
+                    </ModelSelectorGroup>
+                  </ModelSelectorList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           )}
 
           {renderMenu({ busy: isLoading, hasMessages: messages.length > 0 })}
@@ -570,7 +574,7 @@ function ChatSession({
       </Conversation>
 
       {/* Input area */}
-      <div className="border-t p-4">
+      <div className="min-w-0 shrink-0 border-t p-2 sm:p-4">
         {limitMessage ? (
           <Alert>
             <CircleAlert />
@@ -587,23 +591,25 @@ function ChatSession({
             >
               <InputAttachmentChips />
               <PromptInputTextarea placeholder="Введите сообщение или прикрепите файл / голосовое…" />
-              <PromptInputTools className="pr-3 flex flex-row gap-2">
-                <PromptInputActionMenu>
-                  <PromptInputActionMenuTrigger />
-                  <PromptInputActionMenuContent>
-                    <PromptInputActionAddAttachments label="Прикрепить файл" />
-                    <CameraMenuItem />
-                  </PromptInputActionMenuContent>
-                </PromptInputActionMenu>
-                <DictationButton />
-                <VoiceAttachButton disabled={isLoading} />
+              <PromptInputFooter className="flex-wrap justify-end gap-1 border-t px-2 py-1.5">
+                <PromptInputTools className="mr-auto flex-wrap">
+                  <PromptInputActionMenu>
+                    <PromptInputActionMenuTrigger />
+                    <PromptInputActionMenuContent>
+                      <PromptInputActionAddAttachments label="Прикрепить файл" />
+                      <CameraMenuItem />
+                    </PromptInputActionMenuContent>
+                  </PromptInputActionMenu>
+                  <DictationButton />
+                  <VoiceAttachButton disabled={isLoading} />
+                </PromptInputTools>
                 <PromptInputSubmit variant="ghost" status={status} onStop={stop} />
-              </PromptInputTools>
+              </PromptInputFooter>
             </PromptInput>
           </PromptInputProvider>
         )}
 
-        <p className="mt-3 px-6 text-xs leading-snug text-muted-foreground text-left">
+        <p className="mt-2 text-xs leading-snug text-muted-foreground text-left">
           В чате используются большие языковые модели для агентного поиска и
           рассуждений. Эти модели могут ошибаться или давать неверные
           рекомендации.

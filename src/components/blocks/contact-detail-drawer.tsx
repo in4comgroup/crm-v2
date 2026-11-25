@@ -28,7 +28,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { ContactCompaniesBlock } from "@/components/blocks/contact-companies-block"
+import { ContactCompaniesBlock, ContactLinkHistory } from "@/components/blocks/contact-companies-block"
+import type { ContactLinksResponse } from "@/lib/contact-links"
 import { contactDisplayName } from "@/lib/contact-names"
 
 // Дровер контакта — по образцу <ClientDetailDrawer>/<DealDetailDrawer>: клик
@@ -82,6 +83,10 @@ export function ContactDetailDrawer({
   const fieldsPanelRef = useRef<CustomFieldsPanelHandle | null>(null)
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
   const [savingFields, setSavingFields] = useState(false)
+  const [history, setHistory] = useState<{ contactId: string; events: ContactLinksResponse["events"] } | null>(null)
+  const updateHistory = useCallback((contactId: string, events: ContactLinksResponse["events"]) => {
+    setHistory({ contactId, events })
+  }, [])
 
   function handleOpenChange(next: boolean) {
     if (!next && fieldsPanelRef.current?.isDirty()) {
@@ -142,7 +147,7 @@ export function ContactDetailDrawer({
           className="flex flex-1 min-h-0 flex-col gap-0"
         >
           <div className="px-4 border-b shrink-0">
-            <TabsList variant="line" className="w-full justify-start gap-4">
+            <TabsList variant="line" className="w-full justify-start gap-2 overflow-x-auto [&_[role=tab]]:after:bottom-0! [&_[role=tab]:focus-visible]:border-transparent [&_[role=tab]:focus-visible]:ring-0 [&_[role=tab]:focus-visible]:outline-none [&_[role=tab]:focus-visible]:underline [&_[role=tab]:focus-visible]:underline-offset-4">
               <TabsTrigger value="info" className="flex-none">
                 Общая информация
               </TabsTrigger>
@@ -162,14 +167,16 @@ export function ContactDetailDrawer({
                   )}
                 </TabsTrigger>
               )}
+              <TabsTrigger value="history" className="flex-none">История</TabsTrigger>
             </TabsList>
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto p-4">
-            <TabsContent value="info" className="space-y-6">
+            <TabsContent value="info" forceMount className="space-y-6 data-[state=inactive]:hidden">
               {/* «Компании» — links over time, addresses, proposals (spec 04 §6). */}
               <ContactCompaniesBlock
                 contactId={contact.id}
                 onChanged={handleLinksChanged}
+                onHistoryChange={updateHistory}
               />
               <div className="border-t pt-4">{form}</div>
             </TabsContent>
@@ -201,6 +208,9 @@ export function ContactDetailDrawer({
                 />
               </TabsContent>
             )}
+            <TabsContent value="history">
+              <ContactLinkHistory events={history?.contactId === contact.id ? history.events : null} />
+            </TabsContent>
           </div>
         </Tabs>
       </SheetContent>

@@ -270,6 +270,7 @@ export function BlacklistEntityButton({
   onBlocked,
   label,
   className,
+  size = "sm",
 }: {
   entityType: "client" | "contact"
   id: string
@@ -277,6 +278,7 @@ export function BlacklistEntityButton({
   onBlocked: () => void
   label?: string
   className?: string
+  size?: "sm" | "default"
 }) {
   const [busy, setBusy] = useState(false)
 
@@ -309,7 +311,7 @@ export function BlacklistEntityButton({
           <Button
             type="button"
             variant="ghost"
-            size="sm"
+            size={size}
             className={
               className ??
               "text-muted-foreground hover:text-destructive hover:bg-destructive/10"

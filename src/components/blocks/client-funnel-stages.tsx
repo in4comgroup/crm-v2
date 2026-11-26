@@ -9,6 +9,8 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { stageColorClass } from "@/lib/deal-board"
+import { isOpenStageRole } from "@/lib/deal-funnel"
+import { clientRelation, type ClientRelation } from "@/lib/client-relation"
 import { cn } from "@/lib/utils"
 import type { ClientDealStage } from "@/app/api/deals/route"
 
@@ -20,12 +22,19 @@ function dealDisplayName(dealName: string, clientName: string): string {
   return (suffix || title).replaceAll("—", "-")
 }
 
-export function ClientFunnelStages({ clientId, clientName, className }: { clientId: string; clientName: string; className?: string }) {
-  // Keyed by the company the answer is for, so another company never shows
-  // an old answer and no state reset is needed when `clientId` changes.
-  const [data, setData] = useState<{ clientId: string; stages: ClientDealStage[] | null } | null>(null)
+export type ClientDealStagesState = { clientId: string; stages: ClientDealStage[] | null } | null
+
+/**
+ * The company's open deals with their stage (`GET /api/deals?clientStages=`).
+ * `null` clientId = do not load (the caller passes the state in instead).
+ * Keyed by the company the answer is for, so another company never shows
+ * an old answer and no state reset is needed when `clientId` changes.
+ */
+export function useClientDealStages(clientId: string | null): ClientDealStagesState {
+  const [data, setData] = useState<ClientDealStagesState>(null)
 
   useEffect(() => {
+    if (!clientId) return
     let cancelled = false
     fetch(`/api/deals?clientStages=${encodeURIComponent(clientId)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
@@ -39,6 +48,39 @@ export function ClientFunnelStages({ clientId, clientName, className }: { client
       cancelled = true
     }
   }, [clientId])
+
+  return clientId && data?.clientId === clientId ? data : null
+}
+
+/**
+ * Relationship from the deals alone (no manual «Поставщик» / «Партнёр»
+ * tag) — the same rule as the «Компании» tabs (`clientRelation`): a won deal
+ * → «Клиент», an open one (incl. «Контакт до запроса», area 0) →
+ * «Потенциальный», none → «Не определено». `null` while loading / failed.
+ */
+export function relationFromDealStages(state: ClientDealStagesState): ClientRelation | null {
+  if (!state?.stages) return null
+  return clientRelation({
+    companyKind: null,
+    hasWonDeal: state.stages.some((s) => s.stageRole === "won"),
+    hasOpenDeal: state.stages.some((s) => isOpenStageRole(s.stageRole)),
+  })
+}
+
+export function ClientFunnelStages({
+  clientId,
+  clientName,
+  className,
+  state,
+}: {
+  clientId: string
+  clientName: string
+  className?: string
+  /** Already loaded by the parent (`useClientDealStages`) — no second request. */
+  state?: ClientDealStagesState
+}) {
+  const own = useClientDealStages(state === undefined ? clientId : null)
+  const data = state === undefined ? own : state
 
   const current = data?.clientId === clientId ? data : null
   const failed = current !== null && current.stages === null

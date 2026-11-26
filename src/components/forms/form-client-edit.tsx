@@ -375,12 +375,12 @@ export default function ClientEditDialog({
                   <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger>
-                        <SelectValue placeholder="Не определено" />
+                        <SelectValue placeholder="Автоматически по сделкам" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
                       <SelectItem value={COMPANY_KIND_NONE}>
-                        Не определено (по сделкам)
+                        Автоматически по сделкам
                       </SelectItem>
                       {COMPANY_KIND_VALUES.map((k) => (
                         <SelectItem key={k} value={k}>

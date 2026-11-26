@@ -239,6 +239,7 @@ export function ClientDetailShell({
           />
           <ClientProfileBlock
             clientId={detail.id}
+            onClientChanged={refresh}
             className="sm:col-span-2 text-foreground"
           />
           <ClientTelegramBlock

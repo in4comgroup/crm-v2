@@ -49,6 +49,13 @@ import type {
 
 const NONE = "__none__"
 
+const CONTACT_FIELD_LABELS_RU: Record<FillProfileResult["contactFilled"][number], string> = {
+  webUrl: "сайт",
+  email: "e-mail",
+  phone: "телефон",
+  address: "адрес",
+}
+
 const RELATION_LABELS_RU: Record<ClientRelation, string> = {
   active: "Активный клиент",
   dormant: "Затих",
@@ -289,7 +296,20 @@ function LinesInput({
 
 // ── Block ─────────────────────────────────────────────────────────────────
 
-export function ClientProfileBlock({ clientId, className }: { clientId: string; className?: string }) {
+export function ClientProfileBlock({
+  clientId,
+  className,
+  onClientChanged,
+}: {
+  clientId: string
+  className?: string
+  /**
+   * «Заполнить из интернета» also fills blank website / e-mail / phone /
+   * address of the company row — the parent reloads the company so its own
+   * form shows them (2026-11-26).
+   */
+  onClientChanged?: () => void
+}) {
   const [view, setView] = useState<ClientProfileView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -359,11 +379,18 @@ export function ClientProfileBlock({ clientId, className }: { clientId: string; 
     } else {
       const filled = r.profile.filled.length
       const proposed = r.profile.proposed.length
-      if (filled === 0 && proposed === 0) toast.info("Новых данных нет")
+      const contacts = r.contactFilled ?? []
+      if (contacts.length > 0) onClientChanged?.()
+      if (filled === 0 && proposed === 0 && contacts.length === 0) toast.info("Новых данных нет")
       else
-        toast.success("Профиль дополнен из интернета", {
+        // The values are written at once — no «Сохранить» needed (testers
+        // waited for the drawer's save button, 2026-11-26).
+        toast.success("Данные из интернета сохранены", {
           description: [
-            filled ? `заполнено полей: ${filled} (проверьте)` : "",
+            contacts.length
+              ? `контакты компании: ${contacts.map((f) => CONTACT_FIELD_LABELS_RU[f]).join(", ")}`
+              : "",
+            filled ? `полей профиля: ${filled} (проверьте)` : "",
             proposed ? `предложений: ${proposed}` : "",
           ]
             .filter(Boolean)

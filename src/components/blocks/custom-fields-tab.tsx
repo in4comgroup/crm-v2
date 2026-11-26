@@ -640,7 +640,17 @@ export function CustomFieldsPanel({
         ) : (
           <span />
         )}
-        <Button type="button" onClick={() => void save()} disabled={!isDirty || saving}>
+        {/* Clickable with nothing changed (2026-11-26): a field created in
+            «Настроить поля» is already saved, and a disabled button read as
+            «cannot save». */}
+        <Button
+          type="button"
+          onClick={() => {
+            if (!isDirty) toast.info("Изменений нет — всё уже сохранено")
+            else void save()
+          }}
+          disabled={saving}
+        >
           {saving ? <Loader className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
           Сохранить
         </Button>

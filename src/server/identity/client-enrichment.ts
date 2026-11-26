@@ -868,15 +868,22 @@ export type FillProfileResult = {
   outcome: "applied" | "ambiguous" | "no_match"
   candidateCount: number
   profile: ProfileApplySummary
+  /** Blank contact fields of the company filled from the candidate. */
+  contactFilled: EnrichFillable[]
 }
 
 /**
  * The profile button (responsible member or org owner — checked here). One
  * lookup; exactly ONE candidate → its profile goes through the apply rule
  * (field confidence capped by the match confidence, so a weak match only
- * yields proposals); several candidates → `ambiguous`, nothing written (the
- * user narrows the search with the website in «Поиск в интернете»); none →
- * `no_match` (stamped). Contact fields are not touched here.
+ * yields proposals) AND its website / e-mail / phone / address fill the
+ * company's BLANK contact fields (never overwrite; not for a `low` match —
+ * same bar as a profile field); several candidates → `ambiguous`, nothing
+ * written (the user narrows the search with the website in «Поиск в
+ * интернете»); none → `no_match` (stamped).
+ *
+ * Before 2026-11-26 the contact fields were left alone here, so testers saw
+ * the description filled but no website / e-mail / phone.
  */
 export async function fillClientProfileFromWeb(
   orgId: string,
@@ -885,16 +892,31 @@ export async function fillClientProfileFromWeb(
   now = new Date(),
 ): Promise<FillProfileResult> {
   await assertCanEditClientProfile(orgId, userId, clientId)
+  const target = await loadClientInOrg(orgId, clientId)
   const { candidates } = await lookupClientOnWebForOrg(orgId, userId, clientId)
   if (candidates.length === 0) {
     await applyCandidateProfileForOrg(orgId, clientId, null, now)
-    return { outcome: "no_match", candidateCount: 0, profile: EMPTY_PROFILE_SUMMARY }
+    return { outcome: "no_match", candidateCount: 0, profile: EMPTY_PROFILE_SUMMARY, contactFilled: [] }
   }
   if (candidates.length > 1) {
-    return { outcome: "ambiguous", candidateCount: candidates.length, profile: EMPTY_PROFILE_SUMMARY }
+    return {
+      outcome: "ambiguous",
+      candidateCount: candidates.length,
+      profile: EMPTY_PROFILE_SUMMARY,
+      contactFilled: [],
+    }
   }
-  const profile = await applyCandidateProfileForOrg(orgId, clientId, candidates[0], now)
-  return { outcome: "applied", candidateCount: 1, profile }
+  const candidate = candidates[0]
+  const patch = candidate.confidence === "low" ? {} : candidatePatch(target, candidate)
+  const contactFilled = Object.keys(patch) as EnrichFillable[]
+  if (contactFilled.length > 0) {
+    await db
+      .update(client)
+      .set(patch)
+      .where(and(eq(client.id, clientId), eq(client.organizationId, orgId)))
+  }
+  const profile = await applyCandidateProfileForOrg(orgId, clientId, candidate, now)
+  return { outcome: "applied", candidateCount: 1, profile, contactFilled }
 }
 
 // ── Enrichment on create (Q6: org setting, default off) ───────────────────

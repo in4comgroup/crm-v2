@@ -55,7 +55,12 @@ import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
 import { ClientResponsibleField } from "@/components/blocks/client-responsible-field"
 import { ClientProfileBlock } from "@/components/blocks/client-profile-block"
-import { ClientFunnelStages } from "@/components/blocks/client-funnel-stages"
+import {
+  ClientFunnelStages,
+  relationFromDealStages,
+  useClientDealStages,
+} from "@/components/blocks/client-funnel-stages"
+import { CLIENT_RELATION_LABELS } from "@/lib/client-relation"
 import { ClientTelegramBlock } from "@/components/blocks/client-telegram-block"
 import { BlacklistEntityButton } from "@/components/blocks/client-blocklist-dialog"
 import { ClientContentTable } from "@/components/blocks/client-content-table"
@@ -334,6 +339,10 @@ export function ClientDetailDrawer({
       .catch(() => {})
   }
 
+  // «Этап воронки» + the automatic «Тип компании» (one request).
+  const dealStages = useClientDealStages(client?.id ?? null)
+  const autoRelation = relationFromDealStages(dealStages)
+
   const editForm = useForm<ClientEditFormData>({
     defaultValues: buildDefaults(client),
   })
@@ -357,6 +366,13 @@ export function ClientDetailDrawer({
 
   function onSave(data: ClientEditFormData, opts?: { closeAfter?: boolean }) {
     if (!client) return
+    // «Сохранить» stays clickable (2026-11-26): testers read a disabled button
+    // as «cannot save» after the profile / fields had already saved themselves.
+    if (!editForm.formState.isDirty) {
+      toast.info("Изменений нет — всё уже сохранено")
+      if (opts?.closeAfter) onOpenChange(false)
+      return
+    }
     const aliases = data.aliases
       .split(",")
       .map((a) => a.trim())
@@ -616,7 +632,7 @@ export function ClientDetailDrawer({
 
               {/* «Профиль компании» (identity I5 / I6): own API + save, never
                   submits this drawer's form (type="button" everywhere). */}
-              <ClientProfileBlock clientId={client.id} />
+              <ClientProfileBlock clientId={client.id} onClientChanged={onChanged} />
 
               {/* «Telegram» (docs/specs/telegram/04 §7.2, Q18): the company's
                   groups / accounts + «Новые контакты из Telegram»; own API,
@@ -786,12 +802,17 @@ export function ClientDetailDrawer({
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Не определено" />
+                            <SelectValue placeholder="Автоматически по сделкам" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
+                          {/* No manual tag = the relationship from the
+                              deals, shown here so «Не определено» is not
+                              read as the company's type (2026-11-26). */}
                           <SelectItem value={COMPANY_KIND_NONE}>
-                            Не определено (по сделкам)
+                            {autoRelation
+                              ? `Автоматически по сделкам: ${CLIENT_RELATION_LABELS[autoRelation]}`
+                              : "Автоматически по сделкам"}
                           </SelectItem>
                           {COMPANY_KIND_VALUES.map((k) => (
                             <SelectItem key={k} value={k}>
@@ -808,7 +829,7 @@ export function ClientDetailDrawer({
               {/* «Этап воронки» = the stages of the company's deals, read
                   only (bug list 2026-11-21, item 13; the manual field
                   `funnel_phase` with a fixed list was removed). */}
-              <ClientFunnelStages clientId={client.id} clientName={client.name} />
+              <ClientFunnelStages clientId={client.id} clientName={client.name} state={dealStages} />
 
               <div className="grid grid-cols-2 gap-3">
                 <FormField
@@ -878,10 +899,7 @@ export function ClientDetailDrawer({
                 ) : (
                   <span />
                 )}
-                <Button
-                  type="submit"
-                  disabled={isPending || !editForm.formState.isDirty}
-                >
+                <Button type="submit" disabled={isPending}>
                   <Save className="h-3.5 w-3.5 mr-1" />
                   Сохранить
                 </Button>

@@ -450,6 +450,12 @@ export function DealDetailDrawer({
 
   function onSaveDeal(data: DealEditFormData, opts?: { closeAfter?: boolean }) {
     if (!deal) return
+    // «Сохранить» stays clickable (2026-11-26, as in the company drawer).
+    if (!editForm.formState.isDirty) {
+      toast.info("Изменений нет — всё уже сохранено")
+      if (opts?.closeAfter) onOpenChange(false)
+      return
+    }
     const trimmedValue = data.value.trim()
     const numericValue = trimmedValue === "" ? null : Number(trimmedValue)
     if (numericValue !== null && !Number.isFinite(numericValue)) {
@@ -1026,7 +1032,7 @@ export function DealDetailDrawer({
                 <Button
                   type="submit"
                   className="ml-auto"
-                  disabled={isPending || !editForm.formState.isDirty}
+                  disabled={isPending}
                 >
                   <Save className="h-3.5 w-3.5 mr-1" />
                   Сохранить

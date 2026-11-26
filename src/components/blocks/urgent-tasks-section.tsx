@@ -6,12 +6,15 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useGlobalChat } from "@/lib/global-chat-context"
 import type { listUrgentTasks } from "@/server/tasks"
+import { useOrgTime } from "@/lib/org-time-context"
+import { formatOrgDueShort } from "@/lib/org-time"
 
 type UrgentTasks = Awaited<ReturnType<typeof listUrgentTasks>>
-const dueFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" })
 
 export function UrgentTasksSection() {
   const { openChat } = useGlobalChat()
+  // Deadlines in the ORG time zone, not the browser's (2026-11-26).
+  const { timeZone } = useOrgTime()
   const [items, setItems] = useState<UrgentTasks | null>(null)
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -52,7 +55,7 @@ export function UrgentTasksSection() {
             <li key={item.id}>
               <Link href={`/tasks?openTask=${encodeURIComponent(item.id)}`} className="group flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-sm">
                 <span className="min-w-0 flex-1 wrap-anywhere group-hover:underline group-focus-visible:underline">{item.name}</span>
-                <time dateTime={item.dueDate} className="text-xs text-muted-foreground">{dueFormat.format(new Date(item.dueDate))}</time>
+                <time dateTime={item.dueDate} className="text-xs text-muted-foreground">{formatOrgDueShort(item.dueDate, timeZone)}</time>
                 {item.overdue ? <Badge variant="destructive">Просрочена</Badge> : item.priority === "high" && <Badge variant="outline">Высокий приоритет</Badge>}
               </Link>
             </li>

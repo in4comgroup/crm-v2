@@ -43,6 +43,7 @@ import { getTopicsMode, type TopicsMode } from "@/server/topics/mode"
 import { loadAttentionParams } from "@/server/topics/attention/store"
 import { getOrgSetting, setOrgSetting } from "@/server/org-settings"
 import { withWorkingContext, workingContextInputSchema, type WorkingContextInput } from "@/lib/identity/working-context"
+import { DEFAULT_TASK_DUE_TIME } from "@/lib/org-time"
 import type { PersonChannel } from "@/lib/identity/org-profile"
 
 export class OrgProfileError extends Error {
@@ -160,7 +161,7 @@ export type OrgProfileView = {
     members: OrgProfileMember[]
   }
   /** Group C: org time zone + working hours (`attention.params`); the org owner edits it (2026-11-19). */
-  workingContext: { timeZone: string; workStart: string; workEnd: string }
+  workingContext: { timeZone: string; workStart: string; workEnd: string; taskDueTime: string }
   history: OrgProfileHistoryRow[]
 }
 
@@ -179,6 +180,7 @@ function entryView(r: typeof orgIdentityEntry.$inferSelect): OrgIdentityEntryVie
 
 /** Everything the «Профиль организации» tab shows, for `viewerUserId`. */
 export async function getOrgProfileView(orgId: string, viewerUserId: string): Promise<OrgProfileView> {
+  const taskDueTimeP = getOrgSetting(orgId, "tasks.defaultDueTime").catch(() => null)
   const [orgRows, viewer, stored, industries, categories, entries, members, params, logRows, topicsMode, ownCtx] =
     await Promise.all([
       db
@@ -283,7 +285,12 @@ export async function getOrgProfileView(orgId: string, viewerUserId: string): Pr
           entries: personByUser.get(m.userId) ?? [],
         })),
     },
-    workingContext: { timeZone: params.timeZone, workStart: params.workStart, workEnd: params.workEnd },
+    workingContext: {
+      timeZone: params.timeZone,
+      workStart: params.workStart,
+      workEnd: params.workEnd,
+      taskDueTime: (await taskDueTimeP) ?? DEFAULT_TASK_DUE_TIME,
+    },
     history: logRows.map((r) => {
       const before = (r.before ?? {}) as Partial<OrgProfileInput>
       const after = (r.after ?? {}) as Partial<OrgProfileInput>
@@ -433,6 +440,9 @@ export async function saveWorkingContext(orgId: string, input: unknown, userId: 
   if (!parsed.success) throw new OrgProfileError(400, parsed.error.issues[0]?.message ?? "Некорректные данные")
   const current = (await getOrgSetting(orgId, "attention.params")) as Record<string, unknown> | null
   await setOrgSetting(orgId, "attention.params", withWorkingContext(current, parsed.data), userId)
+  // The default due time = its own key; the code default is stored as «no row».
+  const due = parsed.data.taskDueTime === DEFAULT_TASK_DUE_TIME ? null : parsed.data.taskDueTime
+  await setOrgSetting(orgId, "tasks.defaultDueTime", due, userId)
   return parsed.data
 }
 

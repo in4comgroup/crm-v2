@@ -21,6 +21,8 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import type { TaskRow } from "@/app/api/tasks/route"
 import type { TaskType, TaskPriority, TaskStatus } from "@/db/schema"
+import { useOrgTime } from "@/lib/org-time-context"
+import { formatOrgDue } from "@/lib/org-time"
 
 const TYPE_LABELS: Record<TaskType, string> = {
   meet: "Встреча",
@@ -65,15 +67,6 @@ const PRIORITY_COLOR: Record<TaskPriority, string> = {
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
-function formatDate(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleDateString("ru-RU", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  })
-}
-
 // Клик по всей карточке открывает <TaskDetailDrawer> — как <ClientCard>, той
 // же поверхностью (единый язык карточек по разделам). Отдельной кнопки
 // редактирования больше нет; статус меняется прямо на карточке через Select,
@@ -88,6 +81,8 @@ export function TaskCard({
   onOpenDetail: (taskId: string) => void
 }) {
   const [isPending, startTransition] = useTransition()
+  // The deadline in the ORG time zone (src/lib/org-time.ts).
+  const { timeZone } = useOrgTime()
 
   const handleStatusChange = (next: TaskStatus) => {
     if (next === task.status) return
@@ -149,7 +144,7 @@ export function TaskCard({
         <div className="space-y-1 text-muted-foreground">
           <div className="flex items-center gap-2 truncate">
             <CalendarClock className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">Срок {formatDate(task.dueDate)}</span>
+            <span className="truncate">Срок {formatOrgDue(task.dueDate, timeZone)}</span>
           </div>
           <div className="flex items-center gap-2 truncate">
             <UserIcon className="h-3.5 w-3.5 shrink-0" />

@@ -975,6 +975,7 @@ export async function mergeContacts(orgId: string, keepId: string, mergeId: stri
         phone: keepPhone,
         nameNative: keep.nameNative ?? merge.nameNative,
         position: keep.position ?? merge.position,
+        birthday: keep.birthday ?? merge.birthday,
         clientId: newPrimary,
         customValues: values,
         // «Ведётся на уровне» (clients-contacts/07): the kept contact's value, else the merged one's.

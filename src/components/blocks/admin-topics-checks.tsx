@@ -33,7 +33,7 @@ import type { CheckPreview, CheckRunOutcome } from "@/server/topics/checks/run"
 type OrgRow = { organizationId: string; name: string; mode: string; switch: ChecksSwitch }
 
 const MODE_LABEL: Record<string, string> = { off: "Выключено", shadow: "Тень", on: "Включено" }
-const GROUP_LABEL: Record<string, string> = { orders: "Заказы", watchdogs: "Сторож" }
+const GROUP_LABEL: Record<string, string> = { orders: "Заказы", watchdogs: "Сторож", contacts: "Контакты" }
 const STATUS_LABEL: Record<string, string> = { running: "Идёт", ok: "Успешно", failed: "Ошибка", skipped: "Пропущено" }
 const COUNT_LABEL: Record<string, string> = {
   created: "создано",
@@ -205,6 +205,15 @@ export function AdminTopicsChecks() {
                   onCheckedChange={(v) => void saveSwitch({ ...view.switch, watchdogs: v })}
                 />
                 <Label htmlFor="checks-watchdogs-switch">Сторожа по переписке</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="checks-contacts-switch"
+                  checked={view.switch.contacts}
+                  disabled={saving}
+                  onCheckedChange={(v) => void saveSwitch({ ...view.switch, contacts: v })}
+                />
+                <Label htmlFor="checks-contacts-switch">Контакты (дни рождения, включено по умолчанию)</Label>
               </div>
             </div>
             <p className="text-xs text-muted-foreground">

@@ -2,6 +2,7 @@
 
 import { db } from "@/db/drizzle"
 import { clientRelation } from "@/lib/client-relation"
+import { statusAfterPersonSave } from "@/lib/entity-status"
 import {
   client,
   clientProfile,
@@ -624,6 +625,7 @@ export async function updateClient(
   if (data.name !== undefined && !data.name.trim()) {
     throw new Error("Name is required")
   }
+  const nextStatus = statusAfterPersonSave(current.status, data.status)
 
   await db
     .update(client)
@@ -661,7 +663,8 @@ export async function updateClient(
       ...(data.funnelPhase !== undefined
         ? { funnelPhase: data.funnelPhase }
         : {}),
-      ...(data.status !== undefined ? { status: data.status } : {}),
+      // A person's save confirms an automatic «Новая» company (2026-11-26).
+      ...(nextStatus !== undefined ? { status: nextStatus } : {}),
       ...(data.currency !== undefined
         ? { currency: normaliseClientCurrency(data.currency) }
         : {}),
@@ -670,7 +673,7 @@ export async function updateClient(
 
   // Topics engine: a deleted / blocked client leaves its topics (they become
   // unresolved and are re-linked when the client comes back).
-  await onEntityStatusChanged(activeOrgId, { clientIds: [clientId] }, data.status, session.user.id)
+  await onEntityStatusChanged(activeOrgId, { clientIds: [clientId] }, nextStatus, session.user.id)
 }
 
 // ── Web lookup (grounded web search + structured extract) ────────────

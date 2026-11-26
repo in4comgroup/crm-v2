@@ -920,6 +920,8 @@ export function groundTask(
   sources: InputSources,
   now: Date,
   timeZone: string,
+  /** The org's «Срок задачи по умолчанию» for a date without a time. */
+  defaultDueTime?: string,
 ): Grounded<TaskValues> {
   const values = emptyTaskValues()
   const meta: Record<string, FieldMeta> = {}
@@ -942,7 +944,7 @@ export function groundTask(
     if (!src) removed.push({ field: "dueDate", value: dueText, reason: "срок не назван в сообщении" })
     else {
       values.dueText = dueText
-      const code = resolveDueText(dueText, now, timeZone, { past: values.done })
+      const code = resolveDueText(dueText, now, timeZone, { past: values.done, defaultTime: defaultDueTime })
       if (code) {
         values.dueDate = code
         meta.dueDate = { source: src.source, fileName: src.fileName, fileId: src.fileId }

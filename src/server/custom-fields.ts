@@ -26,6 +26,12 @@ import {
   type CustomFieldOption,
   type CustomFieldType,
 } from "@/lib/custom-fields"
+import {
+  CLIENT_STANDARD_FIELDS,
+  CONTACT_STANDARD_FIELDS,
+  validateStandardPatch,
+  type StandardValues,
+} from "@/lib/standard-fields"
 import { getActiveOrgRole } from "@/server/sources"
 
 export class CustomFieldError extends Error {
@@ -284,6 +290,8 @@ export type CustomValuesView = {
   /** Non-archived fields in order (hidden ones too, flagged — the tab shows `isShown` only). */
   fields: CustomFieldDef[]
   values: Record<string, unknown>
+  /** Standard fields (real columns, src/lib/standard-fields.ts): key → value. */
+  standard: StandardValues
   canManage: boolean
 }
 
@@ -293,8 +301,76 @@ export async function getCustomValues(
   entityId: string,
   canManage: boolean,
 ): Promise<CustomValuesView> {
-  const [fields, values] = await Promise.all([listCustomFields(orgId, entity), loadRowValues(orgId, entity, entityId)])
-  return { fields, values, canManage }
+  const [fields, values, standard] = await Promise.all([
+    listCustomFields(orgId, entity),
+    loadRowValues(orgId, entity, entityId),
+    loadStandardValues(orgId, entity, entityId),
+  ])
+  return { fields, values, standard, canManage }
+}
+
+// ── Standard fields (columns; docs/specs/clients-contacts/10-standard-fields.md)
+
+const clientStandardCols = {
+  legalName: client.legalName,
+  legalAddress: client.legalAddress,
+  inn: client.inn,
+  kpp: client.kpp,
+  ogrn: client.ogrn,
+  bankAccount: client.bankAccount,
+  bankName: client.bankName,
+  bankBik: client.bankBik,
+  bankCorrAccount: client.bankCorrAccount,
+} satisfies Record<(typeof CLIENT_STANDARD_FIELDS)[number]["key"], unknown>
+
+const contactStandardCols = {
+  birthday: contact.birthday,
+} satisfies Record<(typeof CONTACT_STANDARD_FIELDS)[number]["key"], unknown>
+
+async function loadStandardValues(orgId: string, entity: CustomFieldEntity, entityId: string): Promise<StandardValues> {
+  if (entity === "client") {
+    const [r] = await db
+      .select(clientStandardCols)
+      .from(client)
+      .where(and(eq(client.organizationId, orgId), eq(client.id, entityId)))
+    if (!r) throw new CustomFieldError("Компания не найдена", 404)
+    return r
+  }
+  const [r] = await db
+    .select(contactStandardCols)
+    .from(contact)
+    .where(and(eq(contact.organizationId, orgId), eq(contact.id, entityId)))
+  if (!r) throw new CustomFieldError("Контакт не найден", 404)
+  return r
+}
+
+/**
+ * Save standard fields of ONE company / contact (any member). `input` =
+ * { key: value | null }; every value validated + normalised by
+ * `validateStandardPatch`; only changed columns are written.
+ */
+export async function saveStandardValues(
+  orgId: string,
+  entity: CustomFieldEntity,
+  entityId: string,
+  input: Record<string, unknown>,
+): Promise<{ standard: StandardValues; changed: number }> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new CustomFieldError("Неверные данные")
+  const check = validateStandardPatch(entity, input)
+  if (!check.ok) throw new CustomFieldError(Object.values(check.errors)[0] ?? "Неверные данные")
+  const current = await loadStandardValues(orgId, entity, entityId)
+  const patch: StandardValues = {}
+  for (const [key, value] of Object.entries(check.values)) {
+    if ((current[key] ?? null) !== value) patch[key] = value
+  }
+  const changed = Object.keys(patch).length
+  if (changed === 0) return { standard: current, changed: 0 }
+  const t = entityTable(entity)
+  await db
+    .update(t)
+    .set(patch)
+    .where(and(eq(t.organizationId, orgId), eq(t.id, entityId)))
+  return { standard: { ...current, ...patch }, changed }
 }
 
 /**

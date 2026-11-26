@@ -1,7 +1,9 @@
 "use client"
 
 // «Поля» of one company / contact (docs/specs/clients-contacts/01-custom-fields.md
-// §4, decisions Q5 / Q8 / Q9): the SHOWN custom fields in position order,
+// §4, decisions Q5 / Q8 / Q9): first the STANDARD fields every org has (real
+// columns — company requisites, contact birthday; src/lib/standard-fields.ts,
+// spec 10-standard-fields.md), then the SHOWN custom fields in position order,
 // grouped by «Раздел», one input per type. One form with «Сохранить» (only
 // changed values are sent) + the unsaved-changes guard; inline errors from the
 // shared `validateCustomValue`; «История» per field. Every member edits values.
@@ -31,8 +33,20 @@ import {
   type CustomFieldDef,
   type CustomFieldEntity,
 } from "@/lib/custom-fields"
+import {
+  formatStandardValue,
+  standardFieldsOf,
+  validateStandardValue,
+  type StandardFieldDef,
+  type StandardValues,
+} from "@/lib/standard-fields"
 
-type ValuesView = { fields: CustomFieldDef[]; values: Record<string, unknown>; canManage: boolean }
+type ValuesView = {
+  fields: CustomFieldDef[]
+  values: Record<string, unknown>
+  standard: StandardValues
+  canManage: boolean
+}
 type HistoryRow = {
   id: string
   fieldId: string
@@ -416,6 +430,89 @@ function FieldBlock({
   )
 }
 
+// ── Standard field row ────────────────────────────────────────────────────
+
+/** What the input holds for a stored standard value (accounts in groups of 4). */
+function standardDraft(def: StandardFieldDef, v: string | null | undefined): string {
+  return def.kind === "date" ? (v ?? "") : formatStandardValue(def, v)
+}
+
+function StandardFieldBlock({
+  def,
+  draft,
+  error,
+  onChange,
+}: {
+  def: StandardFieldDef
+  draft: string
+  error: string | undefined
+  onChange: (v: string) => void
+}) {
+  const helpTip = useAnchorTooltip()
+  const id = `sf-${def.key}`
+  const invalid = Boolean(error)
+  // Valid digits / КПП are shown normalised when the input loses focus.
+  const onBlur = () => {
+    if (def.kind !== "digits" && def.kind !== "kpp") return
+    const check = validateStandardValue(def, draft)
+    if (check.ok && check.value) {
+      const shown = formatStandardValue(def, check.value)
+      if (shown !== draft) onChange(shown)
+    }
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={id} className="text-xs text-muted-foreground">
+          {def.label}
+        </Label>
+        {def.helpText && (
+          <>
+            <span {...helpTip.bind} className="inline-flex text-muted-foreground" aria-label={def.helpText}>
+              <Info className="h-3.5 w-3.5" />
+            </span>
+            <AnchorTooltip text={def.helpText} open={helpTip.open} virtualRef={helpTip.virtualRef} />
+          </>
+        )}
+      </div>
+      {def.kind === "multiline" ? (
+        <Textarea
+          id={id}
+          value={draft}
+          rows={2}
+          maxLength={def.maxLength}
+          aria-invalid={invalid}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : def.kind === "date" ? (
+        <Input
+          id={id}
+          type="date"
+          value={draft}
+          min="1900-01-01"
+          max={new Date().toISOString().slice(0, 10)}
+          aria-invalid={invalid}
+          className="w-fit"
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <Input
+          id={id}
+          value={draft}
+          inputMode={def.kind === "digits" ? "numeric" : undefined}
+          maxLength={def.kind === "text" ? def.maxLength : 40}
+          placeholder={def.placeholder}
+          aria-invalid={invalid}
+          className={def.kind === "digits" || def.kind === "kpp" ? "font-mono" : undefined}
+          onChange={(e) => onChange(def.kind === "kpp" ? e.target.value.toUpperCase() : e.target.value)}
+          onBlur={onBlur}
+        />
+      )}
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  )
+}
+
 // ── Panel ─────────────────────────────────────────────────────────────────
 
 export function CustomFieldsPanel({
@@ -436,6 +533,9 @@ export function CustomFieldsPanel({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
+  // Standard fields: drafts / errors keyed by the column key.
+  const [stdDrafts, setStdDrafts] = useState<Record<string, string>>({})
+  const [stdErrors, setStdErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const reqRef = useRef(0)
@@ -455,7 +555,17 @@ export function CustomFieldsPanel({
     () => shown.filter((f) => f.id in drafts && !sameDraft(drafts[f.id], baseDrafts[f.id])).map((f) => f.id),
     [shown, drafts, baseDrafts],
   )
-  const isDirty = changedIds.length > 0
+  const stdDefs = useMemo(() => standardFieldsOf(entity), [entity])
+  const stdBase = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const d of stdDefs) out[d.key] = standardDraft(d, view?.standard?.[d.key])
+    return out
+  }, [stdDefs, view])
+  const stdChangedKeys = useMemo(
+    () => stdDefs.filter((d) => d.key in stdDrafts && stdDrafts[d.key] !== stdBase[d.key]).map((d) => d.key),
+    [stdDefs, stdDrafts, stdBase],
+  )
+  const isDirty = changedIds.length > 0 || stdChangedKeys.length > 0
 
   const load = useCallback(
     async (opts?: { keepDrafts?: boolean }) => {
@@ -467,8 +577,12 @@ export function CustomFieldsPanel({
         setView(data)
         setLoadError(null)
         // Drafts hold only edited fields; a reload after a definition change keeps them.
-        if (!opts?.keepDrafts) setDrafts({})
+        if (!opts?.keepDrafts) {
+          setDrafts({})
+          setStdDrafts({})
+        }
         setErrors({})
+        setStdErrors({})
       } catch (e) {
         if (req === reqRef.current) setLoadError(e instanceof Error ? e.message : "Не удалось загрузить поля")
       }
@@ -483,6 +597,7 @@ export function CustomFieldsPanel({
     setViewKey(recordKey)
     setView(null)
     setDrafts({})
+    setStdDrafts({})
   }
 
   useEffect(() => {
@@ -504,13 +619,24 @@ export function CustomFieldsPanel({
       if (check.ok) values[id] = check.value
       else nextErrors[id] = check.message
     }
+    const standard: Record<string, string | null> = {}
+    const nextStdErrors: Record<string, string> = {}
+    for (const key of stdChangedKeys) {
+      const d = stdDefs.find((x) => x.key === key)
+      if (!d) continue
+      const check = validateStandardValue(d, stdDrafts[key])
+      if (check.ok) standard[key] = check.value
+      else nextStdErrors[key] = check.message
+    }
     setErrors(nextErrors)
-    if (Object.keys(nextErrors).length > 0) {
+    setStdErrors(nextStdErrors)
+    if (Object.keys(nextErrors).length > 0 || Object.keys(nextStdErrors).length > 0) {
       toast.error("Проверьте значения полей")
       return false
     }
-    if (Object.keys(values).length === 0) {
+    if (Object.keys(values).length === 0 && Object.keys(standard).length === 0) {
       setDrafts({})
+      setStdDrafts({})
       return true
     }
     setSaving(true)
@@ -518,11 +644,17 @@ export function CustomFieldsPanel({
       const res = await fetch("/api/custom-values", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity, id: entityId, values }),
+        body: JSON.stringify({ entity, id: entityId, values, standard }),
       })
-      const data = await readApi<{ values: Record<string, unknown>; changed: number }>(res, "Не удалось сохранить поля")
-      setView((prev) => (prev ? { ...prev, values: data.values ?? prev.values } : prev))
+      const data = await readApi<{ values: Record<string, unknown>; standard?: StandardValues; changed: number }>(
+        res,
+        "Не удалось сохранить поля",
+      )
+      setView((prev) =>
+        prev ? { ...prev, values: data.values ?? prev.values, standard: data.standard ?? prev.standard } : prev,
+      )
       setDrafts({})
+      setStdDrafts({})
       toast.success("Поля сохранены")
       onChanged?.()
       return true
@@ -532,7 +664,7 @@ export function CustomFieldsPanel({
     } finally {
       setSaving(false)
     }
-  }, [view, changedIds, shown, drafts, entity, entityId, onChanged])
+  }, [view, changedIds, shown, drafts, stdChangedKeys, stdDefs, stdDrafts, entity, entityId, onChanged])
 
   useImperativeHandle(handleRef, () => ({ isDirty: () => isDirty, save }), [isDirty, save])
 
@@ -560,6 +692,19 @@ export function CustomFieldsPanel({
     return out.filter((g) => g.fields.length > 0)
   }, [shown])
 
+  const stdGroups = useMemo(() => {
+    const out: { section: string; defs: StandardFieldDef[] }[] = []
+    for (const d of stdDefs) {
+      let g = out.find((x) => x.section === d.section)
+      if (!g) {
+        g = { section: d.section, defs: [] }
+        out.push(g)
+      }
+      g.defs.push(d)
+    }
+    return out
+  }, [stdDefs])
+
   const manageDialog = view?.canManage ? (
     <CustomFieldsDialog
       entity={entity}
@@ -581,21 +726,6 @@ export function CustomFieldsPanel({
     )
   }
 
-  if (shown.length === 0) {
-    return (
-      <div className="flex flex-col items-start gap-2 py-4 text-sm text-muted-foreground">
-        <span>Поля не настроены</span>
-        {view.canManage && (
-          <Button type="button" size="sm" variant="outline" onClick={() => setDialogOpen(true)}>
-            <SlidersHorizontal className="h-4 w-4 mr-1" />
-            Настроить поля
-          </Button>
-        )}
-        {manageDialog}
-      </div>
-    )
-  }
-
   return (
     <div
       className="space-y-5"
@@ -604,6 +734,34 @@ export function CustomFieldsPanel({
         if (e.key === "Enter" && e.target instanceof HTMLInputElement) e.preventDefault()
       }}
     >
+      {stdGroups.map((g) => (
+        <section key={`std:${g.section}`} className="space-y-3">
+          <h4 className="text-sm font-medium border-b pb-1">{g.section}</h4>
+          {g.defs.map((d) => (
+            <StandardFieldBlock
+              key={d.key}
+              def={d}
+              draft={d.key in stdDrafts ? stdDrafts[d.key] : stdBase[d.key]}
+              error={stdErrors[d.key]}
+              onChange={(v) => {
+                setStdDrafts((prev) => ({ ...prev, [d.key]: v }))
+                if (stdErrors[d.key]) {
+                  setStdErrors((prev) => {
+                    const next = { ...prev }
+                    delete next[d.key]
+                    return next
+                  })
+                }
+              }}
+            />
+          ))}
+        </section>
+      ))}
+
+      {groups.length > 0 && <h4 className="text-sm font-medium border-b pb-1">Дополнительные поля</h4>}
+      {groups.length === 0 && (
+        <p className="text-xs text-muted-foreground">Дополнительные поля не настроены.</p>
+      )}
       {groups.map((g) => (
         <section key={g.section ?? "__top__"} className="space-y-3">
           {g.section && <h4 className="text-sm font-medium border-b pb-1">{g.section}</h4>}

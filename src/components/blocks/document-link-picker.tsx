@@ -37,6 +37,8 @@ import {
 } from "@/lib/documents"
 import type { GlobalSearchResult } from "@/app/api/search/route"
 import type { TaskRow } from "@/app/api/tasks/route"
+import { useOrgTime } from "@/lib/org-time-context"
+import { formatOrgDay } from "@/lib/org-time"
 
 type Option = { id: string; label: string; sub: string | null }
 
@@ -70,6 +72,7 @@ export function DocumentLinkPicker({
   existingLinks: DocumentLinkView[]
   onLinked: () => void
 }) {
+  const { timeZone } = useOrgTime()
   const [entityType, setEntityType] = useState<DocumentEntityType>("client")
   const [qInput, setQInput] = useState("")
   const [q, setQ] = useState("")
@@ -195,7 +198,7 @@ export function DocumentLinkPicker({
         .map((t) => ({
           id: t.id,
           label: t.name,
-          sub: [t.clientName, t.dueDate ? `срок ${formatDay(t.dueDate)}` : null].filter(Boolean).join(" · ") || null,
+          sub: [t.clientName, t.dueDate ? `срок ${formatOrgDay(t.dueDate, timeZone)}` : null].filter(Boolean).join(" · ") || null,
         }))
     }
   } else if (!needsServer) {

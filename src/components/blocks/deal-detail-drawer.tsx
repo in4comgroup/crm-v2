@@ -103,6 +103,8 @@ import {
   type BoardStage,
 } from "@/components/blocks/deal-funnel-ui"
 import { DEFAULT_FUNNEL_REASONS, type FunnelReason } from "@/lib/funnel/config"
+import { useOrgTime } from "@/lib/org-time-context"
+import { formatOrgDue } from "@/lib/org-time"
 
 // Тот же список, что раньше был в модалке-редакторе (form-deal-edit.tsx) —
 // не импортируем оттуда, чтобы не тянуть create-only компонент ради одной
@@ -213,6 +215,8 @@ export function DealDetailDrawer({
   // «Мы вышли»: причины организации (GET /api/deals/funnel → reasons.withdrawn).
   withdrawnReasons?: readonly FunnelReason[]
 }) {
+  // Task deadlines in the ORG time zone (src/lib/org-time.ts).
+  const { timeZone: orgTimeZone } = useOrgTime()
   // Стадию берём прямо из deal.funnelStageId — после перевода onChanged →
   // router.refresh обновляет проп (deal выводится из живого списка на доске).
   // Задачи храним вместе с их dealId, чтобы при переключении сделки сразу
@@ -422,6 +426,12 @@ export function DealDetailDrawer({
           outcomeReasonText: "",
         },
   })
+  // react-hook-form computes `isDirty` / `dirtyFields` only when they are READ
+  // DURING RENDER (formState is a subscription proxy). A read only inside a
+  // handler returned the stale `false`: «Сохранить» said «Изменений нет» and
+  // sent nothing (bug 2026-11-26: a renamed company was not saved). So the
+  // handlers use these render-time values.
+  const { isDirty: formIsDirty, dirtyFields: formDirtyFields } = editForm.formState
   const watchedClientId = editForm.watch("clientId")
   const currencySymbol =
     CURRENCY_SYMBOL[
@@ -451,7 +461,7 @@ export function DealDetailDrawer({
   function onSaveDeal(data: DealEditFormData, opts?: { closeAfter?: boolean }) {
     if (!deal) return
     // «Сохранить» stays clickable (2026-11-26, as in the company drawer).
-    if (!editForm.formState.isDirty) {
+    if (!formIsDirty) {
       toast.info("Изменений нет — всё уже сохранено")
       if (opts?.closeAfter) onOpenChange(false)
       return
@@ -464,7 +474,7 @@ export function DealDetailDrawer({
     }
     // Экспертная вероятность и бюджет из брифа уходят, только если их
     // меняли — иначе сервер переписал бы «кто / когда» оценки.
-    const { dirtyFields } = editForm.formState
+    const dirtyFields = formDirtyFields
     const expertText = data.expertProbability.trim()
     const expertValue = expertText === "" ? null : Number(expertText)
     if (
@@ -530,7 +540,7 @@ export function DealDetailDrawer({
   }
 
   function handleSheetOpenChange(next: boolean) {
-    if (!next && editForm.formState.isDirty) {
+    if (!next && formIsDirty) {
       setConfirmCloseOpen(true)
       return
     }
@@ -1264,7 +1274,7 @@ export function DealDetailDrawer({
                         </div>
                       )}
                       <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                        <TaskMeta label="Срок" value={formatDate(t.dueDate)} />
+                        <TaskMeta label="Срок" value={formatOrgDue(t.dueDate, orgTimeZone)} />
                         <TaskMeta
                           label="Исполнитель"
                           value={t.assigneeName}
@@ -1332,7 +1342,7 @@ export function DealDetailDrawer({
                 >
                   <div className="font-medium leading-snug">{t.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {formatDate(t.dueDate)} · {TASK_TYPE_LABELS[t.type]} ·{" "}
+                    {formatOrgDue(t.dueDate, orgTimeZone)} · {TASK_TYPE_LABELS[t.type]} ·{" "}
                     {TASK_STATUS_LABELS[t.status]}
                   </div>
                 </button>

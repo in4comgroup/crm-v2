@@ -31,10 +31,12 @@ export const CHECK_KEYS = [
   "order_confirmation_open",
   "report_open",
   "contract_not_renewed",
+  // Contact data (2026-11-26, origin system_of_record).
+  "contact_birthday",
 ] as const
 export type CheckKey = (typeof CHECK_KEYS)[number]
 
-export type CheckGroup = "orders" | "watchdogs"
+export type CheckGroup = "orders" | "watchdogs" | "contacts"
 /** daily / weekly (Monday) / monthly (day 3) at `runTime` org time; `hourly` = every run. */
 export type CheckSchedule = "hourly" | "daily" | "weekly" | "monthly"
 
@@ -75,6 +77,8 @@ export const CHECKS: readonly CheckDef[] = [
   },
   { key: "report_open", group: "watchdogs", codes: ["DELIVERY_REPORT_OPEN"], schedule: "hourly", labelRu: "Отчёт не предоставлен" },
   { key: "contract_not_renewed", group: "watchdogs", codes: ["CONTRACT_NOT_RENEWED"], schedule: "daily", labelRu: "Договор истёк и не продлён" },
+  // «Сейчас» on the contact's birthday (weight 8 = P8), cleared the next day.
+  { key: "contact_birthday", group: "contacts", codes: ["CONTACT_BIRTHDAY"], schedule: "daily", labelRu: "День рождения контакта" },
 ]
 
 export const CHECK_BY_KEY: ReadonlyMap<CheckKey, CheckDef> = new Map(CHECKS.map((c) => [c.key, c]))
@@ -98,11 +102,24 @@ export const CHECKS_NOT_BUILT: readonly { code: string; reasonRu: string }[] = [
   { code: "SIGNAL_TRACKING_GAP", reasonRu: "Сканирование сайтов — этап 11" },
 ]
 
-// ── Org switch (org_setting `topics.checks`, default both off) ──────────
+// ── Org switch (org_setting `topics.checks`) ──────────────────────────────
+// orders / watchdogs default off; `contacts` (birthdays, 2026-11-26) default
+// ON — a stored value without the key reads as on.
 
-export type ChecksSwitch = { orders: boolean; watchdogs: boolean }
-export const CHECKS_SWITCH_DEFAULT: ChecksSwitch = { orders: false, watchdogs: false }
-export const checksSwitchSchema = z.object({ orders: z.boolean(), watchdogs: z.boolean() })
+export type ChecksSwitch = { orders: boolean; watchdogs: boolean; contacts: boolean }
+export const CHECKS_SWITCH_DEFAULT: ChecksSwitch = { orders: false, watchdogs: false, contacts: true }
+export const checksSwitchSchema = z.object({
+  orders: z.boolean(),
+  watchdogs: z.boolean(),
+  contacts: z.boolean().default(true),
+})
+
+export const CHECK_GROUPS: readonly CheckGroup[] = ["orders", "watchdogs", "contacts"]
+
+/** PURE. Is the group of a check switched on? */
+export function checkGroupOn(sw: ChecksSwitch, group: CheckGroup): boolean {
+  return sw[group] === true
+}
 
 // ── Parameters (settings ladder: org `checks.params` → platform → defaults) ──
 

@@ -417,6 +417,8 @@ export function ClientProfileBlock({
       setEditing(false)
       setDraft(null)
       toast.success(data.changed?.length ? "Профиль сохранён" : "Изменений нет")
+      // The save may turn «Новая» into «Активная» — the drawer re-reads the company.
+      if (data.changed?.length) onClientChanged?.()
     } catch {
       toast.error("Не удалось сохранить профиль")
     } finally {

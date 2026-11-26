@@ -6,8 +6,10 @@ import { db } from "@/db/drizzle"
 import { topicCheckRun } from "@/db/schema"
 import { WorkCalendar } from "@/lib/topics/attention-calendar"
 import {
+  CHECK_GROUPS,
   CHECKS,
   CHECKS_NOT_BUILT,
+  checkGroupOn,
   type CheckDef,
   type CheckKey,
   type CheckPreviewRow,
@@ -26,6 +28,7 @@ import { reconcileOrderTopics } from "../orders-link"
 import { ensureSystemActor } from "../system-actor"
 import { heldProductIds, priceChangeHeld } from "./crm-data"
 import { CRM_DATA_CHECKS, refreshProductWatchState } from "./crm-data-loaders"
+import { CONTACT_CHECKS } from "./contacts-data"
 import { ORDER_CHECKS } from "./orders-data"
 import { applyCheckResult, countOpenProcessInstances, loadExistingInstances, loadStoreContext, type StoreContext } from "./store"
 import { duePeriodKey } from "./schedule"
@@ -39,7 +42,7 @@ import { WATCHDOG_CHECKS } from "./watchdogs-data"
 // ./watchdogs-data.ts, the writes in ./store.ts (+ `refreshProductWatchState`
 // after a catalogue check).
 
-const EVALUATORS: Partial<Record<CheckKey, CheckEvaluator>> = { ...ORDER_CHECKS, ...CRM_DATA_CHECKS, ...WATCHDOG_CHECKS }
+const EVALUATORS: Partial<Record<CheckKey, CheckEvaluator>> = { ...ORDER_CHECKS, ...CRM_DATA_CHECKS, ...WATCHDOG_CHECKS, ...CONTACT_CHECKS }
 
 /** Catalogue checks: after the store applied one, its part of `product_watch_state` is refreshed. */
 const WATCH_STATE_PART: Partial<Record<CheckKey, "price" | "status">> = { price_change: "price", product_status: "status" }
@@ -147,7 +150,7 @@ export async function runDueChecks(
   })
   const olCounts = { ordersLinked: ol.written, ordersLinkedCleared: ol.cleared, ordersLinkedFailed: ol.failed }
   const sw = await getOrgSetting(orgId, "topics.checks")
-  if (!sw.orders && !sw.watchdogs) {
+  if (!CHECK_GROUPS.some((g) => checkGroupOn(sw, g))) {
     return ol.written + ol.cleared + ol.failed > 0 ? { checksOff: 1, ...olCounts } : { skipped: "checks off (topics.checks)" }
   }
   const now = opts.now ?? new Date()
@@ -158,7 +161,7 @@ export async function runDueChecks(
   ])
   const totals: Record<string, number> = { checks: 0, failed: 0, ...olCounts }
   for (const def of CHECKS) {
-    if (def.group === "orders" ? !sw.orders : !sw.watchdogs) continue
+    if (!checkGroupOn(sw, def.group)) continue
     const period = duePeriodKey(def.schedule, now, calendar, params, opts.runId)
     if (!period) continue
     const rowId = await claimRun(orgId, def.key, period, "schedule")

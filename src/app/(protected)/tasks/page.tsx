@@ -47,6 +47,8 @@ import { TaskTimeline } from "@/components/blocks/task-timeline"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { isOpenDealStatus } from "@/lib/deal-funnel"
 import { usePersistentTab } from "@/lib/use-persistent-tab"
+import { useOrgTime } from "@/lib/org-time-context"
+import { formatOrgDueShort } from "@/lib/org-time"
 
 const PAGE_SIZE = 6
 
@@ -213,6 +215,7 @@ function TaskTable({
   onOpenDetail: (taskId: string) => void
   emptyLabel: string
 }) {
+  const { timeZone } = useOrgTime()
   if (tasks.length === 0) {
     return <EmptyState label={emptyLabel} />
   }
@@ -241,7 +244,7 @@ function TaskTable({
                 <TableCell>{TYPE_LABELS[t.type]}</TableCell>
                 <TableCell>{PRIORITY_LABELS[t.priority]}</TableCell>
                 <TableCell>
-                  {new Date(t.dueDate).toLocaleDateString("ru-RU")}
+                  {formatOrgDueShort(t.dueDate, timeZone)}
                 </TableCell>
                 <TableCell>{t.assigneeName ?? "—"}</TableCell>
                 <TableCell>

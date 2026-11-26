@@ -90,6 +90,8 @@ import {
   type CustomFieldsPanelHandle,
 } from "@/components/blocks/custom-fields-tab"
 import { contactDisplayName } from "@/lib/contact-names"
+import { useOrgTime } from "@/lib/org-time-context"
+import { formatOrgDue } from "@/lib/org-time"
 
 const COMPANY_KIND_NONE = "__none__"
 
@@ -141,14 +143,6 @@ function buildDefaults(client: ClientRow | null): ClientEditFormData {
     status: client?.status ?? "active",
     currency: client?.currency ?? "RUB",
   }
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("ru-RU", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  })
 }
 
 // Одно мета-поле задачи в HoverCard — как в deal-detail-drawer.tsx.
@@ -246,6 +240,8 @@ export function ClientDetailDrawer({
   // list card, see refs/blocklist.md.
   canBlock?: boolean
 }) {
+  // Task deadlines in the ORG time zone (src/lib/org-time.ts).
+  const { timeZone: orgTimeZone } = useOrgTime()
   const { data: session } = authClient.useSession()
   const currentUserId = session?.user.id
   const router = useRouter()
@@ -346,6 +342,12 @@ export function ClientDetailDrawer({
   const editForm = useForm<ClientEditFormData>({
     defaultValues: buildDefaults(client),
   })
+  // react-hook-form computes `isDirty` / `dirtyFields` only when they are READ
+  // DURING RENDER (formState is a subscription proxy). A read only inside a
+  // handler returned the stale `false`: «Сохранить» said «Изменений нет» and
+  // sent nothing (bug 2026-11-26: a renamed company was not saved). So the
+  // handlers use these render-time values.
+  const { isDirty: formIsDirty } = editForm.formState
 
   // Another company → full reset. The SAME company saved elsewhere (web
   // lookup «Поиск в интернете», batch enrichment, another tab — its
@@ -368,7 +370,7 @@ export function ClientDetailDrawer({
     if (!client) return
     // «Сохранить» stays clickable (2026-11-26): testers read a disabled button
     // as «cannot save» after the profile / fields had already saved themselves.
-    if (!editForm.formState.isDirty) {
+    if (!formIsDirty) {
       toast.info("Изменений нет — всё уже сохранено")
       if (opts?.closeAfter) onOpenChange(false)
       return
@@ -429,7 +431,7 @@ export function ClientDetailDrawer({
   function handleSheetOpenChange(next: boolean) {
     if (
       !next &&
-      (editForm.formState.isDirty || fieldsPanelRef.current?.isDirty())
+      (formIsDirty || fieldsPanelRef.current?.isDirty())
     ) {
       setConfirmCloseOpen(true)
       return
@@ -1014,7 +1016,7 @@ export function ClientDetailDrawer({
                           </div>
                         )}
                         <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                          <TaskMeta label="Срок" value={formatDate(t.dueDate)} />
+                          <TaskMeta label="Срок" value={formatOrgDue(t.dueDate, orgTimeZone)} />
                           <TaskMeta
                             label="Исполнитель"
                             value={t.assigneeName}
@@ -1140,7 +1142,7 @@ export function ClientDetailDrawer({
                 // «Поля» first (own endpoint); stay open when it fails.
                 const panel = fieldsPanelRef.current
                 if (panel?.isDirty() && !(await panel.save())) return
-                if (editForm.formState.isDirty) {
+                if (formIsDirty) {
                   editForm.handleSubmit((data) =>
                     onSave(data, { closeAfter: true }),
                   )()

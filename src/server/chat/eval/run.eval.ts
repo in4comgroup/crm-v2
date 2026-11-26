@@ -224,6 +224,7 @@ describe("AI chat eval", () => {
       orgId: EVAL_ORG_ID,
       userId: EVAL_USER_ID,
       timeZone: rc.timeZone,
+      defaultDueTime: rc.defaultDueTime,
       now: rc.now,
       stats: (q) => runStatsQuery(rc, q),
       fixture: { injectionSubject: INJECTION_SUBJECT },

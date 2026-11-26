@@ -38,6 +38,8 @@ import type {
 } from "@/app/api/tasks/route"
 import type { TaskType, TaskPriority, TaskStatus } from "@/db/schema"
 import { isOpenDealStatus } from "@/lib/deal-funnel"
+import { defaultDueLocal, dueParts } from "@/lib/org-time"
+import { useOrgTime } from "@/lib/org-time-context"
 
 const TYPES: TaskType[] = [
   "meet",
@@ -80,10 +82,6 @@ const NO_DEAL = "__none__"
 
 type TaskDealOption = { id: string; name: string; clientName: string | null }
 
-function toDateInput(iso: string | null | undefined): string {
-  if (!iso) return new Date().toISOString().slice(0, 10)
-  return new Date(iso).toISOString().slice(0, 10)
-}
 
 type TaskFormData = {
   name: string
@@ -95,7 +93,10 @@ type TaskFormData = {
   clientId: string
   contactId: string
   dealId: string
+  /** «YYYY-MM-DD» in the ORG time zone. */
   dueDate: string
+  /** «HH:MM» in the ORG time zone (default = «Срок задачи по умолчанию»). */
+  dueTime: string
 }
 
 type Props = {
@@ -145,8 +146,17 @@ export function TaskEditForm({
   // Defaults resolve edit-mode `task` first, then create-mode `initialValues`,
   // then hardcoded fallbacks — so a prefilled create (e.g. from a card) seeds
   // the form while edit mode is unaffected.
+  // Deadlines are entered and shown in the ORG time zone (2026-11-26): a new
+  // task starts today at the org's default due time (23:59 unless the owner
+  // changed it in «Рабочий контекст»).
+  const orgTime = useOrgTime()
   const buildDefaults = useCallback(
-    (): TaskFormData => ({
+    (): TaskFormData => {
+      const fallback = defaultDueLocal(new Date(), orgTime)
+      const due = task?.dueDate
+        ? dueParts(task.dueDate, orgTime.timeZone)
+        : { date: initialValues?.dueDate ?? fallback.slice(0, 10), time: initialValues?.dueTime ?? orgTime.defaultDueTime }
+      return {
       name: task?.name ?? initialValues?.name ?? "",
       description: task?.description ?? initialValues?.description ?? "",
       type: task?.type ?? initialValues?.type ?? "other",
@@ -156,11 +166,11 @@ export function TaskEditForm({
       clientId: task?.clientId ?? initialValues?.clientId ?? NO_CLIENT,
       contactId: task?.contactId ?? initialValues?.contactId ?? NO_CONTACT,
       dealId: task?.dealId ?? initialValues?.dealId ?? NO_DEAL,
-      dueDate: task?.dueDate
-        ? toDateInput(task.dueDate)
-        : initialValues?.dueDate ?? toDateInput(undefined),
-    }),
-    [task, initialValues],
+      dueDate: due.date,
+      dueTime: due.time,
+      }
+    },
+    [task, initialValues, orgTime],
   )
 
   const form = useForm<TaskFormData>({ defaultValues: buildDefaults() })
@@ -237,10 +247,13 @@ export function TaskEditForm({
         const clientId = data.clientId === NO_CLIENT ? null : data.clientId
         const contactId = data.contactId === NO_CONTACT ? null : data.contactId
         const dealId = data.dealId === NO_DEAL ? null : data.dealId
+        // «YYYY-MM-DDTHH:MM» = a wall time in the org zone; the server converts it.
+        const { dueTime, ...rest } = data
+        const dueDate = `${data.dueDate}T${dueTime || orgTime.defaultDueTime}`
         const payload =
           mode === "create"
-            ? { ...data, clientId, contactId, dealId }
-            : { id: task!.id, ...data, clientId, contactId, dealId }
+            ? { ...rest, dueDate, clientId, contactId, dealId }
+            : { id: task!.id, ...rest, dueDate, clientId, contactId, dealId }
         const res = await fetch("/api/tasks", {
           method: mode === "create" ? "POST" : "PUT",
           headers: { "Content-Type": "application/json" },
@@ -469,9 +482,19 @@ export function TaskEditForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-gray-400">Срок</FormLabel>
-                <FormControl>
-                  <Input type="date" {...field} />
-                </FormControl>
+                <div className="flex gap-2">
+                  <FormControl>
+                    <Input type="date" className="min-w-0 flex-1" {...field} />
+                  </FormControl>
+                  <FormField
+                    control={form.control}
+                    name="dueTime"
+                    rules={{ required: "Укажите время" }}
+                    render={({ field: timeField }) => (
+                      <Input type="time" aria-label="Время срока" className="w-28 shrink-0" {...timeField} />
+                    )}
+                  />
+                </div>
                 <FormMessage />
               </FormItem>
             )}

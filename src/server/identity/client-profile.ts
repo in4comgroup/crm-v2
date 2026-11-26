@@ -58,6 +58,7 @@ import { getClientSegments, profileRowToValues } from "@/server/identity/client-
 import { listIndustries, readOrgProfile, type IndustryOption } from "@/server/identity/org-profile"
 import { loadUserNames } from "@/server/client-responsible"
 import { deriveClientRelation } from "@/server/topics/lifecycle"
+import { activateInitialRecord } from "@/server/entity-status"
 
 export class ClientProfileError extends Error {
   constructor(
@@ -621,7 +622,11 @@ export async function getClientProfileViewForSession(clientId: string): Promise<
 
 export async function saveClientProfileForSession(clientId: string, input: unknown): Promise<SaveClientProfileResult> {
   const { orgId, userId } = await requireClientProfileSession()
-  return saveClientProfile(orgId, userId, clientId, input)
+  const result = await saveClientProfile(orgId, userId, clientId, input)
+  // A person saved «Профиль компании» → an automatic «Новая» company is
+  // confirmed (2026-11-26, src/server/entity-status.ts).
+  if (result.changed.length > 0) await activateInitialRecord(orgId, "client", clientId)
+  return result
 }
 
 export async function confirmClientProfileFieldForSession(clientId: string, field: unknown) {

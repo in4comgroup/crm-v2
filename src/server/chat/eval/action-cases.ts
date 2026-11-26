@@ -222,12 +222,12 @@ export const ACTION_CASES: EvalCase[] = [
 const tasks = (t: TurnResult) => items(t).filter((i) => i.type === "task").map((i) => i.values as TaskValues)
 
 /** The task whose title matches `re` has the deadline the user's words mean (resolved by code in the org time zone). */
-function dueIs(list: TaskValues[], re: RegExp, words: string, ctx: { now: Date; timeZone: string }): string[] {
+function dueIs(list: TaskValues[], re: RegExp, words: string, ctx: { now: Date; timeZone: string; defaultDueTime: string }): string[] {
   // Open tasks first, by title (a logged meeting may mention «КП» in its notes).
   const open = list.filter((x) => !x.done)
   const t = open.find((x) => re.test(x.title)) ?? open.find((x) => re.test(x.description)) ?? list.find((x) => re.test(x.title))
   if (!t) return [`no task like ${re}`]
-  const want = resolveDueText(words, ctx.now, ctx.timeZone)
+  const want = resolveDueText(words, ctx.now, ctx.timeZone, { defaultTime: ctx.defaultDueTime })
   return t.dueDate === want ? [] : [`task «${t.title}»: due ${t.dueDate || "—"}, expected ${want} («${words}»)`]
 }
 
@@ -864,7 +864,7 @@ ACTION_CASES.push(
       const u = byType(t, "task_update")[0]
       if (!u) return ["no task-update card"]
       const v = u.values as TaskUpdateValues
-      const want = resolveDueText("на понедельник", ctx.now, ctx.timeZone)
+      const want = resolveDueText("на понедельник", ctx.now, ctx.timeZone, { defaultTime: ctx.defaultDueTime })
       const out: string[] = []
       if (v.taskId !== x.id) out.push(`task «${v.taskTitle}», expected «${x.name}»`)
       if (v.action !== "reschedule" || v.dueDate !== want) out.push(`${v.action} ${v.dueDate || "—"}, expected reschedule ${want}`)

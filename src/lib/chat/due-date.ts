@@ -2,7 +2,9 @@
 // client-safe. The model passes the user's own words for the deadline
 // («до пятницы», «завтра в 11:00», «20.11») — code turns them into a date in
 // the ORG time zone, so the weekday arithmetic never depends on the model.
-// A date-only deadline = 18:00 org time (same rule as the attention engine).
+// A date-only deadline = the org's «Срок задачи по умолчанию» (`opts.defaultTime`,
+// org_setting `tasks.defaultDueTime`, 23:59 by default — 2026-11-26); without it
+// 18:00 (the attention engine's rule for deadlines found in mail).
 
 export const DEFAULT_DUE_TIME = "18:00"
 
@@ -141,12 +143,17 @@ const WORD_NUM: Record<string, number> = { один: 1, одну: 1, два: 2, 
  * when the words are not a deadline code can read (then the model's date is
  * used, marked as such). `now` = the turn's time.
  */
-export function resolveDueText(text: string, now: Date, timeZone: string, opts: { past?: boolean } = {}): LocalDateTime | null {
+export function resolveDueText(
+  text: string,
+  now: Date,
+  timeZone: string,
+  opts: { past?: boolean; defaultTime?: string } = {},
+): LocalDateTime | null {
   const t = ` ${(text ?? "").toLowerCase().replace(/ё/g, "е")} `
   const today = zonedParts(now, timeZone)
   const past = opts.past === true
   // A logged meeting / call (`past`) without a time = the current time of that day is unknown → 12:00.
-  const at = (day: { y: number; m: number; d: number }) => `${day.y}-${two(day.m)}-${two(day.d)}T${timeOf(t) ?? (past ? "12:00" : DEFAULT_DUE_TIME)}`
+  const at = (day: { y: number; m: number; d: number }) => `${day.y}-${two(day.m)}-${two(day.d)}T${timeOf(t) ?? (past ? "12:00" : (opts.defaultTime ?? DEFAULT_DUE_TIME))}`
   const plus = (n: number) => addDays(today.y, today.m, today.d, n)
 
   // `past` (T4 «Записать встречу»): when it HAPPENED.

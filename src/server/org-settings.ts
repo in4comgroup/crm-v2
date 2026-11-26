@@ -105,6 +105,13 @@ export const ORG_SETTINGS = {
   // default choice are created as «Агент». Default false — the org owner or
   // a platform admin switches it on.
   "discovery.autoApply": { schema: z.boolean(), default: false },
+  // «Срок задачи по умолчанию» (2026-11-26, «Рабочий контекст», org owner):
+  // the deadline time of a new task and of a date entered without a time, in
+  // the org time zone. null = code default 23:59 (src/lib/org-time.ts).
+  "tasks.defaultDueTime": {
+    schema: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable(),
+    default: null as string | null,
+  },
 } as const
 
 export type OrgSettingKey = keyof typeof ORG_SETTINGS

@@ -7,6 +7,9 @@ import { cookies } from "next/headers"
 import { PanelProvider } from "@/lib/chat-panel-context"
 import { GlobalChatProvider } from "@/lib/global-chat-context"
 import { AiChatPanel } from "@/components/blocks/global-ai-chat"
+import { OrgTimeProvider } from "@/lib/org-time-context"
+import { ORG_TIME_FALLBACK } from "@/lib/org-time"
+import { loadOrgTime } from "@/server/org-time"
 
 export default async function DashboardLayout({
   children,
@@ -23,10 +26,13 @@ export default async function DashboardLayout({
   // Platform admins get an org switcher in the sidebar footer: their own
   // memberships (id + name, sorted by name). Nobody else needs the query.
   const isPlatformAdmin = session.user.role === "admin"
-  const [orgLogo, cookieStore, adminOrganizations] = await Promise.all([
+  // Org time zone + default task due time for every client component
+  // (`useOrgTime()`, task deadlines in the org zone; 2026-11-26).
+  const [orgLogo, cookieStore, adminOrganizations, orgTime] = await Promise.all([
     orgId ? getOrganizationLogo(orgId) : Promise.resolve(null),
     cookies(),
     isPlatformAdmin ? listUserOrganizations(session.user.id) : Promise.resolve(null),
+    orgId ? loadOrgTime(orgId) : Promise.resolve(ORG_TIME_FALLBACK),
   ])
   // The sidebar remembers open / closed: shadcn's SidebarProvider writes the
   // `sidebar_state` cookie on every toggle; reading it here makes a reload /
@@ -34,6 +40,7 @@ export default async function DashboardLayout({
   const sidebarOpen = cookieStore.get("sidebar_state")?.value !== "false"
 
   return (
+    <OrgTimeProvider value={orgTime}>
     <SidebarProvider
       defaultOpen={sidebarOpen}
       style={
@@ -67,5 +74,6 @@ export default async function DashboardLayout({
         </div>
       </div>
     </SidebarProvider>
+    </OrgTimeProvider>
   )
 }

@@ -9,6 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import type { TaskRow } from "@/app/api/tasks/route"
 import TaskEditDialog from "@/components/forms/form-task-edit"
+import { useOrgTime } from "@/lib/org-time-context"
+import { orgDayAsLocalDate } from "@/lib/org-time"
 
 // Color rules — applied per-row, replace the old priority-based palette.
 //   • Done → green, regardless of due date. A completed-but-late task
@@ -16,11 +18,11 @@ import TaskEditDialog from "@/components/forms/form-task-edit"
 //   • Today is at or past the due date → red.
 //   • Due within 3 days (exclusive of today) → yellow.
 //   • Otherwise → light blue.
-function colorForTask(task: TaskRow, today: Date): string {
+function colorForTask(task: TaskRow, today: Date, timeZone: string): string {
   if (task.status === "done") {
     return "bg-emerald-500/60 hover:bg-emerald-500/80 border-emerald-700/60"
   }
-  const due = startOfDay(new Date(task.dueDate))
+  const due = orgDayAsLocalDate(task.dueDate, timeZone)
   const days = differenceInCalendarDays(due, today)
   if (days <= 0) return "bg-red-500/60 hover:bg-red-500/80 border-red-700/60"
   if (days <= 3)
@@ -86,7 +88,9 @@ export function TaskTimeline({
   tasks: TaskRow[]
   onChanged: () => void
 }) {
-  const today = useMemo(() => startOfDay(new Date()), [])
+  // Days of the ORG time zone (deadlines are org wall times, 2026-11-26).
+  const { timeZone } = useOrgTime()
+  const today = useMemo(() => orgDayAsLocalDate(new Date(), timeZone), [timeZone])
   const defaultFrom = useMemo(() => addDays(today, -7), [today])
   const defaultTo = useMemo(() => addDays(today, 7), [today])
 
@@ -300,7 +304,7 @@ export function TaskTimeline({
 
                   {grouped[status].map((task) => {
                     const start = startOfDay(new Date(task.createdAt))
-                    const end = startOfDay(new Date(task.dueDate))
+                    const end = orgDayAsLocalDate(task.dueDate, timeZone)
                     // Bar visibility: only render when [start, end]
                     // intersects [minDate, maxDate]; otherwise the row
                     // shows but the timeline column is empty.
@@ -319,7 +323,7 @@ export function TaskTimeline({
                     )
                     const leftPct = (startOffset / totalDays) * 100
                     const widthPct = (durationDays / totalDays) * 100
-                    const barClass = colorForTask(task, today)
+                    const barClass = colorForTask(task, today, timeZone)
                     return (
                       <div
                         key={task.id}

@@ -14,14 +14,20 @@ describe("working context (time zone + working hours)", () => {
     expect(r.error?.issues[0].message).toBe("Начало рабочего дня должно быть раньше конца")
   })
 
-  it("sets only the three keys of the org override; other keys stay", () => {
+  it("the default task due time: 23:59 when not sent, HH:MM checked", () => {
+    const ok = workingContextInputSchema.safeParse({ timeZone: "UTC", workStart: "09:00", workEnd: "18:00" })
+    expect(ok.success && ok.data.taskDueTime).toBe("23:59")
+    expect(workingContextInputSchema.safeParse({ timeZone: "UTC", workStart: "09:00", workEnd: "18:00", taskDueTime: "24:00" }).success).toBe(false)
+  })
+
+  it("sets only the three keys of the org override; other keys stay (not taskDueTime)", () => {
     expect(withWorkingContext({ boostMax: 1, timeZone: "UTC" }, { timeZone: "Europe/Vienna", workStart: "08:30", workEnd: "17:00" })).toEqual({
       boostMax: 1,
       timeZone: "Europe/Vienna",
       workStart: "08:30",
       workEnd: "17:00",
     })
-    expect(withWorkingContext(null, { timeZone: "UTC", workStart: "09:00", workEnd: "18:00" })).toEqual({
+    expect(withWorkingContext(null, { timeZone: "UTC", workStart: "09:00", workEnd: "18:00", taskDueTime: "20:00" } as never)).toEqual({
       timeZone: "UTC",
       workStart: "09:00",
       workEnd: "18:00",

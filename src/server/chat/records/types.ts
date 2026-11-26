@@ -23,6 +23,8 @@ export type RecordsContext = {
   now: Date
   /** Org time zone (IANA) for dates shown to the user. */
   timeZone: string
+  /** «Срок задачи по умолчанию» (HH:MM, org time) for task deadlines without a time. */
+  defaultDueTime: string
 }
 
 export type SearchOptions = {

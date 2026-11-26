@@ -1,5 +1,6 @@
 // «Рабочий контекст» of an organization (2026-11-19): time zone + working
-// hours, edited by the org OWNER in «Профиль организации». Stored as the org
+// hours (+ the default task due time since 2026-11-26, src/lib/org-time.ts),
+// edited by the org OWNER in «Профиль организации». Stored as the org
 // override of `attention.params` (org_setting, PARTIAL — only these three
 // keys; the rest stays platform / code default). Read by everything through
 // `loadAttentionParams` (topics lists and deadlines, digests and pushes,
@@ -26,6 +27,9 @@ export const workingContextInputSchema = z
     timeZone: z.string().trim().refine(isValidTimeZone, "Неизвестный часовой пояс"),
     workStart: hhmm,
     workEnd: hhmm,
+    // «Срок задачи по умолчанию» — stored in its own org_setting
+    // `tasks.defaultDueTime`, not in `attention.params` (2026-11-26).
+    taskDueTime: hhmm.default("23:59"),
   })
   .refine((v) => v.workStart < v.workEnd, { message: "Начало рабочего дня должно быть раньше конца", path: ["workEnd"] })
 
@@ -34,7 +38,7 @@ export type WorkingContextInput = z.infer<typeof workingContextInputSchema>
 /** The org override of `attention.params` with the working context set (other keys kept). */
 export function withWorkingContext(
   current: Record<string, unknown> | null | undefined,
-  input: WorkingContextInput,
+  input: Pick<WorkingContextInput, "timeZone" | "workStart" | "workEnd">,
 ): Record<string, unknown> {
   return { ...(current ?? {}), timeZone: input.timeZone, workStart: input.workStart, workEnd: input.workEnd }
 }

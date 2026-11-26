@@ -15,6 +15,7 @@ import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
 import { onEntityStatusChanged } from "@/server/topics/integration"
 import { parseCustomFilters } from "@/lib/custom-fields"
+import { statusAfterPersonSave } from "@/lib/entity-status"
 import { customFilterConditions, listCustomFields } from "@/server/custom-fields"
 import {
   contactManagedAtInputSchema,
@@ -446,6 +447,7 @@ export async function updateContact(
   if (data.name !== undefined && !data.name.trim()) {
     throw new Error("Name is required")
   }
+  const nextStatus = statusAfterPersonSave(current.status, data.status)
   if (data.clientId !== undefined) {
     await assertClientIfProvided(data.clientId, activeOrgId)
     // Keep `contact_company_link` in step: with link rows, a form change of
@@ -472,11 +474,12 @@ export async function updateContact(
       ...(data.clientId !== undefined
         ? { clientId: data.clientId || null }
         : {}),
-      ...(data.status !== undefined ? { status: data.status } : {}),
+      // A person's save confirms an automatic «Новый» contact (2026-11-26).
+      ...(nextStatus !== undefined ? { status: nextStatus } : {}),
       ...managedPatch,
     })
     .where(eq(contact.id, contactId))
 
   // Topics engine: a deleted / blocked contact leaves its topics.
-  await onEntityStatusChanged(activeOrgId, { contactIds: [contactId] }, data.status, session.user.id)
+  await onEntityStatusChanged(activeOrgId, { contactIds: [contactId] }, nextStatus, session.user.id)
 }

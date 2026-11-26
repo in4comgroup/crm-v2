@@ -20,6 +20,8 @@ export type EvalCtx = {
   orgId: string
   userId: string
   timeZone: string
+  /** «Срок задачи по умолчанию» of the org (a deadline without a time). */
+  defaultDueTime: string
   now: Date
   /** Reference statistics through the same engine (numbers of the «Аналитика» page). */
   stats: (q: StatsQuery) => Promise<StatsResult>

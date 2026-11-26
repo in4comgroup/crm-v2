@@ -10,9 +10,7 @@ import {
   type RecordSearchResult,
   type RecordType,
 } from "@/lib/chat/records"
-import { ATTENTION_DEFAULTS } from "@/lib/topics/attention-params"
 import { textQuery } from "@/server/search/normalise"
-import { loadAttentionParams } from "@/server/topics/attention/store"
 import { topicCardsVisible } from "@/server/topics/cards/visibility"
 import { cardsModule } from "./cards"
 import { clientsModule } from "./clients"
@@ -25,6 +23,7 @@ import { sourceItemsModule } from "./source-items"
 import { tasksModule } from "./tasks"
 import { topicsModule } from "./topics"
 import { RecordsInputError, type RecordModule, type RecordsContext } from "./types"
+import { loadOrgTime } from "@/server/org-time"
 
 // Records engine of the AI chat (docs/specs/ai-chat/01-specification.md §6):
 // ONE read-only search / list / detail API over the org's CRM records. The
@@ -54,13 +53,8 @@ export const LIST_LIMIT_MAX = 50
 
 /** Context for one request: org + user from the session, topics gate, org time zone. */
 export async function loadRecordsContext(orgId: string, userId: string, now: Date = new Date()): Promise<RecordsContext> {
-  const [topicsVisible, timeZone] = await Promise.all([
-    topicCardsVisible(orgId).catch(() => false),
-    loadAttentionParams(orgId)
-      .then((p) => p.timeZone)
-      .catch(() => ATTENTION_DEFAULTS.timeZone),
-  ])
-  return { orgId, userId, topicsVisible, now, timeZone }
+  const [topicsVisible, orgTime] = await Promise.all([topicCardsVisible(orgId).catch(() => false), loadOrgTime(orgId)])
+  return { orgId, userId, topicsVisible, now, timeZone: orgTime.timeZone, defaultDueTime: orgTime.defaultDueTime }
 }
 
 /** Types the user can see: topics / cards only in topics mode `on`. */

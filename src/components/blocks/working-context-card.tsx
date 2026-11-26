@@ -6,6 +6,7 @@
 // Telegram pushes, notification checks and the AI chat («сегодня»).
 
 import { useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { ChevronsUpDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -16,7 +17,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { LoadingButton } from "@/components/blocks/loading-button"
 import { timeZoneOptions, utcOffsetLabel, workingContextInputSchema } from "@/lib/identity/working-context"
 
-export type WorkingContext = { timeZone: string; workStart: string; workEnd: string }
+export type WorkingContext = { timeZone: string; workStart: string; workEnd: string; taskDueTime: string }
+
+const sameContext = (a: WorkingContext, b: WorkingContext) =>
+  a.timeZone === b.timeZone && a.workStart === b.workStart && a.workEnd === b.workEnd && a.taskDueTime === b.taskDueTime
 
 export function WorkingContextCard({
   value,
@@ -28,14 +32,15 @@ export function WorkingContextCard({
   canEdit: boolean
   onSaved?: () => void
 }) {
+  const router = useRouter()
   const [draft, setDraft] = useState<WorkingContext>(value)
   const [base, setBase] = useState<WorkingContext>(value)
   const [saving, setSaving] = useState(false)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   // A newer stored value (another tab / reload) replaces an unchanged draft.
-  if (value.timeZone !== base.timeZone || value.workStart !== base.workStart || value.workEnd !== base.workEnd) {
-    const untouched = draft.timeZone === base.timeZone && draft.workStart === base.workStart && draft.workEnd === base.workEnd
+  if (!sameContext(value, base)) {
+    const untouched = sameContext(draft, base)
     setBase(value)
     if (untouched) setDraft(value)
   }
@@ -44,7 +49,7 @@ export function WorkingContextCard({
     const q = query.trim().toLowerCase()
     return (q ? zones.filter((z) => z.toLowerCase().includes(q)) : zones).slice(0, 80)
   }, [zones, query])
-  const dirty = draft.timeZone !== base.timeZone || draft.workStart !== base.workStart || draft.workEnd !== base.workEnd
+  const dirty = !sameContext(draft, base)
 
   const save = async () => {
     const check = workingContextInputSchema.safeParse(draft)
@@ -68,6 +73,8 @@ export function WorkingContextCard({
       setDraft(check.data)
       toast.success("Рабочий контекст сохранён")
       onSaved?.()
+      // The layout passes the org time to every page (`useOrgTime`) — re-read it.
+      router.refresh()
     } catch {
       toast.error("Не удалось сохранить рабочий контекст")
     } finally {
@@ -80,8 +87,9 @@ export function WorkingContextCard({
       <CardHeader>
         <CardTitle className="text-lg font-medium">Рабочий контекст</CardTitle>
         <CardDescription>
-          Часовой пояс и рабочие часы организации: по ним считаются списки тем и сроки, сводки и напоминания,
-          уведомления, сообщения в Telegram и «сегодня» в ИИ чате.
+          Часовой пояс и рабочие часы организации: по ним считаются сроки задач, списки тем, сводки и
+          напоминания, уведомления, сообщения в Telegram и «сегодня» в ИИ чате. Все сроки показываются в этом
+          часовом поясе.
           {canEdit ? " Меняет владелец организации." : " Меняет владелец организации; для вас — только просмотр."}
         </CardDescription>
       </CardHeader>
@@ -156,6 +164,23 @@ export function WorkingContextCard({
             </span>
           )}
           <span className="text-xs text-muted-foreground">По рабочим дням производственного календаря.</span>
+        </div>
+        <div className="grid gap-1.5">
+          <span className="text-sm font-medium">Срок задачи по умолчанию</span>
+          {canEdit ? (
+            <Input
+              type="time"
+              aria-label="Срок задачи по умолчанию"
+              className="w-32"
+              value={draft.taskDueTime}
+              onChange={(e) => setDraft((d) => ({ ...d, taskDueTime: e.target.value }))}
+            />
+          ) : (
+            <span className="text-sm">{base.taskDueTime}</span>
+          )}
+          <span className="text-xs text-muted-foreground">
+            Время срока новой задачи и срока, указанного без времени (в том числе из ИИ чата).
+          </span>
         </div>
         {canEdit && (
           <div>

@@ -46,7 +46,7 @@ function closedByUser(t: { status: TopicStatus; closedReason: string | null }): 
 
 /** Origin of the instances of a check group (spec 01 §5.6). */
 export function originOf(def: CheckDef): "system_of_record" | "communication" {
-  return def.group === "orders" ? "system_of_record" : "communication"
+  return def.group === "watchdogs" ? "communication" : "system_of_record"
 }
 
 export function processKeyOf(def: CheckDef): string {

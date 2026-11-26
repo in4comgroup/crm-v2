@@ -21,6 +21,8 @@ import { humanUsersOnly } from "@/server/topics/system-actor"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
 import { contactDisplaySql } from "@/server/contact-display"
+import { defaultDueLocal, parseTaskDue } from "@/lib/org-time"
+import { loadOrgTime } from "@/server/org-time"
 
 export type TaskRow = {
   id: string
@@ -349,8 +351,13 @@ export async function createTask(data: {
   await assertDealIfProvided(data.dealId, activeOrgId)
 
   const now = new Date()
-  const due = data.dueDate ? new Date(data.dueDate) : now
-  if (Number.isNaN(due.getTime())) throw new Error("Invalid due date")
+  // Deadlines are wall times in the ORG zone (src/lib/org-time.ts): «YYYY-MM-DD»
+  // = that day at the org default due time, «YYYY-MM-DDTHH:MM» = that time;
+  // a full ISO instant (code callers) is kept. No deadline = today at the
+  // default time (2026-11-26; before, a bare date became 00:00 UTC = 03:00 MSK).
+  const orgTime = await loadOrgTime(activeOrgId)
+  const due = parseTaskDue(data.dueDate || defaultDueLocal(now, orgTime), orgTime)
+  if (!due) throw new Error("Неверный срок задачи")
 
   const id = randomUUID()
   await db.insert(task).values({
@@ -442,9 +449,9 @@ export async function updateTask(
 
   let due: Date | undefined
   if (data.dueDate !== undefined) {
-    if (!data.dueDate) throw new Error("Invalid due date")
-    const parsed = new Date(data.dueDate)
-    if (Number.isNaN(parsed.getTime())) throw new Error("Invalid due date")
+    if (!data.dueDate) throw new Error("Неверный срок задачи")
+    const parsed = parseTaskDue(data.dueDate, await loadOrgTime(activeOrgId))
+    if (!parsed) throw new Error("Неверный срок задачи")
     due = parsed
   }
 

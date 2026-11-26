@@ -365,6 +365,34 @@
       "when": 1795340740266,
       "tag": "0051_contact_name_native_source",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795703969685,
+      "tag": "0052_client_requisites_contact_birthday",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795703973392,
+      "tag": "0053_inn_custom_field_to_column",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795704814859,
+      "tag": "0054_task_due_org_time",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1795705088453,
+      "tag": "0055_signal_contact_birthday",
+      "breakpoints": true
     }
   ]
 }

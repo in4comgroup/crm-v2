@@ -407,6 +407,19 @@ export const client = pgTable(
     address: text("address"),
     webUrl: text("web_url"),
     currency: text("currency").notNull().default("RUB"),
+    // Standard requisites («Реквизиты» / «Банковские реквизиты», 2026-11-26,
+    // docs/specs/clients-contacts/10-standard-fields.md). Every org has them;
+    // validated + normalised by src/lib/standard-fields.ts (digits stored
+    // without spaces, КПП upper-case). Text, so leading zeros stay.
+    legalName: text("legal_name"),
+    legalAddress: text("legal_address"),
+    inn: text("inn"),
+    kpp: text("kpp"),
+    ogrn: text("ogrn"),
+    bankAccount: text("bank_account"),
+    bankName: text("bank_name"),
+    bankBik: text("bank_bik"),
+    bankCorrAccount: text("bank_corr_account"),
     // Extensible per-tenant custom fields (jsonb). Today only `type` is used,
     // and only for one org; every other org keeps an empty object. See
     // `src/lib/client-custom-fields.ts`.
@@ -529,6 +542,8 @@ export const contact = pgTable(
     phone: text("phone"),
     email: text("email"),
     position: text("position"),
+    // «День рождения» (standard field, 2026-11-26, src/lib/standard-fields.ts).
+    birthday: date("birthday", { mode: "string" }),
     // = the client of the PRIMARY CURRENT link (docs/specs/clients-contacts/04
     // §3.1). Written together with `contact_company_link` by
     // src/server/contact-links.ts. A contact with `client_id` and no link rows

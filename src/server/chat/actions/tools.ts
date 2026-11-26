@@ -382,7 +382,7 @@ export function buildActionTools(turn: ActionTurn) {
     key: string,
     notes: string[],
   ): Promise<{ item: DraftItem; into?: ChatDraftPart }> {
-    const g = groundTask(input, await sources(), turn.rctx.now, turn.rctx.timeZone)
+    const g = groundTask(input, await sources(), turn.rctx.now, turn.rctx.timeZone, turn.rctx.defaultDueTime)
     const v = g.values
     const idx = await index()
     let into: ChatDraftPart | undefined
@@ -1003,7 +1003,7 @@ export function buildActionTools(turn: ActionTurn) {
             let removed: RemovedValue[] = []
             let meta: Record<string, FieldMeta> = {}
             if (input.action === "reschedule") {
-              const g = groundTask({ title: t.name, dueText: input.dueText, dueDate: input.dueDate }, await sources(), turn.rctx.now, turn.rctx.timeZone)
+              const g = groundTask({ title: t.name, dueText: input.dueText, dueDate: input.dueDate }, await sources(), turn.rctx.now, turn.rctx.timeZone, turn.rctx.defaultDueTime)
               v.dueDate = g.values.dueDate
               v.dueText = g.values.dueText
               removed = g.removed.filter((r) => r.field === "dueDate")

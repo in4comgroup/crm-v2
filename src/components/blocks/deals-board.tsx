@@ -806,7 +806,7 @@ export function DealsBoard({
                   Прогноз <b className="text-foreground">{forecastText}</b>
                 </span>
                 <AnchorTooltip
-                  text="Сумма × вероятность по активным сделкам стадий «В прогнозе». Бюджет из брифа не учитывается."
+                  text="Сумма × вероятность по активным сделкам стадий «В прогнозе»."
                   open={forecastTip.open}
                   virtualRef={forecastTip.virtualRef}
                 />

@@ -8,7 +8,7 @@ import { isOpenDealStatus } from "@/lib/deal-funnel"
 
 // Per-column field sort is transient view-state — it NEVER writes to
 // `deal.position`. "Вручную" renders the persisted manual order; the others
-// render a sorted copy. (Spec: Value/New/Old, minus Priority/Age naming.)
+// render a sorted copy.
 export type SortMode = "manual" | "priority" | "value" | "newest" | "oldest"
 
 export const SORT_MODES: SortMode[] = [
@@ -23,7 +23,7 @@ export const SORT_LABEL: Record<SortMode, string> = {
   priority: "По приоритету агента",
   value: "По сумме",
   newest: "Сначала новые",
-  oldest: "Сначала старые",
+  oldest: "Давно без движения",
 }
 
 // Терминальная колонка «Закрытие» объединяет ДВА исхода (Closed + Rejected), поэтому
@@ -52,7 +52,7 @@ export const TERMINAL_SORT_LABEL: Record<TerminalSortMode, string> = {
   lost: "Сначала проигранные",
   value: "По сумме",
   newest: "Сначала новые",
-  oldest: "Сначала старые",
+  oldest: "Давно без движения",
 }
 
 // МОК приоритета агента (UX №3). Реальная логика — на бэке (agent priority
@@ -97,6 +97,10 @@ function compareManual(a: DealRow, b: DealRow): number {
   return ap === null ? 1 : -1
 }
 
+function compareOldestActivity(a: DealRow, b: DealRow): number {
+  return (a.lastActivityAt ?? a.createdAt).localeCompare(b.lastActivityAt ?? b.createdAt)
+}
+
 function sortCards(cards: DealRow[], mode: SortMode): DealRow[] {
   const copy = [...cards]
   switch (mode) {
@@ -119,7 +123,7 @@ function sortCards(cards: DealRow[], mode: SortMode): DealRow[] {
     case "newest":
       return copy.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     case "oldest":
-      return copy.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      return copy.sort(compareOldestActivity)
     case "manual":
     default:
       return copy.sort(compareManual)
@@ -162,7 +166,7 @@ export function sortTerminalCards(
     case "newest":
       return copy.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     case "oldest":
-      return copy.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      return copy.sort(compareOldestActivity)
     case "default":
     default:
       return copy.sort(byRecent)

@@ -34,7 +34,7 @@ export function Rail({
   return (
     <div
       ref={setNodeRef}
-      className={`flex h-full w-13 flex-shrink-0 flex-col items-center gap-2 rounded-lg border py-2 transition-colors ${colorClass} ${
+      className={`mx-1 flex h-full w-13 flex-shrink-0 flex-col items-center gap-2 rounded-lg border py-2 transition-colors ${colorClass} ${
         isOver ? "outline outline-2 outline-dashed outline-primary" : ""
       }`}
     >

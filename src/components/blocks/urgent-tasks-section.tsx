@@ -3,12 +3,15 @@
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { useGlobalChat } from "@/lib/global-chat-context"
 import type { listUrgentTasks } from "@/server/tasks"
 
 type UrgentTasks = Awaited<ReturnType<typeof listUrgentTasks>>
 const dueFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" })
 
 export function UrgentTasksSection() {
+  const { openChat } = useGlobalChat()
   const [items, setItems] = useState<UrgentTasks | null>(null)
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -55,6 +58,14 @@ export function UrgentTasksSection() {
             </li>
           ))}
         </ul>
+      )}
+      {!!items?.length && (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t pt-2">
+          <p className="text-sm text-muted-foreground">Привет! Разберём срочные задачи?</p>
+          <Button type="button" variant="secondary" size="sm" onClick={openChat}>
+            Открыть ИИ-чат
+          </Button>
+        </div>
       )}
     </section>
   )

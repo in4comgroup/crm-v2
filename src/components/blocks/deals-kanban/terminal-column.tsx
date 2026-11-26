@@ -104,7 +104,7 @@ export function TerminalColumn({
     return (
       <div
         ref={setNodeRef}
-        className={`flex h-full w-13 flex-shrink-0 flex-col items-center gap-3 rounded-lg border py-2 transition-colors ${DIAMOND_HEADER} ${
+        className={`mx-1 flex h-full w-13 flex-shrink-0 flex-col items-center gap-3 rounded-lg border py-2 transition-colors ${DIAMOND_HEADER} ${
           isOver ? "outline outline-2 outline-dashed outline-primary" : ""
         }`}
       >

@@ -297,7 +297,7 @@ export function DealKanbanCard({
       data-deal-id={deal.id}
       {...attributes}
       {...listeners}
-      className={`p-3 space-y-1 transition-[box-shadow,background-color] duration-200 ${surfaceClass} ${
+      className={`gap-4 p-3 transition-[box-shadow,background-color] duration-200 ${surfaceClass} ${
         isActive ? "cursor-grab active:cursor-grabbing" : "cursor-default"
       } ${isDragging ? "opacity-40" : ""}`}
       aria-label={`Открыть сделку: ${deal.clientName ?? deal.name}`}
@@ -364,10 +364,10 @@ export function DealKanbanCard({
           background + border (a translucent card «ate» muted/50). */}
       {deal.stateText && (
         <div
-          className="rounded-md border border-border bg-muted p-2 text-xs text-foreground/80 line-clamp-3"
+          className="rounded-md border border-border bg-muted p-2 text-xs text-foreground/80"
           title={deal.stateText}
         >
-          {deal.stateText}
+          <p className="line-clamp-3">{deal.stateText}</p>
         </div>
       )}
 
@@ -509,7 +509,7 @@ export function DealKanbanCard({
 // Превью карточки под курсором при перетаскивании (DragOverlay).
 export function DealKanbanCardOverlay({ deal }: { deal: DealRow }) {
   return (
-    <Card className="w-64 p-3 space-y-2 bg-card border-border shadow-xl rotate-2 cursor-grabbing">
+    <Card className="w-64 gap-4 p-3 bg-card border-border shadow-xl rotate-2 cursor-grabbing">
       <DealTitle deal={deal} />
       <DealMetaLine deal={deal} />
     </Card>

@@ -274,13 +274,6 @@ export function ContactEditForm({
               <FormControl>
                 <Input {...field} placeholder="Обязательное поле" aria-required="true" />
               </FormControl>
-              {/* «Системное имя» = the name the sources use (e-mail display
-                  name, Telegram profile); read-only, for matching (2026-11-22). */}
-              {mode === "edit" && contact?.name && contact.name.trim() !== field.value.trim() && (
-                <p className="text-xs text-muted-foreground">
-                  Системное имя: <span className="text-foreground/80">{contact.name}</span>
-                </p>
-              )}
               <FormMessage />
             </FormItem>
           )}

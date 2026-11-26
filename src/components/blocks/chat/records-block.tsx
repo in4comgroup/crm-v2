@@ -190,9 +190,10 @@ export function RecordHitRow({
         href={hit.href}
         aria-label={`Открыть в CRM: ${hit.title}`}
         title="Открыть в CRM"
-        className="mt-1 mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-60 transition hover:bg-background hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="mt-1 mr-1 inline-flex min-h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition hover:bg-background hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ExternalLink className="size-3.5" aria-hidden />
+        В CRM
       </Link>
     </div>
   )

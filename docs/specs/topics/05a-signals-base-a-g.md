@@ -1899,8 +1899,9 @@ Shared rule: a calendar reply without `.ics` («Принято:», «Откло�
 | `CONTACT_NEW_DECISION_MAKER` | Появился новый человек, принимающий решения (ЛПР) | 6 | chance | event | fixed | medium | — | yes | — | active | on | P6 | account | contact |
 | `CONTACT_NEW_KNOWN_ORG` | Новый контакт у действующего клиента | 4 | chance | event | fixed | medium | — | yes | — | active | on | D4 | account | contact |
 | `CONTACT_OOO` | Контакт отсутствует и указал заместителя | 4 | risk | event | fixed | medium | — | yes | — | active | on | D4 | account | contact |
+| `CONTACT_BIRTHDAY` | День рождения контакта | 8 | chance | event | fixed | quick | — | — | — | active | on | P8 | account | contact |
 
-Block G: 4 codes — 4 active.
+Block G: 5 codes — 5 active. `CONTACT_BIRTHDAY` is a PROCESS code (added 2026-11-26, migration `0055`; never in the extraction prompt).
 
 ### `CONTACT_LEAVING` — Контакт уходит из компании
 
@@ -2045,6 +2046,37 @@ Block G: 4 codes — 4 active.
 **Контрпример:** «Спасибо за письмо, ваше обращение принято в работу» → автоответ без отсутствия.
 
 **Заметка для карточки:** Укажи дату возврата и заместителя; шаг — срочные вопросы вести через заместителя, остальные — после возврата.
+
+---
+
+### `CONTACT_BIRTHDAY` — День рождения контакта
+
+| Field | Value |
+|---|---|
+| Pack · block · family | base · G · contact |
+| Weight · class · kind · score rule | 8 · chance · event · fixed |
+| Effort · asks us · inbound only · amount | quick · no · no · no |
+| Emitted by | process — the CRM check `contact_birthday` (group «Контакты», `src/server/topics/checks/contacts.ts`), never the LLM |
+| Stage (pack default) · IN4COM | active · on |
+| Display profile | from weight (P8 → list «Сейчас», no daily P6 limit) |
+| Recipient role | account (topic owner = the company's «Ответственный»; a contact without a company → every member) |
+| Closes / closed by | closes: — · closed by: the check itself the next day (B5, «День рождения прошёл») |
+| Relations | — |
+| Date gate | — |
+| Relevance window | 1 day |
+| Deal effect | none |
+
+Added 2026-11-26 (tester request «Поднимать карточку со срочностью „Сейчас“ в день рождения контакта»).
+
+**Определение:** Сегодня (в часовом поясе организации) день рождения контакта: дата из поля «День рождения» карточки контакта (`contact.birthday`).
+
+**Граница (не считается):** Упоминание праздника или дня рождения в переписке — не этот код (код только по полю карточки). Удалённые, заблокированные и объединённые контакты — нет сигнала.
+
+**Правило срабатывания:** RU: проверка раз в день (07:00 по времени организации); сегодня совпадают день и месяц поля «День рождения» (29 февраля в невисокосный год — 28 февраля); одна тема на контакт и год (ключ `contact:<id>:birthday:<год>`); на следующий день условие снимается и тема закрывается. EN: daily check; today matches the day and month of the field (29 Feb → 28 Feb in a non-leap year); one topic per contact and year; cleared the next day.
+
+**Пример (evidence):** «Иван Петров: день рождения сегодня (26.11); исполняется 45 лет» (круглая дата — «(юбилей)»).
+
+**Заметка для карточки:** Напомни поздравить контакт с днём рождения сегодня; назови компанию и, если известно, сколько лет исполняется (круглая дата — юбилей). Шаги — позвонить или написать лично, при необходимости отправить подарок или открытку.
 
 ---
 

@@ -99,7 +99,8 @@ Transport: `?cf=<JSON array of CustomFieldFilter>` on `GET /api/clients` (feed) 
 ## 4. Values (all members)
 
 - Stored per company / contact, keyed by the field id (§5). Every member of the org reads and edits values of every shown field (R5). Hidden / archived fields are not editable in the tab.
-- Edit model (Q8): the tab is a form with «Сохранить» (only changed fields are written) and the unsaved-changes guard, like the other forms.
+- Edit model (Q8): the tab is a form with «Сохранить» (only changed fields are written) and the unsaved-changes guard, like the other forms. Since 2026-11-26 the button is disabled only while saving; with nothing changed a click says «Изменений нет — всё уже сохранено» (a field created in «Настроить поля» is saved at once).
+- Since 2026-11-26 the tab first shows the **standard fields** every org has (real columns, not custom fields — company requisites, contact birthday; [10-standard-fields.md](10-standard-fields.md)), then the custom fields under «Дополнительные поля»; one «Сохранить» for both (`PUT /api/custom-values { values, standard }`). A save with a change also turns an automatic «Новая» record into «Активная».
 - Value history (Q9): one log row per changed field (who, when, before, after), shown under the field («История»).
 - Writers: only people through the tab (and the owner bulk actions later). Discovery, enrichment, topics and AI never write custom values in this release.
 - Read by (Q11): the tab; the AI chat (shown fields of the companies / contacts it finds, as «Название: значение» lines); the topics prompts card writer and deal state (shown fields of the topic's / deal's company, ≤ 400 chars, after the client profile summary; gated by `identity.promptContext`). Hidden and archived fields never reach the AI.

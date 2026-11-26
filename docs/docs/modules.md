@@ -196,6 +196,12 @@ one company / contact / deal for the «Темы» tabs).
   «Исполнитель» = the person who creates it. A topic card with `category = new_order` (ORDER_REQUESTED)
   shows «Создать заказ» (Create order) instead and starts the order-from-request
   flow (`resultOrderId` stored). «Отклонить» (Reject) needs a reason.
+- Contact birthday (2026-11-26): on the birthday of a contact (field «День
+  рождения», org time zone) the topics CRM check `contact_birthday` opens a
+  topic «<Компания> — День рождения: <Имя>» with weight 8 → a card in
+  «Сейчас» (not limited by the daily limit of 3); the next day the topic
+  closes by itself. Check group «Контакты», on by default
+  (`topics.checks.contacts`); the org needs the `base` signal pack.
 - Topic card on «Домашняя» (2026-11-21): block «Источники (N)» = the newest
   ≤ 3 messages behind the topic (channel, date, subject — sender); a click
   opens the message, «ещё N» opens the topic panel. Checkbox «Мои» = topic
@@ -293,6 +299,30 @@ links, proposals, merge).
   is no longer shown or edited.
 - "Company materials" match source items by the company's name, address,
   website and contacts against `metadata_json` text (R2-uploaded items only).
+- Standard fields (2026-11-26, spec `docs/specs/clients-contacts/10-standard-fields.md`):
+  every org has company requisites («Реквизиты»: «Юридическое название»,
+  «Юридический адрес», ИНН 10 / 12 digits, КПП 9 chars, ОГРН 13 / 15 digits;
+  «Банковские реквизиты»: «Расчётный счёт» 20 digits, «Наименование банка»,
+  БИК 9 digits, «Корр. счёт банка» 20 digits) and the contact «День рождения».
+  Real columns, validated by `src/lib/standard-fields.ts` (spaces allowed in
+  the input, accounts shown in groups of 4); shown at the TOP of the «Поля»
+  tab, the org custom fields follow under «Дополнительные поля»; one
+  «Сохранить» (`PUT api/custom-values { values, standard }`). The old «ИНН»
+  custom field was moved into the column (migration `0053`).
+- «Новая» → «Активная» (2026-11-26): a company / contact found automatically
+  (`initial`) becomes `active` when a person saves its card — main form,
+  «Поля» or «Профиль компании» with a change (`src/lib/entity-status.ts`,
+  `src/server/entity-status.ts`). Opening a card or a save with no change does
+  not; an explicitly chosen other status wins; automatic processes never.
+- «Тип компании» (2026-11-26): the option without a manual tag is
+  «Автоматически по сделкам» and shows the value from the deals, e.g.
+  «Автоматически по сделкам: Потенциальный» (same rule as the tabs). The tag
+  itself is never written automatically.
+- «Сохранить» buttons (company drawer, «Поля», deal drawer; 2026-11-26) are
+  disabled only while saving; with nothing changed a click says «Изменений нет
+  — всё уже сохранено». The drawers read react-hook-form `isDirty` /
+  `dirtyFields` during render (a read only inside the handler stays `false` —
+  that bug stopped a company rename from saving the same day).
 - Per-client discount lives in `customFields.discount` and is used by orders.
   `client.custom_fields` keeps only system keys (`discount`, `companyKind`);
   org-defined fields live in `custom_values` (definitions in `custom_field`,
@@ -302,7 +332,10 @@ links, proposals, merge).
   проверьте» (+ «Подтвердить» / «Убрать») and turns a different value into a
   proposal; never overwrites a manual value. «Убрать» (2026-11-21) empties an
   UNCONFIRMED automatic value and remembers it (`field_meta.removedKey`), so
-  the next web fill does not write the same value again.
+  the next web fill does not write the same value again. «Заполнить из
+  интернета» with exactly one match (not `low`) also fills the company's EMPTY
+  website / e-mail / phone / address (2026-11-26; never overwrites); toast
+  «Данные из интернета сохранены» lists what was written.
 - Contact «Имя на родном языке» (native name) is required, default = the name
 - Contact names (2026-11-22): «Имя на родном языке» is the one name shown everywhere; `name` = «Системное имя» (source name, read-only, for matching). A person's contact: only the native name is asked. A source contact: native = signature name, else the display name ([clients-contacts/09](../specs/clients-contacts/09-contact-names.md))
   (2026-11-21; form copies the name while the field is empty or a copy; server
@@ -489,7 +522,16 @@ timeline below. Deep link `?openTask=<id>`.
 `statusOnly`). **Server module.** `tasks.ts`.
 
 **Key rules.** Assignee must be an org member; contact must belong to the chosen
-company; `dueDate` is required (defaults to creation time); `closed` = archive.
+company; `closed` = archive. **Deadline = date + time in the ORG time zone**
+(2026-11-26, `src/lib/org-time.ts`): the form «Срок» has a date and a time;
+a new task starts today at the org's «Срок задачи по умолчанию» (23:59 unless
+the owner changed it in «Рабочий контекст»); the server reads «YYYY-MM-DD» /
+«YYYY-MM-DDTHH:MM» in the org zone (`parseTaskDue`, `loadOrgTime`); every task
+view (cards, table, timeline, «Срочные задачи» on Home, company / deal
+drawers) shows the deadline in the org zone (`useOrgTime()` from the
+`(protected)` layout), never in the browser's. Before, a bare date became
+00:00 UTC (03:00 in Moscow: «Просрочена» from 03:00); migration `0054`
+moved such tasks to 23:59 org time.
 The task drawer has tabs «Задача» / «Документы».
 
 ## Documents (attachments)
@@ -606,7 +648,8 @@ company of the contact's e-mail domain (shown «по домену почты», 
 domain); otherwise the chat asks «К какой компании отнести контакт?» with up
 to 4 likely companies and «Без компании» (No company; then a channel is
 still needed), and the card has a company picker; task deadlines come from the
-user's own words («до пятницы») and are computed in the org time zone — no
+user's own words («до пятницы») and are computed in the org time zone (a date
+without a time = the org's «Срок задачи по умолчанию», since 2026-11-26) — no
 words, no date (the card asks); assignee by a colleague's name; code removes every value that is not in the
 user's own text or files, shows existing records with the same e-mail / phone /
 domain («Использовать существующий» / «Всё равно создать новый»), refuses our
@@ -722,7 +765,7 @@ Visible only to platform admins (`user.role === 'admin'`). Tabs:
 | «Модели» (Models) | Read-only AI model registry: every model of each AI gateway with prices and capabilities; filters (gateway, type, vendor, capabilities, search, available only), sortable, server-paginated with the shared pager `table-pager.tsx` (10 / 25 / 50, default 10), detail drawer (full pricing, price history, data source per field); «Синхронизировать» (Sync) button. Spec: `docs/specs/models/02-model-registry.md` | `api/admin/ai/models`, `api/admin/ai/catalog/sync`; `src/server/ai/{registry,catalog}` |
 | «Процессы ИИ» (AI processes) | The model of every place that calls AI (22 processes, grouped; old `ai_usage_event` rows keep the raw key of removed processes and the usage page shows it when the label is unknown): primary + up to 3 fallbacks, picked only from compatible models (capabilities, vendor web-search tool), cheapest first; for the AI chat also the list users may pick from; reset to default; warnings when a chosen model became unavailable; «≈ $ / 1 000 вызовов» and 30-day usage per process; «Правила выбора моделей» (ZDR only, no training only, allowed vendors — a save that would leave a process without a compliant model is refused). Changes apply within a minute, no deploy. Spec: `docs/specs/models/03-processes-and-model-selection.md` | `api/admin/ai/processes`; `src/server/ai/registry/assignments.ts` |
 | «Использование ИИ» (AI usage) | AI spend from the usage ledger: filters (period, organization, process, model, status), KPIs (calls, tokens, gateway cost, errors), cost chart stacked by process or model with its own scale («По дням» / «По месяцам» / «По годам») and range «с … по …» (the range replaces only the page period; the other filters apply), breakdown tables by organization / process / model (row click filters the page), CSV export, «Уточнить» to fetch exact cost for still-estimated calls, «Синхронизировать цены и стоимость» (what the daily cron does; warning when it has not run for >26 h), «С наценкой» KPI/column and the «Наценка» block (global markup %, example, history), block «Лимиты ИИ по организациям» (daily budget in gateway cost + MONTHLY limit in end-user cost, default $20; defaults + per-org overrides, spend today / this month). Specs: `docs/specs/models/04-usage-and-cost.md`, `07-daily-budget.md`, `08-monthly-limit.md` | `api/admin/ai/usage`, `api/admin/ai/settings` (markup + model rules); `src/server/ai/usage.ts`, `usage-stats.ts` |
-| «Темы» (Topics) | Operations of the topics engine: topics mode per org (off / shadow / on; switching to shadow / on is refused until the org profile minimum is complete — admin override with a reason; columns «Профиль» and «Профиль в промптах» = `identity.promptContext`), hourly run history + «Запустить сейчас», «Проверки CRM» (CRM checks + watchdogs, preview, switches), «Рассылка» (email digests; switch «Сообщения о темах в Telegram», column «Telegram», «Тест в Telegram (мне)»). Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
+| «Темы» (Topics) | Operations of the topics engine: topics mode per org (off / shadow / on; switching to shadow / on is refused until the org profile minimum is complete — admin override with a reason; columns «Профиль» and «Профиль в промптах» = `identity.promptContext`), hourly run history + «Запустить сейчас», «Проверки CRM» (CRM checks + watchdogs + contact birthdays, preview, three switches «Проверки по заказам» / «Сторожа по переписке» / «Контакты (дни рождения)» — the last on by default), «Рассылка» (email digests; switch «Сообщения о темах в Telegram», column «Telegram», «Тест в Telegram (мне)»). Spec `docs/specs/topics/` | `api/admin/topics*`; `src/server/topics/` (signal extraction: `src/server/topics/signals/`) |
 | «Сигналы» (Signals) | Signals registry: table with filters, full code editor (all fields, validated, versioned), per-org pack activation / overrides / stage rules / risk guards (preset mechanism kept, no presets defined — one generic set for every org, R22), attributes, relations, risk types, rule templates, history, Markdown export | `api/admin/signals*`; `src/server/signals/` |
 | «Тесты и отладка» (Tests and debugging) | Quality checks and debugging of the topics engine, apart from operations («Темы») and the registry («Сигналы»): «Сигналы сообщений» (signal review of scanned items + «Извлечь заново»), «Темы (отладка)» (topic debug + actions), «Эталонный набор» (golden set), «Оценка извлечения (eval)» (eval / model spike with the option «С профилем организации», stored metrics, quality gate; grouping eval). Component `admin-topics-testing.tsx` | `api/admin/topics/{signals,topics,golden,spike,grouping}` |
 
@@ -744,7 +787,10 @@ source reset.
   the org record and logo), tab «Профиль организации» (who «we» are and what we
   do — identity registry, business profile, completeness «N из 6»; owner edits,
   members read; card «Рабочий контекст» = time zone + working hours, the owner
-  edits them since 2026-11-19, stored as the org override of `attention.params`;
+  edits them since 2026-11-19, stored as the org override of `attention.params`,
+  + «Срок задачи по умолчанию» (default task due time, 23:59, org_setting
+  `tasks.defaultDueTime`, 2026-11-26); the org time zone is the zone in which
+  task deadlines are entered and shown;
   spec `docs/specs/identity/`, `docs/specs/organization/`), tab «Участники»
   (Members — owners only: roles «Владелец» / «Участник» (the old «Администратор»
   is no longer offered), remove, invite, and the block «Приглашения» = pending

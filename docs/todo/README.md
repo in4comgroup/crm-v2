@@ -2,7 +2,7 @@
 
 Work that is decided but **not scheduled**. Each item names its source in the specs. When an item is scheduled, move it into the spec folder of its topic (`docs/specs/<topic>/`) and delete it here.
 
-Last update: 2026-11-19.
+Last update: 2026-11-26.
 
 ## Topics engine (`docs/specs/topics/`)
 
@@ -32,6 +32,7 @@ Write actions from the chat (former O5) are built: [ai-chat-tools/](../specs/ai-
 |---|---|---|---|
 | A1 | Overwrite existing values from the chat | «Дополнить» today only fills empty fields and adds extra addresses / aliases (Q3 B). Later: also change a filled value, with an old → new diff in the card | [ai-chat-tools/02-open-questions.md](../specs/ai-chat-tools/02-open-questions.md) Q3 («C later») |
 | A3 | AI chat over Telegram — round 2 | Decide after the real use: chart images, record detail + paging inside Telegram, editing card values in Telegram, the answer text streamed in the preview, voice answers; a Mini App (CRM screens inside Telegram, own spec, Q10) | [ai-chat-telegram](../specs/ai-chat-telegram/01-specification.md) §14, Q6, Q7, Q10 |
+| A4 | **Chat prompt: default due time** (2026-11-26) | The code uses the org's «Срок задачи по умолчанию» (23:59 by default) for a deadline without a time, but the chat prompt (`src/lib/chat/prompt.ts`) and the `draftTask` / `draftTaskUpdate` tool descriptions still say «date only = 18:00» for the model's own reading (used only when code cannot read the user's words). Change the text to «the org default time» together with the next `pnpm chat:eval` (prompt rule: eval before every prompt change; the org's AI budget is paused) | [organization/01](../specs/organization/01-switcher-invitations-working-context.md) §3.1 |
 
 ## Telegram (`docs/specs/telegram/`, `docs/specs/ai-chat-telegram/`)
 
@@ -71,3 +72,4 @@ Steps to do on the deployed environment, once, when the related code ships.
 | D7 | **Real Telegram test of the AI chat** (part of [telegram/05](../specs/telegram/05-finalization.md) F4) | Owner: Telegram source → «Настройки провайдера» → switch on «ИИ-чат в Telegram». A member: /profile → «Telegram» → «Подключить Telegram» → open the link → «Start». Then: a question, a long pasted text, an album of photos with a caption, a business card photo → «Создать», a voice question, «Выручка по месяцам» → «📎 CSV», a reply to an answer, `/new`, `/stop`; in a group the bot must not answer. Check the HTML on a phone (tables, links) and the waiting preview. Pushes: in working hours a topic entering «Сейчас» of a linked member → one message; «⏰ Отложить до завтра» / «✅ Готово» change the topic; an important notification (e.g. an overdue task) arrives as «❗ …»; /account → «Уведомления» switches stop them | [ai-chat-telegram](../specs/ai-chat-telegram/01-specification.md) §17 |
 | D8 | **Crons back to hourly** (test deployment on Vercel Hobby, 2026-11-18) | `vercel.ts` + `src/server/orchestration/config.ts`: `/api/cron/topics` `0 8 * * *` → `0 * * * *`, `/api/cron/notifications` `0 9 * * *` → `15 * * * *` (change both files). Needs the Vercel Pro plan. Until then topics, pushes, signals and notification checks run once a day | [telegram/05](../specs/telegram/05-finalization.md) §3.3 |
 | D9 | **Migration `0050` AFTER the code** (bug list 2026-11-21) | Deploy the code of the bug-list round first, then run `pnpm db:migrate` (`0050_contact_name_native_required`: blank `contact.name_native` ← `name`, then NOT NULL; also `0051_contact_name_native_source` — must be applied BEFORE the 2026-11-22 contact-names code is deployed, clients-contacts/09). The older code writes NULL there, so the migration must not run before the new code is live | [bugfixing/](../specs/bugfixing/README.md) |
+| D10 | **Migrations `0052`–`0055` with the code of 2026-11-26** | `pnpm db:migrate` against the deployed DB BEFORE the code of 2026-11-26 (`0052` requisite columns + `contact.birthday`, `0053` «ИНН» custom field → `client.inn`, `0054` date-only task deadlines → 23:59 org time, `0055` process code `CONTACT_BIRTHDAY`): the new code reads the new columns. Then each org owner checks «Рабочий контекст» → «Часовой пояс» (default Europe/Vienna; a Moscow client = Europe/Moscow) — task deadlines are shown in that zone | [bugfixing/](../specs/bugfixing/README.md) § 2026-11-26 |

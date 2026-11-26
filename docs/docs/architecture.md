@@ -30,7 +30,7 @@ Node-only packages `imapflow`, `mailparser`, `node-ical`, `exceljs` are listed i
 | `src/app/page.tsx` (`/`) | Public | Landing page with links to sign-in and sign-up. |
 | `src/app/(auth)/` — `/sign-in`, `/sign-up` | Public; signed-in users are redirected to `/dashboard` | OTP sign-in / sign-up forms. |
 | `src/app/accept-invitation/[id]` | Public | Invitation acceptance. Deliberately outside `(auth)` so a signed-in user is not redirected away. |
-| `src/app/(protected)/` | Session required (checked in `layout.tsx`, redirect to `/sign-in`) | All product pages. The layout mounts the sidebar and the global AI chat panel once. |
+| `src/app/(protected)/` | Session required (checked in `layout.tsx`, redirect to `/sign-in`) | All product pages. The layout mounts the sidebar and the global AI chat panel once, and gives every client component the org time (`OrgTimeProvider` → `useOrgTime()`: org time zone + default task due time, server `loadOrgTime`; 2026-11-26). |
 | `src/app/o/[token]` | Public, token is the authorization | Guest order review and confirmation. |
 | `src/app/api/webhooks/telegram/[sourceId]` | Public, path id + secret header are the authorization | Telegram bot webhook. One router (`src/server/telegram/router.ts`): button presses, commands (`/start <code>` staff binding, `/stop`, `/new`, `/help`), a bound member's private message → the AI chat over Telegram (when the owner switched it on), everything else → ingest of private-chat and group messages: text, voice notes and files (parsed as attachments; specs `docs/specs/telegram/`, `docs/specs/ai-chat-telegram/`). |
 | `src/app/api/cron/daily` | Bearer `CRON_SECRET`, required in every environment | Starts the daily pipeline workflow. |

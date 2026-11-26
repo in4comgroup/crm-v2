@@ -1,6 +1,6 @@
 # Topics — signals registry (full specification)
 
-Status: reviewed 2026-11-13 (decisions R1–R20 in [02-open-questions.md](02-open-questions.md) § F applied); updated 2026-11-14 for **R22** (one generic signal set, migration `0016`) and **R23** (all `onHold` codes `active`, retired codes deleted, migration `0017`) · seed data, no code changes
+Status: reviewed 2026-11-13 (decisions R1–R20 in [02-open-questions.md](02-open-questions.md) § F applied); updated 2026-11-14 for **R22** (one generic signal set, migration `0016`) and **R23** (all `onHold` codes `active`, retired codes deleted, migration `0017`) · seed data, no code changes; 2026-11-26: process code `CONTACT_BIRTHDAY` added (migration `0055`, block G, weight 8; check `contact_birthday`)
 Extends [01-specification.md](01-specification.md) §4 (taxonomy) and §10 (Russian language). Attention rules that use these fields: [06-attention-engine.md](06-attention-engine.md).
 
 The registry is the full list of signal codes with all parameters, Russian texts and Russian cues. It is **data** (DB tables with all parameters and settings: codes, packs, per-org activation and overrides, stage rules, risk types, relations), managed by the platform admin in Settings → «Сигналы» (Q3) with a **full editor** in the MVP. These files are the **source of version 1**: after review, version 1 is written into a Drizzle **custom migration** (`pnpm db:custom --name signals_registry_v1`) as platform reference data with fixed ids and `ON CONFLICT DO NOTHING` (root `AGENTS.md` rule 3). After that the DB is the master; these files are not loaded again (no `db/seeds/*.json`, no scripts). The «Экспорт в Markdown» of the tab writes the same format back (spec §4.1).
@@ -171,7 +171,7 @@ AND (code not in a block parked for this pack, e.g. agency: H, J)
 
 There are **no presets** now. The preset «Пилот дистрибуции (IN4COM)» (`distribution-pilot`) is removed (R22); the preset mechanism stays in the code for later use.
 
-An org gets signals by switching the `base` pack on in «Сигналы». No org overrides are needed: every code whose **own** stage is `active` acts: 144 codes, of which 123 go into the live extraction prompt (the other 21 are process codes; phase 8 emits 14 of them, `CHECKS_NOT_BUILT` lists the rest). Codes with stage `parked` (8) / `gated` (6) stay out. Since R23 (`0017`) no code is `onHold` and no retired code exists. IN4COM on the dev DB: `base` on, all its earlier org overrides deleted.
+An org gets signals by switching the `base` pack on in «Сигналы». No org overrides are needed: every code whose **own** stage is `active` acts: 144 codes, of which 123 go into the live extraction prompt (the other 21 are process codes; phase 8 emits 14 of them, `CHECKS_NOT_BUILT` lists the rest). Later additions: 7 parser codes of the custom funnel (`0038`) and the process code `CONTACT_BIRTHDAY` (`0055`, 2026-11-26). Codes with stage `parked` (8) / `gated` (6) stay out. Since R23 (`0017`) no code is `onHold` and no retired code exists. IN4COM on the dev DB: `base` on, all its earlier org overrides deleted.
 
 | Pack | State | Notes |
 |---|---|---|

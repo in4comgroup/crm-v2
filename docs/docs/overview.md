@@ -109,13 +109,13 @@ Step by step:
 | --- | --- | --- |
 | Sources & parsing | Connect channels, ingest items, LLM-parse to Markdown, store in R2 | `/sources` «Источники» |
 | Discovery | Find companies, contacts, links in parsed items; blocklist; own-org identity | `/clients` (dialog) |
-| Cards | Topic cards from the topics engine; read-only history of old Custom-rule cards | `/dashboard` «Домашняя» |
-| Companies & contacts | Company and person records, web lookup (one company at a time; the batch «Обогатить» button was removed 2026-11-21), custom fields, company profile, «Ответственный» (Responsible) + «Также отвечают» (Also responsible), contact field «Ведётся на уровне» (Managed at the level of), contact ↔ company links over time (current / former, two companies, «Контакт сменил компанию?», merge), Telegram chats of a company | `/clients` «Компании», `/contacts` «Контакты» |
+| Cards | Topic cards from the topics engine (incl. a card in «Сейчас» on a contact's birthday); read-only history of old Custom-rule cards | `/dashboard` «Домашняя» |
+| Companies & contacts | Company and person records, standard requisites (ИНН, КПП, ОГРН, bank details) and contact birthday, web lookup (one company at a time; the batch «Обогатить» button was removed 2026-11-21), custom fields, company profile, «Ответственный» (Responsible) + «Также отвечают» (Also responsible), contact field «Ведётся на уровне» (Managed at the level of), contact ↔ company links over time (current / former, two companies, «Контакт сменил компанию?», merge), Telegram chats of a company | `/clients` «Компании», `/contacts` «Контакты» |
 | Documents | Files of companies, contacts, deals, tasks, orders: originals stored, linked automatically and by hand | «Документы» tab in each drawer |
 | Deals | Kanban sales funnel, deal journal, deal bridge from topics | `/deals` «Сделки» |
 | Products / catalog | Read-only product catalog with hybrid search and price-list export | `/products` tab «Каталог товаров» |
 | Orders | Order builder, per-client discount, guest confirmation link, order from request | `/products` tab «Заказы» |
-| Tasks | Task list/cards, timeline, links to clients, contacts, deals | `/tasks` «Задачи» |
+| Tasks | Task list/cards, timeline, links to clients, contacts, deals; deadline = date + time in the org time zone (default time per org) | `/tasks` «Задачи» |
 | Analytics | Sales reporting over booked orders + an analytics AI assistant | `/analytics` «Аналитика» |
 | Global search | Cross-entity search box in every page header | header |
 | AI chat panel | Chat over CRM data and the web, on every page; files and voice messages; draft cards that create or change records after a click | header button |

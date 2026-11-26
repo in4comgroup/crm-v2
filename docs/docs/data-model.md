@@ -2,7 +2,7 @@
 
 [Back to index](./README.md)
 
-Source: `src/db/schema.ts` (Drizzle). Database: Neon Postgres. 105 tables (latest migration `0049`).
+Source: `src/db/schema.ts` (Drizzle). Database: Neon Postgres. 105 tables (latest migration `0055`, 2026-11-26).
 Column names below use the TypeScript (camelCase) names; the SQL columns are
 snake_case (for example `organizationId` → `organization_id`).
 
@@ -28,16 +28,16 @@ Managed mostly by better-auth (`src/lib/auth.ts`).
 
 | Table | Purpose | Key columns / relations |
 | --- | --- | --- |
-| `client` | A company (UI: «Компания») | `name`, `namePhys` (person behind a non-company client), `email`, `phone`, `address`, `webUrl`, `currency`, `aliases` (text[]), `funnelPhase`, `status` (`entity_status`), `customFields` (jsonb system bag: `discount`, `companyKind`, `responsibleHandover`), `customValues` (jsonb, org custom-field values keyed by field id), `enrichmentStatus`, `enrichmentCandidates` (jsonb), `userId` (creator), `organizationId`; «Ответственный» (migration `0029`): `responsibleUserId` (→ `user`, **set null**; default = creator; index with the org), `responsibleChangedAt`, `responsibleChangedByUserId` (**set null**), `responsibleHandoverFromUserId` (**set null**; set while a handover to an owner waits for the owner's decision). `responsibleUserId` stays the MAIN responsible; additional ones are in `client_co_responsible` |
+| `client` | A company (UI: «Компания») | `name`, `namePhys` (person behind a non-company client), `email`, `phone`, `address`, `webUrl`, `currency`, standard requisites (migration `0052`, rules `src/lib/standard-fields.ts`, spec `docs/specs/clients-contacts/10-standard-fields.md`; all text, nullable, digits stored without spaces): `legalName`, `legalAddress`, `inn` (10 / 12 digits), `kpp` (9 chars), `ogrn` (13 / 15 digits), `bankAccount` (20 digits), `bankName`, `bankBik` (9 digits), `bankCorrAccount` (20 digits); `aliases` (text[]), `funnelPhase`, `status` (`entity_status`), `customFields` (jsonb system bag: `discount`, `companyKind`, `responsibleHandover`), `customValues` (jsonb, org custom-field values keyed by field id), `enrichmentStatus`, `enrichmentCandidates` (jsonb), `userId` (creator), `organizationId`; «Ответственный» (migration `0029`): `responsibleUserId` (→ `user`, **set null**; default = creator; index with the org), `responsibleChangedAt`, `responsibleChangedByUserId` (**set null**), `responsibleHandoverFromUserId` (**set null**; set while a handover to an owner waits for the owner's decision). `responsibleUserId` stays the MAIN responsible; additional ones are in `client_co_responsible` |
 | `client_co_responsible` | Additional responsible members of a company, «Также отвечают» (Also responsible) (migration `0049`, spec `docs/specs/clients-contacts/08-co-responsible.md`) | PK (`clientId`, `userId`); `organizationId`, `clientId`, `userId` (all **cascade**), `addedByUserId` (**set null**), `createdAt`; index (org, user). Never the main responsible (assigning a member as main removes the extra row). Counted as responsible in the feed filters «Мои» / by member, profile edit rights, Telegram chat binding rights and the AI chat records; NOT for handover, deal owner, topic owner or notifications |
-| `contact` | A person | `name` (technical/envelope name), `nameNative` (local-script name; NOT NULL since migration 0050, default = `name`), `aliases`, `email`, `phone`, `position`, `clientId` → `client` (**set null**; = the PRIMARY current company link), `status`, `customValues` (jsonb, org custom-field values keyed by field id), `mergedIntoContactId` → `contact` (set when merged; row `deleted`); «Ведётся на уровне» (Managed at the level of, migration `0048`, spec `docs/specs/clients-contacts/07-contact-managed-at.md`): `managedAtUserId` (a member, **set null**) OR `managedAtPersonName` + `managedAtPersonPosition` (our person who is not a user) — a DB check allows only one kind —, `managedAtSetByUserId` (**set null**), `managedAtSetAt`; information only, no logic reads it |
+| `contact` | A person | `name` (technical/envelope name), `nameNative` (local-script name; NOT NULL since migration 0050, default = `name`), `aliases`, `email`, `phone`, `position`, `birthday` (date, «День рождения», migration `0052`; read by the topics check `contact_birthday`), `clientId` → `client` (**set null**; = the PRIMARY current company link), `status`, `customValues` (jsonb, org custom-field values keyed by field id), `mergedIntoContactId` → `contact` (set when merged; row `deleted`); «Ведётся на уровне» (Managed at the level of, migration `0048`, spec `docs/specs/clients-contacts/07-contact-managed-at.md`): `managedAtUserId` (a member, **set null**) OR `managedAtPersonName` + `managedAtPersonPosition` (our person who is not a user) — a DB check allows only one kind —, `managedAtSetByUserId` (**set null**), `managedAtSetAt`; information only, no logic reads it |
 | `contact_company_link` | Contact ↔ company period (migration `0039`, spec `docs/specs/clients-contacts/04`; no backfill — a `client_id` without a row is an implicit link) | `contactId` / `clientId` (**cascade**), `relation` (employee / consultant / representative / other), `status` (current / former), `isPrimary`, `position`, `startedAt`, `endedAt`, `source` (manual / proposal / implicit / merge), `evidenceSourceItemId`, `endReason`, `createdByUserId`, `endedByUserId` |
 | `contact_address` | Extra address of one person | `contactId` (**cascade**), `kind` (email / phone / telegram), `value` (normalised), `status` (active / old), `clientId` (the company of the address), `source` (incl. `learned`, `contact_card` for Telegram); Telegram identity (migration `0046`): `externalId` = the numeric Telegram user id (learned at parse or set by «Связать с контактом» (Link to contact); never on two contacts), `verifiedAt`; unique contact + kind + value; partial index (org, kind, externalId) |
 | `contact_link_proposal` | «Контакт сменил компанию?» (rules P1–P5) | `contactId`, `candidateContactId` (a second record of the same person), `fromClientId`, `toClientId`, `newAddress(Kind)`, `toCompanyName`, `kind` (moved / second_company / same_person / left), `confidence`, `rule`, `evidence` (jsonb: item ids, quote), `pairKey` (unique per org — one proposal per pair ever), `status` (pending / accepted / rejected / superseded), `decision`, `snoozedUntil`, `decidedBy` / `At` |
 | `contact_link_event` | Journal of link changes | `contactId`, `kind`, `payload`, `userId` |
 | `custom_field` | Org custom field of companies or contacts (tenant data; definitions by the org owner, migration `0034`) | `organizationId` (**cascade**), `entity` (`client` / `contact`), `label`, `type` (text, select, number, …), `config` (jsonb: options, currency, decimals, multiline, `systemKey` — `client_type` = the «Тип клиента» field read by analytics and the stage-rule guard), `helpText`, `section`, `isShown` (hidden fields never reach the AI), `position`, `archivedAt` |
 | `custom_field_value_log` | One row per changed custom value | field, entity row, before / after, user, time |
-| `task` | Follow-up work | `type`, `priority`, `status`, `userId` (creator), `assigneeId`, `clientId` / `contactId` / `dealId` (all optional, **set null**), `dueDate` (not null) |
+| `task` | Follow-up work | `type`, `priority`, `status`, `userId` (creator), `assigneeId`, `clientId` / `contactId` / `dealId` (all optional, **set null**), `dueDate` (not null; a UTC instant of a wall time in the ORG time zone — entered and shown in that zone, `src/lib/org-time.ts`; a date without a time = the org's `tasks.defaultDueTime`, 23:59 by default; migration `0054` moved the old date-only rows from 00:00 UTC to 23:59 org time) |
 | `discovery_blocklist` | Org dictionary of entities discovery must ignore | `kind` (`blocklist_kind`), `matchKey` (normalised), `label`, `note`, `sourceItemId`; unique `(org, kind, matchKey)` |
 | `org_identity_entry` | What means "our own org": extra names, websites, mail domains, shared mailboxes, addresses, and staff members' extra addresses | `kind` (`org_identity_kind`), `matchKey` (normalised per kind, `src/lib/identity/registry.ts`), `label`, `note`, `userId` → `user` (**cascade**; kind `person` only), `channel` (`email` / `telegram` / `phone`, kind `person` only), `createdByUserId`; unique `(org, kind, matchKey)`; index `(org, userId)` |
 | `org_profile` | «Профиль организации» — what the org does (identity I1); one row per org, edited by the owner | PK `organizationId` → `organization` (**cascade**), `description`, `industryCode` → `industry` (**set null**), `industryNote`, `marketRoles` (text[], codes validated in code), `products` / `targetCustomers` / `supplierTypes` / `glossary` (jsonb lists), `geography`, `noOwnDomain`, `updatedByUserId` (**set null**), `updatedAt` |
@@ -176,7 +176,9 @@ migrations: `0011` tables, `0012` seed v1, `0013` fixes, `0014` one pack
 (R21), `0016_signals_generic_registry` (R22: one generic set for every org —
 7 vertical-specific codes deleted, blocks DS1–DS7 renamed O–U, neutral texts, no
 presets), `0017_signals_activate_onhold_drop_retired` (R23: every `onHold`
-code `active`, retired codes deleted). Topics phase
+code `active`, retired codes deleted), `0038` (custom funnel: 7 generic codes),
+`0055_signal_contact_birthday` (process code `CONTACT_BIRTHDAY`, block G, weight
+8 → list «Сейчас»; written by the CRM check `contact_birthday`). Topics phase
 0: `org_setting` + `org_setting_log` (`topics.enabled`, `ai.budget.daily_usd`, …), `topics_run`,
 `topics_golden_item`, `topics_eval_result`.
 
@@ -227,6 +229,7 @@ Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
 | `topic_check_run` | One run of one CRM check / watchdog for one org (topics phase 8) | `organization_id` (**cascade**), `check_key` (`CHECK_KEYS`), `period_key` (`YYYY-MM-DD` / `YYYY-Www` / `YYYY-MM` / `run:<id>` / `manual:<iso>`), `trigger` (schedule / manual), `status` (running / ok / failed / skipped), `counts` jsonb, `error`, `started_at`, `finished_at`; partial unique index = one non-failed scheduled run per org + check + period |
 | `topic.last_reminder_at` | Last evening reminder of the topic | once per local evening; drives the in-app «Напоминание» marker |
 | `org_setting` keys | Delivery switches | `topics.delivery.email` (boolean, default false — no topics email for the org until a platform admin enables it), `topics.delivery.telegram` (boolean, default true — Telegram topic pushes), `delivery.params` (partial override; same key on `platform_setting`) |
+| `org_setting` keys | CRM checks + task time | `topics.checks` = `{ orders, watchdogs, contacts }` (orders / watchdogs default false; `contacts` = contact birthdays, default **true** — a stored value without the key reads as true); `tasks.defaultDueTime` («Срок задачи по умолчанию», «HH:MM», null = 23:59; set in «Рабочий контекст» together with the time zone `attention.params.timeZone`) |
 
 ## 8. Admin and audit
 
@@ -266,7 +269,10 @@ Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
   deleted by the UI. `deleted` hides a row; discovery treats it as absent and,
   on re-scan, **revives the same row** (keeps its id and links). `blocked` also
   hides it but is never revived while the blocklist entry exists. `initial`
-  marks auto-discovered rows not yet reviewed. `suspended` = archived.
+  marks auto-discovered rows not yet reviewed; a person who SAVES the card
+  (main form, «Поля», «Профиль компании») confirms it → `active` (2026-11-26,
+  `src/lib/entity-status.ts`; an explicitly chosen other status wins).
+  `suspended` = archived.
 - **Other soft deletes.** Deals use `deal.status` (`cancelled` = lost,
   `deleted` = test/mistake). Tasks use `status = closed`. Rules use `isDeleted` (no UI edits them).
   Cards have no soft delete: rejection is the "dismiss" state. Sources and
@@ -282,7 +288,9 @@ Topics phase 7 — delivery (migrations `0024_topics_phase7_delivery`,
   removed when an owner assigns the company). Unknown keys are dropped by the
   server. The old `type` key of one org was converted into an org custom field
   «Тип клиента» (`custom_field.config.systemKey = client_type`); org-defined
-  values live in `client.custom_values` / `contact.custom_values`.
+  values live in `client.custom_values` / `contact.custom_values`. The old
+  «ИНН» custom field became the standard column `client.inn` (migration `0053`
+  copied valid values and archived the field).
 - **Denormalised `organization_id` on `source_item`**, copied from the source
   at insert / parse, so tenant filters need no join.
 - **Snapshots on orders.** `order_item.unit_price` and `order.discount_percent`

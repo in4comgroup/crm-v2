@@ -4,6 +4,8 @@ Specs for companies («Компании», table `client`) and contacts («Ко�
 
 Later changes (2026-11-21, bug list round — [bugfixing/](../bugfixing/README.md)): contact «Имя на родном языке» is required, default = the name (migration `0050`, apply after the code); company «Этап воронки» = the stages of the company's deals (read only; manual `client.funnel_phase` no longer shown); the company name is edited in the drawer header with its own «Сохранить» / «Отмена».
 
+Later changes (2026-11-26, tester round — [bugfixing/](../bugfixing/README.md)): **standard fields** (10) — company requisites and the contact birthday as real columns at the top of «Поля» (migrations `0052` / `0053`); **«Новая» → «Активная»**: a company / contact with status `initial` (found automatically) becomes `active` when a person saves its card with a change (main form, «Поля», «Профиль компании»; `src/lib/entity-status.ts`; an explicitly chosen other status wins; opening, a save without a change and automatic processes never change it); «Тип компании» without a manual tag = «Автоматически по сделкам» and shows the value from the deals («… : Потенциальный»); «Сохранить» in the company drawer / «Поля» / deal drawer is disabled only while saving («Изменений нет — всё уже сохранено» otherwise); «Заполнить из интернета» also fills the company's empty contacts; the contact birthday raises a card in «Сейчас» (topics, `docs/specs/topics/03-development-plan.md` phase 8).
+
 Status: **built 2026-11-15** (Q1–Q12 decided): C1 definitions, C2 values + «Поля» tab, C3 old data converted, AI use (Q11). Not deployed; migration `0034_custom_fields` applied on the test DB. C4 list columns + filters built the same day (migration `0035`). Open (C5): deals / orders, import / export.
 
 | File | Content |

@@ -179,13 +179,16 @@ Important: a sign-in address counts as «ours» only when it is on our own domai
 
 ### 3.5 Card «Рабочий контекст» (Working context)
 
-**[Owner]** sets «Часовой пояс» (Time zone) and «Рабочие часы» (Working hours) of the organization here. The default is Europe/Vienna, 08:00–18:00, on the working days of the production calendar. Other members see the values read only.
+**[Owner]** sets «Часовой пояс» (Time zone), «Рабочие часы» (Working hours) and «Срок задачи по умолчанию» (Default task due time) of the organization here. The default is Europe/Vienna, 08:00–18:00, on the working days of the production calendar, due time 23:59. Other members see the values read only.
+
+**Set the time zone of the client first.** For a client in Moscow select Europe/Moscow. With the default (Vienna), the task deadlines show 2 hours later than Moscow time.
 
 1. Click the time zone button. Type part of the name (for example «Moscow» or «Vienna»). Select the zone. The list shows the UTC offset of each zone.
 2. Set the start and the end of the working day. The start must be earlier than the end.
-3. Click «Сохранить» (Save) in this card. This card has its own button; it does not save the rest of the profile.
+3. Optional: change «Срок задачи по умолчанию». A new task starts today at this time; a deadline without a time (also from the AI chat) gets this time.
+4. Click «Сохранить» (Save) in this card. This card has its own button; it does not save the rest of the profile.
 
-The time zone and hours control the topic lists and deadlines, the digest and reminder times, the Telegram send hours, the notification check times and «сегодня» (today) in the AI chat. A change takes effect within about one minute. The topic lists are re-computed on the next topics run.
+The time zone and hours control the task deadlines (entered and shown in this zone, not in the zone of the browser), the topic lists and deadlines, the digest and reminder times, the Telegram send hours, the notification check times and «сегодня» (today) in the AI chat. A change takes effect within about one minute. The topic lists are re-computed on the next topics run.
 
 ### 3.6 Other cards on the tab
 
@@ -501,7 +504,8 @@ Use the tester guide `docs/specs/telegram/06-test-guide.md`. Minimum check:
 ### 7.1 Companies and contacts
 
 - «Компании» (Companies, `/clients`) has the tabs «Клиенты» (Customers), «Потенциальные» (Prospects), «Поставщики» (Suppliers), «Партнёры» (Partners) and «Не определено» (Not classified).
-- «Новая компания» (New company) adds one company. «Найти в источниках» (Find in sources) finds companies and contacts in the parsed sources. «Поиск в интернете» (Web search) on a company fills in its missing website, e-mail, phone and address from the web (one company at a time; the batch «Обогатить» button was removed 2026-11-21).
+- «Новая компания» (New company) adds one company. «Найти в источниках» (Find in sources) finds companies and contacts in the parsed sources. «Поиск в интернете» (Web search) on a company fills in its missing website, e-mail, phone and address from the web (one company at a time; the batch «Обогатить» button was removed 2026-11-21). «Заполнить из интернета» (Fill from the internet) in «Профиль компании» also fills the empty website, e-mail, phone and address when it finds exactly one company.
+- A company or contact found automatically has the status «Новая» / «Новый» (New). When a person saves its card with a change, the status becomes «Активная» / «Активный» (Active). No manual switch is needed.
 - «Контакты» (Contacts, `/contacts`): «Новый контакт» (New contact). «Дубли Telegram (N)» (Telegram duplicates) merges contacts with the same Telegram account.
 
 Recommended order for a new client:
@@ -522,6 +526,8 @@ Recommended order for a new client:
 5. Click «Создать» (Create).
 
 **[Member]** fills in the values in the tab «Поля» of the company or contact card. Max 50 fields per entity.
+
+Standard fields are there for every organization, no set-up (since 2026-11-26): at the top of «Поля» of a company — «Реквизиты» («Юридическое название», «Юридический адрес», «ИНН», «КПП», «ОГРН») and «Банковские реквизиты» («Расчётный счёт», «Наименование банка», «БИК», «Корр. счёт банка»); of a contact — «День рождения». Do not create custom fields with these names. The product checks the format (for example ИНН = 10 or 12 digits). On the birthday of a contact the product shows a card in «Сейчас» on «Домашняя» (topics mode «Включено»).
 
 ### 7.3 «Список блокировки» (Blocklist)
 
@@ -575,7 +581,7 @@ The topics engine reads the signals in the sources and makes topics, cards, deal
 5. «Темы» → «Запуски» (Runs) → «Запустить сейчас» (Run now). Check that a run row shows success.
 6. Review the shadow results for 1–2 weeks on «Тесты и отладка» (Tests and debugging).
 7. Set the mode to «Включено» (On). Users then see the lists «Сейчас» (Now), «Сводка» (Digest), «Неделя» (Week) and «Все темы» (All topics) on «Домашняя».
-8. Optional: «Темы» → «Проверки CRM» (CRM checks) → select the organization → «Проверить без записи» (Check without writing). If the result is good, switch on «Проверки по заказам» (Order checks) and «Сторожа по переписке» (Communication watchdogs). Both are off by default.
+8. Optional: «Темы» → «Проверки CRM» (CRM checks) → select the organization → «Проверить без записи» (Check without writing). If the result is good, switch on «Проверки по заказам» (Order checks) and «Сторожа по переписке» (Communication watchdogs). Both are off by default. The third switch, «Контакты (дни рождения)» (Contacts, birthdays), is ON by default: a card in «Сейчас» on the birthday of a contact.
 9. «Темы» → «Рассылка» (Delivery) → select the organization:
    - «Рассылка тем по почте для этой организации» (Topic e-mail for this organization) — default **off**. Check first with «Показать письмо» (Show e-mail) and «Отправить мне тестовое письмо» (Send me a test e-mail).
    - «Сообщения о темах в Telegram» (Topic messages in Telegram) — default on. Test with «Тест в Telegram (мне)» (Telegram test, to me).

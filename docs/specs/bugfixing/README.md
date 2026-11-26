@@ -1,4 +1,4 @@
-# Bug fixing — tester feedback round 2026-11-21
+# Bug fixing — tester feedback rounds 2026-11-21 … 2026-11-26
 
 Feedback of the IN4COM pilot tester (sheet [TODO.xlsx](TODO.xlsx), tab «Баги»), fixed item by item with the product owner, plus the product owner's changes of the same day. Column K «Комментарий разработчика» of the sheet holds the answer to the tester for items 7, 9, 13, 14, 16, 19, 21, 23.
 
@@ -90,10 +90,27 @@ Already built 2026-11-21 (product owner change above, commit `74111d0`, not depl
 |---|---|
 | New list, in this order: «Ошибка в фактах карточки», «Неправильно определены клиент или контакт» (was «Не тот клиент или контакт»), «Неверная важность», «Полностью нерелевантно» (was «Не относится к работе» — same code `not_relevant`, still closes the topic as «Не относится»), «Дубликат» (was «Дубликат другой карточки»), «Другое». «Уже сделано» and «Не сейчас» removed for topic cards (the server refuses them; stored cards keep their labels; deal cards keep «Не сейчас»). Renamed labels apply to every card kind | `src/lib/topics/cards.ts`, `rejectCard` (`src/server/cards.ts`) |
 
+## Tester round 2026-11-26
+
+Commits `2289012` («bugfixing 42-47») and `dd72b91` («bugfixing 48-73»), the last fix after them. Migrations `0052`–`0055`, all applied on the test DB (deploy: `docs/todo/README.md` D10). Unit tests 1062 pass; types (2 older errors in other files) and lint clean; no browser check (the browser extension was not connected).
+
+| Area | Problem (tester) | Decision / change | Where |
+|---|---|---|---|
+| Company → «Профиль компании» | «Заполнить из интернета» filled the profile, not the website / contacts; «Сохранить» disabled although the data was saved | The one match (not `low`) also fills EMPTY website / e-mail / phone / address (never overwrites); the drawer re-reads the company; toast «Данные из интернета сохранены» with the filled fields | `client-enrichment.ts` (`contactFilled`), `client-profile-block.tsx` (`onClientChanged`) |
+| Company / deal / «Поля» | «Сохранить» disabled after the data saved itself | Disabled only while saving; with nothing changed a click says «Изменений нет — всё уже сохранено» | `client-detail-drawer.tsx`, `deal-detail-drawer.tsx`, `custom-fields-tab.tsx` |
+| Company, «Тип компании» | Company with a deal «До воронки» kept «Не определено (по сделкам)», label unclear | The derived relation was already right (tab «Потенциальные»); the option is now «Автоматически по сделкам» and shows the value: «Автоматически по сделкам: Потенциальный» (`relationFromDealStages`, one request with «Этап воронки»). The manual tag is never written automatically | `client-funnel-stages.tsx`, drawer, `form-client-edit.tsx` |
+| «Поля» | Only «ИНН» by default — how to get default fields? | Standard fields as COLUMNS for every org: company «Реквизиты» + «Банковские реквизиты» with format checks, contact «День рождения»; top of «Поля», one «Сохранить»; the old «ИНН» custom field → `client.inn` (6 values) and archived | [clients-contacts/10](../clients-contacts/10-standard-fields.md), `0052`, `0053` |
+| Companies / contacts, «Статус» | How does «Новая» become «Активная»? | A person's save with a change confirms it: `initial` → `active` (main form, «Поля», «Профиль компании»); an explicit other status wins; automatic processes never | `src/lib/entity-status.ts`, `src/server/entity-status.ts` |
+| Tasks, create | «Просрочена» from 03:00; no time for the deadline; default 23:59, settable per client org | Date + time in the form; org setting «Срок задачи по умолчанию» (23:59) in «Рабочий контекст»; deadlines entered and shown in the ORG time zone everywhere; old date-only tasks → 23:59 org time | [organization/01](../organization/01-switcher-invitations-working-context.md) §3.1, `src/lib/org-time.ts`, `0054` |
+| Home, cards | Card «Сейчас» on a contact's birthday | Topics CRM check `contact_birthday` → process code `CONTACT_BIRTHDAY` (weight 8 = P8 = «Сейчас», no daily limit), check group «Контакты» on by default; the topic closes the next day | [topics/03](../topics/03-development-plan.md) phase 8, [topics/05a](../topics/05a-signals-base-a-g.md) block G, `0055` |
+| Company card | Renamed «AST – …» to «AST», saved — not saved | Caused by the «Сохранить» change of this round: react-hook-form updates `isDirty` only when it is read during render; the button no longer read it, so the save handler saw «no changes» and sent nothing. Both drawers now read `isDirty` (deal: also `dirtyFields`) during render. The tester renames again after the deploy | `client-detail-drawer.tsx`, `deal-detail-drawer.tsx`; rule in `src/app/AGENTS.md` |
+
 ## Open
 
 - The web lookup does not use the mail domains of the company's message senders as a hint (would find `orexc.ru` for ОРИКС by name only) — offered, not decided.
 - The deal drawer name has the same «invisible input» look as the company name had — offered, not decided.
+- Other dates (order dates, change history, documents, «создано») are still shown in the browser's time zone, not the org's — offered 2026-11-26, not decided.
+- Test org salesdaily (`Fv60…`) has no `base` signal pack switched on, so no signals / topics (also no birthday cards) there.
 
 | File | Content |
 |---|---|

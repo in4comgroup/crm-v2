@@ -31,7 +31,6 @@ import {
   PlayingCardsFan,
   X,
   ScanSearch,
-  SlidersHorizontal,
 } from "lucide-react"
 import type {
   ClientRow,
@@ -48,7 +47,7 @@ import { DiscoverDialog } from "@/components/blocks/discover-dialog"
 import { MagicDiscoverButton } from "@/components/blocks/magic-discover-button"
 import { ClientEnrichControl } from "@/components/blocks/client-enrich-control"
 import { ClientBlocklistDialog } from "@/components/blocks/client-blocklist-dialog"
-import { CustomFieldsDialog } from "@/components/blocks/custom-fields-dialog"
+import { FilterToolbar } from "@/components/blocks/filter-toolbar"
 import {
   CustomFieldCell,
   CustomFieldFilterChips,
@@ -203,14 +202,11 @@ export default function ClientsPage() {
   const cardsViewTip = useAnchorTooltip()
   const tableViewTip = useAnchorTooltip()
   const blocklistTip = useAnchorTooltip()
-  const fieldsTip = useAnchorTooltip()
   // Custom company fields (any member reads the definitions; «Настроить
   // поля» = org owner only). List columns + «Фильтр по полям» (server-side,
   // `?cf=`, AND with the other filters). Filters live in page state.
   const {
     fields: customFields,
-    canManage: canManageFields,
-    reload: reloadCustomFields,
   } = useCustomFieldDefs("client")
   const listFields = useMemo(() => listColumnFields(customFields), [customFields])
   const [customFilters, setCustomFilters] = useState<CustomFieldFilter[]>([])
@@ -404,7 +400,7 @@ export default function ClientsPage() {
             «Найти в источниках»/«На проверке»/«Список блокировки»/Magic —
             прижаты вправо, переключатель вида — правее всех кнопок. Белый
             контейнер — как на Сделках/Домашней. */}
-        <div className="flex items-center gap-2 flex-wrap rounded-xl border bg-card p-3">
+        <FilterToolbar active={tab !== TAB_ALL || statusFilter !== ALL || responsibleFilter !== RESPONSIBLE_FILTER_ALL || profileFiltered || !!cfParam} actions={<>
           <ClientEditDialog
             mode="create"
             onSuccess={refreshAll}
@@ -415,6 +411,58 @@ export default function ClientsPage() {
               </Button>
             }
           />
+          <Tabs
+            value={sort}
+            onValueChange={(v) => setSort(v as ClientFeedSort)}
+          >
+            <TabsList>
+              <TabsTrigger value="new">Сначала новые</TabsTrigger>
+              <TabsTrigger value="critical">Сначала критичные</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <div className="ml-auto flex items-center gap-2 flex-wrap">
+            <DiscoverDialog
+              onApplied={refreshAll}
+              canBlock={canBlock}
+              trigger={
+                <Button size="sm" variant="outline">
+                  <ScanSearch className="h-4 w-4 mr-1" />
+                  Найти в источниках
+                </Button>
+              }
+            />
+            <ClientEnrichControl refreshKey={total} onChanged={refreshAll} />
+            {canBlock && (
+              <ClientBlocklistDialog
+                onChanged={refreshAll}
+                trigger={
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Список блокировки"
+                    {...blocklistTip.bind}
+                  >
+                    <Ban className="h-4 w-4" />
+                  </Button>
+                }
+              />
+            )}
+            <MagicDiscoverButton onApplied={refreshAll} />
+            <Tabs value={view} onValueChange={(v) => setView(v as ClientView)}>
+              <TabsList>
+                <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
+                  <PlayingCardsFan className="h-4 w-4" />
+                </TabsTrigger>
+                <TabsTrigger value="table" aria-label="Вид таблицей" {...tableViewTip.bind}>
+                  <Rows4 className="h-4 w-4" />
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <AnchorTooltip text="список блокировки" open={blocklistTip.open} virtualRef={blocklistTip.virtualRef} />
+            <AnchorTooltip text="в виде карточек" open={cardsViewTip.open} virtualRef={cardsViewTip.virtualRef} />
+            <AnchorTooltip text="списком" open={tableViewTip.open} virtualRef={tableViewTip.virtualRef} />
+          </div>
+        </>}>
           <Select value={tab} onValueChange={(v) => setTab(v as ClientFeedTab)}>
             <SelectTrigger size="sm" className="w-fit">
               <SelectValue placeholder="Тип компании" />
@@ -472,16 +520,12 @@ export default function ClientsPage() {
               ))}
             </SelectContent>
           </Select>
-          <Tabs
-            value={sort}
-            onValueChange={(v) => setSort(v as ClientFeedSort)}
-          >
-            <TabsList>
-              <TabsTrigger value="new">Сначала новые</TabsTrigger>
-              <TabsTrigger value="critical">Сначала критичные</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          {(statusFilter !== ALL ||
+            <CustomFieldFiltersButton
+              fields={customFields}
+              value={customFilters}
+              onChange={setCustomFilters}
+            />
+          {(tab !== TAB_ALL || statusFilter !== ALL ||
             responsibleFilter !== RESPONSIBLE_FILTER_ALL ||
             profileFiltered ||
             customFilters.length > 0) && (
@@ -489,6 +533,7 @@ export default function ClientsPage() {
               variant="ghost"
               size="sm"
               onClick={() => {
+                setTab(TAB_ALL)
                 setStatusFilter(ALL)
                 setResponsibleFilter(RESPONSIBLE_FILTER_ALL)
                 setIndustryFilter(ALL)
@@ -499,74 +544,7 @@ export default function ClientsPage() {
               Сбросить
             </Button>
           )}
-          <div className="ml-auto flex items-center gap-2 flex-wrap">
-            <DiscoverDialog
-              onApplied={refreshAll}
-              canBlock={canBlock}
-              trigger={
-                <Button size="sm" variant="outline">
-                  <ScanSearch className="h-4 w-4 mr-1" />
-                  Найти в источниках
-                </Button>
-              }
-            />
-            <ClientEnrichControl refreshKey={total} onChanged={refreshAll} />
-            {canBlock && (
-              <ClientBlocklistDialog
-                onChanged={refreshAll}
-                trigger={
-                  <Button
-                    size="icon-sm"
-                    variant="outline"
-                    aria-label="Список блокировки"
-                    {...blocklistTip.bind}
-                  >
-                    <Ban className="h-4 w-4" />
-                  </Button>
-                }
-              />
-            )}
-            <CustomFieldFiltersButton
-              fields={customFields}
-              value={customFilters}
-              onChange={setCustomFilters}
-            />
-            {canManageFields && (
-              <CustomFieldsDialog
-                entity="client"
-                onChanged={() => {
-                  void reloadCustomFields()
-                  void loadPage()
-                }}
-                trigger={
-                  <Button
-                    size="icon-sm"
-                    variant="outline"
-                    aria-label="Настроить поля"
-                    {...fieldsTip.bind}
-                  >
-                    <SlidersHorizontal className="h-4 w-4" />
-                  </Button>
-                }
-              />
-            )}
-            <MagicDiscoverButton onApplied={refreshAll} />
-            <Tabs value={view} onValueChange={(v) => setView(v as ClientView)}>
-              <TabsList>
-                <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
-                  <PlayingCardsFan className="h-4 w-4" />
-                </TabsTrigger>
-                <TabsTrigger value="table" aria-label="Вид таблицей" {...tableViewTip.bind}>
-                  <Rows4 className="h-4 w-4" />
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <AnchorTooltip text="список блокировки" open={blocklistTip.open} virtualRef={blocklistTip.virtualRef} />
-            <AnchorTooltip text="настроить поля" open={fieldsTip.open} virtualRef={fieldsTip.virtualRef} />
-            <AnchorTooltip text="в виде карточек" open={cardsViewTip.open} virtualRef={cardsViewTip.virtualRef} />
-            <AnchorTooltip text="списком" open={tableViewTip.open} virtualRef={tableViewTip.virtualRef} />
-          </div>
-        </div>
+        </FilterToolbar>
         <CustomFieldFilterChips
           fields={customFields}
           value={customFilters}
@@ -608,9 +586,9 @@ export default function ClientsPage() {
                     tasks={tasksByClient[c.id] ?? []}
                     tasksLoaded={tasksLoaded}
                     listFields={listFields}
-                    onOpenDetail={(id, initialTab = "info") => {
+                    onOpenDetail={(id, initialTab) => {
                       setOpenClientId(id)
-                      setDrawerInitialTab(initialTab)
+                      setDrawerInitialTab(initialTab ?? "info")
                       setDrawerOpen(true)
                     }}
                   />

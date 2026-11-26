@@ -698,7 +698,7 @@ function TopicSources({ entry, onOpenTopic }: { entry: TopicEntry; onOpenTopic: 
               <span className="shrink-0">{SOURCE_CHANNEL_LABELS_RU[s.provider ?? ""] ?? "Источник"}</span>
               <span className="shrink-0">· {formatDateTimeRu(s.date)}</span>
               <span className="truncate text-foreground/80 hover:underline underline-offset-2">
-                {[s.subject, s.from].filter(Boolean).length ? `· ${[s.subject, s.from].filter(Boolean).map(cardText).join(" · ")}` : "· открыть"}
+                {[s.subject, s.from].filter(Boolean).length ? `· ${[s.subject, s.from].filter((value): value is string => Boolean(value)).map(cardText).join(" · ")}` : "· открыть"}
               </span>
             </button>
           </li>

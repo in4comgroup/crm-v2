@@ -29,7 +29,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
-import { AlertTriangle, Plus, Rows4, PlayingCardsFan, SlidersHorizontal } from "lucide-react"
+import { AlertTriangle, Plus, Rows4, PlayingCardsFan } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 import type { ContactRow, ClientOption } from "@/app/api/contacts/route"
@@ -37,7 +37,7 @@ import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
 import { ContactCard } from "@/components/blocks/contact-card"
 import { PageLoader } from "@/components/blocks/page-loader"
-import { CustomFieldsDialog } from "@/components/blocks/custom-fields-dialog"
+import { FilterToolbar } from "@/components/blocks/filter-toolbar"
 import { TelegramDuplicatesButton } from "@/components/blocks/telegram-duplicates-button"
 import {
   CustomFieldCell,
@@ -113,14 +113,11 @@ export default function ContactsPage() {
   })
   const cardsViewTip = useAnchorTooltip()
   const tableViewTip = useAnchorTooltip()
-  const fieldsTip = useAnchorTooltip()
   // Custom contact fields (any member reads the definitions; «Настроить
   // поля» = org owner only). List columns + «Фильтр по полям» (server-side,
   // `?cf=`, AND with the other filters). Filters live in page state.
   const {
     fields: customFields,
-    canManage: canManageFields,
-    reload: reloadCustomFields,
   } = useCustomFieldDefs("contact")
   const listFields = useMemo(() => listColumnFields(customFields), [customFields])
   const [customFilters, setCustomFilters] = useState<CustomFieldFilter[]>([])
@@ -224,7 +221,7 @@ export default function ContactsPage() {
       {/* «Новый контакт» — слева; селекты статуса/компании следом;
           переключатель вида — прижат вправо. Белый контейнер — как на
           Компаниях/Сделках/Домашней. */}
-      <div className="flex items-center gap-2 flex-wrap shrink-0 rounded-xl border bg-card p-3">
+      <FilterToolbar active={statusFilter !== ALL || clientFilter !== ALL || !!cfParam} actions={<>
         <ContactEditDialog
           mode="create"
           onSuccess={load}
@@ -235,6 +232,25 @@ export default function ContactsPage() {
             </Button>
           }
         />
+        <div className="ml-auto flex items-center gap-2">
+          <TelegramDuplicatesButton
+            onMerged={() => void load()}
+            onOpenContact={(id) => void openContactById(id)}
+          />
+          <Tabs value={view} onValueChange={(v) => setView(v as ContactView)}>
+            <TabsList>
+              <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
+                <PlayingCardsFan className="h-4 w-4" />
+              </TabsTrigger>
+              <TabsTrigger value="table" aria-label="Вид таблицей" {...tableViewTip.bind}>
+                <Rows4 className="h-4 w-4" />
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <AnchorTooltip text="в виде карточек" open={cardsViewTip.open} virtualRef={cardsViewTip.virtualRef} />
+          <AnchorTooltip text="списком" open={tableViewTip.open} virtualRef={tableViewTip.virtualRef} />
+        </div>
+      </>}>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger size="sm" className="w-fit">
             <SelectValue placeholder="Статус" />
@@ -272,50 +288,12 @@ export default function ContactsPage() {
             Включая бывших
           </label>
         )}
-        <div className="ml-auto flex items-center gap-2">
-          <TelegramDuplicatesButton
-            onMerged={() => void load()}
-            onOpenContact={(id) => void openContactById(id)}
-          />
           <CustomFieldFiltersButton
             fields={customFields}
             value={customFilters}
             onChange={setCustomFilters}
           />
-          {canManageFields && (
-            <CustomFieldsDialog
-              entity="contact"
-              onChanged={() => {
-                void reloadCustomFields()
-                void load()
-              }}
-              trigger={
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  aria-label="Настроить поля"
-                  {...fieldsTip.bind}
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-                </Button>
-              }
-            />
-          )}
-          <Tabs value={view} onValueChange={(v) => setView(v as ContactView)}>
-            <TabsList>
-              <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
-                <PlayingCardsFan className="h-4 w-4" />
-              </TabsTrigger>
-              <TabsTrigger value="table" aria-label="Вид таблицей" {...tableViewTip.bind}>
-                <Rows4 className="h-4 w-4" />
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <AnchorTooltip text="в виде карточек" open={cardsViewTip.open} virtualRef={cardsViewTip.virtualRef} />
-          <AnchorTooltip text="списком" open={tableViewTip.open} virtualRef={tableViewTip.virtualRef} />
-          <AnchorTooltip text="настроить поля" open={fieldsTip.open} virtualRef={fieldsTip.virtualRef} />
-        </div>
-      </div>
+      </FilterToolbar>
 
       {customFilters.length > 0 && (
         <div className="shrink-0">

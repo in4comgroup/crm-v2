@@ -1,13 +1,9 @@
 "use client"
 
-// Dashboard topic lists (topics plan phase 6, spec topics/01 §8.1, §14;
-// 06-attention-engine.md §7.2, §7.4): tabs «Сейчас» / «Сводка» / «Неделя»
-// / «Все темы» with counts, the filter «Мои», the topic cards in rank order
-// and the topic drawer. Shown only when the org's topics mode is `on` (the
-// dashboard page decides). Data: `GET /api/topics`.
+// Dashboard attention lists and topic details.
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertTriangle, ChevronDown, ChevronUp, RefreshCw } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronUp, ChevronsUpDown, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -17,7 +13,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { DealCardBlock, TopicEntryCard, formatDateTimeRu } from "@/components/blocks/topic-card"
 import { TopicDrawer } from "@/components/blocks/topic-drawer"
-import { TOPIC_LIST_LABELS_RU } from "@/lib/topics/attention-types"
+import { Input } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   DEFAULT_TOPIC_STATUS_FILTER,
   DIGEST_VISIBLE_ITEMS,
@@ -35,11 +32,15 @@ import {
 import { usePersistentTab } from "@/lib/use-persistent-tab"
 
 const ANY = "__any__"
+const DASHBOARD_TABS = [...TOPIC_TABS.filter((tab) => tab !== "all"), "none", "all"] as const
+type DashboardTab = TopicTab | "none"
+const STATUS_OPTIONS = TOPIC_STATUS_FILTERS.filter((status) => status !== "closed")
 
-const TAB_DESCRIPTIONS: Record<TopicTab, string> = {
+const TAB_DESCRIPTIONS: Record<DashboardTab, string> = {
   now: "Срочные темы и решения по сделкам, которые требуют внимания сейчас.",
-  digest: "Утренняя подборка тем и новые темы, добавленные в неё после утра.",
-  week: "Еженедельный обзор: менее срочные и затихшие темы, а также недавно истёкшие карточки.",
+  digest: "Темы, к которым стоит вернуться сегодня, включая новые после утренней подборки.",
+  week: "Менее срочные темы, к которым можно вернуться в ближайшие дни.",
+  none: "Темы вне списков внимания.",
   all: "Все темы, доступные по выбранным фильтрам, включая те, что не входят в списки внимания.",
 }
 
@@ -78,12 +79,14 @@ export function TopicListsSection() {
   // Remembered per browser. The hook also reads the `?tab=` deep link (emails,
   // topics phase 7) on mount — it wins over the stored tab. The hook's effect
   // runs before the deep-link effect below, which then strips the URL.
-  const [tab, setTab] = usePersistentTab<TopicTab>("dashboard.topics", "now", {
-    allowed: TOPIC_TABS,
+  const [tab, setTab] = usePersistentTab<DashboardTab>("dashboard.topics", "now", {
+    allowed: DASHBOARD_TABS,
   })
   const [mine, setMine] = useState(false)
   const [status, setStatus] = useState<string>(DEFAULT_TOPIC_STATUS_FILTER)
-  const [list, setList] = useState(ANY)
+  const showFilters = tab === "all" || tab === "none"
+  const [companyOpen, setCompanyOpen] = useState(false)
+  const [companySearch, setCompanySearch] = useState("")
   const [clientId, setClientId] = useState(ANY)
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
   // `key` = the tab + filters the data was loaded for. A list loaded for
@@ -115,16 +118,16 @@ export function TopicListsSection() {
     }
   }, [])
 
-  const queryKey = JSON.stringify([tab, mine, status, list, clientId])
+  const queryKey = JSON.stringify([tab, mine, status, clientId])
 
   const load = useCallback(async () => {
     const id = ++req.current
-    const key = JSON.stringify([tab, mine, status, list, clientId])
-    const qs = new URLSearchParams({ tab })
+    const key = JSON.stringify([tab, mine, status, clientId])
+    const qs = new URLSearchParams({ tab: tab === "none" ? "all" : tab })
     if (mine) qs.set("mine", "1")
-    if (tab === "all") {
+    if (tab === "all" || tab === "none") {
       qs.set("status", status)
-      if (list !== ANY) qs.set("list", list)
+      if (tab === "none") qs.set("list", "none")
       if (clientId !== ANY) qs.set("clientId", clientId)
     }
     try {
@@ -144,7 +147,7 @@ export function TopicListsSection() {
     } finally {
       if (id === req.current) setLoading(false)
     }
-  }, [tab, mine, status, list, clientId])
+  }, [tab, mine, status, clientId])
 
   useEffect(() => {
     setLoading(true)
@@ -152,12 +155,12 @@ export function TopicListsSection() {
   }, [load])
 
   useEffect(() => {
-    if (tab !== "all" || clients.length) return
+    if (!showFilters || clients.length) return
     fetch("/api/topics?clients=1")
       .then((r) => r.json())
       .then((d) => setClients(d.clients ?? []))
       .catch(() => {})
-  }, [tab, clients.length])
+  }, [showFilters, clients.length])
 
   const refresh = useCallback(() => void load(), [load])
   const current = data?.key === queryKey ? data : null
@@ -276,13 +279,13 @@ export function TopicListsSection() {
   return (
     <div className="flex flex-col h-full gap-3">
       <div className="flex items-center gap-3 flex-wrap rounded-xl border bg-card p-3 shrink-0">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as TopicTab)}>
-          <TabsList aria-label="Списки тем" aria-describedby="topic-list-description">
-            {TOPIC_TABS.map((t) => {
-              const n = countOf(t)
+        <Tabs value={tab} onValueChange={(v) => setTab(v as DashboardTab)}>
+          <TabsList aria-label="Срочность" className="h-auto flex-wrap" aria-describedby="topic-list-description">
+            {DASHBOARD_TABS.map((t) => {
+              const n = t === "none" ? null : countOf(t)
               return (
                 <TabsTrigger key={t} value={t}>
-                  {TOPIC_TAB_LABELS_RU[t]}
+                  {t === "none" ? "Остальные" : TOPIC_TAB_LABELS_RU[t]}
                   {n !== null && <span className="ml-1 text-xs text-muted-foreground tabular-nums">{n}</span>}
                 </TabsTrigger>
               )
@@ -295,49 +298,46 @@ export function TopicListsSection() {
             Мои
           </Label>
         </div>
-        {tab === "all" && (
+        {showFilters && (
           <>
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger size="sm" className="w-fit">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {/* Status filter of «Все темы» (product owner, 2026-11-24):
-                    «Закрыты» = resolved + done, «Ошибочные» = «Не относится»
-                    + topics whose latest card was rejected. */}
-                {TOPIC_STATUS_FILTERS.map((f) => (
+                {STATUS_OPTIONS.map((f) => (
                   <SelectItem key={f} value={f}>
                     {TOPIC_STATUS_FILTER_LABELS_RU[f]}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <Select value={list} onValueChange={setList}>
-              <SelectTrigger size="sm" className="w-fit">
-                <SelectValue placeholder="Список" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ANY}>Все</SelectItem>
-                {(["now", "digest", "week", "none"] as const).map((l) => (
-                  <SelectItem key={l} value={l}>
-                    {l === "none" ? "Остальные" : TOPIC_LIST_LABELS_RU[l]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={clientId} onValueChange={setClientId}>
-              <SelectTrigger size="sm" className="w-fit max-w-64">
-                <SelectValue placeholder="Компания" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ANY}>Все компании</SelectItem>
-                {clients.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover open={companyOpen} onOpenChange={(open) => {
+              setCompanyOpen(open)
+              if (!open) setCompanySearch("")
+            }}>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="outline" size="sm" className="max-w-64 font-normal">
+                  <span className="truncate">{clients.find((client) => client.id === clientId)?.name ?? "Все компании"}</span>
+                  <ChevronsUpDown className="size-4 opacity-50" aria-hidden />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-72 space-y-2 p-2">
+                <Input aria-label="Поиск компании" placeholder="Поиск компании…" value={companySearch}
+                  onChange={(event) => setCompanySearch(event.target.value)} />
+                <div className="max-h-64 space-y-1 overflow-y-auto">
+                  {[{ id: ANY, name: "Все компании" }, ...clients.filter((client) =>
+                    client.name.toLocaleLowerCase("ru").includes(companySearch.trim().toLocaleLowerCase("ru")),
+                  )].map((client) => (
+                    <Button key={client.id} type="button" variant={clientId === client.id ? "secondary" : "ghost"}
+                      size="sm" className="w-full justify-start font-normal" aria-pressed={clientId === client.id}
+                      onClick={() => { setClientId(client.id); setCompanyOpen(false); setCompanySearch("") }}>
+                      <span className="truncate">{client.name}</span>
+                    </Button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
           </>
         )}
         <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Обновить" onClick={refresh} disabled={loading}>

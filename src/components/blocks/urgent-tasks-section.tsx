@@ -3,8 +3,6 @@
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { useGlobalChat } from "@/lib/global-chat-context"
 import type { listUrgentTasks } from "@/server/tasks"
 import { useOrgTime } from "@/lib/org-time-context"
 import { formatOrgDueShort } from "@/lib/org-time"
@@ -12,7 +10,6 @@ import { formatOrgDueShort } from "@/lib/org-time"
 type UrgentTasks = Awaited<ReturnType<typeof listUrgentTasks>>
 
 export function UrgentTasksSection() {
-  const { openChat } = useGlobalChat()
   // Deadlines in the ORG time zone, not the browser's (2026-11-26).
   const { timeZone } = useOrgTime()
   const [items, setItems] = useState<UrgentTasks | null>(null)
@@ -34,14 +31,12 @@ export function UrgentTasksSection() {
   }, [attempt])
 
   return (
-    <section aria-labelledby="urgent-tasks-heading" className="mb-4 shrink-0 rounded-xl border bg-card p-3">
-      <div className="flex items-center justify-between gap-2">
-        <h2 id="urgent-tasks-heading" className="flex items-center gap-2 text-sm font-semibold">
-          Мои срочные задачи
-          {!!items?.length && <Badge variant="secondary">{items.length}</Badge>}
-        </h2>
-        <Link href="/tasks" className="shrink-0 text-xs text-muted-foreground underline-offset-4 hover:underline">Все задачи</Link>
-      </div>
+    <section aria-labelledby="urgent-tasks-heading" className="mb-4 flex max-h-[30dvh] shrink-0 flex-col rounded-xl border bg-card p-3">
+      <h2 id="urgent-tasks-heading" className="flex shrink-0 items-center gap-2 text-sm font-semibold">
+        Мои срочные задачи
+        {!!items?.length && <Badge variant="secondary">{items.length}</Badge>}
+      </h2>
+
       {failed ? (
         <p className="mt-2 text-sm text-muted-foreground">
           Не удалось загрузить задачи.{" "}
@@ -50,7 +45,7 @@ export function UrgentTasksSection() {
       ) : !items?.length ? (
         <p aria-live="polite" className="mt-2 text-sm text-muted-foreground">{items ? "Срочных задач нет." : "Загружаем задачи…"}</p>
       ) : (
-        <ul className="mt-2 max-h-40 divide-y overflow-y-auto">
+        <ul className="mt-2 min-h-0 divide-y overflow-y-auto">
           {items.map((item) => (
             <li key={item.id}>
               <Link href={`/tasks?openTask=${encodeURIComponent(item.id)}`} className="group flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-sm">
@@ -61,14 +56,6 @@ export function UrgentTasksSection() {
             </li>
           ))}
         </ul>
-      )}
-      {!!items?.length && (
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t pt-2">
-          <p className="text-sm text-muted-foreground">Привет! Разберём срочные задачи?</p>
-          <Button type="button" variant="secondary" size="sm" onClick={openChat}>
-            Открыть ИИ-чат
-          </Button>
-        </div>
       )}
     </section>
   )

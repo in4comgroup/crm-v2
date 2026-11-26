@@ -10,6 +10,7 @@ import { AiChatPanel } from "@/components/blocks/global-ai-chat"
 import { OrgTimeProvider } from "@/lib/org-time-context"
 import { ORG_TIME_FALLBACK } from "@/lib/org-time"
 import { loadOrgTime } from "@/server/org-time"
+import { getActiveOrgRole } from "@/server/sources"
 
 export default async function DashboardLayout({
   children,
@@ -28,11 +29,12 @@ export default async function DashboardLayout({
   const isPlatformAdmin = session.user.role === "admin"
   // Org time zone + default task due time for every client component
   // (`useOrgTime()`, task deadlines in the org zone; 2026-11-26).
-  const [orgLogo, cookieStore, adminOrganizations, orgTime] = await Promise.all([
+  const [orgLogo, cookieStore, adminOrganizations, orgTime, orgRole] = await Promise.all([
     orgId ? getOrganizationLogo(orgId) : Promise.resolve(null),
     cookies(),
     isPlatformAdmin ? listUserOrganizations(session.user.id) : Promise.resolve(null),
     orgId ? loadOrgTime(orgId) : Promise.resolve(ORG_TIME_FALLBACK),
+    orgId ? getActiveOrgRole() : Promise.resolve(null),
   ])
   // The sidebar remembers open / closed: shadcn's SidebarProvider writes the
   // `sidebar_state` cookie on every toggle; reading it here makes a reload /
@@ -52,7 +54,7 @@ export default async function DashboardLayout({
         { "--sidebar-width": "13rem" } as React.CSSProperties
       }
     >
-      <AppSidebar session={session} orgLogo={orgLogo} adminOrganizations={adminOrganizations} />
+      <AppSidebar session={session} orgLogo={orgLogo} adminOrganizations={adminOrganizations} canManageFields={orgRole?.role === "owner"} />
 
       <div className="relative flex-1 flex flex-col min-w-0">
         {/* Атмосфера лендинга (сетка + свечения, globals.css) — фон всего

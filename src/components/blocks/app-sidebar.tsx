@@ -110,7 +110,9 @@ export function AppSidebar({
   session,
   orgLogo = null,
   adminOrganizations = null,
+  canManageFields = false,
 }: {
+  canManageFields?: boolean
   session: AuthSession
   // Loaded server-side (not from the session) because logos are large base64
   // data URLs that would overflow the session cookie. See (protected)/layout.tsx.
@@ -242,10 +244,10 @@ export function AppSidebar({
           ))}
 
 
-          {isAdmin && (
+          {(isAdmin || canManageFields) && (
             <SidebarMenuItem>
               <SidebarMenuButton asChild>
-                <Link href="/settings" className={footerLinkClass(pathname === "/settings")}>
+                <Link href={isAdmin ? "/settings" : "/settings?tab=custom-fields"} className={footerLinkClass(pathname === "/settings")}>
                   <Settings2 className="size-4 mr-2 shrink-0" />
                   <span className="text-sm">Настройки</span>
                 </Link>

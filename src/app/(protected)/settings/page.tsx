@@ -20,9 +20,25 @@ import { PageLoader } from "@/components/blocks/page-loader"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { usePersistentTab } from "@/lib/use-persistent-tab"
 
+import { CustomFieldsDialog } from "@/components/blocks/custom-fields-dialog"
+import { useCustomFieldDefs } from "@/components/blocks/custom-field-filters"
+import { Button } from "@/components/ui/button"
+
+function CustomFieldsSettings() {
+  return (
+    <Card>
+      <CardContent className="flex flex-wrap gap-2 pt-6">
+        <CustomFieldsDialog entity="client" trigger={<Button variant="outline">Поля компаний</Button>} />
+        <CustomFieldsDialog entity="contact" trigger={<Button variant="outline">Поля контактов</Button>} />
+      </CardContent>
+    </Card>
+  )
+}
+
 const SETTINGS_TABS = [
   "users",
   "organizations",
+  "custom-fields",
   "sources",
   "models",
   "ai-processes",
@@ -40,9 +56,23 @@ export default function SettingsPage() {
     allowed: SETTINGS_TABS,
   })
 
-  if (isPending) {
+  const { canManage, ready } = useCustomFieldDefs("client")
+
+  if (isPending || !ready) {
     return (
       <PageLoader className="min-h-screen" />
+    )
+  }
+
+  if (session?.user?.role !== "admin" && canManage) {
+    return (
+      <div className="flex flex-col gap-4 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-xl font-medium">Настройки</h1>
+          <PageHeaderActions />
+        </div>
+        <CustomFieldsSettings />
+      </div>
     )
   }
 
@@ -67,13 +97,14 @@ export default function SettingsPage() {
 
       <div className="w-full">
         <Tabs
-          value={tab}
+          value={tab === "custom-fields" && !canManage ? "users" : tab}
           onValueChange={(v) => setTab(v as SettingsTab)}
           className="w-full"
         >
           <TabsList>
             <TabsTrigger value="users">Пользователи</TabsTrigger>
             <TabsTrigger value="organizations">Организации</TabsTrigger>
+            {canManage && <TabsTrigger value="custom-fields">Поля</TabsTrigger>}
             <TabsTrigger value="sources">Источники</TabsTrigger>
             <TabsTrigger value="models">Модели</TabsTrigger>
             <TabsTrigger value="ai-processes">Процессы ИИ</TabsTrigger>
@@ -106,6 +137,8 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {canManage && <TabsContent value="custom-fields" className="mt-4"><CustomFieldsSettings /></TabsContent>}
 
           {/* One «Источники» tab: templates, sources, teardown (top to bottom). */}
           <TabsContent

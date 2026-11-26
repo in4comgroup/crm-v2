@@ -16,9 +16,9 @@ export type TopicTab = (typeof TOPIC_TABS)[number]
 
 export const TOPIC_TAB_LABELS_RU: Record<TopicTab, string> = {
   now: "Сейчас",
-  digest: "Сводка",
-  week: "Неделя",
-  all: "Все темы",
+  digest: "Сегодня",
+  week: "Позже",
+  all: "Все",
 }
 
 export function isTopicTab(v: unknown): v is TopicTab {
@@ -197,17 +197,19 @@ export type TopicCounts = Record<TopicTab, TopicCountPair>
  * «Не относится» (dismissed) + topics whose latest topic card was rejected,
  * whatever the reason.
  */
-export const TOPIC_STATUS_FILTERS = ["open", "dormant", "expired", "all", "closed", "archived", "erroneous"] as const
+export const TOPIC_STATUS_FILTERS = ["open", "all", "tasked", "resolved", "dormant", "expired", "erroneous", "archived", "closed"] as const
 export type TopicStatusFilter = (typeof TOPIC_STATUS_FILTERS)[number]
 
 export const TOPIC_STATUS_FILTER_LABELS_RU: Record<TopicStatusFilter, string> = {
-  open: "Открыты",
+  open: "Открытые",
+  tasked: "Стали задачами",
+  resolved: "Решились",
   dormant: "Затихли",
   expired: "Истекли",
   all: "Все",
   closed: "Закрыты",
-  archived: "В архиве",
-  erroneous: "Ошибочные",
+  archived: "Архив",
+  erroneous: "Отклонённые",
 }
 
 export const DEFAULT_TOPIC_STATUS_FILTER: TopicStatusFilter = "open"

@@ -54,13 +54,16 @@ const DEBOUNCE_MS = 300
 export function useCustomFieldDefs(entity: CustomFieldEntity) {
   const [fields, setFields] = useState<CustomFieldDef[]>([])
   const [canManage, setCanManage] = useState(false)
+  const [ready, setReady] = useState(false)
   const reqRef = useRef(0)
 
   // Fetch first, set state in the promise callback (never synchronously in an effect).
   const reload = useCallback(() => {
     const req = ++reqRef.current
     return fetchDefs(entity).then((d) => {
-      if (!d || req !== reqRef.current) return
+      if (req !== reqRef.current) return
+      setReady(true)
+      if (!d) return
       setFields(d.fields)
       setCanManage(d.canManage)
     })
@@ -70,7 +73,7 @@ export function useCustomFieldDefs(entity: CustomFieldEntity) {
     void reload()
   }, [reload])
 
-  return { fields, canManage, reload }
+  return { fields, canManage, ready, reload }
 }
 
 async function fetchDefs(

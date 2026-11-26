@@ -514,6 +514,11 @@ function allStatusCondition(f: TopicStatusFilter): SQL {
   switch (f) {
     case "all":
       return ne(topic.status, "merged")
+    case "tasked":
+      return and(ne(topic.status, "merged"), sql`exists (
+        select 1 from ${card} c
+        where c.topic_id = ${topic.id} and c.result_task_id is not null
+      )`)!
     case "closed":
       return inArray(topic.status, ["resolved", "done"])
     case "erroneous":

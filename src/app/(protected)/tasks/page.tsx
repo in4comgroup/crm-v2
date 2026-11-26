@@ -1,5 +1,7 @@
 "use client"
 
+import { FilterToolbar } from "@/components/blocks/filter-toolbar"
+
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
@@ -455,11 +457,7 @@ function TasksPageContent() {
       {/* Канбан без внешнего Card-контейнера — заголовок страницы достаточен. */}
       <div className="w-full">
 
-          {/* «Новая задача» — слева; фильтры (включая статус) в один ряд —
-              оптимизирует место по вертикали, тот же паттерн, что на
-              Компаниях/Контактах. Селекты в grid (адаптивно сжимаются на
-              узком), переключатель вида прижат вправо. */}
-          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3">
+          <FilterToolbar className="mb-4" active={hasActiveFilters} actions={<>
             <TaskEditDialog
               mode="create"
               onSuccess={refreshAll}
@@ -470,7 +468,20 @@ function TasksPageContent() {
                 </Button>
               }
             />
-            <div className="grid flex-1 min-w-0 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2">
+            <Tabs className="ml-auto" value={view} onValueChange={(v) => setView(v as TaskView)}>
+              <TabsList>
+                <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
+                  <PlayingCardsFan className="h-4 w-4" />
+                </TabsTrigger>
+                <TabsTrigger value="table" aria-label="Вид таблицей" {...tableViewTip.bind}>
+                  <Rows4 className="h-4 w-4" />
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <AnchorTooltip text="в виде карточек" open={cardsViewTip.open} virtualRef={cardsViewTip.virtualRef} />
+            <AnchorTooltip text="списком" open={tableViewTip.open} virtualRef={tableViewTip.virtualRef} />
+          </>}>
+            <div className="grid w-full min-w-0 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger size="sm" className="w-full">
                 <FilterValue label="Статус" isAll={statusFilter === ALL} />
@@ -566,19 +577,7 @@ function TasksPageContent() {
               </SelectContent>
             </Select>
             </div>
-            <Tabs value={view} onValueChange={(v) => setView(v as TaskView)}>
-              <TabsList>
-                <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
-                  <PlayingCardsFan className="h-4 w-4" />
-                </TabsTrigger>
-                <TabsTrigger value="table" aria-label="Вид таблицей" {...tableViewTip.bind}>
-                  <Rows4 className="h-4 w-4" />
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <AnchorTooltip text="в виде карточек" open={cardsViewTip.open} virtualRef={cardsViewTip.virtualRef} />
-            <AnchorTooltip text="списком" open={tableViewTip.open} virtualRef={tableViewTip.virtualRef} />
-          </div>
+          </FilterToolbar>
 
           {/* min-h-8 = высота кнопки сброса: строка не прыгает, когда кнопка
               появляется/исчезает вместе с активными фильтрами. */}

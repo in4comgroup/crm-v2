@@ -1,6 +1,7 @@
 "use client"
 
 import { authClient } from "@/lib/auth-client"
+import Link from "next/link"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ShieldAlert } from "lucide-react"
@@ -178,7 +179,12 @@ export default function SettingsPage() {
             </Card>
             <Card>
               <CardContent className="pt-6">
-                <h2 className="text-lg font-medium">Источники</h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-lg font-medium">Источники</h2>
+                  <Button asChild variant="outline" size="sm">
+                    <Link href="/sources?tab=org">Источники организации</Link>
+                  </Button>
+                </div>
                 <p className="mb-4 text-sm text-muted-foreground">
                   Все источники платформы. Можно отфильтровать по организации.
                 </p>

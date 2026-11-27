@@ -1,10 +1,8 @@
 "use client"
 
 import { useState, useTransition, useEffect } from "react"
-import { useForm } from "react-hook-form"
-import { Check, ChevronsUpDown } from "lucide-react"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useForm, useWatch } from "react-hook-form"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import {
   Dialog,
   DialogContent,
@@ -68,7 +66,6 @@ type Props = {
 
 export default function DealEditDialog({ trigger, onSuccess }: Props) {
   const [open, setOpen] = useState(false)
-  const [companyPickerOpen, setCompanyPickerOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
   const [clientOptions, setClientOptions] = useState<DealClientOption[]>([])
   const [stageOptions, setStageOptions] = useState<DealFunnelStageOption[]>([])
@@ -199,7 +196,7 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
     })
   }
 
-  const watchedClientId = form.watch("clientId")
+  const watchedClientId = useWatch({ control: form.control, name: "clientId" })
   const selectedClient = clientOptions.find((c) => c.id === watchedClientId)
   const currencySymbol =
     CURRENCY_SYMBOL[(selectedClient?.currency ?? "RUB").toUpperCase()] ??
@@ -207,10 +204,7 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
 
   return (
     <>
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      setOpen(nextOpen)
-      if (!nextOpen) setCompanyPickerOpen(false)
-    }}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto dark:bg-gray-800">
         <DialogHeader>
@@ -259,37 +253,19 @@ export default function DealEditDialog({ trigger, onSuccess }: Props) {
                 render={({ field }) => (
                   <FormItem className="min-w-0">
                     <FormLabel className="text-gray-400">Клиент *</FormLabel>
-                    <Popover open={companyPickerOpen} onOpenChange={setCompanyPickerOpen}>
-                      <PopoverTrigger asChild>
-                        <FormControl>
-                          <Button type="button" variant="outline" className="w-full justify-between font-normal" ref={field.ref}>
-                            <span className="truncate">{clientOptions.find((company) => company.id === field.value)?.name ?? "Выберите клиента"}</span>
-                            <ChevronsUpDown className="size-4 shrink-0 opacity-50" aria-hidden />
-                          </Button>
-                        </FormControl>
-                      </PopoverTrigger>
-                      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) min-w-48 p-0">
-                        <Command filter={(_id, search, keywords) =>
-                          keywords?.[0]?.toLocaleLowerCase("ru").includes(search.trim().toLocaleLowerCase("ru")) ? 1 : 0
-                        }>
-                          <CommandInput aria-label="Поиск компании" placeholder="Поиск компании…" autoFocus />
-                          <CommandList>
-                            <CommandEmpty>Компании не найдены</CommandEmpty>
-                            <CommandGroup>
-                              {clientOptions.map((company) => (
-                                <CommandItem key={company.id} value={company.id} keywords={[company.name]} onSelect={() => {
-                                  field.onChange(company.id)
-                                  setCompanyPickerOpen(false)
-                                }}>
-                                  <span className="min-w-0 flex-1 truncate">{company.name}</span>
-                                  {company.id === field.value && <Check aria-hidden />}
-                                </CommandItem>
-                              ))}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
+                    <FormControl>
+                      <SearchableSelect
+                        label="Клиент"
+                        searchLabel="Поиск компании"
+                        placeholder={field.value ? undefined : "Выберите клиента"}
+                        className="w-full"
+                        options={clientOptions}
+                        value={field.value}
+                        ref={field.ref}
+                        onBlur={field.onBlur}
+                        onValueChange={field.onChange}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

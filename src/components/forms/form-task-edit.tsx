@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { LoadingButton } from "@/components/blocks/loading-button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import {
   Select,
   SelectContent,
@@ -327,27 +328,22 @@ export function TaskEditForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-gray-400">Клиент</FormLabel>
-                <Select
-                  value={field.value}
-                  onValueChange={(v) => {
-                    field.onChange(v)
-                    form.setValue("contactId", NO_CONTACT)
-                  }}
-                >
-                  <FormControl>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Без клиента" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    <SelectItem value={NO_CLIENT}>Без клиента</SelectItem>
-                    {clientOptions.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <FormControl>
+                  <SearchableSelect
+                    label="Клиент"
+                    searchLabel="Поиск компании"
+                    className="w-full"
+                    options={[{ id: NO_CLIENT, name: "Без клиента" }, ...clientOptions]}
+                    value={field.value}
+                    ref={field.ref}
+                    onBlur={field.onBlur}
+                    onValueChange={(value) => {
+                      if (value === field.value) return
+                      field.onChange(value)
+                      form.setValue("contactId", NO_CONTACT, { shouldDirty: true })
+                    }}
+                  />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )}
@@ -358,21 +354,18 @@ export function TaskEditForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-gray-400">Контакт</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
-                  <FormControl>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Без контакта" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    <SelectItem value={NO_CONTACT}>Без контакта</SelectItem>
-                    {contactOptions.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <FormControl>
+                  <SearchableSelect
+                    label="Контакт"
+                    searchLabel="Поиск контакта"
+                    className="w-full"
+                    options={[{ id: NO_CONTACT, name: "Без контакта" }, ...contactOptions]}
+                    value={field.value}
+                    ref={field.ref}
+                    onBlur={field.onBlur}
+                    onValueChange={field.onChange}
+                  />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )}
@@ -385,21 +378,21 @@ export function TaskEditForm({
           render={({ field }) => (
             <FormItem>
               <FormLabel className="text-gray-400">Сделка</FormLabel>
-              <Select value={field.value} onValueChange={field.onChange}>
-                <FormControl>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Без сделки" />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  <SelectItem value={NO_DEAL}>Без сделки</SelectItem>
-                  {dealOptions.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.clientName ? `${d.clientName} — ${d.name}` : d.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FormControl>
+                <SearchableSelect
+                  label="Сделка"
+                  searchLabel="Поиск сделки"
+                  className="w-full"
+                  options={[
+                    { id: NO_DEAL, name: "Без сделки" },
+                    ...dealOptions.map((deal) => ({ id: deal.id, name: deal.clientName ? `${deal.clientName} — ${deal.name}` : deal.name })),
+                  ]}
+                  value={field.value}
+                  ref={field.ref}
+                  onBlur={field.onBlur}
+                  onValueChange={field.onChange}
+                />
+              </FormControl>
               <FormMessage />
             </FormItem>
           )}
@@ -457,52 +450,56 @@ export function TaskEditForm({
           />
         </div>
 
-        {/* Исполнение: статус, исполнитель, срок. */}
-        <div className="grid grid-cols-2 gap-3 [&>*]:min-w-0">
+        {/* Execution status and deadline. */}
+        <FormField
+          control={form.control}
+          name="status"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-gray-400">Статус</FormLabel>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  {STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {STATUS_LABELS[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <div className="flex flex-wrap items-start gap-3">
           <FormField
             control={form.control}
-            name="status"
+            name="dueDate"
+            rules={{ required: "Укажите срок" }}
             render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-gray-400">Статус</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
-                  <FormControl>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    {STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {STATUS_LABELS[s]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <FormItem className="min-w-0 flex-[1_1_9rem]">
+                <FormLabel className="text-gray-400">Срок</FormLabel>
+                <FormControl>
+                  <Input type="date" {...field} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
           <FormField
             control={form.control}
-            name="dueDate"
-            rules={{ required: "Укажите срок" }}
+            name="dueTime"
+            rules={{ required: "Укажите время" }}
             render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-gray-400">Срок</FormLabel>
-                <div className="flex gap-2">
-                  <FormControl>
-                    <Input type="date" className="min-w-0 flex-1" {...field} />
-                  </FormControl>
-                  <FormField
-                    control={form.control}
-                    name="dueTime"
-                    rules={{ required: "Укажите время" }}
-                    render={({ field: timeField }) => (
-                      <Input type="time" aria-label="Время срока" className="w-28 shrink-0" {...timeField} />
-                    )}
-                  />
-                </div>
+              <FormItem className="min-w-0 flex-[0_1_7rem]">
+                <FormLabel className="text-gray-400">Время</FormLabel>
+                <FormControl>
+                  <Input type="time" {...field} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )}

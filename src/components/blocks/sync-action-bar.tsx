@@ -31,6 +31,7 @@ function plural(n: number, forms: [string, string, string]): string {
 // hardcoded provider literals, so adding a new provider in the registry
 // flips the right buttons on/off automatically.
 export function SyncActionBar({
+  children,
   sources,
   onSynced,
   onProcessSource,
@@ -42,6 +43,7 @@ export function SyncActionBar({
   onOpenDropoffUpload,
   onOpenWhatsAppUpload,
 }: {
+  children?: React.ReactNode
   sources: SystemSource[]
   onSynced: () => void
   // Called after a successful sync/fetch to chain into the parse→upload
@@ -148,6 +150,7 @@ export function SyncActionBar({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {children}
         {hasArchiveSource && (
           <Button
             variant="outline"

@@ -35,6 +35,7 @@ import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tool
 import type { ContactRow, ClientOption } from "@/app/api/contacts/route"
 import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import { ContactCard } from "@/components/blocks/contact-card"
 import { PageLoader } from "@/components/blocks/page-loader"
@@ -315,20 +316,15 @@ export default function ContactsPage() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={clientFilter} onValueChange={setClientFilter}>
-          <SelectTrigger size="sm" className="w-fit">
-            <SelectValue placeholder="Компания" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Все компании</SelectItem>
-            <SelectItem value={NO_CLIENT}>Без компании</SelectItem>
-            {clientOptions.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          size="sm"
+          label="Компания"
+          searchLabel="Поиск компании"
+          className="max-w-72"
+          options={[{ id: ALL, name: "Все компании" }, { id: NO_CLIENT, name: "Без компании" }, ...clientOptions]}
+          value={clientFilter}
+          onValueChange={setClientFilter}
+        />
         {companyFilterActive && (
           <label className="flex items-center gap-2 text-sm text-muted-foreground">
             <Switch

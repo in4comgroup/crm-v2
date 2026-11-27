@@ -3,7 +3,7 @@
 // Dashboard attention lists and topic details.
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertTriangle, ChevronDown, ChevronUp, ChevronsUpDown, RefreshCw } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronUp, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Card, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,8 +14,7 @@ import { PageLoader } from "@/components/blocks/page-loader"
 import { DealCardBlock, TopicEntryCard, formatDateTimeRu } from "@/components/blocks/topic-card"
 import { TopicDrawer } from "@/components/blocks/topic-drawer"
 import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
-import { Input } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import {
   DIGEST_VISIBLE_ITEMS,
   TOPIC_STATUS_FILTERS,
@@ -85,8 +84,6 @@ export function TopicListsSection() {
   const [mine, setMine] = useState(false)
   const [status, setStatus] = useState<string>("all")
   const showFilters = tab === "all" || tab === "none"
-  const [companyOpen, setCompanyOpen] = useState(false)
-  const [companySearch, setCompanySearch] = useState("")
   const [clientId, setClientId] = useState(ANY)
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
   // `key` = the tab + filters the data was loaded for. A list loaded for
@@ -321,32 +318,15 @@ export function TopicListsSection() {
                 ))}
               </SelectContent>
             </Select>
-            <Popover open={companyOpen} onOpenChange={(open) => {
-              setCompanyOpen(open)
-              if (!open) setCompanySearch("")
-            }}>
-              <PopoverTrigger asChild>
-                <Button type="button" variant="outline" size="sm" className="max-w-64 font-normal">
-                  <span className="truncate">{clients.find((client) => client.id === clientId)?.name ?? "Все компании"}</span>
-                  <ChevronsUpDown className="size-4 opacity-50" aria-hidden />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-72 space-y-2 p-2">
-                <Input aria-label="Поиск компании" placeholder="Поиск компании…" value={companySearch}
-                  onChange={(event) => setCompanySearch(event.target.value)} />
-                <div className="max-h-64 space-y-1 overflow-y-auto">
-                  {[{ id: ANY, name: "Все компании" }, ...clients.filter((client) =>
-                    client.name.toLocaleLowerCase("ru").includes(companySearch.trim().toLocaleLowerCase("ru")),
-                  )].map((client) => (
-                    <Button key={client.id} type="button" variant={clientId === client.id ? "secondary" : "ghost"}
-                      size="sm" className="w-full justify-start font-normal" aria-pressed={clientId === client.id}
-                      onClick={() => { setClientId(client.id); setCompanyOpen(false); setCompanySearch("") }}>
-                      <span className="truncate">{client.name}</span>
-                    </Button>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
+            <SearchableSelect
+              size="sm"
+              label="Компания"
+              searchLabel="Поиск компании"
+              className="max-w-72"
+              options={[{ id: ANY, name: "Все компании" }, ...clients]}
+              value={clientId}
+              onValueChange={setClientId}
+            />
           </>
         )}
         <TooltipProvider>

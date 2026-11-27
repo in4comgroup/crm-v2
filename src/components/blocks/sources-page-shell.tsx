@@ -1,14 +1,17 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { ScanSearch } from "lucide-react"
 import { toast } from "sonner"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TableSourceItems } from "@/components/tables/table-source-items"
 import { TableOrgSources } from "@/components/tables/table-org-sources"
 import { AutoDiscoverySwitch } from "@/components/blocks/auto-discovery-switch"
 import { TableStoredContent } from "@/components/tables/table-stored-content"
 import { DropoffUploadDialog } from "@/components/blocks/dropoff-upload-dialog"
+import { DiscoverDialog } from "@/components/blocks/discover-dialog"
 import { WhatsAppArchiveDialog } from "@/components/blocks/whatsapp-archive-dialog"
 import { SyncActionBar } from "@/components/blocks/sync-action-bar"
 import { ProcessRunBar } from "@/components/blocks/process-controls"
@@ -149,6 +152,7 @@ export function SourcesPageShell({
             onOpenDropoffUpload={() => setUploadOpen(true)}
             onOpenWhatsAppUpload={() => setWhatsAppOpen(true)}
             canExtractSignals={isAdmin}
+            canBlock={isOrgOwner}
           />
         ) : (
           <Card>
@@ -241,6 +245,7 @@ function SourcesScope({
   onOpenDropoffUpload,
   onOpenWhatsAppUpload,
   canExtractSignals,
+  canBlock,
 }: {
   sources: SourceSummary[]
   refreshKey: number
@@ -249,6 +254,7 @@ function SourcesScope({
   onOpenWhatsAppUpload: () => void
   // Platform admin: per-row «Извлечь сигналы и темы» (topics engine, shadow review).
   canExtractSignals: boolean
+  canBlock: boolean
 }) {
   const proc = useProcessRun({ onRefresh: onBumpRefresh })
   // "Processing period" — bounds which fetched items the sync→process chain
@@ -258,12 +264,25 @@ function SourcesScope({
   // via the × in the action bar to process/show the whole backlog.
   const [procDateFrom, setProcDateFrom] = useState(todayInputDate)
   const [procDateTo, setProcDateTo] = useState(todayInputDate)
+  const discoverAction = (
+    <DiscoverDialog
+      onApplied={onBumpRefresh}
+      canBlock={canBlock}
+      trigger={
+        <Button type="button" size="sm" variant="outline">
+          <ScanSearch aria-hidden />
+          Найти в источниках
+        </Button>
+      }
+    />
+  )
 
   if (sources.length === 0) {
     return (
       <Card>
-        <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          Для этой организации ещё не настроены источники.
+        <CardContent className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground">
+          <p>Для этой организации ещё не настроены источники.</p>
+          {discoverAction}
         </CardContent>
       </Card>
     )
@@ -292,7 +311,9 @@ function SourcesScope({
         onProcessDateToChange={setProcDateTo}
         onOpenDropoffUpload={onOpenDropoffUpload}
         onOpenWhatsAppUpload={onOpenWhatsAppUpload}
-      />
+      >
+        {discoverAction}
+      </SyncActionBar>
 
       <ProcessRunBar
         progress={proc.progress}

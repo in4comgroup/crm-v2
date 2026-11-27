@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useId, useMemo, useState } from "react"
 import { addDays, differenceInCalendarDays, format, startOfDay } from "date-fns"
 import { ru } from "date-fns/locale"
 import { Input } from "@/components/ui/input"
@@ -163,29 +163,33 @@ export function TaskTimeline({
     setToStr(toInputDate(defaultTo))
   }
 
+  const rangeId = useId()
+
   return (
     <div className="space-y-3">
       {/* Filter row — timeline-local. Page-level filters still feed
           the parent `tasks` prop. */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <Label className="text-xs text-muted-foreground mb-1 block">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Label htmlFor={`${rangeId}-from`} className="text-xs text-muted-foreground">
             С
           </Label>
           <Input
+            id={`${rangeId}-from`}
             type="date"
             value={fromStr}
             onChange={(e) => setFromStr(e.target.value)}
-            className="h-8 text-sm"
+            className="h-8 w-fit text-sm"
           />
         </div>
-        <div>
-          <Label className="text-xs text-muted-foreground mb-1 block">По</Label>
+        <div className="flex items-center gap-2">
+          <Label htmlFor={`${rangeId}-to`} className="text-xs text-muted-foreground">По</Label>
           <Input
+            id={`${rangeId}-to`}
             type="date"
             value={toStr}
             onChange={(e) => setToStr(e.target.value)}
-            className="h-8 text-sm"
+            className="h-8 w-fit text-sm"
           />
         </div>
         <Button

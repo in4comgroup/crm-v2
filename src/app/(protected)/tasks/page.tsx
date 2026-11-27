@@ -46,6 +46,7 @@ import type { TaskStatus, TaskType, TaskPriority } from "@/db/schema"
 import TaskEditDialog from "@/components/forms/form-task-edit"
 import { TaskCard } from "@/components/blocks/task-card"
 import { TaskDetailDrawer } from "@/components/blocks/task-detail-drawer"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import { TaskTimeline } from "@/components/blocks/task-timeline"
 import { PageLoader } from "@/components/blocks/page-loader"
@@ -550,48 +551,37 @@ function TasksPageContent() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={clientFilter} onValueChange={setClientFilter}>
-              <SelectTrigger size="sm" className="w-full">
-                <FilterValue label="Клиент" isAll={clientFilter === ALL} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Все клиенты</SelectItem>
-                {clientOptions.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={contactFilter} onValueChange={setContactFilter}>
-              <SelectTrigger size="sm" className="w-full">
-                <FilterValue label="Контакт" isAll={contactFilter === ALL} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Все контакты</SelectItem>
-                {contactOptions.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {/* Фильтр по сделке: «Все сделки» (по умолчанию) / «Без сделки» /
-                конкретная сделка (task.dealId). */}
-            <Select value={dealFilter} onValueChange={setDealFilter}>
-              <SelectTrigger size="sm" className="w-full">
-                <FilterValue label="Сделка" isAll={dealFilter === ALL} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Все сделки</SelectItem>
-                <SelectItem value={NO_DEAL}>Без сделки</SelectItem>
-                {dealOptions.map((d) => (
-                  <SelectItem key={d.id} value={d.id}>
-                    {d.clientName ? `${d.clientName} — ${d.name}` : d.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              size="sm"
+              label="Клиент"
+              searchLabel="Поиск компании"
+              placeholder={clientFilter === ALL ? "Клиент" : undefined}
+              options={[{ id: ALL, name: "Все клиенты" }, ...clientOptions]}
+              value={clientFilter}
+              onValueChange={setClientFilter}
+            />
+            <SearchableSelect
+              size="sm"
+              label="Контакт"
+              searchLabel="Поиск контакта"
+              placeholder={contactFilter === ALL ? "Контакт" : undefined}
+              options={[{ id: ALL, name: "Все контакты" }, ...contactOptions]}
+              value={contactFilter}
+              onValueChange={setContactFilter}
+            />
+            <SearchableSelect
+              size="sm"
+              label="Сделка"
+              searchLabel="Поиск сделки"
+              placeholder={dealFilter === ALL ? "Сделка" : undefined}
+              options={[
+                { id: ALL, name: "Все сделки" },
+                { id: NO_DEAL, name: "Без сделки" },
+                ...dealOptions.map((deal) => ({ id: deal.id, name: deal.clientName ? `${deal.clientName} — ${deal.name}` : deal.name })),
+              ]}
+              value={dealFilter}
+              onValueChange={setDealFilter}
+            />
             </div>
           </FilterToolbar>
 

@@ -28,7 +28,6 @@ import {
   Rows4,
   PlayingCardsFan,
   X,
-  ScanSearch,
 } from "lucide-react"
 import type {
   ClientRow,
@@ -42,7 +41,6 @@ import ClientEditDialog from "@/components/forms/form-client-edit"
 import { ClientCard } from "@/components/blocks/client-card"
 import { ClientDetailDrawer } from "@/components/blocks/client-detail-drawer"
 import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
-import { DiscoverDialog } from "@/components/blocks/discover-dialog"
 import { ClientEnrichControl } from "@/components/blocks/client-enrich-control"
 import { ClientBlocklistDialog } from "@/components/blocks/client-blocklist-dialog"
 import { SortableTableHead } from "@/components/blocks/sortable-table-head"
@@ -405,7 +403,7 @@ export default function ClientsPage() {
         </div>
 
         {/* «Новая компания» — первой, слева; селекты типа/статуса следом;
-            «Найти в источниках»/«На проверке»/«Список блокировки» —
+            «На проверке»/«Список блокировки» —
             прижаты вправо, переключатель вида — правее всех кнопок. Белый
             контейнер — как на Сделках/Домашней. */}
         <FilterToolbar active={tab !== TAB_ALL || statusFilter !== ALL || responsibleFilter !== RESPONSIBLE_FILTER_ALL || profileFiltered || !!cfParam} actions={<>
@@ -421,16 +419,6 @@ export default function ClientsPage() {
           />
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <label className="flex cursor-pointer items-center gap-2 text-sm"><Switch size="sm" checked={mine} onCheckedChange={setMine} /> Только мои</label>
-            <DiscoverDialog
-              onApplied={refreshAll}
-              canBlock={canBlock}
-              trigger={
-                <Button size="sm" variant="outline">
-                  <ScanSearch className="h-4 w-4 mr-1" />
-                  Найти в источниках
-                </Button>
-              }
-            />
             <ClientEnrichControl refreshKey={total} onChanged={refreshAll} />
             {canBlock && (
               <ClientBlocklistDialog

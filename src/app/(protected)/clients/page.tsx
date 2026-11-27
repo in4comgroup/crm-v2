@@ -18,11 +18,9 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
 import {
   AlertTriangle,
   Ban,
@@ -41,15 +39,16 @@ import type { DealRow } from "@/app/api/deals/route"
 import type { TaskRow } from "@/app/api/tasks/route"
 import type { ClientDetail } from "@/server/client-content"
 import ClientEditDialog from "@/components/forms/form-client-edit"
-import { ClientCard, STATUS_COLOR } from "@/components/blocks/client-card"
+import { ClientCard } from "@/components/blocks/client-card"
 import { ClientDetailDrawer } from "@/components/blocks/client-detail-drawer"
+import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import { DiscoverDialog } from "@/components/blocks/discover-dialog"
-import { MagicDiscoverButton } from "@/components/blocks/magic-discover-button"
 import { ClientEnrichControl } from "@/components/blocks/client-enrich-control"
 import { ClientBlocklistDialog } from "@/components/blocks/client-blocklist-dialog"
+import { SortableTableHead } from "@/components/blocks/sortable-table-head"
+import { Switch } from "@/components/ui/switch"
 import { FilterToolbar } from "@/components/blocks/filter-toolbar"
 import {
-  CustomFieldCell,
   CustomFieldFilterChips,
   CustomFieldFiltersButton,
   activeCustomFilters,
@@ -57,7 +56,6 @@ import {
   useCustomFieldDefs,
 } from "@/components/blocks/custom-field-filters"
 import { encodeCustomFilters, type CustomFieldFilter } from "@/lib/custom-fields"
-import { sortClientFeed, type ClientFeedSort } from "@/lib/client-feed-sort"
 import { PageLoader } from "@/components/blocks/page-loader"
 import {
   HandoverPendingBadge,
@@ -66,13 +64,10 @@ import {
 import {
   RESPONSIBLE_FILTER_ALL,
   RESPONSIBLE_FILTER_HANDOVER,
-  RESPONSIBLE_FILTER_MINE,
   memberLabel,
 } from "@/lib/client-responsible"
 
 import {
-  CLIENT_SIZE_LABELS_RU,
-  type ClientSizeBand,
 } from "@/lib/identity/client-profile"
 import { usePersistentTab } from "@/lib/use-persistent-tab"
 
@@ -143,6 +138,7 @@ export default function ClientsPage() {
   })
   const [statusFilter, setStatusFilter] = useState<string>(ALL)
   // «Ответственный»: all | mine | handover | <member user id> — server-side.
+  const [mine, setMine] = useState(true)
   const [responsibleFilter, setResponsibleFilter] = useState<string>(RESPONSIBLE_FILTER_ALL)
   const responsibleOptions = useResponsibleOptions()
   // «Профиль компании» filters (identity I5) — server-side, like «Ответственный».
@@ -154,24 +150,16 @@ export default function ClientsPage() {
       .then((d) => setIndustries(d?.industries ?? []))
       .catch(() => setIndustries([]))
   }, [])
-  const industryLabels = useMemo(
-    () => Object.fromEntries(industries.map((i) => [i.code, i.label])) as Record<string, string>,
-    [industries],
-  )
   const profileFiltered = industryFilter !== ALL
-  // Порядок ленты. Живёт на уровне страницы, поэтому не сбрасывается при
-  // переключении карточки/таблица (обе раскладки показывают одни и те же rows).
-  // Сортировка — на клиенте над уже загруженной вкладкой: переключение
-  // мгновенное, без запроса, карточки/строки плавно переезжают (motion layout).
-  const [sort, setSort] = useState<ClientFeedSort>("new")
+  const [sortKey, setSortKey] = useState<"name" | "responsible" | "revenue" | "contact" | "created" | "author">("created")
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
+  function changeSort(key: typeof sortKey) {
+    setSortKey(key)
+    setSortDirection(sortKey === key && sortDirection === "asc" ? "desc" : "asc")
+  }
 
-  // Вся вкладка целиком (до FEED_LIMIT) — иначе «Сначала критичные» не мог бы
-  // поднять компанию из ещё не загруженной порции.
   const [rows, setRows] = useState<ClientRow[]>([])
   const [total, setTotal] = useState(0)
-  const [taskSummary, setTaskSummary] = useState<
-    Record<string, { overdueCount: number } | undefined>
-  >({})
   const [loading, setLoading] = useState(true)
 
   const [revenueByClient, setRevenueByClient] = useState<
@@ -229,6 +217,7 @@ export default function ClientsPage() {
         offset: "0",
       })
       if (statusFilter !== ALL) params.set("status", statusFilter)
+      if (mine) params.set("mine", "1")
       if (responsibleFilter !== RESPONSIBLE_FILTER_ALL) {
         params.set("responsible", responsibleFilter)
       }
@@ -245,18 +234,14 @@ export default function ClientsPage() {
       setLoadError(false)
       setRows(data.rows ?? [])
       setTotal(data.total ?? 0)
-      setTaskSummary(data.taskSummary ?? {})
     } catch {
       if (reqIdRef.current === reqId) setLoadError(true)
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [tab, statusFilter, responsibleFilter, industryFilter, cfParam])
+  }, [tab, statusFilter, responsibleFilter, industryFilter, cfParam, mine])
 
-  const sortedRows = useMemo(
-    () => sortClientFeed(rows, sort, taskSummary),
-    [rows, sort, taskSummary],
-  )
+
 
   // Каждый таб/фильтр статуса — независимая лента: смена любого из них
   // сбрасывает накопленные карточки и грузит с начала.
@@ -264,7 +249,7 @@ export default function ClientsPage() {
     setRows([])
     void loadPage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, statusFilter, responsibleFilter, industryFilter, cfParam])
+  }, [tab, statusFilter, responsibleFilter, industryFilter, cfParam, mine])
 
   const loadExtras = useCallback(async () => {
     const [revRes, dealsRes, tasksRes] = await Promise.all([
@@ -388,6 +373,29 @@ export default function ClientsPage() {
     await Promise.all([loadPage(), loadExtras()])
   }, [loadPage, loadExtras])
 
+  const tableRows = [...rows].sort((a, b) => {
+    const direction = sortDirection === "asc" ? 1 : -1
+    if (sortKey === "revenue") {
+      return direction * ((revenueByClient[a.id]?.revenue ?? 0) - (revenueByClient[b.id]?.revenue ?? 0))
+    }
+    const values = (row: ClientRow) => ({
+      name: row.name, responsible: row.responsibleName, contact: row.lastContactAt,
+      created: row.createdAt, author: row.userName,
+    })
+    return direction * (values(a)[sortKey] ?? "").localeCompare(values(b)[sortKey] ?? "", "ru")
+  })
+
+  function openCompany(id: string, initialTab: "info" | "contacts" = "info") {
+    setOpenClientId(id)
+    setDrawerInitialTab(initialTab)
+    setDrawerOpen(true)
+  }
+  const companyNavigation = useDetailNavigation(
+    drawerOpen ? openClientId : null,
+    (view === "table" ? tableRows : rows).map((row) => row.id),
+    openCompany,
+  )
+
   return (
     <div className="flex flex-col h-[calc(100vh-1rem)]">
       <div className="flex flex-col gap-4 p-4 pb-0 shrink-0">
@@ -397,7 +405,7 @@ export default function ClientsPage() {
         </div>
 
         {/* «Новая компания» — первой, слева; селекты типа/статуса следом;
-            «Найти в источниках»/«На проверке»/«Список блокировки»/Magic —
+            «Найти в источниках»/«На проверке»/«Список блокировки» —
             прижаты вправо, переключатель вида — правее всех кнопок. Белый
             контейнер — как на Сделках/Домашней. */}
         <FilterToolbar active={tab !== TAB_ALL || statusFilter !== ALL || responsibleFilter !== RESPONSIBLE_FILTER_ALL || profileFiltered || !!cfParam} actions={<>
@@ -411,16 +419,8 @@ export default function ClientsPage() {
               </Button>
             }
           />
-          <Tabs
-            value={sort}
-            onValueChange={(v) => setSort(v as ClientFeedSort)}
-          >
-            <TabsList>
-              <TabsTrigger value="new">Сначала новые</TabsTrigger>
-              <TabsTrigger value="critical">Сначала критичные</TabsTrigger>
-            </TabsList>
-          </Tabs>
           <div className="ml-auto flex items-center gap-2 flex-wrap">
+            <label className="flex cursor-pointer items-center gap-2 text-sm"><Switch size="sm" checked={mine} onCheckedChange={setMine} /> Только мои</label>
             <DiscoverDialog
               onApplied={refreshAll}
               canBlock={canBlock}
@@ -447,7 +447,6 @@ export default function ClientsPage() {
                 }
               />
             )}
-            <MagicDiscoverButton onApplied={refreshAll} />
             <Tabs value={view} onValueChange={(v) => setView(v as ClientView)}>
               <TabsList>
                 <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
@@ -495,7 +494,6 @@ export default function ClientsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={RESPONSIBLE_FILTER_ALL}>Ответственный: все</SelectItem>
-              <SelectItem value={RESPONSIBLE_FILTER_MINE}>Мои</SelectItem>
               <SelectItem value={RESPONSIBLE_FILTER_HANDOVER}>
                 Ждут решения владельца
               </SelectItem>
@@ -569,7 +567,7 @@ export default function ClientsPage() {
           ) : view === "cards" ? (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                {sortedRows.map((c) => (
+                {rows.map((c) => (
                   <motion.div
                     key={c.id}
                     layout
@@ -587,9 +585,9 @@ export default function ClientsPage() {
                     tasksLoaded={tasksLoaded}
                     listFields={listFields}
                     onOpenDetail={(id, initialTab) => {
-                      setOpenClientId(id)
-                      setDrawerInitialTab(initialTab ?? "info")
-                      setDrawerOpen(true)
+                      if (id !== openClientId || !drawerOpen) {
+                        companyNavigation.request(() => openCompany(id, initialTab))
+                      }
                     }}
                   />
                   </motion.div>
@@ -604,24 +602,16 @@ export default function ClientsPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Компания</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Телефон</TableHead>
-                        <TableHead>Отрасль</TableHead>
-                        <TableHead>Выручка за 12 мес.</TableHead>
-                        <TableHead>Дата создания</TableHead>
-                        <TableHead>Кто создал</TableHead>
-                        <TableHead>Ответственный</TableHead>
-                        <TableHead>Статус</TableHead>
-                        {listFields.map((f) => (
-                          <TableHead key={f.id} className="max-w-[16rem] truncate">
-                            {f.label}
-                          </TableHead>
-                        ))}
+                        <SortableTableHead label="Компания" direction={sortKey === "name" ? sortDirection : undefined} onSort={() => changeSort("name")} />
+                        <SortableTableHead label="Ответственный" direction={sortKey === "responsible" ? sortDirection : undefined} onSort={() => changeSort("responsible")} />
+                        <SortableTableHead label="Выручка за 12 мес." direction={sortKey === "revenue" ? sortDirection : undefined} onSort={() => changeSort("revenue")} />
+                        <SortableTableHead label="Дата последнего контакта" direction={sortKey === "contact" ? sortDirection : undefined} onSort={() => changeSort("contact")} />
+                        <SortableTableHead label="Дата создания" direction={sortKey === "created" ? sortDirection : undefined} onSort={() => changeSort("created")} />
+                        <SortableTableHead label="Кто создал" direction={sortKey === "author" ? sortDirection : undefined} onSort={() => changeSort("author")} />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {sortedRows.map((c) => {
+                      {tableRows.map((c) => {
                         const rev = revenueByClient[c.id]
                         return (
                           <MotionTableRow
@@ -629,11 +619,7 @@ export default function ClientsPage() {
                             layout="position"
                             transition={LAYOUT_TRANSITION}
                             className="cursor-pointer even:bg-muted/40"
-                            onClick={() => {
-                              setOpenClientId(c.id)
-                              setDrawerInitialTab("info")
-                              setDrawerOpen(true)
-                            }}
+                            onClick={() => companyNavigation.select(c.id)}
                           >
                             <TableCell>
                               <div className="font-medium">{c.name}</div>
@@ -643,28 +629,6 @@ export default function ClientsPage() {
                                 </div>
                               )}
                             </TableCell>
-                            <TableCell>{c.email ?? "—"}</TableCell>
-                            <TableCell>{c.phone ?? "—"}</TableCell>
-                            <TableCell>
-                              {c.profileTags?.industryCode
-                                ? (industryLabels[c.profileTags.industryCode] ?? "—")
-                                : "—"}
-                              {c.profileTags?.sizeBand && (
-                                <div className="text-xs text-muted-foreground">
-                                  {CLIENT_SIZE_LABELS_RU[c.profileTags.sizeBand as ClientSizeBand] ?? ""}
-                                  {c.profileTags.pointsOfSale ? ` · ${c.profileTags.pointsOfSale} точек` : ""}
-                                </div>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {rev && rev.revenue > 0
-                                ? `${Math.round(rev.revenue).toLocaleString("ru-RU")} · ${rev.orders} зак.`
-                                : "нет заказов"}
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap">
-                              {new Date(c.createdAt).toLocaleDateString("ru-RU")}
-                            </TableCell>
-                            <TableCell>{c.userName ?? "—"}</TableCell>
                             <TableCell>
                               <div>{c.responsibleName ?? "—"}</div>
                               {(c.coResponsible?.length ?? 0) > 0 && (
@@ -675,18 +639,11 @@ export default function ClientsPage() {
                               <HandoverPendingBadge client={c} className="mt-1" />
                             </TableCell>
                             <TableCell>
-                              <Badge
-                                variant="secondary"
-                                className={STATUS_COLOR[c.status] ?? ""}
-                              >
-                                {STATUS_LABEL[c.status] ?? c.status}
-                              </Badge>
+                              {rev?.orders ? Math.round(rev.revenue).toLocaleString("ru-RU") : "нет заказов"}
                             </TableCell>
-                            {listFields.map((f) => (
-                              <TableCell key={f.id}>
-                                <CustomFieldCell field={f} value={c.customValues?.[f.id]} />
-                              </TableCell>
-                            ))}
+                            <TableCell className="whitespace-nowrap">{c.lastContactAt ? new Date(c.lastContactAt).toLocaleDateString("ru-RU") : "—"}</TableCell>
+                            <TableCell className="whitespace-nowrap">{new Date(c.createdAt).toLocaleDateString("ru-RU")}</TableCell>
+                            <TableCell>{c.userName ?? "—"}</TableCell>
                           </MotionTableRow>
                         )
                       })}
@@ -703,6 +660,7 @@ export default function ClientsPage() {
       <ClientDetailDrawer
         client={rows.find((r) => r.id === openClientId) ?? null}
         open={drawerOpen}
+        navigation={companyNavigation.navigation}
         initialTab={drawerInitialTab}
         onOpenChange={setDrawerOpen}
         onChanged={refreshAll}

@@ -1,13 +1,13 @@
 "use client"
 
+import { DetailDrawerContent, DetailDrawerTabs, type DetailNavigation, type DetailNavigationStatus } from "@/components/blocks/detail-drawer-layout"
 import { useCallback, useRef, useState } from "react"
 import {
   Sheet,
-  SheetContent,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs"
 import { DocumentsPanel } from "@/components/blocks/documents-panel"
 import { ContactEditForm } from "@/components/forms/form-contact-edit"
 import {
@@ -40,12 +40,14 @@ import { contactDisplayName } from "@/lib/contact-names"
 export function ContactDetailDrawer({
   contact: contactProp,
   open,
+  navigation,
   onOpenChange,
   onChanged,
   canBlock = false,
 }: {
   contact: ContactRow | null
   open: boolean
+  navigation?: DetailNavigation
   onOpenChange: (open: boolean) => void
   onChanged: () => void
   canBlock?: boolean
@@ -83,6 +85,10 @@ export function ContactDetailDrawer({
   const fieldsPanelRef = useRef<CustomFieldsPanelHandle | null>(null)
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
   const [savingFields, setSavingFields] = useState(false)
+  const formNavigationStatus = useRef<DetailNavigationStatus>("ready")
+  const updateNavigationStatus = useCallback((status: DetailNavigationStatus) => {
+    formNavigationStatus.current = status
+  }, [])
   const [history, setHistory] = useState<{ contactId: string; events: ContactLinksResponse["events"] } | null>(null)
   const updateHistory = useCallback((contactId: string, events: ContactLinksResponse["events"]) => {
     setHistory({ contactId, events })
@@ -114,6 +120,7 @@ export function ContactDetailDrawer({
       mode="edit"
       contact={contact}
       canBlock={canBlock}
+      onNavigationStatusChange={updateNavigationStatus}
       onSuccess={() => {
         onChanged()
         onOpenChange(false)
@@ -123,11 +130,13 @@ export function ContactDetailDrawer({
   )
 
   return (
-    <Sheet open={open} onOpenChange={handleOpenChange}>
-      <SheetContent
-        className="w-full sm:max-w-xl flex flex-col gap-0 p-0"
-        // Иначе Radix при открытии автофокусит первое поле формы — см. тот
-        // же фикс в client-detail-drawer.tsx/deal-detail-drawer.tsx.
+    <Sheet open={open} modal={!navigation} onOpenChange={handleOpenChange}>
+      <DetailDrawerContent
+        navigation={navigation}
+        getNavigationStatus={() => {
+          if (savingFields || formNavigationStatus.current === "busy") return "busy"
+          return fieldsPanelRef.current?.isDirty() ? "dirty" : formNavigationStatus.current
+        }}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <Tabs
@@ -147,7 +156,7 @@ export function ContactDetailDrawer({
                 </div>
               )}
             </SheetHeader>
-            <TabsList variant="line" className="mt-1 flex w-full justify-start gap-4 overflow-x-auto p-0 scrollbar-none [&_[role=tab]]:h-full! [&_[role=tab]]:after:-bottom-px! [&_[role=tab]:focus-visible]:border-transparent [&_[role=tab]:focus-visible]:ring-0 [&_[role=tab]:focus-visible]:outline-none [&_[role=tab]:focus-visible]:underline [&_[role=tab]:focus-visible]:underline-offset-4">
+            <DetailDrawerTabs>
               <TabsTrigger value="info" className="flex-none">
                 Общая информация
               </TabsTrigger>
@@ -168,7 +177,7 @@ export function ContactDetailDrawer({
                 </TabsTrigger>
               )}
               <TabsTrigger value="history" className="flex-none">История</TabsTrigger>
-            </TabsList>
+            </DetailDrawerTabs>
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto p-4">
             <TabsContent value="info" forceMount className="space-y-6 data-[state=inactive]:hidden">
@@ -213,7 +222,7 @@ export function ContactDetailDrawer({
             </TabsContent>
           </div>
         </Tabs>
-      </SheetContent>
+      </DetailDrawerContent>
 
       <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
         <AlertDialogContent>

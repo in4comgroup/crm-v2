@@ -110,7 +110,7 @@ export function DealCreatedByAgentBadge({
   if (!deal.createdByAgent) return null
   const canUndo = Boolean(onUndo) && isOpenDealStatus(deal.status)
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex max-w-full flex-wrap items-center gap-1">
       <Badge
         variant="secondary"
         className="gap-1 bg-violet-500/15 text-violet-600 dark:text-violet-300"

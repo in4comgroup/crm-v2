@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useEffect } from "react"
 import { useForm } from "react-hook-form"
+import type { DetailNavigationStatus } from "@/components/blocks/detail-drawer-layout"
 import {
   Dialog,
   DialogContent,
@@ -130,6 +131,7 @@ export function ContactEditForm({
   defaultClientId,
   onSuccess,
   onCancel,
+  onNavigationStatusChange,
   canBlock = false,
 }: {
   mode: "create" | "edit"
@@ -137,6 +139,7 @@ export function ContactEditForm({
   defaultClientId?: string
   onSuccess?: (createdId?: string) => void
   onCancel?: () => void
+  onNavigationStatusChange?: (status: DetailNavigationStatus) => void
   canBlock?: boolean
 }) {
   const [isPending, startTransition] = useTransition()
@@ -170,6 +173,12 @@ export function ContactEditForm({
       ...managedFields(contact?.managedAt),
     },
   })
+
+  const { isDirty, isSubmitting } = form.formState
+  useEffect(() => {
+    onNavigationStatusChange?.(isPending || isSubmitting ? "busy" : isDirty ? "dirty" : "ready")
+    return () => onNavigationStatusChange?.("ready")
+  }, [onNavigationStatusChange, isPending, isSubmitting, isDirty])
 
   useEffect(() => {
     form.reset({

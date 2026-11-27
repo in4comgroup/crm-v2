@@ -1,16 +1,16 @@
 "use client"
 
 import {
-  Home,
-  ChartColumnBig,
+  createLucideIcon,
+  ChartNoAxesColumn,
   Settings2,
   Building2,
   Database,
-  Users,
-  Contact,
+  BuildingComplex,
+  UserGroup,
   ListChecks,
   Package,
-  SquareKanban,
+  Handshake,
 } from "lucide-react"
 import {
   Sidebar,
@@ -38,26 +38,34 @@ export type AuthSession = NonNullable<
   Awaited<ReturnType<typeof getServerSession>>
 >
 
+// LayoutGridCircles was added in Lucide 1.50.
+const LayoutGridCircles = createLucideIcon("layout-grid-circles", [
+  ["circle", { cx: "17.5", cy: "17.5", r: "3.5", key: "bottom-right" }],
+  ["circle", { cx: "17.5", cy: "6.5", r: "3.5", key: "top-right" }],
+  ["circle", { cx: "6.5", cy: "17.5", r: "3.5", key: "bottom-left" }],
+  ["circle", { cx: "6.5", cy: "6.5", r: "3.5", key: "top-left" }],
+])
+
 export const items = [
   {
     title: "Главное",
     url: "/dashboard",
-    icon: Home,
+    icon: LayoutGridCircles,
   },
   {
     title: "Компании",
     url: "/clients",
-    icon: Users,
+    icon: BuildingComplex,
   },
   {
     title: "Контакты",
     url: "/contacts",
-    icon: Contact,
+    icon: UserGroup,
   },
   {
     title: "Сделки",
     url: "/deals",
-    icon: SquareKanban,
+    icon: Handshake,
   },
   {
     title: "Заказы",
@@ -72,7 +80,7 @@ export const items = [
   {
     title: "Аналитика",
     url: "/analytics",
-    icon: ChartColumnBig,
+    icon: ChartNoAxesColumn,
   },
 ]
 

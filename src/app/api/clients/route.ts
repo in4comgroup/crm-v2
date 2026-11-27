@@ -104,6 +104,7 @@ export async function GET(request: NextRequest) {
         tab: tab as ClientFeedTab,
         status: status ?? undefined,
         responsible: searchParams.get("responsible"),
+        mine: searchParams.get("mine") === "1",
         industry: searchParams.get("industry"),
         role: searchParams.get("role"),
         size: searchParams.get("size"),

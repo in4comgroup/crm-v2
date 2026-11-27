@@ -1,5 +1,6 @@
 "use client"
 
+import { Switch } from "@/components/ui/switch"
 import { FilterToolbar } from "@/components/blocks/filter-toolbar"
 
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
@@ -45,6 +46,7 @@ import type { TaskStatus, TaskType, TaskPriority } from "@/db/schema"
 import TaskEditDialog from "@/components/forms/form-task-edit"
 import { TaskCard } from "@/components/blocks/task-card"
 import { TaskDetailDrawer } from "@/components/blocks/task-detail-drawer"
+import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import { TaskTimeline } from "@/components/blocks/task-timeline"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { isOpenDealStatus } from "@/lib/deal-funnel"
@@ -163,18 +165,16 @@ function PagerNav({
 }
 
 function StatusBucket({
-  tasks,
+  paged,
   onChanged,
   onOpenDetail,
   emptyLabel,
 }: {
-  tasks: TaskRow[]
+  paged: ReturnType<typeof usePaged<TaskRow>>
   onChanged: () => void
   onOpenDetail: (taskId: string) => void
   emptyLabel: string
 }) {
-  const paged = usePaged(tasks)
-
   const grid = useMemo(
     () =>
       paged.pageItems.map((t) => (
@@ -188,7 +188,7 @@ function StatusBucket({
     [paged.pageItems, onChanged, onOpenDetail],
   )
 
-  if (tasks.length === 0) {
+  if (paged.pageItems.length === 0) {
     return <EmptyState label={emptyLabel} />
   }
 
@@ -283,6 +283,8 @@ export default function TasksPage() {
 function TasksPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const [mine, setMine] = useState(true)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -374,6 +376,7 @@ function TasksPageContent() {
         setLoadError(false)
         setTasks(tasksRes.tasks ?? [])
         setMembers(mRes.members ?? [])
+        setCurrentUserId(mRes.currentUserId ?? null)
         setClientOptions(cRes.options ?? [])
         setContactOptions(ctRes.options ?? [])
         type DealLite = {
@@ -401,6 +404,7 @@ function TasksPageContent() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
+      if (mine && (!currentUserId || t.assigneeId !== currentUserId)) return false
       if (statusFilter !== ALL && t.status !== statusFilter) return false
       if (typeFilter !== ALL && t.type !== typeFilter) return false
       if (priorityFilter !== ALL && t.priority !== priorityFilter) return false
@@ -419,6 +423,8 @@ function TasksPageContent() {
     })
   }, [
     tasks,
+    mine,
+    currentUserId,
     statusFilter,
     typeFilter,
     priorityFilter,
@@ -436,6 +442,15 @@ function TasksPageContent() {
     clientFilter !== ALL ||
     contactFilter !== ALL ||
     dealFilter !== ALL
+
+  const pagedTasks = usePaged(filteredTasks)
+  const taskNavigation = useDetailNavigation(openTaskId, filteredTasks.map((task) => task.id), (id) => {
+    setOpenTaskId(id)
+    if (view === "cards") {
+      const index = filteredTasks.findIndex((task) => task.id === id)
+      if (index >= 0) pagedTasks.setPage(Math.floor(index / PAGE_SIZE) + 1)
+    }
+  })
 
   const clearFilters = () => {
     setStatusFilter(ALL)
@@ -468,7 +483,8 @@ function TasksPageContent() {
                 </Button>
               }
             />
-            <Tabs className="ml-auto" value={view} onValueChange={(v) => setView(v as TaskView)}>
+            <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm"><Switch size="sm" checked={mine} onCheckedChange={setMine} /> Только мои</label>
+            <Tabs value={view} onValueChange={(v) => setView(v as TaskView)}>
               <TabsList>
                 <TabsTrigger value="cards" aria-label="Вид карточками" {...cardsViewTip.bind}>
                   <PlayingCardsFan className="h-4 w-4" />
@@ -611,9 +627,9 @@ function TasksPageContent() {
             <>
               {view === "cards" ? (
                 <StatusBucket
-                  tasks={filteredTasks}
+                  paged={pagedTasks}
                   onChanged={refreshAll}
-                  onOpenDetail={setOpenTaskId}
+                  onOpenDetail={taskNavigation.select}
                   emptyLabel={
                     hasActiveFilters
                       ? "Нет задач по фильтрам."
@@ -623,7 +639,7 @@ function TasksPageContent() {
               ) : (
                 <TaskTable
                   tasks={filteredTasks}
-                  onOpenDetail={setOpenTaskId}
+                  onOpenDetail={taskNavigation.select}
                   emptyLabel={
                     hasActiveFilters
                       ? "Нет задач по фильтрам."
@@ -651,6 +667,7 @@ function TasksPageContent() {
       <TaskDetailDrawer
         task={openTask}
         open={Boolean(openTask)}
+        navigation={taskNavigation.navigation}
         onOpenChange={(o) => {
           if (!o) {
             setOpenTaskId(null)

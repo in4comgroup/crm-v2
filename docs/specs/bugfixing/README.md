@@ -105,10 +105,13 @@ Commits `2289012` («bugfixing 42-47») and `dd72b91` («bugfixing 48-73»), the
 | Home, cards | Card «Сейчас» on a contact's birthday | Topics CRM check `contact_birthday` → process code `CONTACT_BIRTHDAY` (weight 8 = P8 = «Сейчас», no daily limit), check group «Контакты» on by default; the topic closes the next day | [topics/03](../topics/03-development-plan.md) phase 8, [topics/05a](../topics/05a-signals-base-a-g.md) block G, `0055` |
 | Company card | Renamed «AST – …» to «AST», saved — not saved | Caused by the «Сохранить» change of this round: react-hook-form updates `isDirty` only when it is read during render; the button no longer read it, so the save handler saw «no changes» and sent nothing. Both drawers now read `isDirty` (deal: also `dirtyFields`) during render. The tester renames again after the deploy | `client-detail-drawer.tsx`, `deal-detail-drawer.tsx`; rule in `src/app/AGENTS.md` |
 
+## Deal drawer — title editing
+
+Company and deal drawers share the same inline title editor. A pencil next to the title indicates the editable field. Changing the title shows the save and cancel icons in the header.
+
 ## Open
 
 - The web lookup does not use the mail domains of the company's message senders as a hint (would find `orexc.ru` for ОРИКС by name only) — offered, not decided.
-- The deal drawer name has the same «invisible input» look as the company name had — offered, not decided.
 - Other dates (order dates, change history, documents, «создано») are still shown in the browser's time zone, not the org's — offered 2026-11-26, not decided.
 - Test org salesdaily (`Fv60…`) has no `base` signal pack switched on, so no signals / topics (also no birthday cards) there.
 

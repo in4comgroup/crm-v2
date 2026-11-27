@@ -1,9 +1,9 @@
 "use client"
 
+import { DetailDrawerContent } from "@/components/blocks/detail-drawer-layout"
 import { Fragment } from "react"
 import {
   Sheet,
-  SheetContent,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
@@ -45,7 +45,7 @@ export function DealDecisionFeed({
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-md flex flex-col gap-0 p-0">
+      <DetailDrawerContent defaultWidth="448px">
         <SheetHeader className="p-4 pb-3 border-b">
           <SheetTitle>Лента решений</SheetTitle>
         </SheetHeader>
@@ -100,7 +100,7 @@ export function DealDecisionFeed({
             ))
           )}
         </div>
-      </SheetContent>
+      </DetailDrawerContent>
     </Sheet>
   )
 }

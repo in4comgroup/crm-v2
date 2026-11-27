@@ -1,5 +1,6 @@
 "use client"
 
+import { DetailDrawerContent, DetailDrawerTabs, type DetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import {
   useCallback,
   useEffect,
@@ -10,15 +11,15 @@ import {
 import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
 import { lastActivityHint } from "@/lib/deal-activity"
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Sheet, SheetTitle } from "@/components/ui/sheet"
+import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs"
 import { DocumentsPanel } from "@/components/blocks/documents-panel"
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card"
-import { FollowCursorTooltip } from "@/components/blocks/follow-cursor-tooltip"
+import { EditableDrawerTitle } from "@/components/blocks/editable-drawer-title"
 import {
   Select,
   SelectContent,
@@ -188,6 +189,7 @@ export function DealDetailDrawer({
   clientOptions = [],
   currentUserId,
   open,
+  navigation,
   onOpenChange,
   onChanged,
   onRequestStageChange,
@@ -203,6 +205,7 @@ export function DealDetailDrawer({
   // Для прав смены статуса задачи (инициатор/исполнитель).
   currentUserId: string
   open: boolean
+  navigation?: DetailNavigation
   onOpenChange: (open: boolean) => void
   onChanged: () => void
   // Смена этапа из дровера идёт через ТОТ ЖЕ confirm/reason-диалог, что и
@@ -239,9 +242,6 @@ export function DealDetailDrawer({
   // Попытка закрыть дровер (крестик/Esc/клик вовне) при несохранённой правке —
   // вместо тихого закрытия спрашиваем, что делать с изменениями.
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
-  // Drives the FollowCursorTooltip's `disabled` on the name field — the tip
-  // is suppressed while the field is actually focused/being edited.
-  const [nameFieldFocused, setNameFieldFocused] = useState(false)
   // Активный таб — «Происхождение» грузит данные только когда виден.
   const [tab, setTab] = useState("info")
   const [pauseOpen, setPauseOpen] = useState(false)
@@ -580,14 +580,12 @@ export function DealDetailDrawer({
     .join(", ")
 
   return (
-    <Sheet open={open} onOpenChange={handleSheetOpenChange}>
-      <SheetContent
-        // max-w-2xl (672px), не xl (576px): пять табов («Общая информация»
-        // … «Происхождение») в 576px не влезали — последний обрезался.
-        className="w-full sm:max-w-2xl flex flex-col gap-0 p-0"
-        // Иначе Radix при открытии автофокусит первое поле формы — им
-        // оказывается название (первый инпут в дровере), и оно подсвечивается
-        // рамкой фокуса сразу при открытии, что выглядит как случайный клик.
+    <Sheet open={open} modal={!navigation} onOpenChange={handleSheetOpenChange}>
+      <DetailDrawerContent
+        defaultWidth="50vw"
+        minimumWidth={700}
+        navigation={navigation}
+        getNavigationStatus={() => isPending ? "busy" : formIsDirty ? "dirty" : "ready"}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         {/* Карточка подробностей слита с формой редактирования — все поля
@@ -620,42 +618,14 @@ export function DealDetailDrawer({
                 закрытия. */}
             <div className="px-4 pt-4 border-b shrink-0">
               <SheetTitle className="sr-only">{deal.name}</SheetTitle>
-              <FollowCursorTooltip
-                text="Клик для редактирования"
-                disabled={nameFieldFocused}
-                className="pr-8"
-              >
-                <FormField
-                  control={editForm.control}
-                  name="name"
-                  rules={{ required: "Укажите название" }}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormControl>
-                        <Input
-                          {...field}
-                          onFocus={() => setNameFieldFocused(true)}
-                          onBlur={() => {
-                            field.onBlur()
-                            setNameFieldFocused(false)
-                          }}
-                          className="text-base font-semibold border-none px-0 shadow-none focus-visible:ring-0 dark:bg-transparent selection:bg-muted-foreground/30 selection:text-inherit"
-                          placeholder="Название сделки"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </FollowCursorTooltip>
-              <TabsList
-                variant="line"
-                className="mt-1 w-full justify-start gap-3 overflow-x-auto scrollbar-none"
-              >
-                <TabsTrigger value="info" className="flex-none">
+              <div className="flex items-center pr-10">
+                <EditableDrawerTitle label="Название сделки" pending={isPending} />
+              </div>
+              <DetailDrawerTabs>
+                <TabsTrigger value="info" className="max-w-full flex-none">
                   Общая информация
                 </TabsTrigger>
-                <TabsTrigger value="tasks" className="flex-none">
+                <TabsTrigger value="tasks" className="max-w-full flex-none">
                   Задачи
                   {tasks.length > 0 && (
                     <span className="ml-1.5 text-xs text-muted-foreground">
@@ -663,17 +633,17 @@ export function DealDetailDrawer({
                     </span>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="chronology" className="flex-none">
+                <TabsTrigger value="chronology" className="max-w-full flex-none">
                   Хронология
                 </TabsTrigger>
-                <TabsTrigger value="contacts" className="flex-none">
+                <TabsTrigger value="contacts" className="max-w-full flex-none">
                   Контакты
                 </TabsTrigger>
-                <TabsTrigger value="documents" className="flex-none">
+                <TabsTrigger value="documents" className="max-w-full flex-none">
                   Документы
                 </TabsTrigger>
                 {relatedTopics.visible && (
-                  <TabsTrigger value="topics" className="flex-none">
+                  <TabsTrigger value="topics" className="max-w-full flex-none">
                     Темы
                     {(relatedTopics.result?.open.length ?? 0) > 0 && (
                       <span className="ml-1.5 text-xs text-muted-foreground">
@@ -682,10 +652,10 @@ export function DealDetailDrawer({
                     )}
                   </TabsTrigger>
                 )}
-                <TabsTrigger value="origin" className="flex-none">
+                <TabsTrigger value="origin" className="max-w-full flex-none">
                   Происхождение
                 </TabsTrigger>
-              </TabsList>
+              </DetailDrawerTabs>
             </div>
 
             {/* Единый горизонтальный отступ (px-4) для всего тела дровера —
@@ -753,7 +723,12 @@ export function DealDetailDrawer({
                     <FormLabel className="text-xs text-muted-foreground">
                       Клиент
                     </FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
+                    <Select
+                      // Reset the native select along with the form when switching deals.
+                      key={editForm.formState.defaultValues?.clientId}
+                      value={field.value}
+                      onValueChange={field.onChange}
+                    >
                       <FormControl>
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="Выберите клиента" />
@@ -1317,7 +1292,7 @@ export function DealDetailDrawer({
             </Tabs>
           </form>
         </Form>
-      </SheetContent>
+      </DetailDrawerContent>
 
       {/* Диалог «Связать с задачей» (UX): задачи текущего клиента, ещё не
           привязанные к этой сделке; клик по строке привязывает. */}

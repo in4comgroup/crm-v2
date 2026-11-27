@@ -22,7 +22,8 @@ export function stageDisplayLabel(
   displayName: string | null | undefined,
 ): string {
   const custom = displayName?.trim()
-  return custom ? custom : dealStageLabel(name)
+  const label = custom || dealStageLabel(name)
+  return label === "Контакт до запроса" || label === "Контакты до запроса" ? "Компании до запроса" : label
 }
 
 // ── Stage roles (docs/specs/funnel §3.1) ──────────────────────────────────

@@ -5,18 +5,18 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { AlertTriangle, ChevronDown, ChevronUp, ChevronsUpDown, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { Card, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PageLoader } from "@/components/blocks/page-loader"
 import { DealCardBlock, TopicEntryCard, formatDateTimeRu } from "@/components/blocks/topic-card"
 import { TopicDrawer } from "@/components/blocks/topic-drawer"
+import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
-  DEFAULT_TOPIC_STATUS_FILTER,
   DIGEST_VISIBLE_ITEMS,
   TOPIC_STATUS_FILTERS,
   TOPIC_STATUS_FILTER_LABELS_RU,
@@ -83,7 +83,7 @@ export function TopicListsSection() {
     allowed: DASHBOARD_TABS,
   })
   const [mine, setMine] = useState(false)
-  const [status, setStatus] = useState<string>(DEFAULT_TOPIC_STATUS_FILTER)
+  const [status, setStatus] = useState<string>("all")
   const showFilters = tab === "all" || tab === "none"
   const [companyOpen, setCompanyOpen] = useState(false)
   const [companySearch, setCompanySearch] = useState("")
@@ -165,6 +165,14 @@ export function TopicListsSection() {
   const refresh = useCallback(() => void load(), [load])
   const current = data?.key === queryKey ? data : null
   const entries = current ? current.entries : []
+  const displayedTopicIds = new Set<string>()
+  function renderGrid(group: TopicEntry[]) {
+    for (const entry of group) displayedTopicIds.add(entry.topicId)
+    return <Grid entries={group} onChanged={refresh} onOpen={openTopic} />
+  }
+  function openTopic(id: string) {
+    topicNavigation.select(id)
+  }
 
   const countOf = (t: TopicTab) => (counts ? counts[t][mine ? "mine" : "all"] : null)
 
@@ -184,6 +192,7 @@ export function TopicListsSection() {
     )
   else if (tab === "now") {
     const dealCards = current?.tab === "now" ? current.dealCards : []
+    for (const card of dealCards) displayedTopicIds.add(card.topicId)
     body = (
       <div className="space-y-4">
         {dealCards.length > 0 && (
@@ -197,7 +206,7 @@ export function TopicListsSection() {
                   topicId={c.topicId}
                   topicTitle={c.clientName ? `${c.clientName} — ${c.topicTitle}` : c.topicTitle}
                   onChanged={refresh}
-                  onOpenTopic={setDrawerId}
+                  onOpenTopic={openTopic}
                 />
               ))}
             </div>
@@ -205,7 +214,7 @@ export function TopicListsSection() {
           </>
         )}
         {entries.length ? (
-          <Grid entries={entries} onChanged={refresh} onOpen={setDrawerId} />
+          renderGrid(entries)
         ) : (
           <Empty label="Сейчас нет тем, которые требуют внимания." />
         )}
@@ -217,7 +226,7 @@ export function TopicListsSection() {
       <div className="space-y-4">
         <SectionTitle hint={`снимок ${formatDateTimeRu(current?.digestSnapshotAt ?? null) ?? ""}`}>Утренняя сводка</SectionTitle>
         {parts.shown.length ? (
-          <Grid entries={parts.shown} onChanged={refresh} onOpen={setDrawerId} />
+          renderGrid(parts.shown)
         ) : (
           <Empty label="В утренней сводке нет тем." />
         )}
@@ -227,13 +236,13 @@ export function TopicListsSection() {
               {showMore ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
               {showMore ? "Свернуть" : `Ещё ${parts.more.length}`}
             </Button>
-            {showMore && <Grid entries={parts.more} onChanged={refresh} onOpen={setDrawerId} />}
+            {showMore && renderGrid(parts.more)}
           </>
         )}
         {parts.sinceMorning.length > 0 && (
           <>
             <SectionTitle hint={`${parts.sinceMorning.length}`}>Новое с утра</SectionTitle>
-            <Grid entries={parts.sinceMorning} onChanged={refresh} onOpen={setDrawerId} />
+            {renderGrid(parts.sinceMorning)}
           </>
         )}
       </div>
@@ -244,37 +253,39 @@ export function TopicListsSection() {
       <div className="space-y-4">
         <SectionTitle hint={`снимок ${formatDateTimeRu(current?.weeklySnapshotAt ?? null) ?? ""}`}>Обзор недели</SectionTitle>
         {parts.main.length ? (
-          <Grid entries={parts.main} onChanged={refresh} onOpen={setDrawerId} />
+          renderGrid(parts.main)
         ) : (
           <Empty label="В обзоре недели нет тем." />
         )}
         {parts.expired.length > 0 && (
           <>
             <SectionTitle hint="карточка истекла, тема ещё открыта">Истекло</SectionTitle>
-            <Grid entries={parts.expired} onChanged={refresh} onOpen={setDrawerId} />
+            {renderGrid(parts.expired)}
           </>
         )}
         {parts.dormant.length > 0 && (
           <>
             <SectionTitle hint="нет активности, показ один раз">Тема затихла</SectionTitle>
-            <Grid entries={parts.dormant} onChanged={refresh} onOpen={setDrawerId} />
+            {renderGrid(parts.dormant)}
           </>
         )}
         {parts.since.length > 0 && (
           <>
             <SectionTitle hint={`${parts.since.length} · войдут в следующий обзор`}>Новое после обзора</SectionTitle>
-            <Grid entries={parts.since} onChanged={refresh} onOpen={setDrawerId} />
+            {renderGrid(parts.since)}
           </>
         )}
       </div>
     )
   } else {
     body = entries.length ? (
-      <Grid entries={entries} onChanged={refresh} onOpen={setDrawerId} />
+      renderGrid(entries)
     ) : (
       <Empty label="Нет тем по заданным фильтрам." />
     )
   }
+
+  const topicNavigation = useDetailNavigation(drawerId, [...displayedTopicIds], setDrawerId)
 
   return (
     <div className="flex flex-col h-full gap-3">
@@ -292,12 +303,10 @@ export function TopicListsSection() {
             })}
           </TabsList>
         </Tabs>
-        <div className="flex items-center gap-2">
-          <Checkbox id="topics-mine" checked={mine} onCheckedChange={(v) => setMine(v === true)} />
-          <Label htmlFor="topics-mine" className="text-xs cursor-pointer">
-            Мои
-          </Label>
-        </div>
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <Switch size="sm" checked={mine} onCheckedChange={setMine} />
+          Только мои
+        </label>
         {showFilters && (
           <>
             <Select value={status} onValueChange={setStatus}>
@@ -340,9 +349,16 @@ export function TopicListsSection() {
             </Popover>
           </>
         )}
-        <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Обновить" onClick={refresh} disabled={loading}>
-          <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Обновить темы" onClick={refresh} disabled={loading}>
+                <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Обновить темы</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
       <p id="topic-list-description" className="px-1 text-sm text-muted-foreground">
         {TAB_DESCRIPTIONS[tab]}
@@ -351,6 +367,7 @@ export function TopicListsSection() {
       <TopicDrawer
         topicId={drawerId}
         open={!!drawerId}
+        navigation={topicNavigation.navigation}
         onOpenChange={(o) => {
           if (!o) setDrawerId(null)
         }}

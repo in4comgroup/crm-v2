@@ -1,7 +1,7 @@
 "use client"
 
 import { useDroppable } from "@dnd-kit/core"
-import { ArrowDownUp, Info, PanelLeftClose } from "lucide-react"
+import { ArrowDownUp, PanelLeftClose } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -26,7 +26,6 @@ import {
 import type { DealRow } from "@/app/api/deals/route"
 import type { DealTaskInfo } from "@/hooks/use-board-intel"
 import { DealKanbanCard } from "@/components/blocks/deal-kanban-card"
-import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 import {
   forecastByCurrency,
   stageRole,
@@ -92,7 +91,6 @@ export function Column({
     currency: f.currency,
   }))
   const unestimated = columnForecast.reduce((n, f) => n + f.unestimated, 0)
-  const entryTip = useAnchorTooltip()
   const entryCondition = fs.entryCondition?.trim() || null
 
   return (
@@ -111,27 +109,60 @@ export function Column({
         <div className="flex items-start justify-between gap-1">
           <div className="min-w-0">
             <div className="flex items-baseline gap-2 text-sm font-medium">
-              <span className="truncate">{stage.label}</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0} className="min-w-0 truncate">{stage.label}</span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs space-y-0.5">
+                  {/* Число в шапке (перед суммой) нигде не подписано — тут
+                      расшифровка, что это количество сделок. */}
+                  <div className="font-semibold">{stage.label}</div>
+                  <div>Сделок: {cards.length}</div>
+                  <div>
+                    Сумма:{" "}
+                    {aggregateByCurrency(
+                      cards.map((d) => ({
+                        amount: dealAmount(d.value),
+                        currency: d.currency,
+                      })),
+                    )}
+                  </div>
+                  {pre ? (
+                    <div className="max-w-56">
+                      Компании до запроса: знакомства и отношения без активной
+                      возможности. Не стадия сделки и не входит в прогноз.
+                    </div>
+                  ) : !inForecast ? (
+                    <div className="max-w-56">
+                      Стадия не входит в денежный прогноз.
+                    </div>
+                  ) : (
+                  <>
+                    <div>
+                      Взвешенно: {aggregateByCurrency(weightedEntries)}
+                    </div>
+                    {expert && (
+                      <div className="max-w-56">
+                        Вероятность — экспертная, по каждой сделке.
+                      </div>
+                    )}
+                    {unestimated > 0 && (
+                      <div>Без оценки: {unestimated}</div>
+                    )}
+                  </>
+                  )}
+                  {entryCondition && (
+                    <div className="mt-2 border-t border-current/20 pt-2 wrap-anywhere">
+                      Условие входа: {entryCondition}
+                    </div>
+                  )}
+                </TooltipContent>
+              </Tooltip>
               {inForecast && (
                 <span className="text-xs opacity-70 shrink-0">
                   {expert
                     ? "эксп."
                     : `${Math.round(stage.closureProbability * 100)}%`}
-                </span>
-              )}
-              {/* «Условие входа» стадии — подсказка у названия колонки. */}
-              {entryCondition && (
-                <span
-                  {...entryTip.bind}
-                  className="shrink-0 self-center opacity-70"
-                  aria-label={`Условие входа: ${entryCondition}`}
-                >
-                  <Info className="h-3.5 w-3.5" />
-                  <AnchorTooltip
-                    text={`Условие входа: ${entryCondition}`}
-                    open={entryTip.open}
-                    virtualRef={entryTip.virtualRef}
-                  />
                 </span>
               )}
             </div>
@@ -140,73 +171,31 @@ export function Column({
                 (1440px, 7+ колонок) взвешенная сумма обрезается первой.
                 Слово «сделок» само по себе расшифровывает цифру и склоняется
                 по числу; прячется ниже критической ширины — остаётся цифра. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="text-xs opacity-80 mt-0.5 cursor-default">
-                  <div className="truncate">
-                    {cards.length}
-                    <span className="hidden @[190px]:inline">
-                      {" "}
-                      {pluralizeDeals(cards.length)}
-                    </span>{" "}
-                    ·{" "}
-                    {aggregateByCurrencyCompact(
-                      cards.map((d) => ({
-                        amount: dealAmount(d.value),
-                        currency: d.currency,
-                      })),
-                    )}
-                  </div>
-                  {pre ? (
-                    <div className="truncate opacity-80">до воронки · вне прогноза</div>
-                  ) : !inForecast ? (
-                    <div className="truncate opacity-80">вне прогноза</div>
-                  ) : (
-                  <div className="truncate">
-                    взвеш. {aggregateByCurrencyCompact(weightedEntries)}
-                  </div>
-                  )}
-                </div>
-              </TooltipTrigger>
-              <TooltipContent className="space-y-0.5">
-                {/* Число в шапке (перед суммой) нигде не подписано — тут
-                    расшифровка, что это количество сделок. */}
-                <div>Сделок: {cards.length}</div>
-                <div>
-                  Сумма:{" "}
-                  {aggregateByCurrency(
-                    cards.map((d) => ({
-                      amount: dealAmount(d.value),
-                      currency: d.currency,
-                    })),
-                  )}
-                </div>
-                {pre ? (
-                  <div className="max-w-56">
-                    Контакты до запроса: знакомства и отношения без активной
-                    возможности. Не стадия сделки и не входит в прогноз.
-                  </div>
-                ) : !inForecast ? (
-                  <div className="max-w-56">
-                    Стадия не входит в денежный прогноз.
-                  </div>
-                ) : (
-                <>
-                  <div>
-                    Взвешенно: {aggregateByCurrency(weightedEntries)}
-                  </div>
-                  {expert && (
-                    <div className="max-w-56">
-                      Вероятность — экспертная, по каждой сделке.
-                    </div>
-                  )}
-                  {unestimated > 0 && (
-                    <div>Без оценки: {unestimated}</div>
-                  )}
-                </>
+            <div className="text-xs opacity-80 mt-0.5 cursor-default">
+              <div className="truncate">
+                {cards.length}
+                <span className="hidden @[190px]:inline">
+                  {" "}
+                  {pluralizeDeals(cards.length)}
+                </span>{" "}
+                ·{" "}
+                {aggregateByCurrencyCompact(
+                  cards.map((d) => ({
+                    amount: dealAmount(d.value),
+                    currency: d.currency,
+                  })),
                 )}
-              </TooltipContent>
-            </Tooltip>
+              </div>
+              {pre ? (
+                <div className="truncate opacity-80">до воронки · вне прогноза</div>
+              ) : !inForecast ? (
+                <div className="truncate opacity-80">вне прогноза</div>
+              ) : (
+              <div className="truncate">
+                взвеш. {aggregateByCurrencyCompact(weightedEntries)}
+              </div>
+              )}
+            </div>
           </div>
           <div className="flex shrink-0 items-center">
             <DropdownMenu>

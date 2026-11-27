@@ -67,7 +67,7 @@ function registryCodes(): Set<string> {
 type SeededTemplate = { code: string; labelRu: string; description: string; sort: number; config: unknown }
 
 function seededTemplates(): SeededTemplate[] {
-  const sql = read(MIGRATION)
+  const sql = read(MIGRATION).replaceAll("\r\n", "\n")
   const re = /INSERT INTO "funnel_template" \("code", "label_ru", "description", "sort", "config", "is_active"\) VALUES\n {2}\('([a-z0-9_]+)', '((?:[^']|'')*)', '((?:[^']|'')*)', (\d+), '((?:[^']|'')*)'::jsonb, true\)/g
   return [...sql.matchAll(re)].map((m) => ({
     code: m[1],

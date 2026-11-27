@@ -53,6 +53,7 @@ import {
   type DealProvenanceView,
 } from "@/server/deal-engine"
 import { getTopicsMode } from "@/server/topics/mode"
+import { readOrgListEntries } from "@/server/topics-user"
 import { loadDealLastActivity } from "@/server/deal-activity"
 import type { DealLastActivity, DealLastActivitySource } from "@/lib/deal-activity"
 import {
@@ -120,6 +121,7 @@ export type DealRow = {
   // topics (source "topic", mode `on` only), else the deal's own journal /
   // tasks / creation (source "deal"). Optional: other DealRow producers may
   // leave them out.
+  attentionRank?: number | null
   lastActivityAt?: string | null
   lastActivitySource?: DealLastActivitySource | null
   lastActivityTopicTitle?: string | null
@@ -608,8 +610,9 @@ export async function listDeals(
 
   // Badge «Есть риски»: ONE batched query for all deals (no N+1).
   const engineVisible = (await getTopicsMode(activeOrgId)) === "on"
-  const [risks, activity] = await Promise.all([
+  const [risks, attention, activity] = await Promise.all([
     engineVisible ? loadRiskSummaries(activeOrgId, dealIds) : new Map<string, DealRiskSummary>(),
+    engineVisible && rows.length ? readOrgListEntries(activeOrgId) : null,
     // «N дн без активности»: one aggregated pass for the whole list.
     loadDealLastActivity(
       activeOrgId,
@@ -618,15 +621,24 @@ export async function listDeals(
     ),
   ])
 
-  return rows.map((r) =>
-    toDealRow(
+  const ranks = new Map<string, number>()
+  if (attention) {
+    for (const [rank, entry] of [...attention.now, ...attention.digest, ...attention.week].entries()) {
+      if (entry.clientId && entry.card?.status === "open" && !ranks.has(entry.clientId)) {
+        ranks.set(entry.clientId, rank)
+      }
+    }
+  }
+  return rows.map((r) => ({
+    ...toDealRow(
       r,
       contactsByDeal.get(r.deal.id) ?? [],
       risks.get(r.deal.id) ?? null,
       engineVisible,
       activity.get(r.deal.id) ?? null,
     ),
-  )
+    attentionRank: ranks.get(r.deal.clientId) ?? null,
+  }))
 }
 
 async function loadRiskSummaries(

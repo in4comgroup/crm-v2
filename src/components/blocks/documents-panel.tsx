@@ -381,7 +381,7 @@ export function DocumentsPanel({
         const b = (e.target as HTMLElement).closest("button")
         if (b && b.type === "submit") e.preventDefault()
       }}
-      className="relative space-y-3"
+      className="relative space-y-4"
     >
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
@@ -462,20 +462,21 @@ export function DocumentsPanel({
             className="h-8 pl-8"
           />
         </div>
-        {/* Related files, every entity (bug list 2026-11-21, item 19). */}
-        <div className="flex items-center gap-2">
-          <Switch
-            id={`docs-related-${entityId}`}
-            checked={related}
-            onCheckedChange={(v) => {
-              setRelated(v)
-              setPage(0)
-            }}
-          />
-          <Label htmlFor={`docs-related-${entityId}`} className="text-xs font-normal text-muted-foreground">
-            {RELATED_LABEL_RU[entityType]}
-          </Label>
-        </div>
+      </div>
+
+      {/* Related files, every entity (bug list 2026-11-21, item 19). */}
+      <div className="flex items-center gap-2">
+        <Switch
+          id={`docs-related-${entityId}`}
+          checked={related}
+          onCheckedChange={(v) => {
+            setRelated(v)
+            setPage(0)
+          }}
+        />
+        <Label htmlFor={`docs-related-${entityId}`} className="text-xs font-normal text-muted-foreground">
+          {RELATED_LABEL_RU[entityType]}
+        </Label>
       </div>
 
       {data?.error && <p className="text-sm text-destructive">{data.error}</p>}

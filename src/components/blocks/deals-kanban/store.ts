@@ -55,22 +55,6 @@ export const TERMINAL_SORT_LABEL: Record<TerminalSortMode, string> = {
   oldest: "Давно без движения",
 }
 
-// МОК приоритета агента (UX №3). Реальная логика — на бэке (agent priority
-// score из сигналов: застой, риск, нет следующего шага, внешние события).
-// Пока детерминированный прокси: сделки, которые агент недавно тронул
-// (lastMovedBy==='agent'), + давно без активности (lastActivityAt — та же
-// дата, что у бейджа «N дн без активности», src/lib/deal-activity.ts; нет —
-// createdAt) поднимаются наверх как «требующие внимания». Возвращает score —
-// больше = выше.
-// TODO(backend): заменить на реальный agent priority score.
-function agentPriorityScore(d: DealRow): number {
-  const agentTouched = d.lastMovedBy === "agent" ? 1_000_000_000_000 : 0
-  // Чем старее последняя активность, тем выше (−timestamp, чтобы старые росли).
-  const at = new Date(d.lastActivityAt ?? d.createdAt).getTime()
-  const staleness = Number.isFinite(at) ? -at / 1000 : 0
-  return agentTouched + staleness
-}
-
 export type BoardColumn = {
   stage: DealFunnelStageOption
   mode: SortMode
@@ -105,9 +89,8 @@ function sortCards(cards: DealRow[], mode: SortMode): DealRow[] {
   const copy = [...cards]
   switch (mode) {
     case "priority":
-      // По приоритету агента (мок — см. agentPriorityScore).
       return copy.sort((a, b) => {
-        const d = agentPriorityScore(b) - agentPriorityScore(a)
+        const d = (a.attentionRank ?? Number.MAX_SAFE_INTEGER) - (b.attentionRank ?? Number.MAX_SAFE_INTEGER)
         return d !== 0 ? d : compareManual(a, b)
       })
     case "value":

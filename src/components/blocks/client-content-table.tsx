@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, Eye, Loader } from "lucide-react"
+import { ChevronLeft, ChevronRight, Eye, Loader, X } from "lucide-react"
 import { ParsedMarkdownDialog } from "@/components/blocks/parsed-markdown-dialog"
 import type { SourceSummary } from "@/server/sources"
 
@@ -296,15 +296,12 @@ export function ClientContentTable({
           />
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8"
-          disabled={!filtersActive}
-          onClick={clearFilters}
-        >
-          Сбросить фильтры
-        </Button>
+        {filtersActive && (
+          <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
+            <X className="mr-1 h-4 w-4" />
+            Сбросить
+          </Button>
+        )}
       </div>
 
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -325,14 +322,14 @@ export function ClientContentTable({
       </div>
 
       <div className="rounded-md border overflow-hidden">
-        <Table className="table-fixed w-full min-w-[32rem]">
+        <Table className="table-fixed [&_td]:whitespace-normal [&_th]:whitespace-normal [&_td]:wrap-anywhere [&_th]:wrap-anywhere">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-28">Дата</TableHead>
-              <TableHead className="w-24">Источник</TableHead>
+              <TableHead className="w-[19%]">Дата</TableHead>
+              <TableHead className="w-[17%]">Источник</TableHead>
               <TableHead>Элемент</TableHead>
-              <TableHead className="w-32">Категории</TableHead>
-              <TableHead className="w-16">Просмотр</TableHead>
+              <TableHead className="w-[24%]">Категории</TableHead>
+              <TableHead className="w-[17%] text-center">Просмотр</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -370,16 +367,13 @@ export function ClientContentTable({
                 const title = itemTitle(row)
                 return (
                   <TableRow key={row.id}>
-                    <TableCell className="text-xs whitespace-nowrap">
+                    <TableCell className="text-xs">
                       {formatDate(row.sourceCreatedAt)}
                     </TableCell>
-                    <TableCell className="text-xs truncate">
+                    <TableCell className="text-xs">
                       {row.sourceName}
                     </TableCell>
-                    <TableCell
-                      className="whitespace-normal wrap-anywhere text-sm"
-                      title={title}
-                    >
+                    <TableCell title={title}>
                       {title}
                     </TableCell>
                     <TableCell>
@@ -398,8 +392,9 @@ export function ClientContentTable({
                         </div>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="text-center">
                       <Button
+                        type="button"
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 p-0"

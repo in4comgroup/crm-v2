@@ -18,8 +18,9 @@ import { useGlobalChat } from "@/lib/global-chat-context"
 import { Renderer, JSONUIProvider } from "@json-render/react"
 import { registry } from "@/lib/registry"
 import { sanitizeSpec } from "@/lib/json-render-sanitize"
-import { XIcon, ArrowLeftIcon, Bot } from "lucide-react"
+import { XIcon, ArrowLeftIcon, BotMessageSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { CodeHighlighter } from "@/components/code-highlighter"
 import { cn } from "@/lib/utils"
@@ -28,10 +29,17 @@ import { Component, type ReactNode } from "react"
 export function AiChatTrigger() {
   const { open, openChat } = useGlobalChat()
   return (
-    <Button variant={open ? "default" : "outline"} size="sm" onClick={openChat}>
-      <Bot className="h-4 w-4 mr-1" />
-      ИИ чат
-    </Button>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button type="button" variant={open ? "default" : "outline"} size="icon-sm"
+            aria-label="Открыть ИИ-чат" aria-expanded={open} onClick={openChat}>
+            <BotMessageSquare className="size-4" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Открыть ИИ-чат</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 

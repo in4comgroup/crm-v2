@@ -1,17 +1,18 @@
 "use client"
 
+import { DetailDrawerContent, DetailDrawerTabs, type DetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import { useCallback, useEffect, useRef, useState, useTransition } from "react"
 import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Sheet, SheetTitle } from "@/components/ui/sheet"
+import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs"
 import { DocumentsPanel } from "@/components/blocks/documents-panel"
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card"
-import { FollowCursorTooltip } from "@/components/blocks/follow-cursor-tooltip"
+import { EditableDrawerTitle } from "@/components/blocks/editable-drawer-title"
 import {
   Select,
   SelectContent,
@@ -158,74 +159,11 @@ function TaskMeta({ label, value }: { label: string; value: string | null }) {
   )
 }
 
-// Ресайзер ширины дровера драг-н-дропом. Нативного примитива для этого нет
-// ни в Radix, ни в shadcn Sheet — react-resizable-panels (уже зависимость
-// проекта) устроен для разбиения ДОСТУПНОГО пространства между соседними
-// панелями в потоке документа, а не для растягивания floating-оверлея
-// поверх вьюпорта, так что он тут не подходит. Небольшой ручной хэндлер —
-// стандартный путь для именно этого случая.
-const MIN_WIDTH = 480
-const MAX_WIDTH = 1100
-const DEFAULT_WIDTH = 720
-const WIDTH_STORAGE_KEY = "client-drawer-width"
-
-function useDrawerWidth() {
-  // Lazy initializer (not an effect) — localStorage is a synchronous,
-  // side-effect-free read, so this is the documented React pattern for
-  // seeding state from an external source without an extra render pass.
-  const [width, setWidth] = useState(() => {
-    try {
-      const stored = Number(localStorage.getItem(WIDTH_STORAGE_KEY))
-      if (Number.isFinite(stored) && stored > 0) {
-        return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, stored))
-      }
-    } catch {
-      /* localStorage unavailable — keep default */
-    }
-    return DEFAULT_WIDTH
-  })
-  const draggingRef = useRef(false)
-
-  const onResizeStart = useCallback((e: React.PointerEvent) => {
-    e.preventDefault()
-    draggingRef.current = true
-    document.body.style.userSelect = "none"
-    document.body.style.cursor = "col-resize"
-
-    function onMove(ev: PointerEvent) {
-      if (!draggingRef.current) return
-      const next = Math.min(
-        MAX_WIDTH,
-        Math.max(MIN_WIDTH, window.innerWidth - ev.clientX),
-      )
-      setWidth(next)
-    }
-    function onUp() {
-      draggingRef.current = false
-      document.body.style.userSelect = ""
-      document.body.style.cursor = ""
-      window.removeEventListener("pointermove", onMove)
-      window.removeEventListener("pointerup", onUp)
-      setWidth((w) => {
-        try {
-          localStorage.setItem(WIDTH_STORAGE_KEY, String(w))
-        } catch {
-          /* ignore */
-        }
-        return w
-      })
-    }
-    window.addEventListener("pointermove", onMove)
-    window.addEventListener("pointerup", onUp)
-  }, [])
-
-  return { width, onResizeStart }
-}
-
 export function ClientDetailDrawer({
   client,
   open,
   initialTab = "info",
+  navigation,
   onOpenChange,
   onChanged,
   canBlock = false,
@@ -233,6 +171,7 @@ export function ClientDetailDrawer({
   client: ClientRow | null
   open: boolean
   initialTab?: "info" | "contacts"
+  navigation?: DetailNavigation
   onOpenChange: (open: boolean) => void
   onChanged: () => void
   // When true (owner), shows the "add to blocklist" action in the form
@@ -245,7 +184,6 @@ export function ClientDetailDrawer({
   const { data: session } = authClient.useSession()
   const currentUserId = session?.user.id
   const router = useRouter()
-  const { width, onResizeStart } = useDrawerWidth()
 
   const [taskData, setTaskData] = useState<{
     clientId: string
@@ -255,9 +193,6 @@ export function ClientDetailDrawer({
   const [editingContact, setEditingContact] = useState<ContactRow | null>(null)
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
-  // Drives the FollowCursorTooltip's `disabled` on the name field — the tip
-  // is suppressed while the field is actually focused/being edited.
-  const [nameFieldFocused, setNameFieldFocused] = useState(false)
 
   const clientId = client?.id
   // «Темы» (spec topics/01 §14): shown only when the org's topics mode is `on`.
@@ -450,23 +385,15 @@ export function ClientDetailDrawer({
   const tasks = taskData && taskData.clientId === client.id ? taskData.items : []
 
   return (
-    <Sheet open={open} onOpenChange={handleSheetOpenChange}>
-      <SheetContent
-        className="w-full flex flex-col gap-0 p-0"
-        style={{ width: `${width}px`, maxWidth: "none" }}
-        // Иначе Radix при открытии автофокусит первое поле формы — им
-        // оказывается название (первый инпут в дровере), и оно подсвечивается
-        // рамкой фокуса сразу при открытии, что выглядит как случайный клик.
+    <Sheet open={open} modal={!navigation} onOpenChange={handleSheetOpenChange}>
+      <DetailDrawerContent
+        defaultWidth="720px"
+        minimumWidth={600}
+        widthStorageKey="client-drawer-width"
+        navigation={navigation}
+        getNavigationStatus={() => isPending ? "busy" : formIsDirty || fieldsPanelRef.current?.isDirty() ? "dirty" : "ready"}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        {/* Ресайзер: тонкая полоса на левом краю, драг двигает край панели. */}
-        <div
-          onPointerDown={onResizeStart}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Изменить ширину панели"
-          className="absolute left-0 top-0 z-10 h-full w-1.5 cursor-col-resize touch-none hover:bg-[#669BBC]/40"
-        />
         {/* Карточка подробностей = форма редактирования, по образцу
             deal-detail-drawer.tsx: все поля сразу редактируемые, «Сохранить»
             пишет через PUT /api/clients. Карандаш с карточки списка убран —
@@ -498,63 +425,8 @@ export function ClientDetailDrawer({
             >
             <div className="px-4 pt-4 border-b shrink-0">
               <SheetTitle className="sr-only">{client.name}</SheetTitle>
-              <div className="flex items-start gap-2 pr-10">
-                {/* The company name is edited right here (2026-11-21): a
-                    pencil + a border on hover / focus show that it is a field,
-                    and a changed name gets «Сохранить» / «Отмена» next to it —
-                    no scrolling to the save button of «Общая информация». */}
-                <FollowCursorTooltip
-                  text="Нажмите, чтобы изменить название"
-                  disabled={nameFieldFocused}
-                  className="min-w-0 flex-1"
-                >
-                  <FormField
-                    control={editForm.control}
-                    name="name"
-                    rules={{ required: "Укажите название" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormControl>
-                          <div className="group relative">
-                            <Input
-                              {...field}
-                              aria-label="Название компании"
-                              onFocus={() => setNameFieldFocused(true)}
-                              onBlur={() => {
-                                field.onBlur()
-                                setNameFieldFocused(false)
-                              }}
-                              className="h-9 pl-2 pr-8 -ml-2 text-base font-semibold shadow-none border-transparent hover:border-input focus-visible:border-input dark:bg-transparent selection:bg-muted-foreground/30 selection:text-inherit"
-                              placeholder="Название компании"
-                            />
-                            <Pencil
-                              aria-hidden
-                              className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground opacity-60 group-hover:opacity-100"
-                            />
-                          </div>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </FollowCursorTooltip>
-                {editForm.formState.dirtyFields.name && (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Button type="submit" size="sm" disabled={isPending}>
-                      <Save className="h-3.5 w-3.5 mr-1" />
-                      Сохранить
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={isPending}
-                      onClick={() => editForm.resetField("name")}
-                    >
-                      Отмена
-                    </Button>
-                  </div>
-                )}
+              <div className="flex items-center gap-2 pr-10">
+                <EditableDrawerTitle label="Название компании" pending={isPending} />
                 <ClientLookupDialog
                   client={client}
                   onSaved={onChanged}
@@ -563,6 +435,7 @@ export function ClientDetailDrawer({
                       type="button"
                       variant="ghost"
                       size="icon"
+                      className="ml-auto shrink-0"
                       aria-label="Поиск в интернете"
                       title="Поиск в интернете"
                     >
@@ -571,26 +444,9 @@ export function ClientDetailDrawer({
                   }
                 />
               </div>
-              <TabsList
-                variant="line"
-                className="mt-1 w-full justify-start gap-4 overflow-x-auto scrollbar-none"
-              >
+              <DetailDrawerTabs>
                 <TabsTrigger value="info" className="flex-none">
-                  Общая информация
-                </TabsTrigger>
-                <TabsTrigger value="fields" className="flex-none">
-                  Поля
-                </TabsTrigger>
-                <TabsTrigger value="documents" className="flex-none">
-                  Документы
-                </TabsTrigger>
-                <TabsTrigger value="tasks" className="flex-none">
-                  Задачи
-                  {tasks.length > 0 && (
-                    <span className="ml-1.5 text-xs text-muted-foreground">
-                      {tasks.length}
-                    </span>
-                  )}
+                  Главное
                 </TabsTrigger>
                 <TabsTrigger value="contacts" className="flex-none">
                   Контакты
@@ -606,8 +462,16 @@ export function ClientDetailDrawer({
                     />
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="content" className="flex-none">
-                  Источники
+                <TabsTrigger value="tasks" className="flex-none">
+                  Задачи
+                  {tasks.length > 0 && (
+                    <span className="ml-1.5 text-xs text-muted-foreground">
+                      {tasks.length}
+                    </span>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="documents" className="flex-none">
+                  Документы
                 </TabsTrigger>
                 {relatedTopics.visible && (
                   <TabsTrigger value="topics" className="flex-none">
@@ -619,7 +483,13 @@ export function ClientDetailDrawer({
                     )}
                   </TabsTrigger>
                 )}
-              </TabsList>
+                <TabsTrigger value="fields" className="flex-none">
+                  Инфо
+                </TabsTrigger>
+                <TabsTrigger value="content" className="flex-none">
+                  Источники
+                </TabsTrigger>
+              </DetailDrawerTabs>
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
@@ -631,6 +501,11 @@ export function ClientDetailDrawer({
               )}
 
               <ClientResponsibleField client={client} onChanged={onChanged} />
+
+              {/* «Этап воронки» = the stages of the company's deals, read
+                  only (bug list 2026-11-21, item 13; the manual field
+                  `funnel_phase` with a fixed list was removed). */}
+              <ClientFunnelStages clientId={client.id} clientName={client.name} state={dealStages} />
 
               {/* «Профиль компании» (identity I5 / I6): own API + save, never
                   submits this drawer's form (type="button" everywhere). */}
@@ -797,13 +672,13 @@ export function ClientDetailDrawer({
                   control={editForm.control}
                   name="companyKind"
                   render={({ field }) => (
-                    <FormItem>
+                    <FormItem className="min-w-0">
                       <FormLabel className="text-xs text-muted-foreground">
                         Тип компании
                       </FormLabel>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
-                          <SelectTrigger className="w-full">
+                          <SelectTrigger className="w-full min-w-0">
                             <SelectValue placeholder="Автоматически по сделкам" />
                           </SelectTrigger>
                         </FormControl>
@@ -827,11 +702,6 @@ export function ClientDetailDrawer({
                   )}
                 />
               </div>
-
-              {/* «Этап воронки» = the stages of the company's deals, read
-                  only (bug list 2026-11-21, item 13; the manual field
-                  `funnel_phase` with a fixed list was removed). */}
-              <ClientFunnelStages clientId={client.id} clientName={client.name} state={dealStages} />
 
               <div className="grid grid-cols-2 gap-3">
                 <FormField
@@ -1107,7 +977,7 @@ export function ClientDetailDrawer({
             </Tabs>
           </form>
         </Form>
-      </SheetContent>
+      </DetailDrawerContent>
 
       <ContactDetailDrawer
         contact={editingContact}

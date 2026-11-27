@@ -102,9 +102,12 @@ export function ClientFunnelStages({
               <Badge variant="secondary" className={cn("shrink-0", stageColorClass({ name: s.stageLabel, role: s.stageRole }))}>
                 {s.stageLabel}
               </Badge>
-              <Link href={`/deals?openDeal=${s.dealId}`} className="max-w-full wrap-anywhere hover:underline">
-                {dealDisplayName(s.dealName, clientName)}
-              </Link>
+              <div className="max-w-full space-y-1">
+                <div className="text-xs text-muted-foreground">Сделка</div>
+                <Link href={`/deals?openDeal=${s.dealId}`} className="block wrap-anywhere hover:underline">
+                  {dealDisplayName(s.dealName, clientName)}
+                </Link>
+              </div>
               {s.paused && <span className="shrink-0 text-xs text-muted-foreground">пауза</span>}
             </li>
           ))}

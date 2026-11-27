@@ -1,5 +1,6 @@
 "use client"
 
+import { DetailDrawerContent, type DetailNavigation } from "@/components/blocks/detail-drawer-layout"
 // Topic detail drawer (topics plan phase 6, spec topics/01 §14): title,
 // company / contact / deal links, status + sub-state, list + «Почему в этом
 // списке», the card with its actions, deal cards, signals with evidence
@@ -12,7 +13,7 @@
 // its own list. Used by the dashboard and by the company / contact / deal
 // «Темы» tabs.
 
-import { useCallback, useEffect, useState, useTransition } from "react"
+import { useCallback, useEffect, useRef, useState, useTransition } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
 import { Building2, FileText, GitMerge, Handshake, Link2Off, Loader, ShoppingCart, Unlink, User, UserPlus, Users, XCircle } from "lucide-react"
@@ -27,7 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Sheet, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { SourceMessageDialog } from "@/components/blocks/source-message-dialog"
@@ -60,6 +61,7 @@ import {
 export type TopicDrawerProps = {
   topicId: string | null
   open: boolean
+  navigation?: DetailNavigation
   onOpenChange: (open: boolean) => void
   /** Called after every action that changed the topic (refresh the caller's list). */
   onChanged?: () => void
@@ -167,7 +169,7 @@ function PickDialog({
   )
 }
 
-export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDrawerProps) {
+export function TopicDrawer({ topicId, open, navigation, onOpenChange, onChanged }: TopicDrawerProps) {
   const [topic, setTopic] = useState<TopicDetailView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadedId, setLoadedId] = useState<string | null>(null)
@@ -181,11 +183,14 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
   // «Связать с контактом» of a Telegram message (docs/specs/telegram/04 §6.2).
   const [linkItemId, setLinkItemId] = useState<string | null>(null)
   const [ownersWanted, setOwnersWanted] = useState(false)
+  const latestRequest = useRef(0)
 
   const load = useCallback(async (id: string) => {
+    const request = ++latestRequest.current
     try {
       const res = await fetch(`/api/topics?id=${encodeURIComponent(id)}`)
       const d = await res.json().catch(() => ({}))
+      if (request !== latestRequest.current) return
       if (!res.ok) {
         setError(d.error || "Не удалось загрузить тему")
         setTopic(null)
@@ -194,9 +199,9 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
         setTopic(d.topic as TopicDetailView)
       }
     } catch {
-      setError("Не удалось загрузить тему")
+      if (request === latestRequest.current) setError("Не удалось загрузить тему")
     } finally {
-      setLoadedId(id)
+      if (request === latestRequest.current) setLoadedId(id)
     }
   }, [])
 
@@ -237,8 +242,13 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
   const live = t ? t.status === "open" || t.status === "dormant" : false
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-2xl flex flex-col gap-0 p-0" onOpenAutoFocus={(e) => e.preventDefault()}>
+    <Sheet open={open} modal={!navigation} onOpenChange={onOpenChange}>
+      <DetailDrawerContent
+        defaultWidth="672px"
+        navigation={navigation}
+        getNavigationStatus={() => pending ? "busy" : "ready"}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
         <SheetHeader className="p-4 pb-3 border-b shrink-0 pr-12">
           <SheetTitle className="leading-snug">{t?.title ?? (loading ? "Загрузка…" : "Тема")}</SheetTitle>
           <SheetDescription asChild>
@@ -621,7 +631,7 @@ export function TopicDrawer({ topicId, open, onOpenChange, onChanged }: TopicDra
           to={null}
           date={sourceItem ? formatDateTimeRu(sourceItem.date) : null}
         />
-      </SheetContent>
+      </DetailDrawerContent>
     </Sheet>
   )
 }

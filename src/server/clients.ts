@@ -28,6 +28,7 @@ import {
 } from "drizzle-orm"
 import { isOpenStageRole, OPEN_DEAL_STATUSES } from "@/lib/deal-funnel"
 import { computeOrderDiscount } from "@/lib/orders-format"
+import { loadClientContactDates } from "@/server/topics/checks/orders-data"
 import { loadClientLastActivity } from "@/server/client-activity"
 import { listDealFunnelStages } from "@/server/deals"
 import {
@@ -100,6 +101,7 @@ export type ClientRow = ClientResponsibleInfo & {
   // Реальная последняя активность (письма/карточки, задачи, сделки, заказы,
   // контакты — см. loadClientLastActivity). Заполняется лентой /clients;
   // где её нет, бейдж «N дн без контакта» откатывается на updatedAt.
+  lastContactAt?: string | null
   lastActivityAt?: string
   contacts: ClientContactPreview[]
   /**
@@ -287,6 +289,7 @@ export async function listClientsFeed(params: {
   status?: EntityStatus | "all"
   /** «Ответственный» filter: all | mine | handover | <member user id>. */
   responsible?: ResponsibleFilter | null
+  mine?: boolean
   /** «Профиль компании» filters (identity I5): industry code / market role / size band; "none" = not set. */
   industry?: string | null
   role?: string | null
@@ -376,14 +379,16 @@ export async function listClientsFeed(params: {
 
   // «Мои» / a member also matches the ADDITIONAL responsible members.
   const coResponsible =
-    params.responsible && params.responsible !== "all" && params.responsible !== "handover"
+    params.mine || (params.responsible && params.responsible !== "all" && params.responsible !== "handover")
       ? await loadCoResponsibleIds(activeOrgId)
       : new Map<string, string[]>()
   const matching = rows.filter((r) => {
+    const responsibleRow = { ...r.client, coResponsibleUserIds: coResponsible.get(r.client.id) ?? [] }
+    if (params.mine && !matchesResponsibleFilter("mine", responsibleRow, viewerUserId)) return false
     if (
       !matchesResponsibleFilter(
         params.responsible,
-        { ...r.client, coResponsibleUserIds: coResponsible.get(r.client.id) ?? [] },
+        responsibleRow,
         viewerUserId,
       )
     )
@@ -441,8 +446,9 @@ export async function listClientsFeed(params: {
     contactsByClient.set(c.clientId, list)
   }
 
-  const [lastActivity, responsibleNames] = await Promise.all([
+  const [lastActivity, contactDates, responsibleNames] = await Promise.all([
     loadClientLastActivity(activeOrgId, clientIds),
+    loadClientContactDates(activeOrgId, clientIds),
     loadResponsibleLookup(page.map((r) => r.client)),
   ])
 
@@ -475,6 +481,7 @@ export async function listClientsFeed(params: {
       organizationId: r.client.organizationId,
       createdAt: r.client.createdAt.toISOString(),
       updatedAt: r.client.updatedAt.toISOString(),
+      lastContactAt: contactDates.get(r.client.id)?.lastAt?.toISOString() ?? null,
       lastActivityAt: maxIso(
         r.client.updatedAt,
         lastActivity.get(r.client.id),

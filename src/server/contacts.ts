@@ -9,7 +9,7 @@ import {
 import { contactDisplaySql } from "@/server/contact-display"
 import { db } from "@/db/drizzle"
 import { contact, client, member, user, type EntityStatus } from "@/db/schema"
-import { and, asc, eq, desc, ilike, inArray, isNotNull, isNull, or } from "drizzle-orm"
+import { and, asc, eq, desc, ilike, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core"
 import { getServerSession } from "@/lib/get-session"
 import { randomUUID } from "crypto"
@@ -228,6 +228,8 @@ export async function listContactsPaged(params: {
   clientId?: string | "none" | "all"
   /** Company filter also matches FORMER links («Включая бывших»). */
   includeFormer?: boolean
+  sort?: string | null
+  descending?: boolean
   /** Custom field filters, `?cf=` JSON (docs/specs/clients-contacts §3.5). */
   customFilters?: string | null
   limit?: number
@@ -270,11 +272,16 @@ export async function listContactsPaged(params: {
 
   const where = and(...conditions)
 
+  const columns = { email: contact.email, phone: contact.phone, company: client.name, position: contact.position, managed: sql`coalesce(${managedUser.name}, ${contact.managedAtPersonName})` }
+  const sortColumn = params.sort && Object.hasOwn(columns, params.sort)
+    ? columns[params.sort as keyof typeof columns]
+    : contactDisplaySql()
+  const sortOrder = params.descending ? desc(sortColumn) : asc(sortColumn)
   const [rows, totalRows] = await Promise.all([
     contactFrom()
       .where(where)
       // Alphabetical by the SHOWN name («Имя на родном языке», 2026-11-22).
-      .orderBy(asc(contactDisplaySql()))
+      .orderBy(sql`${sortOrder} nulls last`, asc(contactDisplaySql()), asc(contact.id))
       .limit(limit)
       .offset(offset),
     db.select({ id: contact.id }).from(contact).where(where),

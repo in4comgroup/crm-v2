@@ -20,9 +20,25 @@ import { PageLoader } from "@/components/blocks/page-loader"
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
 import { usePersistentTab } from "@/lib/use-persistent-tab"
 
+import { useState } from "react"
+import { DealStageSettingsDialog, type FunnelSettingsTab } from "@/components/blocks/deal-stage-settings-dialog"
 import { CustomFieldsDialog } from "@/components/blocks/custom-fields-dialog"
 import { useCustomFieldDefs } from "@/components/blocks/custom-field-filters"
 import { Button } from "@/components/ui/button"
+
+function FunnelSettings() {
+  const [tab, setTab] = useState<FunnelSettingsTab | null>(null)
+  return (
+    <Card>
+      <CardContent className="flex flex-wrap gap-2 pt-6">
+        <Button variant="outline" onClick={() => setTab("stages")}>Настроить воронку</Button>
+        <Button variant="outline" onClick={() => setTab("types")}>Типы сделок</Button>
+        <DealStageSettingsDialog open={tab !== null} initialTab={tab ?? "stages"}
+          onOpenChange={(open) => { if (!open) setTab(null) }} onSaved={() => setTab(null)} />
+      </CardContent>
+    </Card>
+  )
+}
 
 function CustomFieldsSettings() {
   return (
@@ -39,6 +55,7 @@ const SETTINGS_TABS = [
   "users",
   "organizations",
   "custom-fields",
+  "funnel",
   "sources",
   "models",
   "ai-processes",
@@ -72,6 +89,7 @@ export default function SettingsPage() {
           <PageHeaderActions />
         </div>
         <CustomFieldsSettings />
+        <FunnelSettings />
       </div>
     )
   }
@@ -105,6 +123,7 @@ export default function SettingsPage() {
             <TabsTrigger value="users">Пользователи</TabsTrigger>
             <TabsTrigger value="organizations">Организации</TabsTrigger>
             {canManage && <TabsTrigger value="custom-fields">Поля</TabsTrigger>}
+            <TabsTrigger value="funnel">Воронка</TabsTrigger>
             <TabsTrigger value="sources">Источники</TabsTrigger>
             <TabsTrigger value="models">Модели</TabsTrigger>
             <TabsTrigger value="ai-processes">Процессы ИИ</TabsTrigger>
@@ -139,6 +158,8 @@ export default function SettingsPage() {
           </TabsContent>
 
           {canManage && <TabsContent value="custom-fields" className="mt-4"><CustomFieldsSettings /></TabsContent>}
+
+          <TabsContent value="funnel" className="mt-4"><FunnelSettings /></TabsContent>
 
           {/* One «Источники» tab: templates, sources, teardown (top to bottom). */}
           <TabsContent

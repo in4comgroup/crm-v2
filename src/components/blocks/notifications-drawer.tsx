@@ -1,5 +1,6 @@
 "use client"
 
+import { DetailDrawerContent } from "@/components/blocks/detail-drawer-layout"
 // The bell «Уведомления» in the page header (docs/specs/notifications §7,
 // decisions Q10 / Q11). Data: GET / POST /api/notifications.
 // - Badge = unread count (9+): RED when an important one is unread, GREY
@@ -14,7 +15,6 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
   Sheet,
-  SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
@@ -300,7 +300,7 @@ export function NotificationsDrawer() {
         </SheetTrigger>
         {/* Правая шторка — тот же язык, что «Лента решений» и дроверы
             сделки/компании: шапка с чертой, ниже скролл с дата-группами. */}
-        <SheetContent className="w-full sm:max-w-md flex flex-col gap-0 p-0">
+        <DetailDrawerContent defaultWidth="448px">
           <SheetHeader className="p-4 pb-3 border-b gap-3">
             <div className="flex items-start justify-between gap-3 pr-8">
               <div className="min-w-0 space-y-1">
@@ -379,7 +379,7 @@ export function NotificationsDrawer() {
               ))
             )}
           </div>
-        </SheetContent>
+        </DetailDrawerContent>
       </Sheet>
     </>
   )

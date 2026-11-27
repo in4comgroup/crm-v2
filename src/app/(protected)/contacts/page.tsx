@@ -1,7 +1,8 @@
 "use client"
 
 import { PageHeaderActions } from "@/components/blocks/page-header-actions"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { toast } from "sonner"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -17,7 +18,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
@@ -35,12 +35,13 @@ import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tool
 import type { ContactRow, ClientOption } from "@/app/api/contacts/route"
 import ContactEditDialog from "@/components/forms/form-contact-edit"
 import { ContactDetailDrawer } from "@/components/blocks/contact-detail-drawer"
+import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import { ContactCard } from "@/components/blocks/contact-card"
 import { PageLoader } from "@/components/blocks/page-loader"
+import { SortableTableHead } from "@/components/blocks/sortable-table-head"
 import { FilterToolbar } from "@/components/blocks/filter-toolbar"
 import { TelegramDuplicatesButton } from "@/components/blocks/telegram-duplicates-button"
 import {
-  CustomFieldCell,
   CustomFieldFilterChips,
   CustomFieldFiltersButton,
   activeCustomFilters,
@@ -98,6 +99,13 @@ export default function ContactsPage() {
   const [rows, setRows] = useState<ContactRow[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
+  const [sortKey, setSortKey] = useState("name")
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
+  function changeSort(key: string) {
+    setSortKey(key)
+    setSortDirection(sortKey === key && sortDirection === "asc" ? "desc" : "asc")
+    setPage(1)
+  }
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<string>(ALL)
   const [clientFilter, setClientFilter] = useState<string>(ALL)
@@ -133,27 +141,30 @@ export default function ContactsPage() {
   const [loadError, setLoadError] = useState(false)
 
   const reqIdRef = useRef(0)
+  const adjacentRequest = useRef<AbortController | null>(null)
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  const fetchContactPage = useCallback(async (targetPage: number, signal?: AbortSignal) => {
+    const params = new URLSearchParams({
+      limit: String(PAGE_SIZE),
+      offset: String((targetPage - 1) * PAGE_SIZE),
+      sort: sortKey,
+      direction: sortDirection,
+    })
+    if (statusFilter !== ALL) params.set("status", statusFilter)
+    if (clientFilter !== ALL) params.set("clientId", clientFilter)
+    if (includeFormer && companyFilterActive) params.set("includeFormer", "1")
+    if (cfParam) params.set("cf", cfParam)
+    const res = await fetch(`/api/contacts?${params.toString()}`, { signal })
+    if (!res.ok) throw new Error("Не удалось загрузить контакты")
+    return await res.json() as { rows?: ContactRow[]; total?: number }
+  }, [statusFilter, clientFilter, includeFormer, companyFilterActive, cfParam, sortKey, sortDirection])
 
   const load = useCallback(async () => {
     setLoading(true)
     const reqId = ++reqIdRef.current
     try {
-      const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String((page - 1) * PAGE_SIZE),
-      })
-      if (statusFilter !== ALL) params.set("status", statusFilter)
-      if (clientFilter !== ALL) params.set("clientId", clientFilter)
-      if (includeFormer && companyFilterActive) params.set("includeFormer", "1")
-      if (cfParam) params.set("cf", cfParam)
-      const res = await fetch(`/api/contacts?${params.toString()}`)
-      if (reqIdRef.current !== reqId) return
-      if (!res.ok) {
-        setLoadError(true)
-        return
-      }
-      const data = await res.json()
+      const data = await fetchContactPage(page)
       if (reqIdRef.current !== reqId) return
       setLoadError(false)
       setRows(data.rows ?? [])
@@ -163,7 +174,47 @@ export default function ContactsPage() {
     } finally {
       if (reqIdRef.current === reqId) setLoading(false)
     }
-  }, [page, statusFilter, clientFilter, includeFormer, companyFilterActive, cfParam])
+  }, [page, fetchContactPage])
+
+  useLayoutEffect(() => () => {
+    adjacentRequest.current?.abort()
+    adjacentRequest.current = null
+  }, [page, fetchContactPage, editingContact?.id])
+
+  async function openAdjacentPage(direction: -1 | 1, request: (run: () => void) => void) {
+    if (adjacentRequest.current) return
+    const controller = new AbortController()
+    adjacentRequest.current = controller
+    const targetPage = page + direction
+    try {
+      const data = await fetchContactPage(targetPage, controller.signal)
+      if (controller.signal.aborted) return
+      const targetRows = data.rows ?? []
+      const contact = direction === -1 ? targetRows.at(-1) : targetRows[0]
+      if (!contact) {
+        setTotal(data.total ?? 0)
+        return
+      }
+      request(() => {
+        setPage(targetPage)
+        setRows(targetRows)
+        setTotal(data.total ?? 0)
+        setEditingContact(contact)
+      })
+    } catch {
+      if (!controller.signal.aborted) toast.error("Не удалось загрузить соседнюю страницу")
+    } finally {
+      if (adjacentRequest.current === controller) adjacentRequest.current = null
+    }
+  }
+
+  const contactNavigation = useDetailNavigation(editingContact?.id ?? null, loading ? [] : rows.map((row) => row.id), (id) => {
+    const contact = rows.find((row) => row.id === id)
+    if (contact) setEditingContact(contact)
+  }, {
+    previous: page > 1 ? (request) => void openAdjacentPage(-1, request) : undefined,
+    next: page < totalPages ? (request) => void openAdjacentPage(1, request) : undefined,
+  })
 
   useEffect(() => {
     void load()
@@ -336,7 +387,7 @@ export default function ContactsPage() {
               <ContactCard
                 key={c.id}
                 contact={c}
-                onOpenDetail={() => setEditingContact(c)}
+                onOpenDetail={() => contactNavigation.select(c.id)}
                 listFields={listFields}
               />
             ))}
@@ -347,16 +398,12 @@ export default function ContactsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Имя</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Телефон</TableHead>
-                    <TableHead>Компания</TableHead>
-                    <TableHead>Статус</TableHead>
-                    {listFields.map((f) => (
-                      <TableHead key={f.id} className="max-w-[16rem] truncate">
-                        {f.label}
-                      </TableHead>
-                    ))}
+                    <SortableTableHead label="Имя" direction={sortKey === "name" ? sortDirection : undefined} onSort={() => changeSort("name")} />
+                    <SortableTableHead label="Email" direction={sortKey === "email" ? sortDirection : undefined} onSort={() => changeSort("email")} />
+                    <SortableTableHead label="Телефон" direction={sortKey === "phone" ? sortDirection : undefined} onSort={() => changeSort("phone")} />
+                    <SortableTableHead label="Компания" direction={sortKey === "company" ? sortDirection : undefined} onSort={() => changeSort("company")} />
+                    <SortableTableHead label="Должность" direction={sortKey === "position" ? sortDirection : undefined} onSort={() => changeSort("position")} />
+                    <SortableTableHead label="Ведётся" direction={sortKey === "managed" ? sortDirection : undefined} onSort={() => changeSort("managed")} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -364,7 +411,7 @@ export default function ContactsPage() {
                     <TableRow
                       key={c.id}
                       className="cursor-pointer"
-                      onClick={() => setEditingContact(c)}
+                      onClick={() => contactNavigation.select(c.id)}
                     >
                       <TableCell>
                         <div className="font-medium">{contactDisplayName(c)}</div>
@@ -375,16 +422,8 @@ export default function ContactsPage() {
                         {c.clientName ?? "Без компании"}
                         <OtherCompaniesBadge items={c.otherCompanies} />
                       </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">
-                          {STATUS_LABEL[c.status] ?? c.status}
-                        </Badge>
-                      </TableCell>
-                      {listFields.map((f) => (
-                        <TableCell key={f.id}>
-                          <CustomFieldCell field={f} value={c.customValues?.[f.id]} />
-                        </TableCell>
-                      ))}
+                      <TableCell>{c.position ?? "—"}</TableCell>
+                      <TableCell>{c.managedAt?.name ?? "—"}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -444,6 +483,7 @@ export default function ContactsPage() {
       <ContactDetailDrawer
         contact={editingContact}
         open={Boolean(editingContact)}
+        navigation={contactNavigation.navigation}
         onOpenChange={(open) => {
           if (!open) setEditingContact(null)
         }}

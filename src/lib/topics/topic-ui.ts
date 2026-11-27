@@ -18,7 +18,7 @@ export const TOPIC_TAB_LABELS_RU: Record<TopicTab, string> = {
   now: "Сейчас",
   digest: "Сегодня",
   week: "Позже",
-  all: "Все",
+  all: "Все темы",
 }
 
 export function isTopicTab(v: unknown): v is TopicTab {

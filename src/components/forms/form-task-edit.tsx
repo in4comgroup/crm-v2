@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useEffect, useCallback } from "react"
 import { useForm } from "react-hook-form"
+import type { DetailNavigationStatus } from "@/components/blocks/detail-drawer-layout"
 import {
   Dialog,
   DialogContent,
@@ -129,12 +130,14 @@ export function TaskEditForm({
   task,
   onSuccess,
   onCancel,
+  onNavigationStatusChange,
   initialValues,
 }: {
   mode: "create" | "edit"
   task?: TaskRow
   onSuccess?: (taskId?: string) => void
   onCancel?: () => void
+  onNavigationStatusChange?: (status: DetailNavigationStatus) => void
   initialValues?: Partial<TaskFormData>
 }) {
   const [isPending, startTransition] = useTransition()
@@ -174,6 +177,11 @@ export function TaskEditForm({
   )
 
   const form = useForm<TaskFormData>({ defaultValues: buildDefaults() })
+  const { isDirty, isSubmitting } = form.formState
+  useEffect(() => {
+    onNavigationStatusChange?.(isPending || isSubmitting ? "busy" : isDirty ? "dirty" : "ready")
+    return () => onNavigationStatusChange?.("ready")
+  }, [onNavigationStatusChange, isPending, isSubmitting, isDirty])
 
   const watchedClientId = form.watch("clientId")
 

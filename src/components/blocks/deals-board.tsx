@@ -19,7 +19,7 @@ import {
 } from "@dnd-kit/core"
 import { snapCenterToCursor } from "@dnd-kit/modifiers"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
 import {
   Popover,
@@ -29,17 +29,11 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Plus,
-  ListTree,
+  ListClock,
   ChevronsRightLeft,
   ChevronsLeftRight,
   ChevronsUpDown,
-  SlidersVertical,
-  Tags,
 } from "lucide-react"
-import {
-  DealStageSettingsDialog,
-  type FunnelSettingsTab,
-} from "@/components/blocks/deal-stage-settings-dialog"
 import { AnchorTooltip, useAnchorTooltip } from "@/components/blocks/anchor-tooltip"
 import {
   forecastByCurrency,
@@ -78,6 +72,7 @@ import {
 } from "@/components/blocks/deal-move-dialog"
 import DealEditDialog from "@/components/forms/form-deal-edit"
 import { DealDetailDrawer } from "@/components/blocks/deal-detail-drawer"
+import { useDetailNavigation } from "@/components/blocks/detail-drawer-layout"
 import { DealDecisionFeed } from "@/components/blocks/deal-decision-feed"
 import { useBoardIntel } from "@/hooks/use-board-intel"
 import {
@@ -246,13 +241,7 @@ export function DealsBoard({
   const [pendingOutcome, setPendingOutcome] = useState<PendingOutcome | null>(
     null,
   )
-  // «Настройки воронки» (стадии, правила, типы, причины, вход) — один
-  // диалог; кнопка «Типы сделок» открывает его же на вкладке типов.
-  const [funnelSettingsTab, setFunnelSettingsTab] =
-    useState<FunnelSettingsTab | null>(null)
-  // Перечитать причины исходов после сохранения настроек воронки.
-  const [funnelVersion, setFunnelVersion] = useState(0)
-  const reasons = useFunnelReasons(funnelVersion)
+  const reasons = useFunnelReasons(0)
   const forecastTip = useAnchorTooltip()
   const unestimatedTip = useAnchorTooltip()
   // «Отменить» у бейджа «создал агент» (карточка или дровер) → один диалог.
@@ -339,7 +328,7 @@ export function DealsBoard({
 
   // Владелец + клиенты, БЕЗ фильтра «Перевёл агент» — источник для «Не
   // состоялись» (см. lostDeals ниже): этот раздел управляется отдельным
-  // чекбоксом showLostDeals и не должен пропадать при включении agentMovedOnly
+  // переключателем showLostDeals и не должен пропадать при включении agentMovedOnly
   // (иначе «Не состоялись» включён, но карточки исчезают — баг, о котором
   // сообщил пользователь).
   const filteredBase = useMemo(() => {
@@ -519,6 +508,21 @@ export function DealsBoard({
   const openDeal = openDealId
     ? (deals.find((d) => d.id === openDealId) ?? null)
     : null
+  const terminalWonIds = new Set(wonDeals.map((deal) => deal.id))
+  const visibleDealIds = store.columns.flatMap(({ stage, cards }) => {
+    if (store.collapsed[stage.id]) return []
+    const lost = showLostDeals ? lostByStage[stage.id] ?? [] : []
+    return [...cards, ...lost].map((deal) => deal.id)
+  })
+  if (terminalStages.length > 0 && !finalCollapsed) {
+    const visibleWon = terminalCards.filter((deal) => terminalWonIds.has(deal.id))
+    const visibleLost = showLostDeals ? terminalCards.filter((deal) => !terminalWonIds.has(deal.id)) : []
+    visibleDealIds.push(...[...visibleWon, ...visibleLost].map((deal) => deal.id))
+  }
+  const dealNavigation = useDetailNavigation(drawerOpen ? openDealId : null, visibleDealIds, (id) => {
+    setOpenDealId(id)
+    setDrawerOpen(true)
+  })
 
   const stageLabelOf = (stageId?: string) => {
     const s = stages.find((st) => st.id === stageId)
@@ -870,10 +874,7 @@ export function DealsBoard({
             />
             {/* «Перевёл агент» — тот же термин, что в бейдже карточки (UX №19). */}
             <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-              <Checkbox
-                checked={agentMovedOnly}
-                onCheckedChange={(v) => setAgentMovedOnly(Boolean(v))}
-              />
+              <Switch size="sm" checked={agentMovedOnly} onCheckedChange={setAgentMovedOnly} />
               Перевёл агент
             </label>
             {/* Чекбокс «Отменённые» убран (UX №6): отменённые приравнены к
@@ -883,60 +884,27 @@ export function DealsBoard({
                 состоялись»: раскрывает проигранные карточки в колонке
                 «Закрытие» под разделителем (по умолчанию скрыты). */}
             <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-              <Checkbox
-                checked={showLostDeals}
-                onCheckedChange={(v) => setShowLostDeals(Boolean(v))}
-              />
+              <Switch size="sm" checked={showLostDeals} onCheckedChange={setShowLostDeals} />
               Не состоялись
             </label>
-            {/* Перенесены сюда со строки заголовка, чтобы освободить её для
-                глобального поиска (справа от заголовка). */}
-            <Button
-              size="sm"
-              variant={feedOpen ? "default" : "outline"}
-              onClick={() => setFeedOpen((v) => !v)}
-            >
-              <ListTree className="h-4 w-4 mr-1" />
-              Лента решений
-            </Button>
-            {/* Сегментед-контрол Все/Мои — справа, перед кнопкой
-                сворачивания колонок (ml-auto здесь, а не на самой кнопке). */}
-            <Tabs
-              value={filter}
-              onValueChange={(v) => setFilter(v as OwnerFilter)}
-              className="ml-auto"
-            >
-              <TabsList>
-                <TabsTrigger value="all">Все</TabsTrigger>
-                <TabsTrigger value="mine">Мои</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm">
+              <Switch size="sm" checked={filter === "mine"} onCheckedChange={(checked) => setFilter(checked ? "mine" : "all")} />
+              Только мои
+            </label>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     size="icon-sm"
-                    variant="outline"
-                    aria-label="Настройки воронки"
-                    onClick={() => setFunnelSettingsTab("stages")}
+                    variant={feedOpen ? "default" : "outline"}
+                    aria-label="Лента решений"
+                    aria-expanded={feedOpen}
+                    onClick={() => setFeedOpen((value) => !value)}
                   >
-                    <SlidersVertical className="h-4 w-4" />
+                    <ListClock className="size-4" aria-hidden />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Настройки воронки</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    size="icon-sm"
-                    variant="outline"
-                    aria-label="Типы сделок"
-                    onClick={() => setFunnelSettingsTab("types")}
-                  >
-                    <Tags className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Типы сделок</TooltipContent>
+                <TooltipContent>Лента решений</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -964,17 +932,6 @@ export function DealsBoard({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            <DealStageSettingsDialog
-              open={funnelSettingsTab !== null}
-              initialTab={funnelSettingsTab ?? "stages"}
-              onOpenChange={(o) => {
-                if (!o) setFunnelSettingsTab(null)
-              }}
-              onSaved={() => {
-                setFunnelVersion((v) => v + 1)
-                refresh()
-              }}
-            />
           </div>
         </div>
 
@@ -1027,8 +984,7 @@ export function DealsBoard({
                   onUndoAgent={setUndoDeal}
                   onOpen={(d) => {
                     if (justDraggedRef.current) return
-                    setOpenDealId(d.id)
-                    setDrawerOpen(true)
+                    dealNavigation.select(d.id)
                   }}
                   onCollapse={() => store.toggleCollapse(column.stage.id)}
                   onSortChange={(mode) => store.setSort(column.stage.id, mode)}
@@ -1055,8 +1011,7 @@ export function DealsBoard({
                 onUndoAgent={setUndoDeal}
                 onOpen={(d) => {
                   if (justDraggedRef.current) return
-                  setOpenDealId(d.id)
-                  setDrawerOpen(true)
+                  dealNavigation.select(d.id)
                 }}
               />
             )}
@@ -1095,6 +1050,7 @@ export function DealsBoard({
         clientOptions={clientOptions}
         currentUserId={currentUserId}
         open={drawerOpen}
+        navigation={dealNavigation.navigation}
         onOpenChange={setDrawerOpen}
         onChanged={refresh}
         onRequestStageChange={requestStageChange}

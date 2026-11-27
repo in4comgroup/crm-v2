@@ -105,6 +105,12 @@ Commits `2289012` («bugfixing 42-47») and `dd72b91` («bugfixing 48-73»), the
 | Home, cards | Card «Сейчас» on a contact's birthday | Topics CRM check `contact_birthday` → process code `CONTACT_BIRTHDAY` (weight 8 = P8 = «Сейчас», no daily limit), check group «Контакты» on by default; the topic closes the next day | [topics/03](../topics/03-development-plan.md) phase 8, [topics/05a](../topics/05a-signals-base-a-g.md) block G, `0055` |
 | Company card | Renamed «AST – …» to «AST», saved — not saved | Caused by the «Сохранить» change of this round: react-hook-form updates `isDirty` only when it is read during render; the button no longer read it, so the save handler saw «no changes» and sent nothing. Both drawers now read `isDirty` (deal: also `dirtyFields`) during render. The tester renames again after the deploy | `client-detail-drawer.tsx`, `deal-detail-drawer.tsx`; rule in `src/app/AGENTS.md` |
 
+## Tester item 2026-11-27 — «Найти в источниках»: maslov.agency people created without the company
+
+- Евгения Кондрашева and Anna Chekhomova (`@maslov.agency`) were created at 08:42 UTC with no company; a person linked them by hand at 08:57. The company profile is not the cause (discovery never reads it).
+- Cause: the existing company `maslov.agency` had NO website at the scan. The domain rule found only the new candidate «maslov:agency» (website from the mails) and linked the people to it. The candidate was a possible duplicate of `maslov.agency`, so it was unticked and not created (apply only folded its spellings + website into the existing company), and apply dropped the links to it with no message.
+- Fix (`src/server/discovery-core.ts`, pure `duplicateLinkTarget` in `src/lib/discovery-pick.ts`, tests): in the preview a candidate flagged `possibleDuplicate` of a live company stands for THAT company in the link proposals (its website still counts); on apply a link to a candidate that was not created but is such a duplicate goes to the existing company (safety net for an older preview). `rankDomainMatches` counts one company once (its own website + the duplicate's website). An operator who ticks the duplicate candidate (creates a separate company) still gets the link to the existing company — change it by hand.
+
 ## Deal drawer — title editing
 
 Company and deal drawers share the same inline title editor. A pencil next to the title indicates the editable field. Changing the title shows the save and cancel icons in the header.

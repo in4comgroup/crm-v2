@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { hasNonLatinLetter, pickNativeName, rankDomainMatches } from "./discovery-pick"
+import { duplicateLinkTarget, hasNonLatinLetter, pickNativeName, rankDomainMatches } from "./discovery-pick"
 
 describe("pickNativeName", () => {
   it("prefers a Cyrillic spelling over a longer Latin one", () => {
@@ -35,6 +35,26 @@ describe("rankDomainMatches", () => {
     const parent = { existing: false, domain: "acme.com", name: "Acme" }
     const exact = { existing: false, domain: "mail.acme.com", name: "Zeta" }
     expect(rankDomainMatches("mail.acme.com", [parent, exact]).map((m) => m.name)).toEqual(["Zeta", "Acme"])
+  })
+  it("one company entered twice (its website + a duplicate candidate's) is one match", () => {
+    const own = { existing: true, domain: "maslov.agency", name: "maslov.agency", id: "e:c1" }
+    const viaDup = { existing: true, domain: "maslov.agency", name: "maslov.agency", id: "e:c1" }
+    expect(rankDomainMatches("maslov.agency", [own, viaDup])).toHaveLength(1)
+  })
+})
+
+describe("duplicateLinkTarget", () => {
+  const live = new Set(["c1"])
+  it("a possible duplicate of a live company stands for that company", () => {
+    expect(duplicateLinkTarget({ possibleDuplicate: { clientId: "c1", name: "maslov.agency" } }, live)).toEqual({
+      clientId: "c1",
+      name: "maslov.agency",
+    })
+  })
+  it("no duplicate, or a duplicate of a company that is not live / linkable → none", () => {
+    expect(duplicateLinkTarget({ possibleDuplicate: null }, live)).toBeNull()
+    expect(duplicateLinkTarget({}, live)).toBeNull()
+    expect(duplicateLinkTarget({ possibleDuplicate: { clientId: "c9", name: "x" } }, live)).toBeNull()
   })
 })
 

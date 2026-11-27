@@ -42,6 +42,9 @@ export type DomainMatchCandidate = {
   /** The company's website domain. */
   domain: string
   name: string
+  /** Stable id of the company (one company can enter twice: its own website
+   *  and a duplicate candidate's website). Same id → one match. */
+  id?: string
 }
 
 /**
@@ -54,7 +57,30 @@ export function rankDomainMatches<T extends DomainMatchCandidate>(emailDomain: s
   const existing = matches.filter((m) => m.existing)
   const pool = existing.length ? existing : [...matches]
   const exact = (m: T) => (m.domain === emailDomain ? 0 : 1)
-  return pool.sort((a, b) => exact(a) - exact(b) || a.name.localeCompare(b.name))
+  const sorted = pool.sort((a, b) => exact(a) - exact(b) || a.name.localeCompare(b.name))
+  const seen = new Set<string>()
+  return sorted.filter((m) => {
+    if (m.id === undefined) return true
+    if (seen.has(m.id)) return false
+    seen.add(m.id)
+    return true
+  })
+}
+
+/**
+ * The existing company a new company candidate stands for in link proposals
+ * and on apply: a candidate flagged `possibleDuplicate` of a live, linkable
+ * company is that company (by default it is NOT created — its spellings and
+ * website are folded into the existing company). Bug 2026-11-27: the
+ * maslov.agency people were linked to the unchecked duplicate candidate
+ * «maslov:agency», and apply dropped the links without a message.
+ */
+export function duplicateLinkTarget(
+  cand: { possibleDuplicate?: { clientId: string; name: string } | null },
+  linkableClientIds: ReadonlySet<string>,
+): { clientId: string; name: string } | null {
+  const d = cand.possibleDuplicate
+  return d && linkableClientIds.has(d.clientId) ? d : null
 }
 
 /**

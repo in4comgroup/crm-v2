@@ -28,7 +28,7 @@ import { loadOrgBlocklist } from "@/server/blocklist"
 import { cleanPhone } from "@/server/parsers/_shared"
 import { randomUUID } from "crypto"
 import { loadContactAddressIndex, proposeFromDiscovery } from "@/server/contact-links"
-import { pickDisplayName, pickNativeName, rankDomainMatches } from "@/lib/discovery-pick"
+import { duplicateLinkTarget, pickDisplayName, pickNativeName, rankDomainMatches } from "@/lib/discovery-pick"
 import { namesFromSource, sourceContactNames } from "@/lib/contact-names"
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -1081,8 +1081,10 @@ export async function previewDiscoveryForOrg(
     arr.push(lc)
     clientByCompanyKey.set(key, arr)
   }
+  const linkableClientIds = new Set<string>()
   for (const c of existingClients) {
     if (c.status === "suspended" || c.status === "deleted") continue
+    linkableClientIds.add(c.id)
     const lc: LinkClient = { ref: { kind: "existing", id: c.id }, name: c.name }
     const url = (c.webUrl ?? "").trim()
     const domain = url ? extractWebsiteDomain(url) : ""
@@ -1095,10 +1097,14 @@ export async function previewDiscoveryForOrg(
       addClientKey(lc, canonicalKey(companyMatchKey(s)))
   }
   for (const cand of clientCandidates) {
-    const lc: LinkClient = {
-      ref: { kind: "new", normalisedKey: cand.normalisedKey },
-      name: cand.displayName,
-    }
+    // A possible duplicate of a live company stands for THAT company: by
+    // default it is not created, so a link to the candidate would be dropped
+    // on apply (bug 2026-11-27, maslov.agency). Its website still counts —
+    // the existing company may have none yet (apply fills it).
+    const dup = duplicateLinkTarget(cand, linkableClientIds)
+    const lc: LinkClient = dup
+      ? { ref: { kind: "existing", id: dup.clientId }, name: dup.name }
+      : { ref: { kind: "new", normalisedKey: cand.normalisedKey }, name: cand.displayName }
     if (cand.inferredWebUrl) {
       const domain = extractWebsiteDomain(cand.inferredWebUrl)
       if (domain && !blocklist.isBlockedDomain(domain))
@@ -1155,7 +1161,12 @@ export async function previewDiscoveryForOrg(
         emailDomain,
         clientByDomain
           .filter((cl) => domainMatches(emailDomain, cl.domain))
-          .map((cl) => ({ ...cl, existing: cl.client.ref.kind === "existing", name: cl.client.name })),
+          .map((cl) => ({
+            ...cl,
+            existing: cl.client.ref.kind === "existing",
+            name: cl.client.name,
+            id: clientRefKey(cl.client.ref),
+          })),
       )
       if (matches.length > 0) {
         const picked = matches[0]
@@ -1633,8 +1644,17 @@ export async function applyDiscoveryForOrg(
   // creation) and refs to already-linked contacts (re-checked below).
   const resolveContact = (ref: ContactRef): string | null =>
     ref.kind === "existing" ? ref.id : newContactEmailToId.get(ref.email) ?? null
-  const resolveClient = (ref: ClientRef): string | null =>
-    ref.kind === "existing" ? ref.id : newClientKeyToId.get(ref.normalisedKey) ?? null
+  // A new candidate that was not created but is a possible duplicate of a
+  // live company → that company (safety net for an older preview that still
+  // links to the candidate; bug 2026-11-27, maslov.agency).
+  const liveClientIds = new Set(existingClients.filter((c) => c.status !== "deleted").map((c) => c.id))
+  const resolveClient = (ref: ClientRef): string | null => {
+    if (ref.kind === "existing") return ref.id
+    const created = newClientKeyToId.get(ref.normalisedKey)
+    if (created) return created
+    const cand = input.candidates.clients.find((c) => c.normalisedKey === ref.normalisedKey)
+    return cand ? duplicateLinkTarget(cand, liveClientIds)?.clientId ?? null : null
+  }
 
   const resolvedLinks: { contactId: string; clientId: string }[] = []
   for (const link of input.selectedLinks) {

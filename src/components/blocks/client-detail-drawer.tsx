@@ -283,6 +283,9 @@ export function ClientDetailDrawer({
   // sent nothing (bug 2026-11-26: a renamed company was not saved). So the
   // handlers use these render-time values.
   const { isDirty: formIsDirty } = editForm.formState
+  // Recreate the native selects when their defaults change. Otherwise Radix
+  // can emit a change during reset and mark the new company's form dirty.
+  const fieldDefaults = editForm.formState.defaultValues
 
   // Another company → full reset. The SAME company saved elsewhere (web
   // lookup «Поиск в интернете», batch enrichment, another tab — its
@@ -676,7 +679,7 @@ export function ClientDetailDrawer({
                       <FormLabel className="text-xs text-muted-foreground">
                         Тип компании
                       </FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      <Select key={fieldDefaults?.companyKind} value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger className="w-full min-w-0">
                             <SelectValue placeholder="Автоматически по сделкам" />
@@ -712,7 +715,7 @@ export function ClientDetailDrawer({
                       <FormLabel className="text-xs text-muted-foreground">
                         Статус
                       </FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      <Select key={fieldDefaults?.status} value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger className="w-full">
                             <SelectValue />
@@ -737,7 +740,7 @@ export function ClientDetailDrawer({
                       <FormLabel className="text-xs text-muted-foreground">
                         Валюта
                       </FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      <Select key={fieldDefaults?.currency} value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger className="w-full">
                             <SelectValue />
